@@ -7,7 +7,7 @@ use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{SetTaskDependenciesRequest, TaskRow};
-use crate::application::swarm::ports::{BoardRepository, Clock};
+use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind,
     services::dependencies::{dependency_list, validate_dependencies},

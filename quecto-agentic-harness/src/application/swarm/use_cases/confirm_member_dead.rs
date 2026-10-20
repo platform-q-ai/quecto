@@ -8,7 +8,7 @@ use super::OverRepository;
 use crate::application::swarm::board_loss::{ABRUPT_BLOCKER, ORDERLY_BLOCKER, end_by_loss};
 use crate::application::swarm::board_operation::{detail, operation, text};
 use crate::application::swarm::dto::{ConfirmMemberDeadRequest, DeathConfirmation, DeathConfirmed};
-use crate::application::swarm::ports::{BoardRepository, Clock};
+use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind,
     services::policy::{Access, status_is_alive},

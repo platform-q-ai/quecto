@@ -6,7 +6,7 @@ use crate::application::swarm::board_test_support::{
     BoardState, CompactEncoding, MemoryBoard, StoredFile, StoredMessage, member_row, running_board,
     stored_task,
 };
-use crate::application::swarm::ports::Clock;
+use crate::application::swarm::ports::lifecycle::Clock;
 
 /// A clock that always reads 7.
 struct FixedClock;

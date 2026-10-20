@@ -120,7 +120,7 @@ fn rejected_wake(world: &mut QuectoWorld) {
     };
     let socket = workspace.join("worker.sock");
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-    use quecto::application::swarm::ports::CoordinationPort;
+    use quecto::application::swarm::ports::lifecycle::CoordinationPort;
     context.reserve_member("worker", "reservation").unwrap();
     let worker = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         member: "worker".into(),
@@ -240,7 +240,7 @@ fn contract_history(world: &mut QuectoWorld) {
 
 #[given("an idle swarm peer with an unavailable endpoint")]
 fn idle_peer(world: &mut QuectoWorld) {
-    use quecto::application::swarm::ports::CoordinationPort;
+    use quecto::application::swarm::ports::lifecycle::CoordinationPort;
     use quecto::domain::swarm::value_objects::lifecycle::ProcessIdentity;
     run(world, json!({"op":"summary"}));
     let checkout = world.swarm_workspace.clone().unwrap();
@@ -390,7 +390,7 @@ fn supervise(
     world: &mut QuectoWorld,
     action: quecto::domain::swarm::value_objects::run_control::RunControlAction,
 ) {
-    use quecto::application::swarm::ports::SwarmRunControl;
+    use quecto::application::swarm::ports::lifecycle::SwarmRunControl;
     let context = supervisor_context(world);
     let outcome = std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()

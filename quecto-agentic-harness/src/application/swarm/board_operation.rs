@@ -11,7 +11,12 @@
 //! the operation needs a running run, and runs the operation's work.
 use serde_json::{Map, Value};
 
-use super::ports::{BoardEvents, BoardRepository, BoardRuns, BoardTransaction, Clock};
+use super::ports::{
+    board_events::BoardEvents,
+    board_repository::{BoardRepository, BoardTransaction},
+    board_runs::BoardRuns,
+    lifecycle::Clock,
+};
 use crate::domain::swarm::{
     entities::records::RunRecord,
     events::telemetry::RefusalKind,

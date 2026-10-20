@@ -397,7 +397,7 @@ async fn checkout_under_the_workspace_is_opened() {
 
 #[tokio::test]
 async fn run_control_receipt_decodes_the_lost_coordinator_blocker() {
-    use crate::application::swarm::ports::SwarmRunControl;
+    use crate::application::swarm::ports::lifecycle::SwarmRunControl;
     use crate::domain::swarm::{
         value_objects::lifecycle::RunStatus, value_objects::run_control::RunControlAction,
     };

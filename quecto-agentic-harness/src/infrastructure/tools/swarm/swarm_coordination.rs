@@ -1,6 +1,6 @@
 //! Typed coordination adapter. Python wire details stop at this boundary.
 use super::SwarmContext;
-use crate::application::swarm::ports::CoordinationPort;
+use crate::application::swarm::ports::lifecycle::CoordinationPort;
 use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::value_objects::lifecycle::MemberExit;
 use crate::domain::swarm::{

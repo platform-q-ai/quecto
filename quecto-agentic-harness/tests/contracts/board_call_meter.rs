@@ -9,7 +9,9 @@ use std::thread;
 use std::time::Duration;
 
 use quecto::application::swarm::dto::BoardLocation;
-use quecto::application::swarm::ports::{BoardCallMeter, BoardRepository};
+use quecto::application::swarm::ports::{
+    board_repository::BoardRepository, board_telemetry::BoardCallMeter,
+};
 use quecto::infrastructure::persistence::sqlite::swarm_board::meter::SqliteBoardCallMeter;
 use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 

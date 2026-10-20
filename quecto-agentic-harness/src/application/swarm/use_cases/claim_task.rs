@@ -7,7 +7,10 @@ use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{ClaimTaskRequest, TaskRow};
-use crate::application::swarm::ports::{BoardRepository, Clock, IdSource};
+use crate::application::swarm::ports::{
+    board_repository::{BoardRepository, IdSource},
+    lifecycle::Clock,
+};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, services::policy::Access,
     value_objects::board_error::BoardError,

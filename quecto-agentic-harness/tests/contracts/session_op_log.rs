@@ -3,7 +3,7 @@
 //! no turn, notes the records and summaries dropped before they reached
 //! it, one line per kind, and hands over only the drops it has not noted.
 use quecto::application::swarm::dto::DroppedRecords;
-use quecto::application::swarm::ports::{BoardOpLog, SessionOpLog};
+use quecto::application::swarm::ports::board_telemetry::{BoardOpLog, SessionOpLog};
 use quecto::domain::swarm::events::run_summary::RunSummaryFold;
 use quecto::infrastructure::observability::audit_log::AuditLog;
 use quecto::infrastructure::observability::board_op_log::EventLogBoardOps;

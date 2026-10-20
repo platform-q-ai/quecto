@@ -28,7 +28,10 @@ use crate::application::swarm::board_operation::atomic;
 use crate::application::swarm::dto::{
     ActivateMemberRequest, AdmitMemberRequest, JoinRunRequest, Joined,
 };
-use crate::application::swarm::ports::{BoardRepository, Clock, IdSource};
+use crate::application::swarm::ports::{
+    board_repository::{BoardRepository, IdSource},
+    lifecycle::Clock,
+};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, services::validation::bounded,
     value_objects::board_error::BoardError, value_objects::python_value::python_truthy,

@@ -86,7 +86,7 @@ fn wake_sink(
 /// resume's control generation, so a provider-failure suspension re-arms.
 #[tokio::test]
 async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
-    use crate::application::swarm::ports::SwarmRunControl;
+    use crate::application::swarm::ports::lifecycle::SwarmRunControl;
     use crate::domain::swarm::value_objects::run_control::RunControlAction;
     let (directory, context) = crate::swarm_control_fixture::context();
     let socket = directory.path().join("worker.sock");
@@ -215,7 +215,7 @@ async fn a_settled_pause_has_suspended_local_inference_on_a_current_thread_runti
 #[derive(Default)]
 struct Summaries(std::sync::Mutex<Vec<crate::domain::swarm::events::run_summary::SwarmRunSummary>>);
 
-impl crate::application::swarm::ports::BoardOpLog for Summaries {
+impl crate::application::swarm::ports::board_telemetry::BoardOpLog for Summaries {
     fn record(&self, _observation: crate::domain::swarm::events::telemetry::BoardOpObservation) {}
 
     fn summarize(&self, summary: crate::domain::swarm::events::run_summary::SwarmRunSummary) {
@@ -226,7 +226,7 @@ impl crate::application::swarm::ports::BoardOpLog for Summaries {
     }
 }
 
-impl crate::application::swarm::ports::SessionOpLog for Summaries {
+impl crate::application::swarm::ports::board_telemetry::SessionOpLog for Summaries {
     fn dropped(&self, _drops: crate::application::swarm::dto::DroppedRecords) {}
 
     fn take_unnoted(&self) -> crate::application::swarm::dto::DroppedRecords {
@@ -402,7 +402,7 @@ async fn the_supervisor_pushes_a_local_change_to_a_members_endpoint() {
     };
     crate::infrastructure::tools::registry::call_work::off_the_runtime(|| other.cancel_run())
         .unwrap();
-    crate::application::swarm::ports::SwarmRunControl::nudge_watch(&context);
+    crate::application::swarm::ports::lifecycle::SwarmRunControl::nudge_watch(&context);
     let ended = tokio::task::spawn_blocking(move || watch.join().unwrap())
         .await
         .unwrap();

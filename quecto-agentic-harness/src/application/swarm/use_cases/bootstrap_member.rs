@@ -10,7 +10,10 @@ use crate::application::swarm::dto::{
     BootstrapMemberRequest, BootstrapRunRequest, BootstrappedSummary, JoinRunRequest, Joined,
     LaunchIdentity,
 };
-use crate::application::swarm::ports::{BoardRepository, Clock, IdSource};
+use crate::application::swarm::ports::{
+    board_repository::{BoardRepository, IdSource},
+    lifecycle::Clock,
+};
 use crate::domain::swarm::value_objects::board_error::BoardError;
 
 /// The placeholder when the board holds no run (`BootstrapRun`'s

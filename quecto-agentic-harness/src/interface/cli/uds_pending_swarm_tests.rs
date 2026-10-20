@@ -1,6 +1,6 @@
 use super::dispatch_test_env::DispatchTestEnv as Env;
 use super::*;
-use crate::application::swarm::ports::SwarmRunControl;
+use crate::application::swarm::ports::lifecycle::SwarmRunControl;
 use crate::domain::inference::services::turn_suspension::Work;
 use crate::domain::swarm::{
     value_objects::lifecycle::RunStatus,
@@ -8,7 +8,9 @@ use crate::domain::swarm::{
 };
 struct Control(RunStatus);
 impl SwarmRunControl for Control {
-    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+    fn coordinator_board(
+        &self,
+    ) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
         Box::pin(async { Ok(None) })
     }
     fn nudge_watch(&self) {}
@@ -189,7 +191,9 @@ fn composed_suspension_rechecks_durable_generation_before_cancelling() {
 /// the re-arming can be observed without a model turn.
 pub(super) struct RunningAt(pub(super) u64);
 impl SwarmRunControl for RunningAt {
-    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+    fn coordinator_board(
+        &self,
+    ) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
         Box::pin(async { Ok(None) })
     }
     fn nudge_watch(&self) {}
@@ -283,7 +287,9 @@ async fn a_resume_wake_re_arms_a_provider_suspended_member() {
 struct Answer(Result<(RunStatus, u64), &'static str>);
 
 impl SwarmRunControl for Answer {
-    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+    fn coordinator_board(
+        &self,
+    ) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
         Box::pin(async { Ok(None) })
     }
     fn nudge_watch(&self) {}

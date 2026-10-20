@@ -17,7 +17,7 @@ use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
-use crate::application::swarm::ports::CheckoutPaths;
+use crate::application::swarm::ports::board_files::CheckoutPaths;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

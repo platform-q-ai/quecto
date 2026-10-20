@@ -8,7 +8,7 @@ use super::OverRepository;
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::board_read_models::{page_bounds, reading};
 use crate::application::swarm::dto::{EventPage, ReadRunEventsRequest};
-use crate::application::swarm::ports::{BoardRepository, Clock};
+use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

@@ -83,7 +83,7 @@ const BUDGETS: &[FlatBudget<'_>] = &[
     FlatBudget { path: "interface/cli", expected: 95 },
     FlatBudget { path: "infrastructure/tools", expected: 1 },
     FlatBudget { path: "infrastructure/persistence", expected: 1 },
-    FlatBudget { path: "application/swarm", expected: 22 },
+    FlatBudget { path: "application/swarm", expected: 21 },
     FlatBudget { path: "domain/swarm", expected: 1 },
 ];
 // Layout slices opt capabilities into strict shape as they migrate (#2357).

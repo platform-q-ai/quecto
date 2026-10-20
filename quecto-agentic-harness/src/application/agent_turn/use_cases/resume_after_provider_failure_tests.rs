@@ -3,7 +3,7 @@
 //! a resume since then re-arms them, a wake alone never does; an explicit
 //! instruction re-arms any suspension.
 use super::*;
-use crate::application::swarm::ports::{CoordinatorBoardFuture, PortFuture};
+use crate::application::swarm::ports::{PortFuture, lifecycle::CoordinatorBoardFuture};
 use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 use crate::domain::swarm::value_objects::run_control::RunControlReceipt;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

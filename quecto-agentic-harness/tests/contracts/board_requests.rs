@@ -4,7 +4,7 @@
 //! text as `json.loads` reads it (keys sorted); another payload under the
 //! same id is refused; a full ledger takes no new request.
 use quecto::application::swarm::dto::BoardLocation;
-use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
+use quecto::application::swarm::ports::board_repository::{BoardRepository, BoardTransaction};
 use quecto::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

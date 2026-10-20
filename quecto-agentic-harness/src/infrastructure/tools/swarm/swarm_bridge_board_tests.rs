@@ -8,7 +8,7 @@ use serde_json::json;
 
 use super::{SwarmBoard, SwarmBoardHandlesBuilder};
 use crate::application::swarm::dto::BoardLocation;
-use crate::application::swarm::ports::BoardOpLog;
+use crate::application::swarm::ports::board_telemetry::BoardOpLog;
 use crate::composition::swarm::build_swarm_board_handles;
 use crate::domain::swarm::events::telemetry::BoardOpObservation;
 use crate::infrastructure::observability::audit_log::AuditLog;
@@ -27,7 +27,7 @@ impl BoardOpLog for Recorded {
     fn summarize(&self, _summary: crate::domain::swarm::events::run_summary::SwarmRunSummary) {}
 }
 
-impl crate::application::swarm::ports::SessionOpLog for Recorded {
+impl crate::application::swarm::ports::board_telemetry::SessionOpLog for Recorded {
     fn dropped(&self, _drops: crate::application::swarm::dto::DroppedRecords) {}
 
     fn take_unnoted(&self) -> crate::application::swarm::dto::DroppedRecords {
@@ -238,7 +238,7 @@ static SESSION_LOG: std::sync::OnceLock<Arc<Recorded>> = std::sync::OnceLock::ne
 fn session_log(
     enabled: bool,
     _log: &AuditLog,
-) -> Option<Arc<dyn crate::application::swarm::ports::SessionOpLog>> {
+) -> Option<Arc<dyn crate::application::swarm::ports::board_telemetry::SessionOpLog>> {
     match enabled {
         true => Some(SESSION_LOG.get_or_init(Arc::default).clone()),
         false => None,

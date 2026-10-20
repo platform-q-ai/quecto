@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use super::PyJsonEncoding;
-use crate::application::swarm::ports::BoardEncoding;
+use crate::application::swarm::ports::board_repository::BoardEncoding;
 
 #[test]
 fn encoding_is_the_boards_sorted_compact_ascii_json() {

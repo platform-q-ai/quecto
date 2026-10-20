@@ -4,7 +4,7 @@
 //! messages read back as `dict(row)`, and the inbox binds its flag as
 //! Python's `sqlite3` does.
 use quecto::application::swarm::dto::{BoardLocation, MessageRow, NewMessage};
-use quecto::application::swarm::ports::BoardRepository;
+use quecto::application::swarm::ports::board_repository::BoardRepository;
 use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 

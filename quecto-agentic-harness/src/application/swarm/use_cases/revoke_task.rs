@@ -10,7 +10,10 @@ use crate::application::swarm::board_operation::{detail, operation, text};
 use crate::application::swarm::board_recovery::{Notice, notify_revoked, reopen};
 use crate::application::swarm::board_tasks::{HELD_CLAIM, read_task};
 use crate::application::swarm::dto::{Revocation, RevokeTaskRequest, Revoked};
-use crate::application::swarm::ports::{BoardEncoding, BoardRepository, Clock};
+use crate::application::swarm::ports::{
+    board_repository::{BoardEncoding, BoardRepository},
+    lifecycle::Clock,
+};
 use crate::domain::swarm::services::validation::TEXT_MAX_BYTES;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, services::policy::Access, services::validation::bounded,

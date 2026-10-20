@@ -21,7 +21,11 @@ use crate::application::swarm::dto::{
     RunStatusRow, ScopeObservation, StoredContract, TaskRow, UsageReport,
 };
 use crate::application::swarm::ports::{
-    BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
+    board_events::BoardEvents,
+    board_members::BoardMembers,
+    board_repository::{BoardRepository, BoardWork},
+    board_runs::BoardRuns,
+    lifecycle::Clock,
 };
 use crate::domain::swarm::{
     entities::records::{MemberRecord, MemberState, RunRecord, RunState},

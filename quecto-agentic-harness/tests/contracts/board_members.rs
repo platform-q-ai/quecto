@@ -5,7 +5,7 @@
 use quecto::application::swarm::dto::{
     BoardLocation, LaunchIdentity, MemberClaimCounts, MemberRow, NewMember,
 };
-use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
+use quecto::application::swarm::ports::board_repository::{BoardRepository, BoardTransaction};
 use quecto::domain::swarm::{
     entities::records::MemberState, events::telemetry::RefusalKind,
     value_objects::board_error::BoardError,

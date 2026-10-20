@@ -7,7 +7,7 @@ use super::MemoryTransaction;
 use crate::application::swarm::dto::{
     CompletionState, DictRow, EvidenceEntry, NewEvidence, PriorEvidence,
 };
-use crate::application::swarm::ports::BoardEvidence;
+use crate::application::swarm::ports::board_evidence::BoardEvidence;
 use crate::domain::swarm::value_objects::board_error::BoardError;
 
 /// A criterion as the `evidence` table's TEXT column stores it (#2394

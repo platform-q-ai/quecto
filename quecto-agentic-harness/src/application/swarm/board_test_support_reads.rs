@@ -130,7 +130,9 @@ fn measured<T>(rows: Vec<T>, bytes: &mut i64, size: impl Fn(&T) -> i64) -> Vec<T
 /// The projection reads (#2478) over the in-memory board: the allowlisted
 /// columns, each kind sorted as the SQL sorts it, cut at its limit and at
 /// its stored bytes as the SQL cuts them (#2487 round 2).
-impl crate::application::swarm::ports::BoardProjectionReads for super::MemoryTransaction<'_> {
+impl crate::application::swarm::ports::board_projection::BoardProjectionReads
+    for super::MemoryTransaction<'_>
+{
     fn projection_revision(
         &self,
     ) -> Result<

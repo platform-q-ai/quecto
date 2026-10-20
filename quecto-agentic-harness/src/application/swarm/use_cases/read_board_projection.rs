@@ -23,7 +23,7 @@ use crate::application::swarm::dto::{
     ProjectionTotals, RunProjection, StoredEvidenceColumns, StoredItemColumns, StoredMemberColumns,
     StoredRunColumns, StoredStateColumns,
 };
-use crate::application::swarm::ports::BoardRepository;
+use crate::application::swarm::ports::board_repository::BoardRepository;
 use crate::domain::swarm::events::telemetry::run_role;
 use crate::domain::swarm::{
     entities::records::{MemberState, RunState, TaskState},

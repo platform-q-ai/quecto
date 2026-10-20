@@ -13,7 +13,10 @@ use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::{
     NewRequestUsage, RecordRequestUsageRequest, RecordedRequest, RequestDelivery,
 };
-use crate::application::swarm::ports::{BoardEncoding, BoardRepository, Clock};
+use crate::application::swarm::ports::{
+    board_repository::{BoardEncoding, BoardRepository},
+    lifecycle::Clock,
+};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind,
     services::policy::Access,

@@ -1,8 +1,8 @@
 //! Linux process and UDS adapters for the swarm lifecycle use cases.
 use super::swarm_bridge::{SwarmContext, process_confirmed_dead, process_start};
-use crate::application::swarm::ports::CoordinationPort;
 use crate::application::swarm::ports::PortFuture;
-use crate::application::swarm::ports::{ProcessControl, ProcessObservation};
+use crate::application::swarm::ports::lifecycle::CoordinationPort;
+use crate::application::swarm::ports::lifecycle::{ProcessControl, ProcessObservation};
 use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::{
     entities::run::Member,
@@ -434,7 +434,7 @@ impl WatchBudget {
 /// ends itself instead of keeping the environment alive. What to do each
 /// tick is the application's decision (`settlement_step`).
 fn watch_until_ended(context: &SwarmContext, runtime: &tokio::runtime::Runtime) {
-    use crate::application::swarm::ports::SettlementStep;
+    use crate::application::swarm::ports::lifecycle::SettlementStep;
     let started = std::time::Instant::now();
     let mut retry_logged = false;
     let mut budget = WatchBudget::default();
@@ -502,7 +502,7 @@ fn watch_until_ended(context: &SwarmContext, runtime: &tokio::runtime::Runtime) 
 /// The wall clock: Unix seconds, as Python's `time.time()`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SystemClock;
-impl crate::application::swarm::ports::Clock for SystemClock {
+impl crate::application::swarm::ports::lifecycle::Clock for SystemClock {
     fn now_seconds(&self) -> f64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -554,7 +554,7 @@ pub fn bind_local_suspension(cancel: LocalSuspend) {
     let _ = LOCAL_SUSPEND.set(cancel);
 }
 
-impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
+impl crate::application::swarm::ports::lifecycle::SwarmRunControl for SwarmContext {
     fn apply(
         &self,
         action: crate::domain::swarm::value_objects::run_control::RunControlAction,
@@ -603,7 +603,9 @@ impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
     }
     /// Two harness reads, off the async workers: `_status` (whose
     /// coordinator, which status, free workers) and `_run_totals` (tasks).
-    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+    fn coordinator_board(
+        &self,
+    ) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
         let context = self.clone();
         Box::pin(async move {
             super::super::registry::call_work::spawn_blocking_in_call(move || {
@@ -615,7 +617,7 @@ impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
     }
 }
 
-impl crate::application::swarm::ports::WorkerBoardRead for SwarmContext {
+impl crate::application::swarm::ports::lifecycle::WorkerBoardRead for SwarmContext {
     /// Three harness reads, off the async workers (#2471).
     fn worker_board(
         &self,

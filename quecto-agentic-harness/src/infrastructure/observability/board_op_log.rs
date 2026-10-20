@@ -34,7 +34,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::application::swarm::dto::DroppedRecords;
-use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
+use crate::application::swarm::ports::board_telemetry::{BoardOpLog, SessionOpLog};
 use crate::domain::audit::AuditEvent;
 use crate::domain::swarm::{
     events::run_summary::SwarmRunSummary, events::telemetry::BoardOpObservation,

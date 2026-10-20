@@ -20,7 +20,10 @@ use super::py_json::{self, PyJson};
 use super::repository::{SqliteBoard, cell_at, encoded, failed, fetched, loose, refused, text};
 use super::store::TransactionError;
 use crate::application::swarm::dto::{NewTask, TaskRow, TaskUpdate};
-use crate::application::swarm::ports::{BoardRequests, BoardTasks, RequestAction};
+use crate::application::swarm::ports::{
+    board_requests::{BoardRequests, RequestAction},
+    board_tasks::BoardTasks,
+};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

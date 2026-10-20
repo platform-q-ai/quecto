@@ -272,7 +272,7 @@ async fn terminal_notifications_do_not_queue_impossible_inbox_work() {
 /// locally: it never signals the coordinator through its socket.
 #[tokio::test]
 async fn a_failed_run_never_signals_its_coordinator_through_its_socket() {
-    use crate::application::swarm::ports::CoordinationPort;
+    use crate::application::swarm::ports::lifecycle::CoordinationPort;
     let directory = tempfile::tempdir().unwrap();
     let tool = super::swarm_test_support::tool(
         Arc::new(directory.path().to_path_buf()),

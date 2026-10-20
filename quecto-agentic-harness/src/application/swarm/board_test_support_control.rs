@@ -7,7 +7,7 @@ use super::{BoardState, MemoryTransaction};
 use crate::application::swarm::dto::{
     NewRequestUsage, StoredRequestUsage, UsageReport, UsageRow, UsageStanding,
 };
-use crate::application::swarm::ports::BoardUsage;
+use crate::application::swarm::ports::board_usage::BoardUsage;
 use crate::domain::swarm::{entities::records::RunState, value_objects::board_error::BoardError};
 
 /// One recorded `events` row.

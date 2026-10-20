@@ -4,7 +4,7 @@
 use std::sync::atomic::Ordering;
 
 use super::EventLogBoardOps;
-use crate::application::swarm::ports::BoardOpLog;
+use crate::application::swarm::ports::board_telemetry::BoardOpLog;
 use crate::domain::shared::redaction::Redacted;
 use crate::domain::swarm::events::telemetry::{
     ArgumentFaults, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole,

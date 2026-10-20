@@ -6,7 +6,7 @@
 //! session's state and runs it. The swarm's run control is the one effect
 //! it needs, to date a suspension and to see a resume: the delivery
 //! adapter owns that port for the process and passes it in.
-use crate::application::swarm::ports::SwarmRunControl;
+use crate::application::swarm::ports::lifecycle::SwarmRunControl;
 use crate::domain::inference::services::turn_suspension::{AutomaticTurns, SuspensionCause, Work};
 use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::value_objects::run_control::RunControlAction;

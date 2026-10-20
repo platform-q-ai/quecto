@@ -6,7 +6,7 @@ use crate::application::swarm::board_test_support::{
     usage,
 };
 use crate::application::swarm::dto::{NewRequestUsage, RecordRequestUsageRequest, RequestDelivery};
-use crate::application::swarm::ports::BoardEncoding;
+use crate::application::swarm::ports::board_repository::BoardEncoding;
 use crate::domain::swarm::{
     entities::records::RunState, events::telemetry::RefusalKind,
     value_objects::board_error::BoardError,

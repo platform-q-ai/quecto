@@ -29,7 +29,9 @@ async fn an_allowed_wake_sends_the_change_wake() {
 /// A running run that allows the wake.
 struct Waking;
 impl SwarmRunControl for Waking {
-    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+    fn coordinator_board(
+        &self,
+    ) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
         Box::pin(async { Ok(None) })
     }
     fn nudge_watch(&self) {}
@@ -58,7 +60,9 @@ impl SwarmRunControl for Waking {
 /// A run paused again after the resume, whose board still allows the wake.
 struct PausedWaking;
 impl SwarmRunControl for PausedWaking {
-    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+    fn coordinator_board(
+        &self,
+    ) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
         Box::pin(async { Ok(None) })
     }
     fn nudge_watch(&self) {}

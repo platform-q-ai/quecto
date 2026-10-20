@@ -24,9 +24,9 @@ pub mod dto;
 pub mod ports;
 pub mod use_cases;
 
-use ports::{
-    Clock, CoordinationPort, PortFuture, ProcessControl, ProcessObservation, SettlementStep,
-    SwarmLifecycle,
+use ports::PortFuture;
+use ports::lifecycle::{
+    Clock, CoordinationPort, ProcessControl, ProcessObservation, SettlementStep, SwarmLifecycle,
 };
 
 pub fn reconcile(

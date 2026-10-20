@@ -252,7 +252,7 @@ fn rust_board_notifications_decode_as_wire_members() {
 
 fn panicking_board(
     _: crate::application::swarm::dto::BoardLocation,
-    _: Option<std::sync::Arc<dyn crate::application::swarm::ports::BoardOpLog>>,
+    _: Option<std::sync::Arc<dyn crate::application::swarm::ports::board_telemetry::BoardOpLog>>,
 ) -> crate::infrastructure::tools::swarm::swarm_board_dispatch::SwarmBoardHandles {
     panic!("the accounting job panicked")
 }

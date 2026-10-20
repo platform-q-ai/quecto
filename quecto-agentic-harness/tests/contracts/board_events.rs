@@ -2,7 +2,7 @@
 //! actor, a REAL time, the action and the detail in the board's encoding —
 //! and the control generation, the latest `paused`/`resumed` event id.
 use quecto::application::swarm::dto::BoardLocation;
-use quecto::application::swarm::ports::BoardRepository;
+use quecto::application::swarm::ports::board_repository::BoardRepository;
 use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 

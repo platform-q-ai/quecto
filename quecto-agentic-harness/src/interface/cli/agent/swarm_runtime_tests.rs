@@ -264,7 +264,7 @@ static ADMITTED_BUILDS: std::sync::atomic::AtomicUsize = std::sync::atomic::Atom
 
 fn counted(
     location: crate::application::swarm::dto::BoardLocation,
-    log: Option<std::sync::Arc<dyn crate::application::swarm::ports::BoardOpLog>>,
+    log: Option<std::sync::Arc<dyn crate::application::swarm::ports::board_telemetry::BoardOpLog>>,
 ) -> crate::infrastructure::tools::swarm::swarm_board_dispatch::SwarmBoardHandles {
     ADMITTED_BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     crate::composition::swarm::build_swarm_board_handles(location, log)

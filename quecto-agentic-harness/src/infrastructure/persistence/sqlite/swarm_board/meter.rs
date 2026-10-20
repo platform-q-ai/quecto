@@ -38,7 +38,10 @@ use super::repository::{SqliteBoardRepository, atomic_on, read_on};
 use super::store::{BUSY_TIMEOUT, BoardStore};
 use super::usage_sums::KeptSums;
 use crate::application::swarm::dto::{CallMeasure, RunRoles};
-use crate::application::swarm::ports::{BoardCallMeter, BoardRepository, BoardWork, MeteredCall};
+use crate::application::swarm::ports::{
+    board_repository::{BoardRepository, BoardWork},
+    board_telemetry::{BoardCallMeter, MeteredCall},
+};
 use crate::domain::swarm::events::telemetry::board_run_id;
 use crate::domain::swarm::value_objects::board_error::BoardError;
 

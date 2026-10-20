@@ -1,6 +1,6 @@
 //! `uuid.uuid4().hex` (#2270): the board's run ids, member reservations,
 //! claim tokens and file-reservation tokens.
-use crate::application::swarm::ports::IdSource;
+use crate::application::swarm::ports::board_repository::IdSource;
 
 /// A random (version 4) UUID as 32 lowercase hex digits, no hyphens.
 #[derive(Clone, Copy, Debug, Default)]
