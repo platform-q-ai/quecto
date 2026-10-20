@@ -423,6 +423,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             PromptOutcome::Cancelled
         }
         Some(Ok(agent_result)) => {
+            agent_session.automatic_turns().turn_succeeded();
             agent_session.set_context_tokens(agent_result.context_tokens);
             // Tool events are forwarded in real-time via forward_progress_event
             // — emitting them again here would duplicate events with conflicting
@@ -500,7 +501,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
                 interrupted::restamp_ledger(&mut *session.write().await, messages);
             }
             // Dated by the dispatch loop once it knows the control generation.
-            agent_session.automatic_turns().suspend_after_failure();
+            agent_session.automatic_turns().suspend_after_failure(&e);
             sink.emit(&AgentEvent::err(None, "agent_error", format!("{e}")))
                 .await;
             PromptOutcome::Error

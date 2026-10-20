@@ -12,6 +12,12 @@ pub(super) const SWARM_WAKE: &str = "swarm_wake";
 /// task-item words (#2478 slice B, owner-approved 2026-10-12).
 pub(super) const RESUMED_WAKE: &str = "The swarm was resumed after a provider failure interrupted your turn. Continue your interrupted work: inspect summary using your last event_cursor, read and acknowledge relevant durable inbox messages, work only on actionable task items and yield when none remain.";
 
+/// Why a suspended member's automatic turns came back (#1721, #2531).
+const REARMED_BY_RESUME: &str =
+    "automatic turns re-armed by a swarm resume after a provider failure";
+const REARMED_BY_WAKE: &str =
+    "automatic turns re-armed by a swarm wake after a recoverable provider failure";
+
 /// The wake a member reads when swarm work changed (#2478 slice B wording).
 pub(super) const CHANGED_WAKE: &str = "Swarm work changed. Inspect summary using your last event_cursor, then read and acknowledge relevant durable inbox messages. Work only on actionable task items; yield when none remain.";
 
@@ -274,9 +280,10 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
         return false;
     };
     // #1721: while suspended, learn the control generation without claiming
-    // wake events; a pause/resume since the provider failure re-arms us.
+    // wake events; a pause/resume since the provider failure re-arms us, and
+    // so does this wake after a recoverable failure (#2531).
     if !ctx.session.automatic_turns_allowed() {
-        use crate::application::agent_turn::use_cases::resume_after_provider_failure::SuspendedProbe;
+        use crate::domain::inference::services::turn_suspension::WakeOutcome;
         match ctx
             .session
             .automatic_turns()
@@ -284,16 +291,19 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
             .await
         {
             Ok(probe) => {
-                let (SuspendedProbe::Rearmed { generation: seen }
-                | SuspendedProbe::StillSuspended { generation: seen }) = probe;
+                let seen = probe.generation;
                 ctx.turn_control.observe_control_generation(seen);
-                if let SuspendedProbe::Rearmed { generation: seen } = probe {
+                let reason = match probe.outcome {
+                    WakeOutcome::RearmedByResume => Some(REARMED_BY_RESUME),
+                    WakeOutcome::RearmedAfterRecoverableFailure => Some(REARMED_BY_WAKE),
+                    WakeOutcome::NotSuspended | WakeOutcome::StillSuspended => None,
+                };
+                if let Some(reason) = reason {
                     let event = AgentEvent::ok(
                         None,
                         SWARM_WAKE,
                         Some(serde_json::json!({
-                            "status": "resumed", "generation": seen,
-                            "reason": "automatic turns re-armed by a swarm resume after a provider failure"
+                            "status": "resumed", "generation": seen, "reason": reason
                         })),
                     );
                     emit_event_to_broadcast_or_writer(ctx, &event).await;

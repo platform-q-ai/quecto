@@ -400,7 +400,11 @@ async fn a_provider_suspension_is_dated_after_the_failed_turn() {
     ctx.session
         .automatic_turns()
         .observe_control_generation(Some(4));
-    ctx.session.automatic_turns().suspend_after_failure();
+    ctx.session.automatic_turns().suspend_after_failure(
+        &crate::domain::shared::error::DomainError::Provider(
+            "provider error (401): invalid credentials".into(),
+        ),
+    );
     with_control(&mut ctx, Answer(Ok((RunStatus::Running, 6))));
     crate::interface::cli::uds_swarm_control::date_provider_suspension(&mut ctx).await;
     assert_eq!(ctx.turn_control.control_generation(), Some(6));
@@ -434,7 +438,8 @@ async fn a_provider_suspension_is_dated_after_the_failed_turn() {
     assert!(ctx.session.automatic_turns_allowed());
 }
 
-/// A provider that always fails terminally.
+/// A provider that always fails terminally (#2531: a credential failure,
+/// not a retryable class, which a wake would re-arm).
 #[derive(Debug)]
 struct FailingProvider;
 impl crate::application::providers::ports::LlmProvider for FailingProvider {
@@ -463,7 +468,7 @@ impl crate::application::providers::ports::LlmProvider for FailingProvider {
     > {
         Box::pin(async {
             Err(crate::domain::shared::error::DomainError::Provider(
-                "provider error (500): boom".into(),
+                "provider error (401): invalid credentials".into(),
             ))
         })
     }
