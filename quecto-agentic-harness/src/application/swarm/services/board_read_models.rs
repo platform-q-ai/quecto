@@ -13,17 +13,19 @@
 //! `outside_edited_loss_records` divergences).
 use serde_json::Value;
 
-use super::board_control::edited;
-use super::board_operation::{atomic, operation};
-use super::board_tasks::{HELD_CLAIM, read_task};
-use super::dto::{CountedTask, FullSummary, RunSummary, SummaryCounts, SummaryScan, TaskRow};
-use super::ports::{
+use super::super::dto::{
+    CountedTask, FullSummary, RunSummary, SummaryCounts, SummaryScan, TaskRow,
+};
+use super::super::ports::{
     board_events::BoardEvents,
     board_members::BoardMembers,
     board_repository::{BoardRepository, BoardTransaction},
     board_tasks::BoardTasks,
     lifecycle::Clock,
 };
+use super::board_control::edited;
+use super::board_operation::{atomic, operation};
+use super::board_tasks::{HELD_CLAIM, read_task};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind,
     services::owner::{OWNER_IDLE_AFTER, OwnerState, idle_transition, owner_recovery, owner_state},

@@ -1,5 +1,5 @@
 //! Test support (compiled only under `cfg(test)`): the in-memory board's
-//! id source and codec stand-in, beside `board_test_support.rs` so each
+//! id source and codec stand-in, beside `test_support/mod.rs` so each
 //! file stays within its size budget.
 use std::sync::{Arc, Mutex};
 

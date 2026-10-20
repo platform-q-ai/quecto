@@ -1,6 +1,6 @@
 //! Test support (compiled only under `cfg(test)`): the in-memory board's
 //! messages (#2275, #2276). A message id matches by the rough INTEGER
-//! affinity of `board_test_support_tasks`, a recipient by its text, and
+//! affinity of `test_support::tasks`, a recipient by its text, and
 //! the inbox flag by Python's truth; the SQLite adapter's contract tests
 //! pin the real binding.
 use serde_json::Value;

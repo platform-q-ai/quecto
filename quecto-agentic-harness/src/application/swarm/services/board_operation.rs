@@ -11,7 +11,7 @@
 //! the operation needs a running run, and runs the operation's work.
 use serde_json::{Map, Value};
 
-use super::ports::{
+use super::super::ports::{
     board_events::BoardEvents,
     board_repository::{BoardRepository, BoardTransaction},
     board_runs::BoardRuns,

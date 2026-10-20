@@ -1,10 +1,10 @@
 use serde_json::json;
 
 use super::{atomic, end, operation, read};
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::ports::board_repository::BoardRepository;
+use crate::application::swarm::test_support::{
     MemoryBoard, SteppingClock, member_row, running_board,
 };
-use crate::application::swarm::ports::board_repository::BoardRepository;
 use crate::domain::swarm::{
     entities::records::RunState, events::telemetry::RefusalKind, services::policy::Access,
     value_objects::board_error::BoardError,

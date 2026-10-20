@@ -1,8 +1,8 @@
 use serde_json::{Value, json};
 
 use super::{owned, read_task, unsubmitted};
-use crate::application::swarm::board_operation::atomic;
-use crate::application::swarm::board_test_support::{MemoryBoard, running_board, stored_task};
+use crate::application::swarm::services::board_operation::atomic;
+use crate::application::swarm::test_support::{MemoryBoard, running_board, stored_task};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

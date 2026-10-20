@@ -1,10 +1,10 @@
 use serde_json::{Value, json};
 
 use super::ConfirmMemberDead;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::{ConfirmMemberDeadRequest, DeathConfirmation, DeathConfirmed};
+use crate::application::swarm::test_support::{
     BoardState, MemoryBoard, SteppingClock, StoredFile, member_row, running_board, stored_task,
 };
-use crate::application::swarm::dto::{ConfirmMemberDeadRequest, DeathConfirmation, DeathConfirmed};
 use crate::application::swarm::use_cases::OverRepository;
 use crate::domain::swarm::{
     entities::records::RunState, events::telemetry::RefusalKind,

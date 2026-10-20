@@ -1,10 +1,10 @@
 use serde_json::json;
 
 use super::ReadRunEvents;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::ReadRunEventsRequest;
+use crate::application::swarm::test_support::{
     MemoryBoard, SteppingClock, recorded, running_board,
 };
-use crate::application::swarm::dto::ReadRunEventsRequest;
 use crate::application::swarm::use_cases::OverRepository;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
