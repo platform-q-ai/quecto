@@ -1,10 +1,10 @@
 use serde_json::{Value, json};
 
 use super::StopRun;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::{RunTransition, StopRunRequest};
+use crate::application::swarm::test_support::{
     BoardState, MemoryBoard, SteppingClock, paused, running_board,
 };
-use crate::application::swarm::dto::{RunTransition, StopRunRequest};
 use crate::domain::swarm::{
     entities::records::RunState, events::telemetry::RefusalKind,
     value_objects::board_error::BoardError,

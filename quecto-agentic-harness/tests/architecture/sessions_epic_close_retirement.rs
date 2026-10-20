@@ -29,9 +29,9 @@ const INTERFACE_SESSION_MODULES: &[&str] = &[
     "src/interface/cli/uds_session_handles.rs",
     "src/interface/cli/uds_turn_accounting.rs",
     "src/interface/cli/uds_session_switch_runtime.rs",
-    "src/interface/cli/retention_handles.rs",
+    "src/interface/cli/controllers/retention_handles.rs",
     "src/interface/cli/uds_lifecycle.rs",
-    "src/interface/cli/agent/run_session.rs",
+    "src/interface/cli/controllers/agent/run_session.rs",
 ];
 
 /// Adapter and layout names no interface production file may spell.
@@ -68,7 +68,7 @@ const RAW_KEY_CONVERSION_SITES: &[&str] = &[
 /// reason — `build_key("cli", name)` is the same bytes `SessionIdentity::
 /// named_cli` produces for a name the flag parser already admitted, and the
 /// registry runs on the one-shot path too, where no identity is resolved.
-const STARTUP_KEY_SITES: &[&str] = &["src/interface/cli/agent/agent_tool_registry.rs"];
+const STARTUP_KEY_SITES: &[&str] = &["src/interface/cli/controllers/agent/agent_tool_registry.rs"];
 
 /// Disposition inventory (D10): the interface modules that stayed, each in
 /// its allowlisted owner role, with no sessions persistence call.

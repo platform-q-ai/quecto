@@ -5,8 +5,6 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::OverRepository;
-use crate::application::swarm::board_operation::{atomic, detail, text};
-use crate::application::swarm::board_read_models::summary;
 use crate::application::swarm::dto::{
     CreateBranch, CreateRunRequest, CreatedRun, NewMember, NewRun, RunContract, RunOwnerRow,
 };
@@ -16,6 +14,8 @@ use crate::application::swarm::ports::{
     board_runs::BoardRuns,
     lifecycle::Clock,
 };
+use crate::application::swarm::services::board_operation::{atomic, detail, text};
+use crate::application::swarm::services::board_read_models::summary;
 use crate::domain::swarm::services::validation::{
     DEADLINE_HORIZON_SECONDS, MEMBER_LIMIT_MAX, TEXT_MAX_BYTES,
 };

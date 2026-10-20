@@ -26,7 +26,7 @@ use crate::application::environments::ports::container::ContainerConfigPersisten
 use crate::application::environments::use_cases::{ContainerStatus, InitialiseStandardContainer};
 use crate::infrastructure::processes::containers::standard::assets::EmbeddedStandardAssets;
 use crate::infrastructure::processes::containers::standard::workspace_origin::GitWorkspaceOrigin;
-use crate::interface::cli::configuration_handles::ConfigurationEnvironment;
+use crate::interface::cli::controllers::configuration_handles::ConfigurationEnvironment;
 
 /// The overlay's `container_configs.<name>` written through the patch
 /// handle bound to one run's selection.

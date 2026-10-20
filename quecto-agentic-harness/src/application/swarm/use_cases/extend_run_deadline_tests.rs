@@ -1,10 +1,8 @@
 use serde_json::{Value, json};
 
 use super::ExtendRunDeadline;
-use crate::application::swarm::board_test_support::{
-    MemoryBoard, SteppingClock, paused, running_board,
-};
 use crate::application::swarm::dto::{ExtendRunDeadlineRequest, RunTransition};
+use crate::application::swarm::test_support::{MemoryBoard, SteppingClock, paused, running_board};
 use crate::domain::swarm::{
     entities::records::RunState, events::telemetry::RefusalKind,
     value_objects::board_error::BoardError,

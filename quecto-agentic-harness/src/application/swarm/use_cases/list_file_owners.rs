@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use super::OverRepository;
 
-use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::{FileRow, ListFileOwnersRequest};
 use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
+use crate::application::swarm::services::board_operation::operation;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, services::policy::Access,
     value_objects::board_error::BoardError,

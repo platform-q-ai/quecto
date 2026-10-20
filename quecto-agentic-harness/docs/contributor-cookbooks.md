@@ -43,7 +43,7 @@ Do not run live provider lanes unless the task explicitly requires them.
 - `src/infrastructure/tools/native/mod.rs` and
   `src/infrastructure/tools/registry/mod.rs` for registration and guard
   composition.
-- `src/interface/cli/agent/agent_tool_registry.rs` when CLI/agent construction
+- `src/interface/cli/controllers/agent/agent_tool_registry.rs` when CLI/agent construction
   needs to expose the tool.
 - `src/infrastructure/security/sandbox.rs` for the path hook and the
   `validate_command` entry point; `denylist.rs` for the dangerous-command

@@ -19,7 +19,7 @@ pub struct UdsLoopArgs<'a> {
     /// The run's retained-context handles (D9 #1978): the one store the
     /// agent's pruning writer and the active session's recovery backstop
     /// share, derived here so the two cannot diverge; `None` for unit rigs.
-    pub retention: Option<super::retention_handles::RetentionHandles>,
+    pub retention: Option<super::controllers::retention_handles::RetentionHandles>,
     pub base_dir: &'a std::path::Path,
     pub workspace: &'a std::path::Path,
     /// The typed identity the loop opens (D10 #1979), carrying the stable
@@ -36,7 +36,7 @@ pub struct UdsLoopArgs<'a> {
     pub sessions: super::SessionHandlesBuilder,
     /// The run's catalogue handles (#1845, #1848), built once by the agent
     /// startup and shared with the spawn tool.
-    pub catalogue: super::catalogue_handles::CatalogueHandles,
+    pub catalogue: super::controllers::catalogue_handles::CatalogueHandles,
     pub ext_registry: Option<super::uds_extensions::ExtRegistry>,
     /// How long this harness lives (#1937): decided once at startup.
     pub lifetime: crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime,

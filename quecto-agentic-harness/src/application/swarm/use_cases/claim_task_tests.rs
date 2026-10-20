@@ -1,10 +1,10 @@
 use serde_json::{Value, json};
 
 use super::ClaimTask;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::ClaimTaskRequest;
+use crate::application::swarm::test_support::{
     BoardState, CounterIds, MemoryBoard, SteppingClock, member_row, running_board, stored_task,
 };
-use crate::application::swarm::dto::ClaimTaskRequest;
 use crate::application::swarm::use_cases::OverRepository;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,

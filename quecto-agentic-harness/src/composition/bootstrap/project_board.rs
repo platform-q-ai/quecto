@@ -268,7 +268,7 @@ fn store_reason(error: &BoardStoreError) -> String {
 /// The agent tool's recording, into its session's event log `log`: only
 /// while the switch its session decided when it started (`event_log_on`,
 /// with the sessions' rule #2150: the session's configuration or the
-/// owner's global file, `switched_on` in `interface/cli/agent/event_log.rs`)
+/// owner's global file, `switched_on` in `interface/cli/controllers/agent/event_log.rs`)
 /// is on, and only when `log` has a synchronous line to append through.
 /// `None` otherwise. Its records follow a session switch with that switch,
 /// so a later edit to a config file neither starts nor stops them, as the

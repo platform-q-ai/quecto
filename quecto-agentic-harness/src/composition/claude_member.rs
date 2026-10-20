@@ -17,7 +17,9 @@ use crate::infrastructure::external_agents::claude_code::process::ClaudeCodeLaun
 use crate::infrastructure::external_agents::clock::TokioExternalAgentClock;
 use crate::infrastructure::external_agents::telemetry::TracingExternalAgentTelemetry;
 use crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor;
-use crate::interface::cli::claude_member::{ClaudeMemberHandles, ClaudeMemberSettings};
+use crate::interface::cli::controllers::claude_member::{
+    ClaudeMemberHandles, ClaudeMemberSettings,
+};
 
 /// Where members' private state lives, under quecto's base directory.
 pub const CLAUDE_MEMBERS_DIR: &str = "claude-members";

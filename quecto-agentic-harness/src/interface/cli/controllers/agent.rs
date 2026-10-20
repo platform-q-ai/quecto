@@ -1,0 +1,746 @@
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::configuration::dto::ConfigSelection;
+use crate::domain::external_agent::backend::MemberBackend;
+use crate::infrastructure::config::Config;
+use crate::infrastructure::extensions::registry::ExtensionRegistry;
+use crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle;
+use crate::infrastructure::tools::agents::subagent_registry::{NotificationRx, SubagentRegistry};
+use crate::interface::cli::CliContext;
+use std::sync::Arc;
+/// Max byte length for `--socket` paths (the portable macOS/Linux limit).
+const MAX_SOCKET_PATH_BYTES: usize = 104;
+pub(crate) struct AgentOutput<'a> {
+    pub(crate) stdout: &'a mut String,
+    pub(crate) stderr: &'a mut String,
+}
+mod agent_deadline;
+#[path = "agent/build_result.rs"]
+mod build_result;
+pub(in crate::interface::cli) mod event_log;
+#[path = "agent/loaded_config.rs"]
+mod loaded_config;
+pub(crate) use build_result::AgentBuildResult;
+mod flag_parse;
+mod startup_effort;
+mod startup_prompt;
+mod startup_route;
+mod swarm_runtime;
+pub(crate) use agent_deadline::{DeadlineResult, run_with_deadline, settle_stopped_run};
+mod flag_private;
+pub(crate) use flag_parse::AgentFlags;
+use flag_parse::{
+    next_arg, parse_agent_mode, parse_effort_level, parse_pos_u32, parse_pos_u64,
+    parse_session_name,
+};
+pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags> {
+    let mut session_name: Option<String> = None;
+    let mut no_session = false;
+    let mut message: Option<String> = None;
+    let mut system_prompt: Option<String> = None;
+    let mut model_override: Option<String> = None;
+    let mut max_iterations: Option<u32> = None;
+    let mut max_time: Option<u64> = None;
+    let mut uds_mode = false;
+    let mut socket_path: Option<std::path::PathBuf> = None;
+    let mut persist = false;
+    let mut disabled_tools: Vec<String> = Vec::new();
+    let mut effort: Option<crate::domain::inference::value_objects::provider::EffortLevel> = None;
+    let mut workflow = false;
+    let mut no_workflow_requested = false;
+    let mut workflow_guards = false;
+    let mut workflow_spec_path: Option<std::path::PathBuf> = None;
+    let mut parent_id: Option<String> = None;
+    let mut admission_context: Option<std::path::PathBuf> = None;
+    let mut parent_control: Option<std::path::PathBuf> = None;
+    let mut inherited_tool_policy_path: Option<std::path::PathBuf> = None;
+    let (mut spawned, mut coordinator) = (false, false);
+    let mut no_extensions = false;
+    let mut backend = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            f @ ("--no-session" | "--persist" | "--workflow" | "--workflow-guards"
+            | "--spawned" | "--no-extensions" | "--coordinator") => {
+                *match f {
+                    "--no-session" => &mut no_session,
+                    "--persist" => &mut persist,
+                    "--workflow" => &mut workflow,
+                    "--spawned" => &mut spawned,
+                    "--coordinator" => &mut coordinator,
+                    "--no-extensions" => &mut no_extensions,
+                    _ => &mut workflow_guards,
+                } = true;
+                if f == "--workflow" {
+                    no_workflow_requested = false;
+                }
+                i += 1;
+            }
+            "--no-workflow" => {
+                workflow = false;
+                no_workflow_requested = true;
+                workflow_guards = false;
+                i += 1;
+            }
+            "-s" | "--session" => {
+                session_name = Some(parse_session_name(args, i, stderr)?);
+                i += 2;
+            }
+            "-m" | "--message" => {
+                let val = next_arg(args, i, "-m requires a message", stderr)?;
+                message = Some(val.to_string());
+                i += 2;
+            }
+            f @ ("--system" | "--model" | "--parent-id") => {
+                let msg = format!("{f} requires a value");
+                let val = next_arg(args, i, &msg, stderr)?;
+                *(match f {
+                    "--system" => &mut system_prompt,
+                    "--parent-id" => &mut parent_id,
+                    _ => &mut model_override,
+                }) = Some(val.to_string());
+                i += 2;
+            }
+            "--max-iterations" => {
+                let val = next_arg(args, i, "--max-iterations requires a value", stderr)?;
+                max_iterations = Some(parse_pos_u32(val, "--max-iterations", stderr)?);
+                i += 2;
+            }
+            "--max-time" => {
+                let val = next_arg(args, i, "--max-time requires a value", stderr)?;
+                max_time = Some(parse_pos_u64(val, "--max-time", stderr)?);
+                i += 2;
+            }
+            f @ ("--mode" | "--backend") => {
+                let val = next_arg(args, i, flag_parse::value_hint(f), stderr)?;
+                match f {
+                    "--mode" => uds_mode = parse_agent_mode(val, stderr)?,
+                    _ => backend = Some(flag_parse::parse_backend(val, stderr)?),
+                }
+                i += 2;
+            }
+            "--socket" => {
+                let val = next_arg(args, i, "--socket requires a path", stderr)?;
+                socket_path = Some(std::path::PathBuf::from(val));
+                i += 2;
+            }
+            "--disable-tool" => {
+                let val = next_arg(args, i, "--disable-tool requires a tool name", stderr)?;
+                disabled_tools.push(val.to_string());
+                i += 2;
+            }
+            "--effort" => {
+                let val = next_arg(args, i, "--effort requires a value", stderr)?;
+                effort = Some(parse_effort_level(val, stderr)?);
+                i += 2;
+            }
+            "--config" => {
+                // Value consumed globally by extract_config_flag; validate here too.
+                let _val = next_arg(args, i, "--config requires a path", stderr)?;
+                i += 2;
+            }
+            "--workflow-spec" => {
+                let val = next_arg(args, i, "--workflow-spec requires a path", stderr)?;
+                workflow_spec_path = Some(std::path::PathBuf::from(val));
+                i += 2;
+            }
+            f @ ("--admission-context" | "--parent-control") => {
+                let msg = format!("{f} requires a path");
+                let val = next_arg(args, i, &msg, stderr)?;
+                *(match f {
+                    "--admission-context" => &mut admission_context,
+                    _ => &mut parent_control,
+                }) = Some(std::path::PathBuf::from(val));
+                i += 2;
+            }
+            "--inherited-tool-policy-snapshot" => {
+                inherited_tool_policy_path =
+                    Some(flag_private::parse_snapshot_path(args, i, stderr)?);
+                i += 2;
+            }
+            "--network" => {
+                stderr.push_str(
+                    "agent: WARNING: --network is deprecated and ignored; network isolation flag has been removed\n",
+                );
+                i += 1;
+            }
+            other if other.starts_with("--") || other.starts_with('-') => {
+                stderr.push_str(&format!("agent: unknown flag '{other}'\n"));
+                return None;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    let mut flags = AgentFlags {
+        session_name,
+        no_session,
+        message,
+        system_prompt,
+        model_override,
+        max_iterations,
+        max_time,
+        uds_mode,
+        socket_path,
+        persist,
+        disabled_tools,
+        effort,
+        workflow,
+        workflow_guards,
+        workflow_disabled: no_workflow_requested,
+        swarm_participation:
+            crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared(),
+        workflow_spec_path,
+        inherited_tool_policy: None,
+        parent_id,
+        spawned,
+        coordinator,
+        launch_extensions: !no_extensions,
+        parent_identity_override: None,
+        session_key_override: None,
+        cwd_override: None,
+        web_fetch_tool_factory: None,
+        project_board: None,
+        kill_tool: None,
+        retention: None,
+        catalogue: None,
+        provider_runtime: None,
+        tool_policy_persistence: None,
+        configuration: None,
+        admission: None,
+        container_configs: None,
+        environment_registry: None,
+        stdin_is_tty: false,
+        admission_context,
+        parent_control,
+        backend,
+    };
+    flags = flag_parse::validate_agent_flags(flags, stderr)?;
+    if let Some(path) = inherited_tool_policy_path {
+        flag_private::load_inherited_tool_policy_for_valid_child(&path, stderr, &mut flags)?;
+    }
+    Some(flags)
+}
+
+pub(crate) fn cmd_agent(
+    ctx: &CliContext,
+    args: &[String],
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
+    // Headless mode logs to stderr; install the API-key-redacting subscriber so
+    // any secret that reaches a log line is scrubbed. No-op unless RUST_LOG is set.
+    crate::infrastructure::observability::logging::install_redacting_subscriber();
+
+    let Some(mut flags) = parse_agent_flags(args, stderr) else {
+        return 1;
+    };
+    flags.adopt_context(ctx);
+    if !swarm_runtime::admit(ctx, &mut flags, stderr) {
+        return 1;
+    }
+    // The run watch's held ticks are written however the command ends
+    // (#2338 review round 1).
+    let _watch_ticks = swarm_runtime::WatchTicksOnExit::of_process();
+
+    if flags.uds_mode {
+        return match flags.backend.unwrap_or_default() {
+            MemberBackend::Quecto => cmd_agent_uds(ctx, flags, stderr),
+            MemberBackend::ClaudeCode => super::claude_member::run(ctx, &flags, stderr),
+        };
+    }
+
+    // ── One-shot mode (default) ───────────────────────────────────────────────
+    if flags.message.is_none() {
+        stderr.push_str("agent: -m is required for non-interactive mode\n");
+        return 1;
+    }
+
+    let agents_instructions = match startup_prompt::load_agents_instructions(ctx, stderr) {
+        Some(instructions) => instructions,
+        None => return 1,
+    };
+    let parent_playbook = match startup_prompt::load_parent_playbook(ctx, flags.spawned, stderr) {
+        Some(playbook) => playbook,
+        None => return 1,
+    };
+
+    let base_dir = ctx.base_dir();
+    let selection = match ctx.config_selection() {
+        Ok(selection) => selection,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            return 1;
+        }
+    };
+    let build = match build_agent_from_config(&base_dir, &selection, &flags, stderr, None) {
+        Some(r) => r,
+        None => return 1,
+    };
+
+    flags.system_prompt = Some(startup_prompt::compose_for(
+        &flags,
+        agents_instructions.as_deref(),
+        &build.extension_prompt_snippets,
+        &parent_playbook,
+    ));
+    let mut out = AgentOutput { stdout, stderr };
+    // The interface never constructs a session store (#1970): without
+    // composition's builder there is nothing to persist against.
+    let Some(sessions) = ctx.sessions else {
+        out.stderr
+            .push_str("agent: sessions capability not composed\n");
+        return 1;
+    };
+    let mut agent = build.agent;
+    let key = event_log::one_shot_key(flags.session_name.as_deref());
+    let target = event_log::SessionLogTarget {
+        base_dir: &base_dir,
+        session_key: &key,
+        event_log: build.event_log,
+        project_board: ctx.project_board_recording,
+    };
+    event_log::attach(&mut agent, &flags, &target, out.stderr);
+    let handles = super::run_end_fleet::RunHandles {
+        retention: &build.retention,
+        run_end: super::run_end_fleet::RunEnd::compose(
+            ctx.run_end_fleet,
+            build.subagent_registry,
+            build.harness_lifecycle,
+            ctx.live_output,
+        ),
+    };
+    let code = run_agent_session(&base_dir, sessions, agent, handles, &flags, &mut out);
+    admission_startup::shutdown();
+    code
+}
+pub(crate) fn build_agent_from_config(
+    base_dir: &std::path::Path,
+    selection: &ConfigSelection,
+    flags: &AgentFlags,
+    stderr: &mut String,
+    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+) -> Option<AgentBuildResult> {
+    let env_overrides = super::config_loading::quecto_env_overrides();
+    build_agent_from_config_in(
+        base_dir,
+        selection,
+        flags,
+        stderr,
+        broadcast_tx,
+        &env_overrides,
+    )
+}
+
+/// [`build_agent_from_config`] over `env_overrides`, the `QUECTO_*`
+/// environment it applies (#2313 review L5: fixed by a test).
+pub(crate) fn build_agent_from_config_in(
+    base_dir: &std::path::Path,
+    selection: &ConfigSelection,
+    flags: &AgentFlags,
+    stderr: &mut String,
+    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    env_overrides: &std::collections::HashMap<String, String>,
+) -> Option<AgentBuildResult> {
+    // Zero-config: a missing default config file loads defaults (no
+    // onboarding step). The overlay (#2024) merges over it when trusted; a
+    // one-shot run from a terminal may be asked to trust it, a UDS or
+    // spawned run never prompts.
+    let prompt_for_trust = !flags.uds_mode && !flags.spawned && flags.stdin_is_tty;
+    let loaded =
+        match loaded_config::load(base_dir, selection, flags, prompt_for_trust, env_overrides) {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                stderr.push_str(&error);
+                stderr.push('\n');
+                return None;
+            }
+        };
+    let Some(build_configuration) = flags.configuration else {
+        debug_assert!(false, "a configuration loaded only through the capability");
+        return None;
+    };
+    for line in super::config_loading::layer_diagnostics(&loaded.sources) {
+        stderr.push_str(&line);
+        stderr.push('\n');
+    }
+    let config_sources = loaded.sources;
+    let config = loaded.config;
+    // The provider runtime (#1849): composed through the injected builder;
+    // the interface never constructs provider state itself. Checked before
+    // admission negotiation so a mis-composed binary fails without side
+    // effects (no sidecar bound, no client built).
+    let Some(build_provider) = flags.provider_runtime else {
+        stderr.push_str("agent: provider runtime capability not composed\n");
+        return None;
+    };
+    // The catalogue handles (#1845, #1848) are built once per run, after the
+    // provider, before the tools and the loop that consume them; the
+    // interface never constructs a catalogue use case.
+    let Some(build_catalogue) = flags.catalogue else {
+        stderr.push_str("agent: catalogue capability not composed\n");
+        return None;
+    };
+    let Some(build_tool_policy_persistence) = flags.tool_policy_persistence else {
+        stderr.push_str("agent: tool-policy persistence capability not composed\n");
+        return None;
+    };
+    let Some(build_container_config_handles) = flags.container_configs else {
+        stderr.push_str("agent: container-config handles capability not composed\n");
+        return None;
+    };
+    if !admission_startup::negotiate_from_flags(&config, flags, stderr) {
+        return None;
+    }
+    let http_client = crate::interface::shared::build_http_client();
+    let provider = match build_provider(&config, base_dir, &http_client) {
+        Ok(p) => p,
+        Err(msg) => {
+            stderr.push_str(&format!("{}\n", msg));
+            return None;
+        }
+    };
+    // Workflow templates resolve against CWD and home.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let home_dir = crate::infrastructure::tools::native::path_utils::home_dir();
+    let web_fetch_tool = config.tools.web.fetch.enabled.then(|| {
+        assert!(
+            flags.web_fetch_tool_factory.is_some(),
+            "web-fetch factory missing"
+        );
+        flags.web_fetch_tool_factory.expect("checked")(
+            crate::interface::shared::web_fetch_client_recipe(),
+            config.tools.web.fetch.max_response_kb,
+        )
+    });
+    // The run's reloadable configuration (#1849): the reload use case is
+    // seeded now, after the startup composition read the same files.
+    let runtime_inputs = super::catalogue_handles::RuntimeConfigurationInputs {
+        selection: selection.clone(),
+        inherited_child: crate::infrastructure::admission::process::current()
+            .is_some_and(|admission| admission.inherits_authority()),
+        env_overrides: env_overrides.clone(),
+        http_client: http_client.clone(),
+        provider_runtime: build_provider,
+        configuration: build_configuration,
+    };
+    let mut catalogue = build_catalogue(base_dir, Some(&runtime_inputs));
+    // The container-config handles (#2024 S4a, S4c) are composed over this
+    // run's own selection: the working directory's trusted overlay, never
+    // the base directory, decides `container: true`, and the same layers
+    // are what `get_container_configs` and the spawn description list.
+    let container_configs = build_container_config_handles(base_dir, selection);
+    let ToolRegistryBuild {
+        registry,
+        retention,
+        session_key,
+        model,
+        ext_registry,
+        extension_prompt_snippets,
+        notification_rx,
+        subagent_registry,
+        harness_lifecycle,
+        environment_control,
+        workflow_state,
+        workspace,
+    } = match build_tool_registry(ToolRegistryArgs {
+        base_dir,
+        config_path: selection.path(),
+        config: &config,
+        http_client: &http_client,
+        web_fetch_tool,
+        effort_control: catalogue.effort.clone(),
+        container_configs,
+        flags,
+        stderr,
+        broadcast_tx,
+        cwd: &cwd,
+        home_dir,
+    }) {
+        Ok(build) => build,
+        Err(error) => {
+            // Fail fast at startup: a broken workflow template file must not
+            // silently degrade into a session with a partial library.
+            stderr.push_str(&format!("{error}\n"));
+            return None;
+        }
+    };
+    let effort = startup_effort::admit(&catalogue.effort, flags.effort, &config, &model, stderr)?;
+    let route = provider.route_check(&model);
+    startup_route::admit(route, &model, flags.spawned, &mut catalogue, stderr)?;
+    // #1113: an explicit `--workflow` session arms the idle-boundary template
+    // selector nudge — the selector reaches the model through the nudge
+    // channel and the workflow tool description, never through the system
+    // prompt, which stays byte-identical for the whole session.
+    if flags.workflow {
+        if let Some(ws) = &workflow_state {
+            crate::domain::workflow::lock_engine(ws).set_selector_nudge(true);
+        }
+    }
+    let wf_config = workflow_state.as_ref().map(|_| config.workflow.clone());
+    let limits = startup_route::startup_limits(&mut catalogue, &model, stderr);
+    let context_marks = (config.agents.defaults.context_marks())
+        .map_err(|error| stderr.push_str(&format!("agent: {error}\n")))
+        .ok()?;
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider,
+        tool_registry: Box::new(registry),
+        model: model.clone(),
+        max_tokens: config.agents.defaults.max_tokens,
+        temperature: config.agents.defaults.temperature,
+        retention: Some(retention.context.clone()),
+        session_key,
+        max_context_tokens: config.agents.defaults.max_context_tokens,
+        progress_callback: None,
+        streaming: false,
+        effort,
+        audit_log: None,
+        // #1045/#2414: constructor fields — config cannot be dropped.
+        pin_recent_turns: config.agents.defaults.pin_recent_turns,
+        context_marks,
+        model_context_window: limits.context_window,
+        tool_profile_context: if flags.spawned {
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Child
+        } else {
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent
+        },
+    })
+    .with_max_tool_iterations(
+        flags
+            .max_iterations
+            .unwrap_or(config.agents.defaults.max_tool_iterations),
+    )
+    .with_model_limits(limits);
+    let mut agent = super::swarm_composition::wire_member(
+        agent,
+        &flags.swarm_participation,
+        &config.agents.defaults,
+    );
+    // Durable `set_tool_policy … persist` goes through composition's hook (#1849).
+    agent.set_tool_policy_persistence(Some(build_tool_policy_persistence(
+        base_dir,
+        &config_sources,
+    )));
+    Some(AgentBuildResult {
+        agent,
+        catalogue,
+        retention,
+        workflow_config: wf_config,
+        extension_prompt_snippets,
+        model,
+        ext_registry: Arc::new(std::sync::Mutex::new(ext_registry)),
+        notification_rx,
+        subagent_registry,
+        harness_lifecycle,
+        environment_control,
+        workflow_state,
+        workspace,
+        event_log: event_log::switched_on(config.telemetry.event_log.enabled, base_dir),
+        extensions: build_result::agent_extensions(&config, flags),
+    })
+}
+mod agent_tool_registry;
+use agent_tool_registry::{ToolRegistryArgs, ToolRegistryBuild, build_tool_registry};
+#[path = "agent/run_session.rs"]
+mod run_session;
+#[path = "agent/run_session_save.rs"]
+mod run_session_save;
+pub(crate) use run_session::run_agent_session;
+
+#[path = "agent/startup_identity.rs"]
+mod startup_identity;
+use startup_identity::{composed_loop_builders, resolve_startup_identity};
+
+fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -> i32 {
+    // Early validation for user-supplied --socket paths: check length before
+    // doing any I/O (config load, agent build).  Auto-generated paths are
+    // always short, so we only gate on explicitly provided paths here.
+    if let Some(ref p) = flags.socket_path {
+        if p.as_os_str().len() > MAX_SOCKET_PATH_BYTES {
+            stderr
+                .push_str("agent: --socket path exceeds the Unix socket path limit (104 bytes)\n");
+            return 1;
+        }
+    }
+    let Some((parent_control, lifetime)) = parent_control_startup::consume_and_resolve_lifetime(
+        (flags.parent_control.as_deref(), flags.coordinator),
+        flags.persist,
+        ctx.teardown_graph.is_some(),
+        stderr,
+    ) else {
+        return 1;
+    };
+
+    let Some((sessions, automatic_turns)) = composed_loop_builders(ctx, stderr) else {
+        return 1;
+    };
+
+    let ephemeral = event_log::ephemeral(&flags);
+    let Some(session_identity) = resolve_startup_identity(ctx, &flags, ephemeral, stderr) else {
+        return 1;
+    };
+    let session_key = session_identity.runtime_key().to_string();
+    if flags.session_name.is_none() && !ephemeral && flags.parent_identity_override.is_none() {
+        flags.parent_identity_override = Some(session_key.clone());
+        flags.session_key_override = Some(session_key.clone());
+    }
+
+    let agents_instructions = match startup_prompt::load_agents_instructions(ctx, stderr) {
+        Some(instructions) => instructions,
+        None => return 1,
+    };
+    let parent_playbook = match startup_prompt::load_parent_playbook(ctx, flags.spawned, stderr) {
+        Some(playbook) => playbook,
+        None => return 1,
+    };
+
+    let base_dir = ctx.base_dir();
+    let selection = match ctx.config_selection() {
+        Ok(selection) => selection,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            return 1;
+        }
+    };
+    // Create the broadcast channel early so the WorkflowTool emitter can
+    // send workflow_state events from the moment it is constructed (#598).
+    let workflow_available = flags.uds_mode && !flags.workflow_disabled;
+    let broadcast_tx = if workflow_available {
+        let (tx, _) = tokio::sync::broadcast::channel::<String>(
+            crate::interface::cli::uds_multi::BROADCAST_CHANNEL_CAPACITY,
+        );
+        Some(tx)
+    } else {
+        None
+    };
+    let build = match build_agent_from_config(
+        &base_dir,
+        &selection,
+        &flags,
+        stderr,
+        broadcast_tx.clone(),
+    ) {
+        Some(r) => r,
+        None => return 1,
+    };
+    let mut agent = build.agent;
+    // Enable incremental streaming so the UDS layer emits token events.
+    agent.set_streaming(true);
+    agent.set_session_key(session_identity.clone());
+
+    let target = event_log::SessionLogTarget {
+        base_dir: &base_dir,
+        session_key: &session_key,
+        event_log: build.event_log,
+        project_board: ctx.project_board_recording,
+    };
+    event_log::attach(&mut agent, &flags, &target, stderr);
+
+    let model = build.model.clone();
+
+    // Build the base system prompt. It is static for the lifetime of the
+    // session (#1113): workflow state is never appended, so the provider-side
+    // cached prefix survives every workflow step. Dynamic workflow state
+    // reaches the model through tool results and idle-boundary nudges.
+    let system_prompt = startup_prompt::compose_for(
+        &flags,
+        agents_instructions.as_deref(),
+        &build.extension_prompt_snippets,
+        &parent_playbook,
+    );
+
+    // Use --socket path if provided; otherwise auto-generate in $XDG_RUNTIME_DIR or temp.
+    let socket_path = flags
+        .socket_path
+        .clone()
+        .unwrap_or_else(parent_control_startup::auto_socket_path);
+
+    if !swarm_runtime::bind_socket(&socket_path, stderr) {
+        return 1;
+    }
+    let retention = build.retention;
+    let code = crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
+        agent,
+        retention: Some(retention.clone()),
+        base_dir: &base_dir,
+        workspace: &build.workspace,
+        identity: session_identity,
+        model,
+        ephemeral,
+        system_prompt,
+        socket_path,
+        socket_override: None,
+        sessions,
+        catalogue: build.catalogue,
+        ext_registry: Some(build.ext_registry),
+        lifetime,
+        notification_rx: build.notification_rx,
+        subagent_registry: build.subagent_registry,
+        harness_lifecycle: build.harness_lifecycle,
+        workflow_state: build.workflow_state,
+        workflow_config: build.workflow_config,
+        broadcast_tx,
+        parent_control,
+        teardown_graph: ctx.teardown_graph,
+        automatic_turns,
+        environment_control: build.environment_control,
+        extensions: build.extensions,
+    });
+    admission_startup::shutdown();
+    // An ephemeral UDS server persisted spill content only for in-run recall.
+    retention.recall.scrub_ephemeral(ephemeral);
+    code
+}
+
+#[path = "agent/admission_startup.rs"]
+mod admission_startup;
+#[cfg(test)]
+#[path = "agent_agents_md_tests.rs"]
+mod agents_md_tests;
+#[cfg(test)]
+#[path = "agent_build_tests.rs"]
+mod build_tests;
+#[cfg(test)]
+#[path = "agent_935_clamp_tests.rs"]
+mod clamp_935_tests;
+#[cfg(test)]
+#[path = "agent_config_tests.rs"]
+mod config_tests;
+#[cfg(test)]
+#[path = "agent_cov_tests.rs"]
+mod cov_tests;
+#[cfg(test)]
+#[path = "agent_1048_ctx_wiring_tests.rs"]
+mod ctx_wiring_1048_tests;
+#[cfg(test)]
+#[path = "agent_integration_tests.rs"]
+mod integration_tests;
+#[cfg(test)]
+#[path = "agent_926_tests.rs"]
+mod issue_926_tests;
+#[cfg(test)]
+#[path = "agent_no_session_tests.rs"]
+mod no_session_tests;
+#[path = "agent/parent_control_startup.rs"]
+mod parent_control_startup;
+#[cfg(test)]
+#[path = "agent_2126_route_tests.rs"]
+mod route_2126_tests;
+#[cfg(test)]
+#[path = "agent_run_end_tests.rs"]
+mod run_end_tests;
+#[cfg(test)]
+#[path = "agent_startup_identity_tests.rs"]
+mod startup_identity_tests;
+#[cfg(test)]
+#[path = "agent_tests.rs"]
+mod tests;
+#[cfg(test)]
+#[path = "agent_web_fetch_recipe_tests.rs"]
+mod web_fetch_recipe_tests;
+#[cfg(test)]
+#[path = "agent_workflow_discovery_tests.rs"]
+mod workflow_discovery_tests;
+#[cfg(test)]
+#[path = "agent_workflow_spec_tests.rs"]
+mod workflow_spec_tests;

@@ -163,7 +163,7 @@ fn the_overlay_writer_refuses_an_untrusted_overlay_and_a_selection_without_a_loc
 
     let explicit = ConfigSelection::Explicit(rig.base_dir.join("config.json"));
     let handles = super::super::configuration::build_configuration_handles(
-        &crate::interface::cli::configuration_handles::ConfigurationEnvironment {
+        &crate::interface::cli::controllers::configuration_handles::ConfigurationEnvironment {
             base_dir: rig.base_dir.clone(),
             prompt_for_trust: false,
         },

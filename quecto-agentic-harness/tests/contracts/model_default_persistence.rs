@@ -12,7 +12,7 @@ use quecto::application::configuration::ports::{OverlayTrust, OverlayTrustStore}
 use quecto::composition::catalogue_defaults::ConfigDefaultsWriter;
 use quecto::composition::configuration::build_configuration_handles;
 use quecto::infrastructure::config::persistence::PersistentOverlayTrustStore;
-use quecto::interface::cli::configuration_handles::ConfigurationEnvironment;
+use quecto::interface::cli::controllers::configuration_handles::ConfigurationEnvironment;
 
 pub(crate) struct Layers {
     pub base: TempDir,

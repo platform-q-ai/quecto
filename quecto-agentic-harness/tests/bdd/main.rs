@@ -866,7 +866,7 @@ pub struct QuectoWorld {
     //   src/domain/workflow/mod_tests.rs
     //   src/infrastructure/tools/native/workflow_tool_comprehensive_tests.rs
     //   src/interface/shared_tests.rs
-    //   src/interface/cli/agent_tests.rs
+    //   src/interface/cli/controllers/agent_tests.rs
     //   src/interface/cli/protocol_tests.rs
     //   src/infrastructure/persistence/file/sessions/session_store.rs
     // --- Extension system BDD fields ---

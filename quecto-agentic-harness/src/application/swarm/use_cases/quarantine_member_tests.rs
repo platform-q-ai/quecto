@@ -1,10 +1,10 @@
 use serde_json::{Value, json};
 
 use super::QuarantineMember;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::{Quarantine, QuarantineMemberRequest, Quarantined};
+use crate::application::swarm::test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, recorded, running_board, stored_member,
 };
-use crate::application::swarm::dto::{Quarantine, QuarantineMemberRequest, Quarantined};
 use crate::application::swarm::use_cases::OverRepository;
 use crate::domain::swarm::{
     entities::records::RunState, events::telemetry::RefusalKind,

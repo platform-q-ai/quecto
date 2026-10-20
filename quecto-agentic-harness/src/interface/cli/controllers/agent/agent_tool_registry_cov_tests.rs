@@ -1,0 +1,464 @@
+use super::*;
+use crate::infrastructure::tools::swarm::swarm_bridge::Participation;
+use crate::interface::cli::controllers::agent::flag_parse::AgentFlags;
+
+pub(super) fn flags() -> AgentFlags {
+    AgentFlags {
+        project_board: None,
+        session_name: Some("dev".to_string()),
+        no_session: false,
+        message: None,
+        system_prompt: None,
+        model_override: None,
+        max_iterations: None,
+        max_time: None,
+        uds_mode: false,
+        socket_path: None,
+        persist: false,
+        disabled_tools: Vec::new(),
+        effort: None,
+        workflow: false,
+        workflow_guards: false,
+        swarm_participation: Participation::none(),
+        workflow_disabled: true,
+        workflow_spec_path: None,
+        inherited_tool_policy: None,
+        parent_id: None,
+        spawned: false,
+        coordinator: false,
+        launch_extensions: true,
+        parent_identity_override: None,
+        session_key_override: None,
+        cwd_override: None,
+        web_fetch_tool_factory: None,
+        kill_tool: None,
+        retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
+        admission_context: None,
+        parent_control: None,
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        admission: Some(crate::composition::admission::build_admission_handles),
+        container_configs: Some(
+            crate::composition::container_configs::build_agent_container_config_handles,
+        ),
+        stdin_is_tty: false,
+        environment_registry: None,
+        backend: None,
+    }
+}
+
+#[test]
+fn resolve_agent_model_prefers_explicit_override() {
+    assert_eq!(
+        resolve_agent_model(Some("openai-api/gpt-5.6-sol"), "anthropic-api/claude"),
+        "openai-api/gpt-5.6-sol"
+    );
+}
+
+#[test]
+fn resolve_agent_model_falls_back_to_config_default() {
+    assert_eq!(
+        resolve_agent_model(None, "anthropic-api/claude-sonnet-4.5"),
+        "anthropic-api/claude-sonnet-4.5"
+    );
+}
+
+#[test]
+fn build_tool_registry_uses_empty_session_for_no_session() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = Config::default();
+    let http = reqwest::Client::new();
+    let mut flags = flags();
+    flags.no_session = true;
+    let mut stderr = String::new();
+
+    let built = build_tool_registry(ToolRegistryArgs {
+        base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+            None,
+        )
+        .effort,
+        container_configs: crate::composition::container_configs::build_container_config_handles(
+            std::path::Path::new("/nonexistent-base"),
+            None,
+        ),
+        config_path: tmp.path(),
+        config: &config,
+        http_client: &http,
+        web_fetch_tool: None,
+        flags: &flags,
+        stderr: &mut stderr,
+        broadcast_tx: None,
+        cwd: tmp.path(),
+        home_dir: Some(tmp.path()),
+    })
+    .unwrap();
+
+    assert!(stderr.is_empty(), "stderr: {stderr}");
+    assert_eq!(built.session_key, "");
+    assert_eq!(built.model, config.agents.defaults.model);
+    assert!(built.notification_rx.is_some());
+    assert!(built.subagent_registry.is_some());
+}
+
+#[test]
+fn build_tool_registry_uses_cli_session_name_and_model_override() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = Config::default();
+    let http = reqwest::Client::new();
+    let mut flags = flags();
+    flags.session_name = Some("named".to_string());
+    flags.model_override = Some("openai-api/gpt-5.6-sol".to_string());
+    let mut stderr = String::new();
+
+    let built = build_tool_registry(ToolRegistryArgs {
+        base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+            None,
+        )
+        .effort,
+        container_configs: crate::composition::container_configs::build_container_config_handles(
+            std::path::Path::new("/nonexistent-base"),
+            None,
+        ),
+        config_path: tmp.path(),
+        config: &config,
+        http_client: &http,
+        web_fetch_tool: None,
+        flags: &flags,
+        stderr: &mut stderr,
+        broadcast_tx: None,
+        cwd: tmp.path(),
+        home_dir: Some(tmp.path()),
+    })
+    .unwrap();
+
+    assert_eq!(
+        built.session_key,
+        crate::domain::sessions::entities::session::Session::build_key("cli", "named")
+    );
+    assert_eq!(built.model, "openai-api/gpt-5.6-sol");
+    assert!(!built.extension_prompt_snippets.contains("failed"));
+}
+
+/// Both CLI runtime roles expose the shared manual through registry wiring.
+#[tokio::test]
+async fn build_tool_registry_exposes_shared_docs_for_both_roles() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = Config::default();
+    let http = reqwest::Client::new();
+
+    // Spawned child path: shared workflow is listed and readable.
+    let mut spawned_flags = flags();
+    spawned_flags.spawned = true;
+    let mut stderr = String::new();
+    let spawned = build_tool_registry(ToolRegistryArgs {
+        base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+            None,
+        )
+        .effort,
+        container_configs: crate::composition::container_configs::build_container_config_handles(
+            std::path::Path::new("/nonexistent-base"),
+            None,
+        ),
+        config_path: tmp.path(),
+        config: &config,
+        http_client: &http,
+        web_fetch_tool: None,
+        flags: &spawned_flags,
+        stderr: &mut stderr,
+        broadcast_tx: None,
+        cwd: tmp.path(),
+        home_dir: Some(tmp.path()),
+    })
+    .unwrap();
+
+    assert!(
+        spawned.registry.get("docs").is_some(),
+        "docs tool must remain registered for spawned agents"
+    );
+    assert!(
+        spawned.registry.get("spawn").is_some(),
+        "spawn tool must remain available for spawned agents (#1319 non-goal)"
+    );
+
+    let toc = spawned.registry.execute("docs", "{}").await.unwrap();
+    assert!(!toc.is_error, "spawned TOC must succeed: {}", toc.content);
+    assert!(
+        toc.content.contains("workflow"),
+        "spawned registry docs TOC must list workflow; got:\n{}",
+        toc.content
+    );
+
+    let direct = spawned
+        .registry
+        .execute("docs", r#"{"name":"workflow"}"#)
+        .await
+        .unwrap();
+    assert!(
+        !direct.is_error,
+        "spawned registry must serve workflow; got:\n{}",
+        direct.content
+    );
+    assert!(
+        direct.content.contains("Workflow"),
+        "spawned registry must return shared workflow body"
+    );
+
+    // Top-level path: same glue must keep workflow available.
+    let top_flags = flags(); // spawned: false
+    stderr.clear();
+    let top = build_tool_registry(ToolRegistryArgs {
+        base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+            None,
+        )
+        .effort,
+        container_configs: crate::composition::container_configs::build_container_config_handles(
+            std::path::Path::new("/nonexistent-base"),
+            None,
+        ),
+        config_path: tmp.path(),
+        config: &config,
+        http_client: &http,
+        web_fetch_tool: None,
+        flags: &top_flags,
+        stderr: &mut stderr,
+        broadcast_tx: None,
+        cwd: tmp.path(),
+        home_dir: Some(tmp.path()),
+    })
+    .unwrap();
+
+    let top_toc = top.registry.execute("docs", "{}").await.unwrap();
+    assert!(!top_toc.is_error);
+    assert!(
+        top_toc.content.contains("workflow — "),
+        "top-level registry docs TOC must list workflow; got:\n{}",
+        top_toc.content
+    );
+    let top_direct = top
+        .registry
+        .execute("docs", r#"{"name":"workflow"}"#)
+        .await
+        .unwrap();
+    assert!(!top_direct.is_error);
+    assert_eq!(top_toc.content, toc.content);
+    assert_eq!(top_direct.content, direct.content);
+    assert!(
+        top_direct.content.contains("Workflow"),
+        "top-level registry must still serve workflow body"
+    );
+}
+
+/// #1276 Phase 3 characterization: agent-control tools are always present on
+/// the CLI composition root with official-native descriptors and are not
+/// unloadable via the extension lifecycle path.
+#[test]
+fn build_tool_registry_registers_agent_control_tools_as_official_native() {
+    use crate::domain::tool_policy::value_objects::tool_descriptor::{
+        ToolAvailability, ToolSource,
+    };
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = Config::default();
+    let http = reqwest::Client::new();
+    let flags = flags();
+    let mut stderr = String::new();
+
+    let built = build_tool_registry(ToolRegistryArgs {
+        base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+            None,
+        )
+        .effort,
+        container_configs: crate::composition::container_configs::build_container_config_handles(
+            std::path::Path::new("/nonexistent-base"),
+            None,
+        ),
+        config_path: tmp.path(),
+        config: &config,
+        http_client: &http,
+        web_fetch_tool: None,
+        flags: &flags,
+        stderr: &mut stderr,
+        broadcast_tx: None,
+        cwd: tmp.path(),
+        home_dir: Some(tmp.path()),
+    })
+    .unwrap();
+
+    for name in ["recall", "spawn", "agent_cmd"] {
+        assert!(
+            built.registry.get(name).is_some(),
+            "{name} must be registered"
+        );
+        let descriptor = built
+            .registry
+            .descriptor(name)
+            .unwrap_or_else(|| panic!("missing descriptor for {name}"));
+        assert!(
+            matches!(descriptor.source, ToolSource::BundledNative),
+            "{name} source"
+        );
+        assert_eq!(descriptor.owner.as_ref(), "quecto:official-tools");
+        assert!(matches!(descriptor.availability, ToolAvailability::Enabled));
+        assert!(
+            !built
+                .registry
+                .runtime_tool_names()
+                .iter()
+                .any(|n| n == name),
+            "{name} must not be unloadable via unregister_extension"
+        );
+        assert!(
+            built
+                .registry
+                .definitions()
+                .iter()
+                .any(|d| d.name.as_ref() == name),
+            "{name} must be model-visible"
+        );
+    }
+
+    assert!(
+        built.registry.get("workflow").is_none(),
+        "workflow stays off when not uds / disabled"
+    );
+    assert!(built.notification_rx.is_some());
+    assert!(built.subagent_registry.is_some());
+    assert!(built.workflow_state.is_none());
+}
+
+/// #1276 Phase 3 characterization: UDS + workflow flag wires the workflow tool
+/// and keeps the shared engine handle live for guards/binding.
+#[test]
+fn build_tool_registry_registers_workflow_when_uds_and_enabled() {
+    use crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = Config::default();
+    let http = reqwest::Client::new();
+    let mut flags = flags();
+    flags.uds_mode = true;
+    flags.workflow_disabled = false;
+    flags.workflow = true;
+    flags.workflow_guards = true;
+    let mut stderr = String::new();
+
+    let built = build_tool_registry(ToolRegistryArgs {
+        base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+            None,
+        )
+        .effort,
+        container_configs: crate::composition::container_configs::build_container_config_handles(
+            std::path::Path::new("/nonexistent-base"),
+            None,
+        ),
+        config_path: tmp.path(),
+        config: &config,
+        http_client: &http,
+        web_fetch_tool: None,
+        flags: &flags,
+        stderr: &mut stderr,
+        broadcast_tx: None,
+        cwd: tmp.path(),
+        home_dir: Some(tmp.path()),
+    })
+    .unwrap();
+
+    assert!(built.registry.get("workflow").is_some());
+    let descriptor = built.registry.descriptor("workflow").unwrap();
+    assert!(matches!(descriptor.source, ToolSource::BundledNative));
+    assert_eq!(descriptor.owner.as_ref(), "quecto:official-tools");
+    assert!(
+        !built
+            .registry
+            .runtime_tool_names()
+            .iter()
+            .any(|n| n == "workflow")
+    );
+    assert!(built.workflow_state.is_some());
+    assert_eq!(
+        built.registry.guard_count(),
+        1,
+        "workflow_guards must register the guard"
+    );
+}
+
+/// #1276 Phase 3 characterization: config-gated web tools are bundled native
+/// official tools, not runtime-unloadable extension tools.
+#[test]
+fn build_tool_registry_registers_web_tools_as_bundled_native_official_tools() {
+    use crate::domain::tool_policy::value_objects::tool_descriptor::ToolSource;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut config = Config::default();
+    config.tools.web.fetch.enabled = true;
+    config.tools.web.brave.enabled = true;
+    config.tools.web.brave.api_key = "test-key".into();
+    let http = reqwest::Client::new();
+    let flags = flags();
+    let mut stderr = String::new();
+
+    let built = build_tool_registry(ToolRegistryArgs {
+        base_dir: tmp.path(),
+        effort_control: crate::composition::catalogue::build_catalogue_handles(
+            std::path::Path::new("/nonexistent-catalogue"),
+            None,
+        )
+        .effort,
+        container_configs: crate::composition::container_configs::build_container_config_handles(
+            std::path::Path::new("/nonexistent-base"),
+            None,
+        ),
+        config_path: tmp.path(),
+        config: &config,
+        http_client: &http,
+        web_fetch_tool: Some(crate::composition::web_fetch::build(
+            crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default(),
+            1024,
+        )),
+        flags: &flags,
+        stderr: &mut stderr,
+        broadcast_tx: None,
+        cwd: tmp.path(),
+        home_dir: Some(tmp.path()),
+    })
+    .unwrap();
+
+    for name in ["web_search", "web_fetch"] {
+        assert!(built.registry.get(name).is_some(), "{name} registered");
+        let descriptor = built.registry.descriptor(name).unwrap();
+        assert!(matches!(descriptor.source, ToolSource::BundledNative));
+        assert_eq!(descriptor.owner.as_ref(), "quecto:official-tools");
+        assert!(
+            !built
+                .registry
+                .runtime_tool_names()
+                .iter()
+                .any(|n| n == name),
+            "{name} must not be runtime-unloadable"
+        );
+        assert!(
+            built
+                .registry
+                .definitions()
+                .iter()
+                .any(|d| d.name.as_ref() == name),
+            "{name} must remain model-visible"
+        );
+    }
+}

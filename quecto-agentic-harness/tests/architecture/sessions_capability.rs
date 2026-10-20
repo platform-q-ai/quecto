@@ -172,7 +172,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/composition/fleet_settlement.rs",
     "src/composition/retention.rs",
     "src/interface/cli/uds_session_handles.rs",
-    "src/interface/cli/retention_handles.rs",
+    "src/interface/cli/controllers/retention_handles.rs",
     "src/infrastructure/persistence/file/context_spill.rs",
     "src/infrastructure/tools/native/recall.rs",
     "src/interface/cli/uds_sync.rs",
@@ -535,7 +535,7 @@ const RAW_KEY_CONVERSION_SITES: &[&str] = &[];
 /// (D5 #1972): the interface's persistence triggers. Decrease-only (D8
 /// #1977 moved the resume's transition save into the application).
 const SAVE_REQUESTERS: &[&str] = &[
-    "src/interface/cli/agent/run_session_save.rs",
+    "src/interface/cli/controllers/agent/run_session_save.rs",
     "src/interface/cli/uds.rs",
     "src/interface/cli/uds_dispatch.rs",
     "src/interface/cli/uds_multi.rs",
@@ -560,7 +560,7 @@ const SAVE_TRIGGER_SITES: &[(&str, &str)] = &[
         "SaveTrigger::OrdinaryExit",
     ),
     (
-        "src/interface/cli/agent/run_session_save.rs",
+        "src/interface/cli/controllers/agent/run_session_save.rs",
         "SaveTrigger::OrdinaryExit",
     ),
 ];
@@ -747,7 +747,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/use_cases/retain_context.rs", 118),
     ("src/application/sessions/dto/retained_context.rs", 92),
     ("src/composition/retention.rs", 35),
-    ("src/interface/cli/retention_handles.rs", 33),
+    ("src/interface/cli/controllers/retention_handles.rs", 33),
     ("src/infrastructure/tools/native/recall.rs", 152),
     // #2212: the gauge moved to its own module (336 → 332); #2342: the
     // spill writers and the swarm cap moved to their own modules (→ 310);
@@ -936,7 +936,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/infrastructure/persistence/file/session_export_records.rs",
         81,
     ),
-    ("src/interface/cli/agent/run_session.rs", 123),
+    ("src/interface/cli/controllers/agent/run_session.rs", 123),
     ("src/interface/cli/uds_dispatch.rs", 500),
     // D10 #1979 hands the presenters the active session's key (was 190).
     // #2009: the discovery presenter is its own owner; the query extraction
@@ -1565,7 +1565,7 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
     assert_eq!(
         openers,
         set(&[
-            "src/interface/cli/agent/run_session.rs",
+            "src/interface/cli/controllers/agent/run_session.rs",
             "src/interface/cli/uds_lifecycle.rs",
         ]),
         "the startup open is requested by exactly the two startup paths"
@@ -1620,7 +1620,7 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
         .collect();
     assert_eq!(
         propagators,
-        set(&[adapter, "src/interface/cli/agent.rs"]),
+        set(&[adapter, "src/interface/cli/controllers/agent.rs"]),
         "the raw session key is propagated by the switch adapter and the startup path only"
     );
     // The typed identity is the agent loop's only session-key input.
@@ -1845,7 +1845,7 @@ const RETENTION_PORT_HOLDERS: &[&str] = &[
     "src/composition/retention.rs",
     "src/composition/sessions.rs",
     "src/infrastructure/persistence/file/context_spill.rs",
-    "src/interface/cli/retention_handles.rs",
+    "src/interface/cli/controllers/retention_handles.rs",
     "src/interface/cli/uds_session_handles.rs",
 ];
 
@@ -2022,8 +2022,8 @@ fn retained_context_has_exactly_one_owner_per_role() {
     assert_eq!(
         production_files_calling(".scrub_ephemeral("),
         set(&[
-            "src/interface/cli/agent.rs",
-            "src/interface/cli/agent/run_session.rs",
+            "src/interface/cli/controllers/agent.rs",
+            "src/interface/cli/controllers/agent/run_session.rs",
         ])
     );
     assert!(

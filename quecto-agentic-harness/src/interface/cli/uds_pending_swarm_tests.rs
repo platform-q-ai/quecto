@@ -91,8 +91,10 @@ async fn terminal_notifications_do_not_create_extra_report_turns() {
 async fn production_swarm_wiring_accounts_for_a_turn_and_denies_paused_inference() {
     let (_directory, context) = crate::swarm_control_fixture::context();
     let mut env = Env::with_unselected_workflow();
-    env.agent =
-        crate::interface::cli::swarm_composition::wire_agent(env.agent, Some(context.clone()));
+    env.agent = crate::interface::cli::controllers::swarm_composition::wire_agent(
+        env.agent,
+        Some(context.clone()),
+    );
     let mut ctx = env.ctx();
     handle_prompt(
         &mut ctx,
@@ -170,8 +172,10 @@ fn composed_suspension_rechecks_durable_generation_before_cancelling() {
         RunStatus::Running,
         0,
     )));
-    let suspend =
-        crate::interface::cli::swarm_composition::suspension_callback(&handle, context.clone());
+    let suspend = crate::interface::cli::controllers::swarm_composition::suspension_callback(
+        &handle,
+        context.clone(),
+    );
     suspend(RunStatus::Paused, generation);
     assert_eq!(
         receiver.try_recv(),
