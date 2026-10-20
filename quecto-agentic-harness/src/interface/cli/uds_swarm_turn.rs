@@ -105,6 +105,15 @@ impl TurnControl {
         });
         first
     }
+    /// Release the pending wake slot a wake could not be sent for (a full
+    /// or closed channel), keeping any deferred generation for the next
+    /// wake (#2626 review round 4): only the slot is cleared.
+    pub fn release_swarm_wake(&self) {
+        self.pending_swarm_wake
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+    }
     pub fn take_swarm_wake(&self, fallback: u64) -> u64 {
         self.take_swarm_wake_from(fallback).0
     }
@@ -185,7 +194,7 @@ impl TurnControl {
                     crate::interface::cli::uds_multi::ClientMessage::SwarmWake { generation };
                 if sender.send(message).await.is_err() {
                     // The loop ended while sending: release the slot.
-                    control.take_swarm_wake(0);
+                    control.release_swarm_wake();
                 }
             }
         });

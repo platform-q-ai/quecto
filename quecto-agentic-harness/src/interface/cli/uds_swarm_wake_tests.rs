@@ -62,7 +62,9 @@ fn running(wake_allowed: bool) -> RunControlReceipt {
 }
 
 impl SwarmRunControl for Claimed {
-    fn coordinator_board(&self) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
+    fn coordinator_board(
+        &self,
+    ) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
         Box::pin(async { Ok(None) })
     }
     fn nudge_watch(&self) {}

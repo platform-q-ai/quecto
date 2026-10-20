@@ -140,7 +140,7 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
                 // slot was occupied: then this generation rides that message.
                 // If the slot was empty nothing would drain it, so refuse.
                 if ctx.turn_control.queue_swarm_wake(generation) {
-                    ctx.turn_control.take_swarm_wake(0);
+                    ctx.turn_control.release_swarm_wake();
                     super::protocol::AgentEvent::err(
                         id.as_deref(),
                         "swarm_control",
@@ -247,7 +247,7 @@ fn self_wake(ctx: &ReaderDispatchCtx<'_>, generation: u64) -> Option<String> {
         }
         Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {
             if ctx.turn_control.queue_swarm_wake(generation) {
-                ctx.turn_control.take_swarm_wake(0);
+                ctx.turn_control.release_swarm_wake();
                 Some("self-wake queue full; suspended members re-arm on their next wake".into())
             } else {
                 None
@@ -290,6 +290,10 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
         // A wake from outside this process, or a self-wake for this one.
         None => {}
         Some(epoch) if epoch == current_epoch => {}
+        // A self-wake for an older suspension, but the member takes turns
+        // again: the wake is claimed as any other (it may carry a deferred
+        // outside wake, #2626 review round 4).
+        Some(_) if ctx.session.automatic_turns_allowed() => {}
         // Stale: it held the one self-wake slot, so the newer suspension
         // could not schedule its own (#2626 review round 3). Keep what the
         // wake carried (a deferred outside wake folds into it) and schedule
@@ -297,6 +301,12 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
         Some(_) => {
             ctx.turn_control.defer_swarm_wake(generation);
             keep_self_waking(ctx);
+            let event = AgentEvent::ok(
+                None,
+                SWARM_WAKE,
+                Some(serde_json::json!({"status": "handed_over", "generation": generation})),
+            );
+            emit_event_to_broadcast_or_writer(ctx, &event).await;
             return false;
         }
     }

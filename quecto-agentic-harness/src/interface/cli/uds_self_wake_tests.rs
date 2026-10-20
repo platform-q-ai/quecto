@@ -23,7 +23,9 @@ impl LockedOnce {
 }
 
 impl SwarmRunControl for LockedOnce {
-    fn coordinator_board(&self) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
+    fn coordinator_board(
+        &self,
+    ) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
         Box::pin(async { Ok(None) })
     }
     fn nudge_watch(&self) {}
@@ -202,6 +204,70 @@ async fn a_durable_probe_error_schedules_no_self_wake() {
     assert_eq!(
         self_wake_within(&mut wakes, RECOVERABLE_SELF_WAKE_DELAY * 2).await,
         None
+    );
+}
+
+/// #2626 review round 4: a self-wake for an older suspension that fires
+/// once the member takes turns again is claimed like any other wake, so the
+/// outside wake it carries (deferred by a locked store) runs its change
+/// wake, never dropped.
+#[tokio::test(start_paused = true)]
+async fn a_stale_self_wake_while_allowed_claims_the_deferred_change_wake() {
+    use crate::domain::inference::services::turn_suspension::{Instruction, Work};
+    let mut env = Env::with_unselected_workflow();
+    let (mut ctx, _waker, mut wakes) = suspended_over(&mut env, Arc::new(Waking));
+    let older = ctx.session.automatic_turns().suspension_epoch();
+    assert!(
+        ctx.turn_control
+            .schedule_self_wake(RECOVERABLE_SELF_WAKE_DELAY, older)
+    );
+    // A locked store deferred an outside wake; a newer suspension came and
+    // an instruction re-armed it before the older self-wake fired.
+    ctx.turn_control.defer_swarm_wake(5);
+    ctx.session
+        .automatic_turns()
+        .suspend_after_failure(&unavailable());
+    ctx.session
+        .automatic_turns()
+        .start_turn(Work::Instruction(Instruction::Prompt), None);
+    assert!(ctx.session.automatic_turns_allowed());
+    let generation = self_wake_within(&mut wakes, RECOVERABLE_SELF_WAKE_DELAY * 2)
+        .await
+        .expect("the older self-wake fires");
+    handle_wake(&mut ctx, generation).await;
+    assert_eq!(
+        user_prompts(&ctx),
+        [crate::interface::cli::uds_swarm_control::CHANGED_WAKE]
+    );
+}
+
+/// A stale self-wake that hands over says so on the event stream.
+#[tokio::test(start_paused = true)]
+async fn a_hand_over_is_reported() {
+    let mut env = Env::with_unselected_workflow();
+    let (mut ctx, _waker, mut wakes) = suspended_over(&mut env, Arc::new(Claimed));
+    let (sender, mut events) = tokio::sync::broadcast::channel(64);
+    ctx.broadcast_tx = Some(sender);
+    let older = ctx.session.automatic_turns().suspension_epoch();
+    assert!(
+        ctx.turn_control
+            .schedule_self_wake(std::time::Duration::ZERO, older)
+    );
+    ctx.session
+        .automatic_turns()
+        .suspend_after_failure(&unavailable());
+    let generation = self_wake_within(&mut wakes, RECOVERABLE_SELF_WAKE_DELAY)
+        .await
+        .expect("the older self-wake");
+    handle_wake(&mut ctx, generation).await;
+    let mut statuses = Vec::new();
+    while let Ok(line) = events.try_recv() {
+        let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+        statuses.push(event["data"]["status"].clone());
+    }
+    assert!(
+        statuses.contains(&serde_json::json!("handed_over")),
+        "{statuses:?}"
     );
 }
 
