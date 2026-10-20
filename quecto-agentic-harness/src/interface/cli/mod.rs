@@ -1,19 +1,14 @@
-mod admission_broker;
-pub mod admission_handles;
-pub mod auth;
 pub mod board;
-pub mod catalogue_handles;
-pub mod claude_member;
-mod config_loading;
-pub mod configuration_handles;
-pub mod container_config_handles;
-pub mod container_handles;
-mod controllers;
+pub mod controllers;
 pub use controllers::container::{
     ContainerDoctorBuilder, ContainerInitBuilder, ContainerInventoryBuilder,
     ContainerStatusBuilder, EnvironmentRegistryBuilder,
 };
-mod launch_rollback_wait;
+use controllers::{
+    admission_broker, admission_handles, auth, catalogue_handles, claude_member,
+    configuration_handles, container_config_handles, retention_handles, run_end_fleet,
+    swarm_board_handles,
+};
 pub mod protocol;
 pub mod uds;
 mod uds_admission_projection;
@@ -49,9 +44,6 @@ pub use uds_busy_test_support::{busy_reader_intercept, busy_reader_intercept_wit
 #[cfg(any(test, feature = "test-support"))]
 pub use uds_shutdown::test_support::deliver_termination_signal;
 
-pub mod retention_handles;
-pub mod run_end_fleet;
-pub mod swarm_board_handles;
 mod uds_admission_warnings;
 pub mod uds_discovery_handles;
 #[cfg(test)]
@@ -698,8 +690,7 @@ mod leading_config_dispatch_tests;
 #[cfg(test)]
 mod mod_tests;
 
-mod swarm_composition;
 /// A swarm member's execution ports on its agent loop, for the tests that
 /// drive the real loop through the CLI's own wiring (#2339 review L1).
 #[cfg(any(test, feature = "test-support"))]
-pub use swarm_composition::wire_agent as wire_swarm_agent;
+pub use controllers::swarm_composition::wire_agent as wire_swarm_agent;

@@ -9,8 +9,8 @@ pub mod handles;
 
 pub use handles::{ClaudeMemberHandles, ClaudeMemberHandlesBuilder, ClaudeMemberSettings};
 
-use super::CliContext;
-use super::controllers::agent::AgentFlags;
+use super::agent::AgentFlags;
+use crate::interface::cli::CliContext;
 
 /// The member's name when `-s` is not given.
 const DEFAULT_MEMBER: &str = "claude-member";

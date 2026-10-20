@@ -69,7 +69,7 @@ impl Rig {
 
     fn trust_overlay(&self) {
         quecto::composition::configuration::build_configuration_handles(
-            &quecto::interface::cli::configuration_handles::ConfigurationEnvironment {
+            &quecto::interface::cli::controllers::configuration_handles::ConfigurationEnvironment {
                 base_dir: self.base_dir.clone(),
                 prompt_for_trust: false,
             },

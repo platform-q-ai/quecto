@@ -203,7 +203,7 @@ runtime; the scripts list and remove. `composition/environments.rs`
 `CliComposition.environment_registry`, seeded for a top-level session,
 journal-only for a spawned child) and `build_container_inventory` (the
 `ContainerInventoryHandles` the interface declares in
-`interface/cli/container_handles.rs`); `interface/cli/controllers/container_inventory.rs`
+`interface/cli/controllers/container_handles.rs`); `interface/cli/controllers/container_inventory.rs`
 parses `container ls|kill|gc` and presents. `agent_cmd get_containers`
 asks `ListEnvironmentsQuery::listing` for a bounded listing (#2220:
 joinable plus own by default, `all` for every record, ref-number order,
@@ -393,12 +393,12 @@ a caller of it, under the same lock). The runtime-configuration source
 composition-supplied `ConfigLoader` and watches the overlay as well as the
 base file, and the trust record while the overlay exists
 (`ReloadSource::while_present`). Composition (`src/composition/configuration.rs`) builds the
-`ConfigurationHandles` (`src/interface/cli/configuration_handles.rs`,
+`ConfigurationHandles` (`src/interface/cli/controllers/configuration_handles.rs`,
 including the `realize` document → `Config` handle) `main` hands the CLI
 through `CliComposition.configuration`, and the loader for reloads (which
 watches the trust record only when an overlay existed at seed time); the
 interface (`src/interface/cli/controllers/{config_cmd.rs, commands.rs}`
-and `src/interface/cli/config_loading.rs`) parses `quecto config get|set|trust`, loads through the
+and `src/interface/cli/controllers/config_loading.rs`) parses `quecto config get|set|trust`, loads through the
 handles and presents the layer report in `quecto status`.
 
 ## Admission operation: one host-wide broker, agent-operable
@@ -449,9 +449,9 @@ byte-equal child check is retired: `provider_runtime_admission.rs`'s
 `AdmissionRuntimeCandidate` carries an `inherit` flag (composition sets it from
 `ProcessAdmission::inherits_authority`), and `binding` resolves a `*`/`default`
 alias for unlisted slots. Composition (`src/composition/admission.rs`) builds
-`AdmissionHandles` (`src/interface/cli/admission_handles.rs`) `main` hands the
+`AdmissionHandles` (`src/interface/cli/controllers/admission_handles.rs`) `main` hands the
 CLI through `CliComposition.admission`; the interface
-(`src/interface/cli/admission_broker.rs`) parses one command into one use case
+(`src/interface/cli/controllers/admission_broker.rs`) parses one command into one use case
 and presents the outcome (naming the directory), addressing the global config
 (never the cwd overlay). `get_state.admission` gains `directory`, `epoch`,
 `connected` and `authorityStatus` (`uds_admission_projection.rs`,

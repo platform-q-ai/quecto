@@ -29,7 +29,7 @@ const INTERFACE_SESSION_MODULES: &[&str] = &[
     "src/interface/cli/uds_session_handles.rs",
     "src/interface/cli/uds_turn_accounting.rs",
     "src/interface/cli/uds_session_switch_runtime.rs",
-    "src/interface/cli/retention_handles.rs",
+    "src/interface/cli/controllers/retention_handles.rs",
     "src/interface/cli/uds_lifecycle.rs",
     "src/interface/cli/controllers/agent/run_session.rs",
 ];

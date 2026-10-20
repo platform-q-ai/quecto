@@ -7,7 +7,7 @@ use std::path::Path;
 
 use super::AgentFlags;
 use crate::application::configuration::dto::ConfigSelection;
-use crate::interface::cli::config_loading::{LoadedConfig, load_selected_config};
+use crate::interface::cli::controllers::config_loading::{LoadedConfig, load_selected_config};
 
 /// The configuration `selection` names, over `base_dir`, realized with
 /// `env_overrides`: an explicit file that must exist but does not, a

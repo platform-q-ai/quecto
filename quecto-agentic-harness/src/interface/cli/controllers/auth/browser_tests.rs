@@ -19,7 +19,9 @@ use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::auth::oauth::OAuthEndpoints;
 use crate::infrastructure::time::auth_clock::SystemAuthClock;
 use crate::interface::cli::CliContext;
-use crate::interface::cli::auth::{AuthEnvironment, AuthHandles, cmd_auth_with_reader};
+use crate::interface::cli::controllers::auth::{
+    AuthEnvironment, AuthHandles, cmd_auth_with_reader,
+};
 
 /// An authorization bound to a known state, returning to the run's
 /// loopback redirect.
