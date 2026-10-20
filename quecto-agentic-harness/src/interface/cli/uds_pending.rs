@@ -20,7 +20,7 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         if ctx.turn_control.is_steer_pending() {
             return;
         }
-        let pending = if ctx.session.automatic_turns_allowed {
+        let pending = if ctx.session.automatic_turns_allowed() {
             crate::interface::cli::uds_session::coalesce_pending(ctx.session.drain_pending())
         } else {
             // #1712: a suspended member still obeys explicit instructions
@@ -36,31 +36,28 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         }
         let mut remaining = pending.into_iter();
         while let Some(pending_msg) = remaining.next() {
-            let explicit = is_explicit(&pending_msg);
-            if ctx.turn_control.is_steer_pending()
-                || (!ctx.session.automatic_turns_allowed && !explicit)
-            {
+            // The domain decides which work a suspended member admits.
+            let work = work_of(&pending_msg);
+            if ctx.turn_control.is_steer_pending() || !ctx.session.automatic_turns().admits(work) {
                 ctx.session
                     .restore_pending(std::iter::once(pending_msg).chain(remaining));
                 return;
             }
             if let Some(control) = &ctx.turn_control.swarm_control {
+                use crate::domain::inference::services::turn_suspension::Work;
                 use crate::domain::swarm::{
                     value_objects::lifecycle::RunStatus,
                     value_objects::run_control::RunControlAction,
                 };
-                use crate::interface::cli::uds_session::PendingMessage;
                 let status = control.apply(RunControlAction::Status).await;
                 if let Ok(receipt) = &status {
                     ctx.turn_control
                         .observe_control_generation(receipt.generation);
                     ctx.session
+                        .automatic_turns()
                         .observe_control_generation(Some(receipt.generation));
                 }
-                let explicit = matches!(
-                    pending_msg,
-                    PendingMessage::User { .. } | PendingMessage::Control { .. }
-                );
+                let explicit = matches!(work, Work::Instruction(_));
                 let admission = match status {
                     Ok(receipt) => match receipt.status {
                         RunStatus::Setup | RunStatus::Running => Some(true),
@@ -97,9 +94,7 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
             // #1712: only an explicit instruction the run admits re-arms a
             // suspended member; a paused run or a failed probe keeps both the
             // suspension and the instruction.
-            if !ctx.session.automatic_turns_allowed {
-                ctx.session.resume_automatic_turns();
-            }
+            ctx.session.automatic_turns().start_turn(work, None);
             let correlation = match &pending_msg {
                 crate::interface::cli::uds_session::PendingMessage::Control {
                     id, command, ..
@@ -121,7 +116,7 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
             }
             // A failure during this drain stops the batch: the rest is
             // retained, never retried against a failing provider.
-            if !ctx.session.automatic_turns_allowed {
+            if !ctx.session.automatic_turns_allowed() {
                 ctx.session.restore_pending(remaining);
                 return;
             }
@@ -139,7 +134,12 @@ fn take_explicit_instructions(
         .session
         .drain_pending()
         .into_iter()
-        .partition(is_explicit);
+        .partition(|message| {
+            matches!(
+                work_of(message),
+                crate::domain::inference::services::turn_suspension::Work::Instruction(_)
+            )
+        });
     ctx.session.restore_pending(automatic.into_iter());
     if explicit.is_empty() {
         None
@@ -148,14 +148,20 @@ fn take_explicit_instructions(
     }
 }
 
-/// Human or parent intent (a prompt or a queued control), as opposed to
-/// harness-generated notes and nudges.
-fn is_explicit(message: &crate::interface::cli::uds_session::PendingMessage) -> bool {
+/// The work a queued message is (#1909): human or parent intent (a prompt
+/// or a queued control) is an admitted follow-up instruction; harness
+/// notes are automatic work. The domain decides what each may do.
+fn work_of(
+    message: &crate::interface::cli::uds_session::PendingMessage,
+) -> crate::domain::inference::services::turn_suspension::Work {
+    use crate::domain::inference::services::turn_suspension::Work;
     use crate::interface::cli::uds_session::PendingMessage;
-    matches!(
-        message,
-        PendingMessage::User { .. } | PendingMessage::Control { .. }
-    )
+    match message {
+        PendingMessage::User { .. } | PendingMessage::Control { .. } => Work::FOLLOW_UP,
+        PendingMessage::Automatic(_)
+        | PendingMessage::SubagentNotification { .. }
+        | PendingMessage::CoalescedSubagentNotification { .. } => Work::Automatic,
+    }
 }
 
 /// A second-stage dispatch acknowledgment must reflect actual retention.
@@ -164,16 +170,17 @@ pub(super) async fn queue_prompt(
     id: Option<&str>,
     type_name: &str,
     message: crate::interface::cli::uds_session::PromptBody,
-    steer: bool,
+    work: crate::domain::inference::services::turn_suspension::Work,
 ) -> bool {
-    let type_name = if steer { "steer" } else { type_name };
-    if steer {
+    use crate::domain::inference::services::turn_suspension::Work;
+    let type_name = if work.is_steer() { "steer" } else { type_name };
+    if work.is_steer() {
         ctx.turn_control.consume_steer();
     }
-    let retained = ctx.session.enqueue_control(id, type_name, message, steer);
-    match retained {
-        true => {}
-        false => ctx.turn_control.client_instruction_refused(),
+    let retained = ctx.session.enqueue_control(id, type_name, message, work);
+    // Only a client's instruction was counted as taken (#2467).
+    if let (false, Work::Instruction(_)) = (retained, work) {
+        ctx.turn_control.client_instruction_refused();
     }
     ctx.session.record_control(
         id,

@@ -549,7 +549,7 @@ pub(crate) use run_session::run_agent_session;
 
 #[path = "agent/startup_identity.rs"]
 mod startup_identity;
-use startup_identity::resolve_startup_identity;
+use startup_identity::{composed_loop_builders, resolve_startup_identity};
 
 fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -> i32 {
     // Early validation for user-supplied --socket paths: check length before
@@ -571,10 +571,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         return 1;
     };
 
-    // The interface never constructs a session store (#1970): the loop is
-    // composed over the builder `main` handed in.
-    let Some(sessions) = ctx.sessions else {
-        stderr.push_str("agent: sessions capability not composed\n");
+    let Some((sessions, automatic_turns)) = composed_loop_builders(ctx, stderr) else {
         return 1;
     };
 
@@ -685,6 +682,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         broadcast_tx,
         parent_control,
         teardown_graph: ctx.teardown_graph,
+        automatic_turns,
         environment_control: build.environment_control,
         extensions: build.extensions,
     });

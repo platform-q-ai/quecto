@@ -1006,6 +1006,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
             broadcast_tx: None,
             parent_control: None,
             teardown_graph: None,
+            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
             environment_control: None,
         })
     });

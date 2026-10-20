@@ -30,8 +30,12 @@ async fn a_drained_turn_is_persisted_when_it_ends() {
     let mut env = Env::with_unselected_workflow();
     {
         let mut ctx = env.ctx();
-        ctx.session
-            .enqueue_control(Some("p2"), "follow_up", "queued prompt".into(), false);
+        ctx.session.enqueue_control(
+            Some("p2"),
+            "follow_up",
+            "queued prompt".into(),
+            crate::domain::inference::services::turn_suspension::Work::FOLLOW_UP,
+        );
         drain_and_run_pending(&mut ctx).await;
         assert!(ctx.session.drain_pending().is_empty(), "the prompt ran");
     }

@@ -134,7 +134,7 @@ impl Fx {
                     crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
             }),
             messages: vec![Message::user("one"), Message::assistant("two", vec![])],
-            session: AgentSession::new("stub".into()),
+            session: AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new()),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
             store: Arc::new(FileSessionStore::new(

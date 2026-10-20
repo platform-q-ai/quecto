@@ -49,8 +49,12 @@ async fn an_ended_run_admits_explicit_instructions_but_a_plain_pause_admits_noth
         "worker ended".into(),
         crate::interface::cli::uds_session::NoteClass::Completion,
     );
-    ctx.session
-        .enqueue_control(Some("report"), "follow_up", "final report".into(), false);
+    ctx.session.enqueue_control(
+        Some("report"),
+        "follow_up",
+        "final report".into(),
+        crate::domain::inference::services::turn_suspension::Work::FOLLOW_UP,
+    );
     drain_and_run_pending(&mut ctx).await;
     assert_eq!(
         user_prompts(&ctx),
@@ -62,8 +66,12 @@ async fn an_ended_run_admits_explicit_instructions_but_a_plain_pause_admits_noth
             std::sync::Arc::new(Control(RunStatus::Paused)),
         )),
     );
-    ctx.session
-        .enqueue_control(Some("later"), "follow_up", "while paused".into(), false);
+    ctx.session.enqueue_control(
+        Some("later"),
+        "follow_up",
+        "while paused".into(),
+        crate::domain::inference::services::turn_suspension::Work::FOLLOW_UP,
+    );
     drain_and_run_pending(&mut ctx).await;
     assert_eq!(
         user_prompts(&ctx),
