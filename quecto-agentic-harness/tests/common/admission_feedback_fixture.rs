@@ -106,7 +106,20 @@ impl Leaf {
                     },
                     json!({"type":"response.failed","response":{"status":"failed","error":error}})
                 ),
-                format!("Responses stream response.failed: status=failed: type={kind}: {message}"),
+                // The class the failure's code (or, with none, its type)
+                // names on the Responses wire (Refs #2531): a billing code
+                // first, then a throttle, then a refused request.
+                format!(
+                    "{}Responses stream response.failed: status=failed: type={kind}: {message}",
+                    match (kind, code) {
+                        (_, Some("insufficient_quota")) => "provider stream failure (billing): ",
+                        (_, Some("rate_limit_exceeded")) =>
+                            "provider stream failure (rate limit): ",
+                        ("invalid_request_error", None) =>
+                            "provider stream failure (client error): ",
+                        _ => "",
+                    }
+                ),
             ),
             Self::Anthropic => (
                 format!(

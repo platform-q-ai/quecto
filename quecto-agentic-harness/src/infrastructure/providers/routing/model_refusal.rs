@@ -17,6 +17,7 @@ use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::inference::services::provider_error::model_refusal;
 use crate::domain::inference::value_objects::provider::{ModelRoute, StreamEvent, route_model};
 use crate::domain::shared::error::DomainError;
+use crate::infrastructure::providers::transport::sse_common::next_event;
 
 #[derive(Debug)]
 pub struct RefusalRecordingProvider {
@@ -158,18 +159,6 @@ impl LlmProvider for RefusalRecordingProvider {
 
 /// The relay's buffer: the providers' own stream channels hold 32 events.
 const RELAY_CAPACITY: usize = 32;
-
-/// The provider's next event, or `None` once either the provider or the
-/// caller has gone (as `codex_replay::next_event` relays).
-async fn next_event(
-    events: &mut tokio::sync::mpsc::Receiver<StreamEvent>,
-    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-) -> Option<StreamEvent> {
-    tokio::select! {
-        event = events.recv() => event,
-        () = tx.closed() => None,
-    }
-}
 
 /// Release the refusal of `reference`, if one is held: it was served.
 fn release(sink: &dyn ModelRefusalSink, reference: &ModelRef) {

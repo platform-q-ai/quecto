@@ -101,6 +101,14 @@ impl TokenExchange for Fakes {
             .push((provider, code.to_string(), verifier.to_string()));
         self.exchange.clone()
     }
+
+    fn refresh(
+        &self,
+        _provider: LoginProvider,
+        _refresh_token: &str,
+    ) -> Result<IssuedToken, TokenExchangeError> {
+        unreachable!("a browser login refreshes nothing")
+    }
 }
 
 impl CredentialStorePort for Fakes {

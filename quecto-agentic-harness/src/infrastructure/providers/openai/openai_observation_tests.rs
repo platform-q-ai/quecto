@@ -229,3 +229,28 @@ async fn an_error_chunk_of_either_shape_ends_an_admitted_stream_as_an_error() {
         assert_eq!(terminal, Some(TerminalEvent::Error));
     }
 }
+
+/// #2609 review: the chat wire reads a chunk's `error` object only. A
+/// Responses-nested throttle, or a root `error` event's code, beside an
+/// error object naming nothing it knows, fails an attempt without
+/// throttling it; the compatible vendors' names in the `error` object
+/// still throttle.
+#[test]
+fn a_chat_attempt_reads_its_error_object_only() {
+    for line in [
+        r#"data: {"error":{"message":"x"},"response":{"error":{"code":"rate_limit_exceeded"}}}"#,
+        r#"data: {"type":"error","code":"rate_limit_exceeded","error":{"message":"x"}}"#,
+    ] {
+        let seen = observed(profile(), &[line], None);
+        assert!(seen.failure, "{line}");
+        assert!(!seen.hinted, "{line}");
+        assert_eq!(seen.diagnostics.error_code, None, "{line}");
+    }
+    for line in [
+        r#"data: {"error":{"type":"overloaded_error"}}"#,
+        r#"data: {"error":{"type":"rate_limit_error"}}"#,
+        r#"data: {"error":{"code":"rate_limit_exceeded"}}"#,
+    ] {
+        assert!(observed(profile(), &[line], None).hinted, "{line}");
+    }
+}

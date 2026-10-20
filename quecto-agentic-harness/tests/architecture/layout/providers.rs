@@ -13,6 +13,7 @@ const FOLDERS: &[(&str, &[&str])] = &[
     (
         "anthropic",
         &[
+            "anthropic_input.rs",
             "anthropic_sse.rs",
             "anthropic_sse_handler.rs",
             "anthropic_user_msg.rs",
@@ -45,13 +46,13 @@ const FOLDERS: &[(&str, &[&str])] = &[
         "codex",
         &[
             "codex_input.rs",
+            "codex_input_prefix.rs",
             "codex_replay.rs",
             "codex_request.rs",
             "codex_sse_handler.rs",
             "codex_sse_state.rs",
             "codex_test_support.rs",
             "codex_wire.rs",
-            "input_prefix.rs",
             "mod.rs",
         ],
     ),
@@ -65,6 +66,7 @@ const FOLDERS: &[(&str, &[&str])] = &[
             "attempt_transport.rs",
             "attempt_transport_passive.rs",
             "diagnostic_sse.rs",
+            "input_prefix.rs",
             "mod.rs",
             "single_attempt_client.rs",
             "sse_common.rs",

@@ -79,6 +79,7 @@ const USE_CASES: &[&str] = &[
     "GcOrphanedEnvironments",
     "HarnessShutdownTransaction",
     "InitialiseStandardContainer",
+    "ImportExternalCredentials",
     "InspectAuthStatus",
     "InspectEffectiveConfiguration",
     "InspectAuthority",
