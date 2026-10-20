@@ -184,7 +184,14 @@ fn the_callback_carrying_the_state_returns_its_code() {
 #[test]
 fn a_callback_with_another_state_is_refused_and_waiting_goes_on() {
     let (received, answers) = receive_while(|attempt| {
+        // Only this attempt's listener answers its own path's wrong state
+        // "State mismatch"; any other answer is a stranger's on a reused
+        // port. Without it the accepting call is not made, so the listener
+        // times out having met a stranger and the attempt is repeated.
         let refused = attempt.call("code=forged&state=other");
+        if refused.as_deref() != Some(STATE_MISMATCH) {
+            return vec![refused];
+        }
         let accepted = attempt.call("code=fake-code&state={state}");
         vec![refused, accepted]
     });
