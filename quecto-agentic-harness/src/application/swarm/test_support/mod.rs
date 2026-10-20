@@ -656,31 +656,22 @@ fn count(members: &[MemberRow], wanted: impl Fn(&str) -> bool) -> i64 {
     .unwrap()
 }
 
-#[path = "board_test_support_tasks.rs"]
 mod tasks;
 
-#[path = "board_test_support_control.rs"]
 mod control;
 
-#[path = "board_test_support_evidence.rs"]
 mod evidence;
 
-#[path = "board_test_support_files.rs"]
 mod files;
 
-#[path = "board_test_support_messages.rs"]
 mod messages;
 
-#[path = "board_test_support_wakes.rs"]
 mod wakes;
 
-#[path = "board_test_support_loss.rs"]
 mod loss;
 
-#[path = "board_test_support_ids.rs"]
 mod ids;
 
-#[path = "board_test_support_reads.rs"]
 mod reads;
 
 /// Readings in order, then the last one forever.

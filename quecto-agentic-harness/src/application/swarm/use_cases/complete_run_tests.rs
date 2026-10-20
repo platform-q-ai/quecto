@@ -1,11 +1,11 @@
 use serde_json::{Value, json};
 
 use super::CompleteRun;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::{CompleteRunRequest, RevalidateTaskRequest};
+use crate::application::swarm::test_support::{
     BoardState, CompactEncoding, MemoryBoard, SteppingClock, StoredFile, accepted, member_row,
     running_board, stored_task,
 };
-use crate::application::swarm::dto::{CompleteRunRequest, RevalidateTaskRequest};
 use crate::application::swarm::use_cases::RevalidateTask;
 use crate::domain::swarm::{
     entities::records::RunState, events::telemetry::RefusalKind,

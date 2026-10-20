@@ -5,9 +5,9 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::OverRepository;
-use crate::application::swarm::board_read_models::summary;
 use crate::application::swarm::dto::{ReadRunSummaryRequest, RunSummary};
 use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
+use crate::application::swarm::services::board_read_models::summary;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

@@ -1,12 +1,12 @@
 use serde_json::{Value, json};
 
 use super::{Notice, notify_revoked, reopen};
-use crate::application::swarm::board_operation::atomic;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::ports::lifecycle::Clock;
+use crate::application::swarm::services::board_operation::atomic;
+use crate::application::swarm::test_support::{
     BoardState, CompactEncoding, MemoryBoard, StoredFile, StoredMessage, member_row, running_board,
     stored_task,
 };
-use crate::application::swarm::ports::lifecycle::Clock;
 
 /// A clock that always reads 7.
 struct FixedClock;

@@ -8,7 +8,7 @@
 //! (the `outside_edited_contract` divergence).
 use serde_json::{Map, Value};
 
-use super::dto::{EvidenceEntry, TaskRow};
+use super::super::dto::{EvidenceEntry, TaskRow};
 use crate::domain::swarm::{
     entities::records::{CriterionKind, EvidenceRow, TaskRecord, TaskState},
     services::validation::edited_criteria,
