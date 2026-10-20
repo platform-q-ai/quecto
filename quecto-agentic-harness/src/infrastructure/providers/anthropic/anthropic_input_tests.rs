@@ -115,3 +115,37 @@ fn an_unreadable_image_costs_the_most_an_image_can() {
     let block = json!({"type": "image", "source": {"type": "url", "url": "https://x"}});
     assert_eq!(super::image_tokens(&block), UNREADABLE_IMAGE_TOKENS);
 }
+
+/// #2628 review: what the request asks the model to do with its thinking
+/// and its output selects the cache as the system prompt does: a change in
+/// either leaves nothing of the head cached.
+#[test]
+fn a_changed_thinking_or_output_config_caches_nothing_before_the_conversation() {
+    let messages = json!([{"role": "user", "content": "go"}]);
+    for (field, before, after) in [
+        (
+            "thinking",
+            json!({"type": "enabled", "budget_tokens": 1024}),
+            json!({"type": "enabled", "budget_tokens": 2048}),
+        ),
+        (
+            "output_config",
+            json!({"effort": "low"}),
+            json!({"effort": "high"}),
+        ),
+    ] {
+        let mut first = body(messages.clone());
+        first[field] = before;
+        let mut second = body(messages.clone());
+        second[field] = after;
+        assert_eq!(
+            compare(&first, &second).unchanged_prefix_tokens_estimate,
+            0,
+            "{field}"
+        );
+        assert!(
+            compare(&first, &first).unchanged_prefix_tokens_estimate > 0,
+            "{field}"
+        );
+    }
+}

@@ -172,3 +172,78 @@ async fn a_refused_send_never_becomes_the_baseline() {
         assert_eq!(observed.first_changed_item, None, "{path:?}");
     }
 }
+
+/// A gate that never admits, and says when it was asked and when the pending
+/// acquire was dropped.
+#[derive(Debug, Default)]
+struct NeverAdmits {
+    asked: tokio::sync::Notify,
+    withdrawn: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Sets its flag when dropped: a pending acquire withdrawn.
+struct OnDrop(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for OnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl crate::application::admission::ports::inference_attempt::AttemptAdmission for NeverAdmits {
+    fn acquire(
+        &self,
+    ) -> crate::application::admission::ports::inference_attempt::AttemptAcquisition<'_> {
+        self.asked.notify_one();
+        let guard = OnDrop(self.withdrawn.clone());
+        Box::pin(async move {
+            let _guard = guard;
+            std::future::pending().await
+        })
+    }
+}
+
+/// #2436, #2628 review: a turn dropped while its streamed attempt waits for
+/// admission withdraws that attempt, also when the request is measured for
+/// the cache diagnostic, so no request goes out with no reader.
+#[tokio::test]
+async fn a_dropped_stream_withdraws_its_queued_attempt() {
+    let gate = Arc::new(NeverAdmits::default());
+    let client = crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
+        reqwest::Client::builder().no_proxy(),
+    )
+    .expect("a client");
+    let provider = AnthropicProvider::new("sk-ant-test".into(), Some("http://127.0.0.1:1".into()))
+        .with_attempt_admission(gate.clone(), client);
+    let baseline = InputBaseline::default();
+    let trace = Arc::new(RequestTrace::default());
+    trace.attach_input_baseline(baseline);
+    let messages = [Message::user("go")];
+    let request = ChatRequest {
+        trace: Some(trace),
+        admission: None,
+        messages: &messages,
+        tools: &[],
+        model: "claude-sonnet-4-5",
+        max_tokens: 100,
+        temperature: 0.0,
+        session_id: Some("s"),
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let events = provider.chat_stream_incremental(request).await;
+    tokio::time::timeout(std::time::Duration::from_secs(5), gate.asked.notified())
+        .await
+        .expect("the attempt asked for admission");
+    drop(events);
+    let withdrawn = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !gate.withdrawn.load(std::sync::atomic::Ordering::SeqCst) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(withdrawn.is_ok(), "the queued attempt was withdrawn");
+}
