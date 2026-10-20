@@ -1,6 +1,6 @@
 //! `admission-broker` administration paths over a real in-process authority.
 use super::*;
-use crate::composition::admission::start_authority;
+use crate::composition::admission::{build_authority_use_cases, start_authority};
 use crate::interface::cli::CliContext;
 
 fn ctx(dir: &std::path::Path) -> CliContext {
@@ -129,9 +129,7 @@ fn run_until_serves_then_stops_and_refuses_a_second_authority() {
     let dir = AuthorityDirectory::open(&authority).unwrap();
     let outcome = rt.block_on(async {
         let serve = run_until(
-            dir.clone(),
-            proposal.clone(),
-            false,
+            start(&dir, &proposal),
             async move {
                 let _ = stop_rx.await;
             },
@@ -151,15 +149,7 @@ fn run_until_serves_then_stops_and_refuses_a_second_authority() {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
             let (mut o2, mut e2) = (String::new(), String::new());
-            let busy = run_until(
-                dir.clone(),
-                proposal.clone(),
-                false,
-                async {},
-                &mut o2,
-                &mut e2,
-            )
-            .await;
+            let busy = run_until(start(&dir, &proposal), async {}, &mut o2, &mut e2).await;
             assert_eq!(busy, 3, "{e2}");
             assert!(e2.contains("another admission authority"), "{e2}");
             let _ = stop_tx.send(());
@@ -321,4 +311,34 @@ fn every_service_action_has_a_line_and_the_unit_config_path_is_absolute() {
     assert!(resolved.ends_with("relative/config.json"));
     let absolute = install_config_path(&ctx(temp.path()), &opts).unwrap();
     assert_eq!(absolute, temp.path().join("config.json"));
+}
+
+/// A broker start over `dir` with composition's durability use cases.
+fn start(dir: &AuthorityDirectory, proposal: &AdmissionRuntimeProposal) -> BrokerStart {
+    BrokerStart {
+        dir: dir.clone(),
+        proposal: proposal.clone(),
+        build_use_cases: build_authority_use_cases,
+        accept_missing_ledger: false,
+    }
+}
+
+/// A broker that cannot build its authority (#1910: the durability use
+/// cases come from the composed handles) refuses before it announces that
+/// it is serving.
+#[test]
+fn run_without_composed_handles_refuses_before_serving() {
+    let temp = tempfile::tempdir().unwrap();
+    let authority = temp.path().join("authority");
+    let config = ENABLED.replace("DIR", &format!("{:?}", authority.to_string_lossy()));
+    std::fs::write(temp.path().join("config.json"), config).unwrap();
+    let uncomposed = CliContext {
+        admission: None,
+        ..ctx(temp.path())
+    };
+    let (code, _, err) = run(&uncomposed, &["run"]);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("admission capability not composed"), "{err}");
+    assert!(!err.contains("serving authority directory"), "{err}");
+    assert!(!authority.exists(), "nothing was opened");
 }

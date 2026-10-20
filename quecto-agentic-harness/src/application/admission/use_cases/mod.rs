@@ -1,12 +1,23 @@
-//! Use cases of the admission operation capability (#2024 S3). Constructed
-//! only by `composition::admission`; the interface holds injected handles.
+//! Use cases of the admission capability (#2024 S3, #1910). Constructed only
+//! by `composition::admission`; the interface holds the operation handles and
+//! the authority server holds the running authority's use cases, all
+//! injected.
 
+pub mod advance_authority_epoch;
+pub mod checkpoint_ledger;
+pub mod complete_admission;
+pub mod dispatch_admissions;
+mod durable_ledger;
 pub mod inspect_authority;
 pub mod install_authority_service;
 pub mod negotiate_authority;
 pub mod reset_authority;
 pub mod uninstall_authority_service;
 
+pub use advance_authority_epoch::AdvanceAuthorityEpoch;
+pub use checkpoint_ledger::CheckpointLedger;
+pub use complete_admission::CompleteAdmission;
+pub use dispatch_admissions::DispatchAdmissions;
 pub use inspect_authority::InspectAuthority;
 pub use install_authority_service::InstallAuthorityService;
 pub use negotiate_authority::NegotiateAuthority;
