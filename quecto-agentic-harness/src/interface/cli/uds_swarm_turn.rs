@@ -105,6 +105,23 @@ impl TurnControl {
         });
         first
     }
+    /// Fold `generation` into a pending wake message, if one is pending:
+    /// returns whether it did. An empty slot is left empty, so a wake the
+    /// full channel cannot carry never occupies (or later clears) the slot
+    /// (#2626 review round 5).
+    pub fn join_pending_swarm_wake(&self, generation: u64) -> bool {
+        let mut pending = self
+            .pending_swarm_wake
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match *pending {
+            Some((seen, source)) => {
+                *pending = Some((seen.max(generation), source));
+                true
+            }
+            None => false,
+        }
+    }
     /// Release the pending wake slot a wake could not be sent for (a full
     /// or closed channel), keeping any deferred generation for the next
     /// wake (#2626 review round 4): only the slot is cleared.

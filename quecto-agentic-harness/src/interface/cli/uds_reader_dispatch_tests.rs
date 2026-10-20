@@ -543,11 +543,12 @@ async fn a_wake_without_a_generation_nudges_nothing() {
 #[path = "uds_reader_dispatch_image_tests.rs"]
 mod image_tests;
 
-/// #2626 review round 4 (#2531): a wake the full command channel cannot
-/// carry releases only its own slot; a deferred outside wake's generation
-/// is kept for the next wake, not wiped.
-#[tokio::test]
-async fn a_wake_refused_on_a_full_channel_keeps_a_deferred_wake() {
+/// Dispatch `line` with a full command channel over `turn_control`;
+/// returns the reply.
+async fn dispatched_on_a_full_channel(
+    turn_control: &super::super::uds_cancel::TurnControl,
+    line: &str,
+) -> serde_json::Value {
     let registry = super::super::uds_ext_protocol::new_client_tool_registry();
     let (writer, mut replies) = tokio::sync::mpsc::channel(4);
     super::super::uds_ext_protocol::register_client_writer(&registry, 1, writer);
@@ -560,14 +561,10 @@ async fn a_wake_refused_on_a_full_channel_keeps_a_deferred_wake() {
     let cancel = std::sync::Arc::new(std::sync::Mutex::new(
         super::super::uds_cancel::CancelSlot::Idle,
     ));
-    let turn_control = super::super::uds_cancel::TurnControl::with_swarm_control(Some(
-        std::sync::Arc::new(WatchedControl::default()),
-    ));
-    turn_control.defer_swarm_wake(41);
     dispatch(ReaderDispatchCtx {
-        line: r#"{"type":"swarm_control","action":"wake","generation":3,"id":"wake-1"}"#.into(),
+        line: line.into(),
         cancel_handle: &cancel,
-        turn_control: &turn_control,
+        turn_control,
         session: &session,
         registry: &registry,
         subagent_registry: &None,
@@ -576,17 +573,93 @@ async fn a_wake_refused_on_a_full_channel_keeps_a_deferred_wake() {
         cmd_tx: &commands,
     })
     .await;
-    let reply: serde_json::Value = serde_json::from_str(
-        &tokio::time::timeout(std::time::Duration::from_secs(2), replies.recv())
-            .await
-            .expect("a reply")
-            .expect("a reply line"),
+    let reply = tokio::time::timeout(std::time::Duration::from_secs(2), replies.recv())
+        .await
+        .expect("a reply")
+        .expect("a reply line");
+    serde_json::from_str(&reply).unwrap()
+}
+
+fn watched_turn_control() -> super::super::uds_cancel::TurnControl {
+    super::super::uds_cancel::TurnControl::with_swarm_control(Some(std::sync::Arc::new(
+        WatchedControl::default(),
+    )))
+}
+
+/// #2626 review round 4 (#2531): a wake the full command channel cannot
+/// carry leaves the slot alone; a deferred outside wake's generation is
+/// kept for the next wake, not wiped.
+#[tokio::test]
+async fn a_wake_refused_on_a_full_channel_keeps_a_deferred_wake() {
+    let turn_control = watched_turn_control();
+    turn_control.defer_swarm_wake(41);
+    let reply = dispatched_on_a_full_channel(
+        &turn_control,
+        r#"{"type":"swarm_control","action":"wake","generation":3,"id":"wake-1"}"#,
     )
-    .unwrap();
+    .await;
     assert_eq!(reply["success"], false, "the queue was full: {reply}");
     assert_eq!(
         turn_control.take_swarm_wake(0),
         41,
         "the deferred wake is kept"
+    );
+}
+
+/// #2626 review round 5: a resume's own self-wake on a full channel keeps
+/// a deferred outside wake too.
+#[tokio::test]
+async fn a_resume_self_wake_refused_on_a_full_channel_keeps_a_deferred_wake() {
+    let turn_control = watched_turn_control();
+    turn_control.defer_swarm_wake(41);
+    let reply = dispatched_on_a_full_channel(
+        &turn_control,
+        r#"{"type":"swarm_control","action":"resume","id":"resume-1"}"#,
+    )
+    .await;
+    assert!(
+        reply["data"]["warning"]
+            .as_str()
+            .is_some_and(|warning| warning.contains("self-wake queue full")),
+        "{reply}"
+    );
+    assert_eq!(
+        turn_control.take_swarm_wake(0),
+        41,
+        "the deferred wake is kept"
+    );
+}
+
+/// #2626 review round 5: on a full channel a wake rides a pending wake
+/// message (its generation folds in, the message's source is kept) and is
+/// refused when none is pending, without ever occupying the slot.
+#[tokio::test]
+async fn a_full_channel_wake_rides_a_pending_message_or_leaves_the_slot_empty() {
+    let turn_control = watched_turn_control();
+    let reply = dispatched_on_a_full_channel(
+        &turn_control,
+        r#"{"type":"swarm_control","action":"wake","generation":3,"id":"wake-1"}"#,
+    )
+    .await;
+    assert_eq!(reply["success"], false, "{reply}");
+    assert_eq!(
+        turn_control.take_swarm_wake_from(0),
+        (0, None),
+        "slot never occupied"
+    );
+    assert!(
+        turn_control.queue_swarm_wake(2),
+        "a rider's own pending message"
+    );
+    let reply = dispatched_on_a_full_channel(
+        &turn_control,
+        r#"{"type":"swarm_control","action":"wake","generation":9,"id":"wake-2"}"#,
+    )
+    .await;
+    assert_eq!(reply["data"]["status"], "coalesced", "{reply}");
+    assert_eq!(
+        turn_control.take_swarm_wake_from(0),
+        (9, None),
+        "the rider kept, folded"
     );
 }

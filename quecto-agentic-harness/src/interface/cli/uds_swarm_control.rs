@@ -137,20 +137,21 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
             }
             (Some(generation), Some(_), Err(tokio::sync::mpsc::error::TrySendError::Full(_))) => {
                 // A wake message is already pending only when the coalescing
-                // slot was occupied: then this generation rides that message.
-                // If the slot was empty nothing would drain it, so refuse.
-                if ctx.turn_control.queue_swarm_wake(generation) {
-                    ctx.turn_control.release_swarm_wake();
-                    super::protocol::AgentEvent::err(
-                        id.as_deref(),
-                        "swarm_control",
-                        "wake queue full; the durable inbox remains authoritative",
-                    )
-                } else {
+                // slot is occupied: then this generation rides that message.
+                // If the slot is empty nothing would drain it, so refuse. The
+                // join and the check are one step under the slot's lock, so
+                // a refused wake never touches a concurrent rider (#2626).
+                if ctx.turn_control.join_pending_swarm_wake(generation) {
                     super::protocol::AgentEvent::ok(
                         id.as_deref(),
                         "swarm_control",
                         Some(serde_json::json!({"status":"coalesced"})),
+                    )
+                } else {
+                    super::protocol::AgentEvent::err(
+                        id.as_deref(),
+                        "swarm_control",
+                        "wake queue full; the durable inbox remains authoritative",
                     )
                 }
             }
@@ -246,11 +247,13 @@ fn self_wake(ctx: &ReaderDispatchCtx<'_>, generation: u64) -> Option<String> {
             None
         }
         Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {
-            if ctx.turn_control.queue_swarm_wake(generation) {
-                ctx.turn_control.release_swarm_wake();
-                Some("self-wake queue full; suspended members re-arm on their next wake".into())
-            } else {
-                None
+            // Rides a pending wake message, or is refused without touching
+            // the slot (one step under its lock, #2626).
+            match ctx.turn_control.join_pending_swarm_wake(generation) {
+                true => None,
+                false => {
+                    Some("self-wake queue full; suspended members re-arm on their next wake".into())
+                }
             }
         }
         Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {
@@ -300,13 +303,16 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
         // the newer suspension's self-wake now.
         Some(_) => {
             ctx.turn_control.defer_swarm_wake(generation);
-            keep_self_waking(ctx);
-            let event = AgentEvent::ok(
-                None,
-                SWARM_WAKE,
-                Some(serde_json::json!({"status": "handed_over", "generation": generation})),
-            );
-            emit_event_to_broadcast_or_writer(ctx, &event).await;
+            // Reported only when a newer self-wake was scheduled (a newer
+            // terminal suspension or store rejection takes none).
+            if keep_self_waking(ctx) {
+                let event = AgentEvent::ok(
+                    None,
+                    SWARM_WAKE,
+                    Some(serde_json::json!({"status": "handed_over", "generation": generation})),
+                );
+                emit_event_to_broadcast_or_writer(ctx, &event).await;
+            }
             return false;
         }
     }
@@ -491,15 +497,17 @@ pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'
 /// recoverable failure suspended it, or a re-arm owes the run a turn a
 /// locked store kept it from taking (#2626 review). Tagged with the
 /// suspension it is for, so it goes stale when a newer one begins.
-fn keep_self_waking(ctx: &mut super::uds::DispatchCtx<'_>) {
+/// Returns whether one was scheduled.
+fn keep_self_waking(ctx: &mut super::uds::DispatchCtx<'_>) -> bool {
     let turns = ctx.session.automatic_turns();
     let needed = turns.needs_self_wake() || turns.owes_turn();
     let epoch = turns.suspension_epoch();
-    if needed && ctx.turn_control.swarm_control.is_some() {
-        ctx.turn_control.schedule_self_wake(
+    match (needed, ctx.turn_control.swarm_control.is_some()) {
+        (true, true) => ctx.turn_control.schedule_self_wake(
             crate::domain::inference::services::turn_suspension::RECOVERABLE_SELF_WAKE_DELAY,
             epoch,
-        );
+        ),
+        (true, false) | (false, _) => false,
     }
 }
 

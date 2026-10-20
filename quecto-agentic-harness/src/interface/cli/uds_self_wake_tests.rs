@@ -271,6 +271,45 @@ async fn a_hand_over_is_reported() {
     );
 }
 
+/// #2626 review round 5: a stale self-wake whose newer suspension takes no
+/// self-wake (a terminal failure) schedules nothing and so reports no
+/// hand-over.
+#[tokio::test(start_paused = true)]
+async fn a_stale_self_wake_with_nothing_to_hand_over_reports_none() {
+    let mut env = Env::with_unselected_workflow();
+    let (mut ctx, _waker, mut wakes) = suspended_over(&mut env, Arc::new(Claimed));
+    let (sender, mut events) = tokio::sync::broadcast::channel(64);
+    ctx.broadcast_tx = Some(sender);
+    let older = ctx.session.automatic_turns().suspension_epoch();
+    assert!(
+        ctx.turn_control
+            .schedule_self_wake(std::time::Duration::ZERO, older)
+    );
+    ctx.session.automatic_turns().suspend_after_failure(
+        &crate::domain::shared::error::DomainError::Provider(
+            "provider error (401): invalid credentials".into(),
+        ),
+    );
+    let generation = self_wake_within(&mut wakes, RECOVERABLE_SELF_WAKE_DELAY)
+        .await
+        .expect("the older self-wake");
+    handle_wake(&mut ctx, generation).await;
+    let mut statuses = Vec::new();
+    while let Ok(line) = events.try_recv() {
+        let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+        statuses.push(event["data"]["status"].clone());
+    }
+    assert!(
+        !statuses.contains(&serde_json::json!("handed_over")),
+        "{statuses:?}"
+    );
+    assert_eq!(
+        self_wake_within(&mut wakes, RECOVERABLE_SELF_WAKE_DELAY * 2).await,
+        None,
+        "nothing was scheduled"
+    );
+}
+
 /// A paused run takes no turn: its wake leaves a recoverable failure
 /// suspended, spending none of the bound, and says nothing re-armed.
 #[tokio::test]
