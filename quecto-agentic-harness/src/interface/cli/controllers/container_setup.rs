@@ -10,13 +10,13 @@
 
 use std::path::PathBuf;
 
-use super::CliContext;
 use crate::application::configuration::dto::ConfigSelection;
 use crate::application::environments::dto::{
     AssetState, CheckStatus, ContainerConfigLayer, EntryValueChange, RepositoryOrigin,
     StandardContainerReport, StandardContainerRequest, StandardContainerStatus, StandardDefault,
 };
 use crate::domain::shared::redaction::redact_url_userinfo;
+use crate::interface::cli::CliContext;
 
 const INIT_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\n";
 const STATUS_USAGE: &str = "usage: quecto container status [--project <abs dir>]\n";

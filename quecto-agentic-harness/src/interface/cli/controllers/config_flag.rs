@@ -20,7 +20,9 @@ fn scanned(args: &[String]) -> &[String] {
 /// Extract `--config <path>` from args (consumed globally).
 /// Skips values of flags that take arguments (e.g. `-m`, `--system`) to avoid
 /// misinterpreting message text like `-m "--config"` as the flag.
-pub(super) fn extract_config_flag(args: &[String]) -> Result<Option<PathBuf>, String> {
+pub(in crate::interface::cli) fn extract_config_flag(
+    args: &[String],
+) -> Result<Option<PathBuf>, String> {
     let args = scanned(args);
     /// Flags that consume the next arg as a value (skip their value during scan).
     const VALUE_FLAGS: &[&str] = &[
@@ -54,7 +56,7 @@ pub(super) fn extract_config_flag(args: &[String]) -> Result<Option<PathBuf>, St
     Ok(None)
 }
 
-pub(super) fn strip_global_config_flag(args: &[String]) -> Vec<String> {
+pub(in crate::interface::cli) fn strip_global_config_flag(args: &[String]) -> Vec<String> {
     let (args, rest) = args.split_at(scanned(args).len());
     const VALUE_FLAGS: &[&str] = &[
         "-m",

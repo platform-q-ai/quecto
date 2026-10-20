@@ -5,23 +5,16 @@ pub mod auth;
 pub mod board;
 pub mod catalogue_handles;
 pub mod claude_member;
-mod commands;
-mod config_cmd;
-mod config_flag;
 mod config_loading;
 pub mod configuration_handles;
-mod container;
 pub mod container_config_handles;
 pub mod container_handles;
-mod container_inventory;
-mod container_setup;
-pub use container::{
+mod controllers;
+pub use controllers::container::{
     ContainerDoctorBuilder, ContainerInitBuilder, ContainerInventoryBuilder,
     ContainerStatusBuilder, EnvironmentRegistryBuilder,
 };
-mod help;
 mod launch_rollback_wait;
-mod models;
 pub mod protocol;
 pub mod uds;
 mod uds_admission_projection;
@@ -103,7 +96,7 @@ pub mod uds_wire;
 mod uds_workflow_nudge;
 
 use crate::application::configuration::dto::{ConfigSelection, ConfigSelectionRequest};
-use config_flag::{extract_config_flag, strip_global_config_flag};
+use controllers::config_flag::{extract_config_flag, strip_global_config_flag};
 use std::path::PathBuf;
 
 // Re-export shared functions for backward compatibility.
@@ -587,26 +580,30 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
     let exit_code = {
         match args[1].as_str() {
             "agent" => agent::cmd_agent(ctx, &args[2..], &mut stdout, &mut stderr),
-            "status" => commands::cmd_status(ctx, &mut stdout, &mut stderr),
-            "config" => config_cmd::cmd_config(ctx, &args[2..], &mut stdout, &mut stderr),
+            "status" => controllers::commands::cmd_status(ctx, &mut stdout, &mut stderr),
+            "config" => {
+                controllers::config_cmd::cmd_config(ctx, &args[2..], &mut stdout, &mut stderr)
+            }
             "auth" => auth::cmd_auth(ctx, &args[2..], &mut stdout, &mut stderr),
-            "models" => models::cmd_models(ctx, &args[2..], &mut stdout, &mut stderr),
+            "models" => controllers::models::cmd_models(ctx, &args[2..], &mut stdout, &mut stderr),
             "admission-broker" => {
                 admission_broker::cmd_admission_broker(ctx, &args[2..], &mut stdout, &mut stderr)
             }
-            "container" => container::cmd_container(ctx, &args[2..], &mut stdout, &mut stderr),
+            "container" => {
+                controllers::container::cmd_container(ctx, &args[2..], &mut stdout, &mut stderr)
+            }
             "board" => board::cmd_board(ctx, &args[2..], &mut stdout, &mut stderr),
             "help" | "--help" | "-h" => {
-                help::help_text(&mut stdout);
+                controllers::help::help_text(&mut stdout);
                 0
             }
             "version" | "--version" | "-v" => {
-                help::version_text(&mut stdout);
+                controllers::help::version_text(&mut stdout);
                 0
             }
             other => {
                 stderr.push_str(&format!("Unknown command: {other}\n"));
-                help::help_text(&mut stdout);
+                controllers::help::help_text(&mut stdout);
                 1
             }
         }
@@ -669,8 +666,10 @@ fn run_repl_command(
         Some("auth") => {
             auth::cmd_auth_with_reader(ctx, &args[1..], &mut stdout, &mut stderr, reader)
         }
-        Some("status") => commands::cmd_status(ctx, &mut stdout, &mut stderr),
-        Some("models") => models::cmd_models(ctx, &args[1..], &mut stdout, &mut stderr),
+        Some("status") => controllers::commands::cmd_status(ctx, &mut stdout, &mut stderr),
+        Some("models") => {
+            controllers::models::cmd_models(ctx, &args[1..], &mut stdout, &mut stderr)
+        }
         _ => 1,
     };
     (stdout, stderr, code)

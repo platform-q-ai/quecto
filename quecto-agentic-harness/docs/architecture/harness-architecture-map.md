@@ -145,7 +145,7 @@ effective config) and `ContainerRuntimePreflight` (adapted in
 config's create argv with `--preflight-only` and parses its
 status/check/detail/remedy lines — the checks live in the script, one list
 for the create and the doctor). `composition/environments.rs` builds the
-doctor; `interface/cli/container.rs` parses, invokes it and presents.
+doctor; `interface/cli/controllers/container.rs` parses, invokes it and presents.
 
 The standard container is landed (#2024 S4e). `quecto container init` is
 the environments capability's
@@ -167,7 +167,7 @@ materialised scripts, `--state-dir`, `--repo`, `--image`) and the default
 rule (only when the effective set — read through `ContainerConfigRoster`
 — has no other default). `quecto container status` is
 `use_cases/container_status.rs` over the asset store, the roster, the
-S4b lookup and preflight. `interface/cli/container_setup.rs` parses,
+S4b lookup and preflight. `interface/cli/controllers/container_setup.rs` parses,
 invokes and presents; the CLI context carries the builders `main` hands
 in.
 
@@ -203,7 +203,7 @@ runtime; the scripts list and remove. `composition/environments.rs`
 `CliComposition.environment_registry`, seeded for a top-level session,
 journal-only for a spawned child) and `build_container_inventory` (the
 `ContainerInventoryHandles` the interface declares in
-`interface/cli/container_handles.rs`); `interface/cli/container_inventory.rs`
+`interface/cli/container_handles.rs`); `interface/cli/controllers/container_inventory.rs`
 parses `container ls|kill|gc` and presents. `agent_cmd get_containers`
 asks `ListEnvironmentsQuery::listing` for a bounded listing (#2220:
 joinable plus own by default, `all` for every record, ref-number order,
@@ -397,8 +397,8 @@ base file, and the trust record while the overlay exists
 including the `realize` document → `Config` handle) `main` hands the CLI
 through `CliComposition.configuration`, and the loader for reloads (which
 watches the trust record only when an overlay existed at seed time); the
-interface (`src/interface/cli/{config_cmd.rs, config_loading.rs,
-commands.rs}`) parses `quecto config get|set|trust`, loads through the
+interface (`src/interface/cli/controllers/{config_cmd.rs, commands.rs}`
+and `src/interface/cli/config_loading.rs`) parses `quecto config get|set|trust`, loads through the
 handles and presents the layer report in `quecto status`.
 
 ## Admission operation: one host-wide broker, agent-operable

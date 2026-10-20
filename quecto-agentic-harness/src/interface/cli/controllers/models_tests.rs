@@ -281,7 +281,7 @@ fn cli_models_adapter_owns_no_discovery_mechanics() {
     ] {
         assert!(
             !source.contains(forbidden),
-            "interface/cli/models.rs must not mention '{forbidden}': discovery \
+            "interface/cli/controllers/models.rs must not mention '{forbidden}': discovery \
              mechanics belong to infrastructure behind the refresh use case"
         );
     }
