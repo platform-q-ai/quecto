@@ -107,6 +107,7 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("application/catalogue", &["use_cases", "ports", "dto", "services"]),
     Capability("application/configuration", &["use_cases", "ports", "dto", "services"]),
     Capability("application/admission", &["use_cases", "ports", "dto", "services"]),
+    Capability("application/environments", &["use_cases", "ports", "dto"]),
     Capability("application/subagents", &["use_cases", "ports", "dto"]),
     Capability(
         "application/swarm",
