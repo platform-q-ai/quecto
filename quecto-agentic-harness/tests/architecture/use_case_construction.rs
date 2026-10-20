@@ -854,7 +854,7 @@ fn path_string(path: &syn::Path) -> String {
 
 /// Every rename (`… as Y`, any visibility, grouped or not, multiline or
 /// not) and `type Y = …::X` alias of a parsed file, alias → target.
-pub(super) fn syn_aliases_of(file: &syn::File) -> BTreeMap<String, String> {
+fn syn_aliases_of(file: &syn::File) -> BTreeMap<String, String> {
     use syn::visit::Visit;
     struct Aliases(BTreeMap<String, String>);
     impl<'ast> Visit<'ast> for Aliases {

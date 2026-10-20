@@ -2,18 +2,33 @@
 //!
 //! The start functions are `pub(crate)`, so the compiler refuses a start
 //! from outside the crate. Inside it, this parse-based scan resolves every
-//! path through the crate's aliases (`use … as S`, `pub use … as Broker`,
-//! `type S = …`) and qualified-self paths (`<AuthorityServer>::start`), so
-//! only the server itself, composition and the broker's run path start one.
-//! The test-support start functions in composition stay behind their gate.
+//! path through every alias the crate and the file declare (`use … as S`,
+//! `pub use … as Broker`, `type S = …`; a name aliased twice keeps both
+//! targets) and qualified-self paths (`<AuthorityServer>::start`), and reads
+//! the tokens of every macro invocation and `macro_rules!` body, so only the
+//! server itself, composition and the broker's run path name a server item
+//! other than its known non-starting ones. A plain substring needle backs
+//! the parse up, fail-closed. The test-support start functions in
+//! composition stay behind their gate.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use proc_macro2::{TokenStream, TokenTree};
+
 use super::teardown_authority::walk;
-use super::use_case_construction::{crate_raw_aliases, ident_name, syn_aliases_of};
+use super::use_case_construction::{crate_raw_aliases, ident_name};
 
 const SERVER: &str = "AuthorityServer";
+
+/// The server's items that start nothing: anything else named through the
+/// server outside `STARTERS` counts as a start (an allowlist, so a new start
+/// variant is caught without being listed).
+const NON_STARTING: &[&str] = &["directory", "shutdown"];
+
+/// The scan's own fixtures spell starts in string literals; the parse never
+/// reads a literal as a path, but the substring backstop would.
+const BACKSTOP_EXEMPT: &[&str] = &["tests/architecture/authority_starts.rs"];
 
 /// The files that may start an authority server: its own module, composition
 /// and the `admission-broker run` path.
@@ -24,7 +39,7 @@ const STARTERS: &[&str] = &[
 ];
 
 struct Starts<'a> {
-    aliases: &'a BTreeMap<String, String>,
+    aliases: &'a BTreeMap<String, BTreeSet<String>>,
     impl_types: Vec<String>,
     found: Vec<String>,
 }
@@ -33,20 +48,23 @@ impl Starts<'_> {
     /// Whether `ident` (or `Self` in the enclosing impl) names the server,
     /// through any chain of aliases.
     fn names_server(&self, ident: &str) -> bool {
-        let mut current = match ident {
+        let start = match ident {
             "Self" => match self.impl_types.last() {
                 Some(ty) => ty.clone(),
                 None => return false,
             },
             other => other.to_string(),
         };
-        for _ in 0..=self.aliases.len() {
-            if current == SERVER {
+        // Every chain of aliases from the name, not just one: a name two
+        // aliases share is the server if either reaches it.
+        let mut seen = BTreeSet::new();
+        let mut pending = vec![start];
+        while let Some(name) = pending.pop() {
+            if name == SERVER {
                 return true;
             }
-            match self.aliases.get(&current) {
-                Some(next) if *next != current => current = next.clone(),
-                _ => return false,
+            if seen.insert(name.clone()) {
+                pending.extend(self.aliases.get(&name).into_iter().flatten().cloned());
             }
         }
         false
@@ -92,7 +110,7 @@ impl<'ast> syn::visit::Visit<'ast> for Starts<'_> {
             .map(|segment| ident_name(&segment.ident))
             .collect();
         if let Some(last) = segments.last()
-            && last.starts_with("start")
+            && !NON_STARTING.contains(&last.as_str())
         {
             let owner = match &expr.qself {
                 Some(qself) => self.type_names_server(&qself.ty),
@@ -107,6 +125,92 @@ impl<'ast> syn::visit::Visit<'ast> for Starts<'_> {
         }
         syn::visit::visit_expr_path(self, expr);
     }
+
+    /// A macro's arguments (and a `macro_rules!` body) are tokens the syntax
+    /// visitor does not walk: read them for `<server> :: <item>`.
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        let mut tokens = Vec::new();
+        flatten(mac.tokens.clone(), &mut tokens);
+        for window in tokens.windows(4) {
+            if let [
+                TokenTree::Ident(owner),
+                TokenTree::Punct(first),
+                TokenTree::Punct(second),
+                TokenTree::Ident(item),
+            ] = window
+                && first.as_char() == ':'
+                && second.as_char() == ':'
+                && self.names_server(&ident_name(owner))
+                && !NON_STARTING.contains(&ident_name(item).as_str())
+            {
+                self.found.push(format!("{owner}::{item} (in a macro)"));
+            }
+        }
+        syn::visit::visit_macro(self, mac);
+    }
+}
+
+/// Every token of `stream`, groups opened, in order.
+fn flatten(stream: TokenStream, out: &mut Vec<TokenTree>) {
+    for tree in stream {
+        match tree {
+            TokenTree::Group(group) => flatten(group.stream(), out),
+            other => out.push(other),
+        }
+    }
+}
+
+/// Every rename (`… as Y`) and `type Y = …::X` of a parsed file, each pair
+/// kept: a name renamed twice keeps both targets.
+fn alias_pairs(file: &syn::File) -> Vec<(String, String)> {
+    use syn::visit::Visit;
+    struct Pairs(Vec<(String, String)>);
+    impl<'ast> Visit<'ast> for Pairs {
+        fn visit_use_rename(&mut self, item: &'ast syn::UseRename) {
+            self.0
+                .push((ident_name(&item.rename), ident_name(&item.ident)));
+        }
+        fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
+            if let syn::Type::Path(ty) = &*item.ty
+                && let Some(last) = ty.path.segments.last()
+            {
+                self.0
+                    .push((ident_name(&item.ident), ident_name(&last.ident)));
+            }
+            syn::visit::visit_item_type(self, item);
+        }
+    }
+    let mut pairs = Pairs(Vec::new());
+    pairs.visit_file(file);
+    pairs.0
+}
+
+/// Every alias the crate declares, with every target a name has.
+fn crate_aliases() -> BTreeMap<String, BTreeSet<String>> {
+    let mut aliases: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (alias, target) in crate_raw_aliases() {
+        aliases
+            .entry(alias.clone())
+            .or_default()
+            .insert(target.clone());
+    }
+    let mut files = Vec::new();
+    walk(Path::new("src"), &mut files);
+    walk(Path::new("tests"), &mut files);
+    for file in files {
+        if let Ok(parsed) = syn::parse_file(&std::fs::read_to_string(&file).unwrap()) {
+            for (alias, target) in alias_pairs(&parsed) {
+                aliases.entry(alias).or_default().insert(target);
+            }
+        }
+    }
+    aliases
+}
+
+fn crate_aliases_cached() -> &'static BTreeMap<String, BTreeSet<String>> {
+    use std::sync::OnceLock;
+    static ALIASES: OnceLock<BTreeMap<String, BTreeSet<String>>> = OnceLock::new();
+    ALIASES.get_or_init(crate_aliases)
 }
 
 /// Every start of an authority server `source` spells, resolved through the
@@ -122,8 +226,10 @@ fn starts_in(source: &str) -> Vec<String> {
             Vec::new()
         };
     };
-    let mut aliases = crate_raw_aliases().clone();
-    aliases.extend(syn_aliases_of(&file));
+    let mut aliases = crate_aliases_cached().clone();
+    for (alias, target) in alias_pairs(&file) {
+        aliases.entry(alias).or_default().insert(target);
+    }
     let mut scan = Starts {
         aliases: &aliases,
         impl_types: Vec::new(),
@@ -131,6 +237,20 @@ fn starts_in(source: &str) -> Vec<String> {
     };
     scan.visit_file(&file);
     scan.found
+}
+
+/// What a file outside `STARTERS` is refused for: every start the parse
+/// finds, and, fail-closed, the spelling `AuthorityServer::start` anywhere in
+/// its text (a comment, a string, tokens the parse could not read).
+fn outside_starts(file: &str, source: &str) -> Vec<String> {
+    let mut found: Vec<String> = starts_in(source)
+        .into_iter()
+        .map(|start| format!("{file}: {start}"))
+        .collect();
+    if !BACKSTOP_EXEMPT.contains(&file) && source.contains(concat!("AuthorityServer", "::start")) {
+        found.push(format!("{file}: names `AuthorityServer::start…`"));
+    }
+    found
 }
 
 /// Every authority server, in production or under test, is started the way
@@ -145,11 +265,11 @@ fn only_composition_and_the_broker_start_an_authority_server() {
     let mut outside = Vec::new();
     let mut allowed = 0usize;
     for file in files {
-        let found = starts_in(&std::fs::read_to_string(&file).unwrap());
+        let source = std::fs::read_to_string(&file).unwrap();
         if STARTERS.contains(&file.as_str()) {
-            allowed += found.len();
+            allowed += starts_in(&source).len();
         } else {
-            outside.extend(found.into_iter().map(|start| format!("{file}: {start}")));
+            outside.extend(outside_starts(&file, &source));
         }
     }
     assert!(
@@ -175,6 +295,17 @@ fn the_start_scan_resolves_aliases_and_qualified_self() {
         "impl AuthorityServer { fn again() { Self::start(d, p); } }",
         "fn f() { let start = AuthorityServer::start; }",
         "fn f() { r#AuthorityServer::start(d, p); }",
+        // Inside a macro's arguments (#2622 review round 3).
+        "fn f() { assert!(std::mem::size_of_val(&crate::infrastructure::admission::AuthorityServer::start) == 0); }",
+        "async fn f() { assert!(AuthorityServer::start(d, p).await.is_ok()); }",
+        "async fn f() { assert!(matches!(AuthorityServer::start(d, p).await, Err(_))); }",
+        "async fn f() { tokio::select! { _ = AuthorityServer::start(d, p) => {} } }",
+        "macro_rules! go { () => { AuthorityServer::start(d, p) }; }",
+        // A start variant nobody listed is still a start.
+        "fn f() { AuthorityServer::begin(d, p); }",
+        // A name aliased twice: either target may be the server.
+        "use crate::infrastructure::admission::AuthorityServer as S;\nuse crate::other::Thing as S;\nfn f() { S::start(d, p); }",
+        "use crate::other::Thing as S;\nuse crate::infrastructure::admission::AuthorityServer as S;\nfn f() { S::start(d, p); }",
     ];
     for source in caught {
         assert!(!starts_in(source).is_empty(), "must catch:\n{source}");
@@ -183,6 +314,9 @@ fn the_start_scan_resolves_aliases_and_qualified_self() {
         "fn f() { Other::start(d, p); }",
         "fn f(s: &AuthorityServer) { s.directory(); }",
         "fn f() { AuthorityServer::directory(s); }",
+        "fn f() { AuthorityServer::shutdown(s); }",
+        "fn f() { assert!(Other::start(d, p).is_ok()); }",
+        "fn f() { assert_eq!(AuthorityServer::directory(s), d); }",
         "impl Other { fn again() { Self::start(d, p); } }",
         "fn f() { start_authority(d, p); }",
     ];
@@ -190,6 +324,23 @@ fn the_start_scan_resolves_aliases_and_qualified_self() {
         let found = starts_in(source);
         assert!(found.is_empty(), "must spare:\n{source}\nfound {found:?}");
     }
+}
+
+/// The substring backstop refuses the spelling the parse cannot see, and
+/// spares only the scan's own fixtures.
+#[test]
+fn the_start_backstop_is_fail_closed() {
+    let hidden = concat!("// started with AuthorityServer", "::start elsewhere\n");
+    assert_eq!(
+        starts_in(hidden),
+        Vec::<String>::new(),
+        "a comment is no path"
+    );
+    assert_eq!(outside_starts("src/elsewhere.rs", hidden).len(), 1);
+    assert_eq!(
+        outside_starts("tests/architecture/authority_starts.rs", hidden),
+        Vec::<String>::new()
+    );
 }
 
 /// Composition's start functions exist only in test and `test-support`
