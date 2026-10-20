@@ -250,14 +250,17 @@ impl AnthropicProvider {
     }
 
     /// Mark the conversation's cache breakpoints (#2410): the last user
-    /// message, which writes this request's whole conversation, and the
+    /// message, which writes this request's whole conversation, and the user
     /// message the request before ended at — the one just before the last
     /// assistant reply — which that request wrote and this one reads back
     /// exactly. With the system prompt's marker(s) that is at most four
-    /// breakpoints, the API's limit. Without the second, a reply that adds
-    /// more blocks than the cache looks back over (20) from the new last
-    /// marker, such as a wide batch of tool calls and their results, would
-    /// read nothing of the conversation from the cache.
+    /// breakpoints, the API's limit. On the first-party API the last marker
+    /// alone reads the conversation back after a tool batch (a run of
+    /// `tool_use` or `tool_result` blocks counts as one of the 20 positions
+    /// the cache looks back over), so the second is defence in depth: for an
+    /// Anthropic-compatible endpoint that does not promise that, and for a
+    /// turn that adds more than 20 positions of text or images (#2628
+    /// review).
     fn apply_cache_control_to_last_user_message(api_messages: &mut [serde_json::Value]) {
         let is = |message: &serde_json::Value, role: &str| message["role"].as_str() == Some(role);
         let last_user = api_messages.iter().rposition(|m| is(m, "user"));
