@@ -792,18 +792,16 @@ interrupted work. Resuming an already running run repeats the fan-out with
 the unchanged generation: nobody re-arms or gains a turn from it, so it is
 safe but costs one wake round trip per member. Members a resume could not
 reach are listed as `wake_warnings` on the receipt. Neither a prompt nor a steer
-is needed after a resume. A failure the provider may recover from (a rate
-limit, a server or network failure, an empty or stalled stream, Envoy's 507
-retry-buffer reply) whose retries ran out suspends a member as recoverable
-(#2531): its next swarm wake re-arms it and runs one turn to continue the
-interrupted work, whether or not the wake claims a generation, and a member
-nothing else wakes (the coordinator, or the last active member) wakes itself
-once, 30 seconds after the failed turn. Without a swarm, the next automatic
-note re-arms it. Both are bounded: after two such re-arms without a turn that
-succeeds, the next failure suspends the member as a terminal one, which only
-a resume or an explicit instruction re-arms. Each re-arm is reported as a
-`swarm_wake` `resumed` event with its reason. A durable store rejection is
-not re-armed this way; it waits for an explicit instruction. Any explicit instruction (prompt,
+is needed after a resume. A swarm wake also re-arms a member suspended by a
+recoverable provider failure (a rate limit, a server or network failure, an
+empty or stalled stream, Envoy's 507 retry-buffer reply) whose retries ran out
+(#2531). The member then runs one turn to continue its interrupted work. If no
+wake comes, the member wakes itself once, 30 seconds after the failed turn.
+Without a swarm, its next automatic note re-arms it. This happens at most twice
+before a turn succeeds. A terminal provider failure still needs an instruction
+or a resume. Each re-arm is reported as a `swarm_wake` `resumed` event with its
+reason. A durable store rejection is not re-armed this way; it waits for an
+explicit instruction. Any explicit instruction (prompt,
 follow_up or steer) re-arms a suspended member once the run admits it (a
 paused run keeps it queued): a parent's fast-acked prompt to an idle member is
 queued as a follow-up and executes rather than waiting behind the suspension
