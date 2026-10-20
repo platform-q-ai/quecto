@@ -134,3 +134,29 @@ fn unpriced_usage_is_reported_unknown_never_free() {
         "the unpriced part is said"
     );
 }
+
+/// #2635 review: usage priced at $0 (a declared-free model) beside an
+/// unpriced attempt is a known $0 cost plus the unpriced count, not unknown.
+#[test]
+fn usage_priced_at_zero_is_known_beside_unpriced_attempts() {
+    let mut usage = InspectSessionUsage::new();
+    usage.record_turn(
+        "k",
+        UsageTotals {
+            priced_attempts: 1,
+            ..turn(10, 2, 0, 0, 0)
+        },
+        0,
+    );
+    usage.record_turn(
+        "k",
+        UsageTotals {
+            unpriced_attempts: 1,
+            ..turn(10, 2, 0, 0, 0)
+        },
+        0,
+    );
+    let report = usage.report("k", &[], 0, 0);
+    assert_eq!(report.cost_micro_usd, Some(0), "priced at zero is known");
+    assert_eq!(report.usage.unpriced_attempts, 1);
+}

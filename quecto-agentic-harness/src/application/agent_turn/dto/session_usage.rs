@@ -26,6 +26,8 @@ pub struct SessionUsage {
     /// reported usage, a cut-short attempt included, not logical requests.
     /// Their usage counts, but their cost is unknown, never zero.
     pub unpriced_attempts: u64,
+    /// Provider attempts whose usage was priced, a zero price included.
+    pub priced_attempts: u64,
 }
 
 impl SessionUsage {
@@ -38,9 +40,12 @@ impl SessionUsage {
     /// session billed usage and none of it was priced, so unpriced never
     /// reads as free. A session that used nothing cost zero.
     pub fn known_cost_micro_usd(&self) -> Option<u64> {
-        match (self.cost_micro_usd, self.unpriced_attempts) {
-            (0, unpriced) if unpriced > 0 => None,
-            (cost, _) => Some(cost),
+        // Something was priced (a zero price included), or nothing was
+        // billed unpriced: the cost is known (#2635 review).
+        let priced = self.priced_attempts > 0 || self.cost_micro_usd > 0;
+        match (priced, self.unpriced_attempts) {
+            (false, unpriced) if unpriced > 0 => None,
+            _ => Some(self.cost_micro_usd),
         }
     }
 

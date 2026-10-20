@@ -238,6 +238,7 @@ fn usage_totals_record_saturates_counters() {
         output_tokens: u32::MAX,
         context_input_tokens: 0,
         unpriced_attempts: u64::MAX,
+        priced_attempts: u64::MAX,
     };
     totals.record(&UsageInfo {
         prompt_tokens: 1,
@@ -286,6 +287,7 @@ fn a_billed_reply_with_no_price_is_counted_unpriced() {
     totals.record(&usage(10, Some(0)));
     totals.record(&usage(10, Some(7)));
     assert_eq!(totals.unpriced_attempts, 1);
+    assert_eq!(totals.priced_attempts, 2, "a zero price is a price");
     assert_eq!(totals.cost_micro_usd, 7);
 }
 

@@ -42,6 +42,10 @@ impl InspectSessionUsage {
             .usage
             .unpriced_attempts
             .saturating_add(turn.unpriced_attempts);
+        self.usage.priced_attempts = self
+            .usage
+            .priced_attempts
+            .saturating_add(turn.priced_attempts);
         let billed = [
             turn.billed_input_tokens,
             turn.billed_output_tokens,

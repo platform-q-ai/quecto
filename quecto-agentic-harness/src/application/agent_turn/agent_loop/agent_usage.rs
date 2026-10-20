@@ -14,6 +14,9 @@ pub struct UsageTotals {
     /// reported usage, a cut-short attempt included, not logical requests.
     /// Their usage counts, but their cost is unknown, never zero.
     pub unpriced_attempts: u64,
+    /// Provider attempts whose usage was priced, at any rate, zero included
+    /// (#2635 review): a declared-free model's usage is priced at $0.
+    pub priced_attempts: u64,
 }
 
 impl UsageTotals {
@@ -60,6 +63,7 @@ impl UsageTotals {
                 self.cost_micro_usd = self
                     .cost_micro_usd
                     .saturating_add(cost.total_cost_micro_usd);
+                self.priced_attempts = self.priced_attempts.saturating_add(1);
             }
             (None, true) => self.unpriced_attempts = self.unpriced_attempts.saturating_add(1),
             (None, false) => {}
