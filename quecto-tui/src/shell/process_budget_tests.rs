@@ -116,7 +116,7 @@ fn mirrored_constants_match_the_harness_sources() {
         usize_after(&fleet, "const MAX_PASSES: usize"),
         HARNESS_MAX_PASSES as usize
     );
-    let rollbacks = harness_source("interface/cli/launch_rollback_wait.rs");
+    let rollbacks = harness_source("interface/cli/controllers/launch_rollback_wait.rs");
     assert_eq!(
         Duration::from_secs(secs_after(
             &rollbacks,
