@@ -203,19 +203,35 @@ fn a_callback_on_another_path_is_not_found_and_waiting_goes_on() {
     // path, so a callback meant for another listener on a reused port is
     // answered "404 Not found" and never accepted.
     let (received, answers) = receive_while(|attempt| {
+        // Proof first that this attempt's own listener holds the port: only
+        // it answers its own path's wrong state "State mismatch", and it
+        // keeps the port until it returns. Until then the port may still be
+        // a stranger's (a released port can be handed out twice), and a
+        // stranger's answer to the foreign call proves nothing. Without the
+        // proof the foreign and accepting calls are not made, so the listener
+        // times out having met a stranger and the attempt is repeated.
+        let proof = attempt.call("code=forged&state=other");
+        if proof.as_deref() != Some(STATE_MISMATCH) {
+            return vec![proof];
+        }
         let foreign = call(
             attempt.port,
             &format!("/elsewhere/callback?code=foreign&state={}", attempt.state()),
         );
         let accepted = attempt.call("code=fake-code&state={state}");
-        vec![foreign, accepted]
+        vec![proof, foreign, accepted]
     });
     assert_eq!(
         answers[0].as_deref(),
+        Some(STATE_MISMATCH),
+        "the attempt's own listener holds the port: {answers:?} / {received:?}"
+    );
+    assert_eq!(
+        answers[1].as_deref(),
         Some(NOT_FOUND),
         "{answers:?} / {received:?}"
     );
-    assert!(succeeded(&answers[1]), "{answers:?} / {received:?}");
+    assert!(succeeded(&answers[2]), "{answers:?} / {received:?}");
     assert_eq!(received, Ok("fake-code".to_string()), "{answers:?}");
 }
 
