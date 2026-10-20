@@ -49,6 +49,8 @@ mod panic_strategy;
 mod project_board_telemetry;
 #[path = "architecture/provider_serialization.rs"]
 mod provider_serialization;
+#[path = "architecture/providers_transport.rs"]
+mod providers_transport;
 /// Sessions capability (#1968, D1 #1970): plural capability, one
 /// construction site, one layout owner, retirement of the singular path.
 #[path = "architecture/sessions_capability.rs"]

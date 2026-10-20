@@ -81,15 +81,15 @@ mod transport_tests {
             started: std::time::Instant::now(),
         })));
         let mut observer = LineObserver::new(Profile::new(
-            Vendor::Codex,
+            &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
             crate::infrastructure::providers::transport::attempt_profile::Surface::Assembled,
             Default::default(),
         ));
         observer.push(
-            b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"SECRET\"}\n",
+            b"data: {\"type\":\"output\",\"text\":\"SECRET\"}\n",
             &receipt,
         );
-        observer.push(b"data: {\"type\":\"response.incomplete\",\"response\":{\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n", &receipt);
+        observer.push(b"data: {\"type\":\"end\",\"response\":{\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n", &receipt);
         observer.push(
             &vec![
                 b'x';
@@ -125,7 +125,11 @@ mod transport_tests {
         let gate: Arc<dyn AttemptAdmission> = Arc::new(Gate);
         let surface =
             crate::infrastructure::providers::transport::attempt_profile::Surface::Assembled;
-        let profile = Profile::new(Vendor::OpenAi, surface, Default::default());
+        let profile = Profile::new(
+            &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
+            surface,
+            Default::default(),
+        );
         let refuse =
             |_: &str| -> Result<(), DomainError> { Err(DomainError::Provider("bad".into())) };
         let accept = |_: &str| -> Result<(), DomainError> { Ok(()) };
@@ -187,6 +191,7 @@ mod transport_tests {
                 &tx,
                 &mut ReadingHandler,
                 Default::default(),
+                &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
             )
             .await;
             drop(tx);
@@ -346,7 +351,7 @@ mod transport_tests {
                 (Some(saved), None),
                 reqwest::Client::new().get(server.uri()),
                 Profile::new(
-                    Vendor::Codex,
+                    &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
                     crate::infrastructure::providers::transport::attempt_profile::Surface::Incremental,
                     Default::default(),
                 ),
@@ -379,7 +384,7 @@ mod transport_tests {
     #[tokio::test]
     async fn a_refused_stream_ends_as_rejected() {
         let server = MockServer::start().await;
-        let chunk = r#"data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}"#;
+        let chunk = r#"data: {"type":"output","text":"hi"}"#;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_string(format!("{chunk}\n")))
             .mount(&server)
@@ -394,7 +399,7 @@ mod transport_tests {
                 (Some(saved), None),
                 reqwest::Client::new().get(server.uri()),
                 Profile::new(
-                    Vendor::OpenAi,
+                    &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
                     crate::infrastructure::providers::transport::attempt_profile::Surface::Incremental,
                     Default::default(),
                 ),
@@ -415,8 +420,8 @@ mod transport_tests {
         for (status, body, terminal, malformed) in [
             (
                 200,
-                "data: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n",
-                Some(TerminalEvent::ResponseCompleted),
+                "data: {\"type\":\"end\",\"response\":{\"output\":[]}}\n",
+                Some(TerminalEvent::Done),
                 0,
             ),
             (200, "data: [DONE]\n", Some(TerminalEvent::Done), 0),
@@ -453,7 +458,7 @@ mod transport_tests {
                 None,
                 reqwest::Client::new().get(server.uri()),
                 Profile::new(
-                    Vendor::Codex,
+                    &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
                     crate::infrastructure::providers::transport::attempt_profile::Surface::Assembled,
                     Default::default(),
                 ),

@@ -127,8 +127,7 @@ impl SseHandler for CodexSseHandler {
                     return SseLineOutcome::Done;
                 }
             }
-            if crate::infrastructure::providers::transport::attempt_profile::finishes_reply(&event)
-            {
+            if super::codex_wire::finishes_reply(&event) {
                 self.saw_terminal = true;
                 let _ = tx.send(StreamEvent::Done(self.take_response())).await;
                 return SseLineOutcome::Done;

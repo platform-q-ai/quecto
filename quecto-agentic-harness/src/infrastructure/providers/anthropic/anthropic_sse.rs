@@ -3,6 +3,7 @@
 //
 // #437: Added `signature_delta` handling for thinking block signature capture.
 
+use super::anthropic_wire::ANTHROPIC_WIRE;
 use crate::domain::conversation::services::visible_thinking::{
     MAX_VISIBLE_THINKING_BYTES, append_visible_thinking,
 };
@@ -350,7 +351,7 @@ impl AnthropicProvider {
 
         let idle = self.stream_idle;
         // Observed beside the request, never altering it (#2151, #2210).
-        let profile = Profile::new(Vendor::Anthropic, Surface::Assembled, idle);
+        let profile = Profile::new(&ANTHROPIC_WIRE, Surface::Assembled, idle);
         let trace = params.trace.clone();
         let attempt =
             crate::infrastructure::providers::transport::attempt_transport::PassiveAttempt::begin(
@@ -388,12 +389,15 @@ impl AnthropicProvider {
 
         let full = match &attempt {
             Some(attempt) => attempt.read_sse(response, profile).await?,
-            None => idle.sse_text(response).await.map_err(|e| match e {
-                BodyError::Idle(silent) => DomainError::Provider(silent.to_string()),
-                BodyError::Read(e) => {
-                    DomainError::Provider(format!("failed to read stream: {}", e))
-                }
-            })?,
+            None => idle
+                .sse_text(response, &ANTHROPIC_WIRE)
+                .await
+                .map_err(|e| match e {
+                    BodyError::Idle(silent) => DomainError::Provider(silent.to_string()),
+                    BodyError::Read(e) => {
+                        DomainError::Provider(format!("failed to read stream: {}", e))
+                    }
+                })?,
         };
         let parsed = Self::parse_sse_reply(&full, params.tool_defs)
             .map_err(|cut| cut.account(trace.as_deref(), params.model));
@@ -519,7 +523,7 @@ impl AnthropicProvider {
         let attempt =
             crate::infrastructure::providers::transport::attempt_transport::PassiveAttempt::begin(
                 params.base.trace,
-                Profile::new(Vendor::Anthropic, Surface::Incremental, idle),
+                Profile::new(&ANTHROPIC_WIRE, Surface::Incremental, idle),
             );
         let mut response = match idle.within(request_builder.send()).await {
             Ok(Ok(r)) => r,
@@ -568,12 +572,13 @@ impl AnthropicProvider {
             handler,
             attempt,
             idle,
+            &ANTHROPIC_WIRE,
         )
         .await;
     }
 }
 
-use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface, Vendor};
+use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface};
 use crate::infrastructure::providers::transport::sse_end::{self, UnfinishedReply};
 use crate::infrastructure::providers::transport::stream_idle::{BodyError, error_text};
 

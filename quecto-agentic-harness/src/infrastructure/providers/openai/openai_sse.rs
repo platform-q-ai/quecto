@@ -127,11 +127,8 @@ impl SseHandler for OpenAiSseHandler {
             // A mid-stream error chunk ends the stream as an error (#2236),
             // on this path too, which runs without admission: never skipped,
             // or end of file would send the partial reply as a whole one.
-            if crate::infrastructure::providers::transport::attempt_profile::is_stream_error_chunk(
-                &chunk,
-            ) {
-                let message =
-                    crate::infrastructure::providers::transport::attempt_profile::openai_stream_error(&chunk);
+            if super::openai_stream_error::is_stream_error_chunk(&chunk) {
+                let message = super::openai_stream_error::openai_stream_error(&chunk);
                 let _ = tx.send(StreamEvent::Error(message)).await;
                 return SseLineOutcome::Done;
             }
@@ -235,6 +232,7 @@ pub(crate) async fn pump_sse_bytes(
         tx,
         &mut handler,
         Default::default(),
+        &super::openai_wire::OPENAI_WIRE,
     )
     .await;
 }
@@ -246,8 +244,15 @@ pub(crate) async fn pump_sse_bytes_for_model(
     attempt: Option<super::super::transport::attempt_transport::PassiveAttempt>,
     idle: super::super::transport::stream_idle::StreamIdle,
 ) {
-    super::super::transport::attempt_transport::pump_observed(response, tx, handler, attempt, idle)
-        .await;
+    super::super::transport::attempt_transport::pump_observed(
+        response,
+        tx,
+        handler,
+        attempt,
+        idle,
+        &super::openai_wire::OPENAI_WIRE,
+    )
+    .await;
 }
 
 /// Consume an owned OpenAI SSE byte stream, emitting `StreamEvent`s per delta.

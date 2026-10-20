@@ -210,19 +210,28 @@ pub(in crate::infrastructure::providers) async fn pump_observed<H: SseHandler>(
     inner: H,
     attempt: Option<PassiveAttempt>,
     idle: super::super::stream_idle::StreamIdle,
+    wire: &'static dyn WireDialect,
 ) {
     match attempt {
         Some(attempt) => {
+            // The attempt's own profile names the wire (#2609 review): the
+            // caller's must be the same one.
+            let observed = attempt.observer.dialect();
+            debug_assert!(
+                observed.name() == wire.name(),
+                "the observed wire is the one pumped"
+            );
+            let wire = observed;
             let receipt = attempt.receipt.clone();
             let mut handler = Observed {
                 inner,
                 attempt: Some(attempt),
             };
-            super::diagnostic_sse::pump_sse(&receipt, response, tx, &mut handler, idle).await;
+            super::diagnostic_sse::pump_sse(&receipt, response, tx, &mut handler, idle, wire).await;
         }
         None => {
             let mut inner = inner;
-            super::super::sse_common::pump_sse(response, tx, &mut inner, idle).await;
+            super::super::sse_common::pump_sse(response, tx, &mut inner, idle, wire).await;
         }
     }
 }

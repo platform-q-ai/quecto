@@ -1,10 +1,11 @@
 pub mod admission_feedback;
+pub(in crate::infrastructure::providers) mod attempt_events;
 pub(crate) mod attempt_profile;
 pub(crate) mod attempt_transport;
-pub(crate) mod input_prefix;
 pub mod single_attempt_client;
 pub mod sse_common;
 pub(crate) mod sse_end;
 pub(crate) mod sse_limits;
 pub(crate) mod sse_progress;
 pub mod stream_idle;
+pub(in crate::infrastructure::providers) mod wire_dialect;

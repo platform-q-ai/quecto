@@ -1,6 +1,7 @@
 mod request_body;
-use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface, Vendor};
+use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface};
 use crate::infrastructure::providers::transport::attempt_transport::queue_before_spawn;
+use anthropic_wire::ANTHROPIC_WIRE;
 // Anthropic adapter: impl LlmProvider for AnthropicProvider.
 //
 // See gap analysis #437 for Anthropic API parity work.
@@ -25,6 +26,7 @@ use claude_code::{CLAUDE_CODE_VERSION, sanitize_surrogates, to_claude_code_name}
 
 pub(super) mod anthropic_sse;
 mod anthropic_user_msg;
+pub(in crate::infrastructure::providers) mod anthropic_wire;
 
 /// Anthropic LLM provider.
 #[derive(Debug, Clone)]
@@ -413,7 +415,7 @@ impl LlmProvider for AnthropicProvider {
                     trace.clone(),
                     cancel.as_ref(),
                     request_builder,
-                    Profile::new(Vendor::Anthropic, Surface::Chat, self.stream_idle),
+                    Profile::new(&ANTHROPIC_WIRE, Surface::Chat, self.stream_idle),
                     |text| {
                         let json = serde_json::from_str(text).map_err(|e| {
                             DomainError::Provider(format!("failed to parse response JSON: {e}"))
@@ -475,7 +477,7 @@ impl LlmProvider for AnthropicProvider {
                     trace.clone(),
                     cancel.as_ref(),
                     builder,
-                    Profile::new(Vendor::Anthropic, Surface::Assembled, self.stream_idle),
+                    Profile::new(&ANTHROPIC_WIRE, Surface::Assembled, self.stream_idle),
                     |raw| {
                         let mut parsed = Self::parse_sse_reply(raw, tools_snapshot)
                             .map_err(|cut| cut.account(trace.as_deref(), &model))?;
@@ -541,11 +543,7 @@ impl LlmProvider for AnthropicProvider {
                         gate,
                         (trace.clone(), cancel.as_ref()),
                         builder,
-                        Profile::new(
-                            Vendor::Anthropic,
-                            Surface::Incremental,
-                            provider.stream_idle,
-                        ),
+                        Profile::new(&ANTHROPIC_WIRE, Surface::Incremental, provider.stream_idle),
                         tx,
                         anthropic_sse::AnthropicSseHandler::with_model(tools_snapshot, &model)
                             .with_trace(trace.clone()),
@@ -594,3 +592,7 @@ mod issue_1338_tests;
 #[cfg(test)]
 #[path = "anthropic_watermark_tests.rs"]
 mod watermark_tests;
+
+#[cfg(test)]
+#[path = "anthropic_observation_tests.rs"]
+mod observation_tests;
