@@ -117,3 +117,45 @@ fn save_all_reports_credentials_dir_creation_failure() {
     );
     assert!(!msg.contains("sk-secret"), "error leaked the token: {msg}");
 }
+
+/// #2619 review: the store types its failure's kind where it happens, so a
+/// caller never has to read it back out of the words.
+#[test]
+fn a_store_failure_is_typed_where_it_happens() {
+    let kind = |store: &CredentialStore| CredentialStorePort::list(store).unwrap_err().failure;
+
+    let malformed = TempDir::new().unwrap();
+    std::fs::write(malformed.path().join("credentials.json"), "{ nope").unwrap();
+    assert_eq!(
+        kind(&CredentialStore::new(malformed.path())),
+        CredentialStoreFailure::Malformed
+    );
+
+    let directory = TempDir::new().unwrap();
+    std::fs::create_dir(directory.path().join("credentials.json")).unwrap();
+    let store = CredentialStore::new(directory.path());
+    assert_eq!(kind(&store), CredentialStoreFailure::Unavailable);
+    let write = CredentialStorePort::store(&store, credential("openai", "fake-token"));
+    assert_eq!(
+        write.unwrap_err().failure,
+        CredentialStoreFailure::Unavailable
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_store_this_user_may_not_read_is_permission_denied() {
+    use std::os::unix::fs::PermissionsExt;
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        // root reads a 0o000 file: there is no refusal to observe.
+        return;
+    }
+    let base = TempDir::new().unwrap();
+    let path = base.path().join("credentials.json");
+    std::fs::write(&path, r#"{"credentials":{}}"#).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let error = CredentialStorePort::list(&CredentialStore::new(base.path())).unwrap_err();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(error.failure, CredentialStoreFailure::PermissionDenied);
+}

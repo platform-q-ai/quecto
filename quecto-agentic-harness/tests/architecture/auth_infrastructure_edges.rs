@@ -8,12 +8,14 @@ use std::path::Path;
 
 /// The infrastructure modules `infrastructure/auth` may name, as paths
 /// under `crate::infrastructure`: itself, the clock, the shared runtime
-/// builder and the atomic file write. Anything else is refused.
+/// builder, the atomic file write and the content-free JSON parse
+/// failure (#2617). Anything else is refused.
 const AUTH_MAY_NAME: &[&[&str]] = &[
     &["auth"],
     &["time"],
     &["processes", "tokio_runtime"],
     &["persistence", "file", "atomic_write"],
+    &["persistence", "file", "json_failure"],
 ];
 
 /// The `infrastructure` siblings `file`'s production code names that are

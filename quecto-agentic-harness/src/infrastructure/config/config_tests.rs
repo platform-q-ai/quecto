@@ -183,7 +183,12 @@ fn test_load_workflow_step_reference_with_wrong_typed_override_names_the_referen
         "{error}"
     );
     assert!(error.to_string().contains("shared.json"), "{error}");
-    assert!(error.to_string().contains("invalid type"), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains("a field has the wrong type or value at key"),
+        "{error}"
+    );
 }
 
 #[test]

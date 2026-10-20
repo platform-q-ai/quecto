@@ -520,13 +520,27 @@ fn registry_skips_a_provider_block_with_an_unknown_auth_mode() {
     );
     assert_eq!(config.skipped.len(), 1);
     assert_eq!(config.skipped[0].provider, "x");
-    assert!(
-        config.skipped[0]
-            .error
-            .contains("unknown auth mode 'vault'"),
-        "{}",
-        config.skipped[0].error
+    assert_eq!(
+        config.skipped[0].error,
+        "provider 'x' declares an unknown auth mode (supported: apiKey, oauth); its models were skipped",
+        "the file's value is never quoted (#2617)"
     );
+}
+
+/// #2617: a wrong-typed `apiKey` in models.json may hold a secret; the
+/// parse error names the field and never quotes the value.
+#[test]
+fn a_wrong_typed_models_json_field_is_named_never_quoted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("models.json");
+    let json = r#"{"providers":{"x":{"api":"openai-completions","apiKey":14142135623,"models":[{"id":"m"}]}}}"#;
+    std::fs::write(&path, json).unwrap();
+    let error = ModelRegistry::load_registry_config(&path)
+        .unwrap_err()
+        .to_string();
+    let named = error.starts_with("failed to parse models registry: ")
+        && error.contains("providers.x.apiKey");
+    assert!(named && !error.contains("14142135623"), "{error}");
 }
 
 #[serial_test::serial]

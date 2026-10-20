@@ -30,7 +30,10 @@ impl InspectAuthStatus {
         let stored = self
             .store
             .list()
-            .map_err(|error| AuthStatusError::Unreadable(error.0))?;
+            .map_err(|error| AuthStatusError::Unreadable {
+                failure: error.failure,
+                reason: error.reason,
+            })?;
         let now = self.clock.now_unix_secs();
         let mut statuses: Vec<ProviderAuthStatus> = stored
             .into_iter()

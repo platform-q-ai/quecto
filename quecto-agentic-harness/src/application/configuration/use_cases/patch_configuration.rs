@@ -36,6 +36,7 @@ use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, OverlayDocument, OverlayTrust,
     OverlayTrustStore,
 };
+use crate::application::configuration::services::document_parse::parse_document;
 use crate::application::configuration::services::overlay_policy::{
     global_only_path, global_only_values, key_segments, policy_entry_id, remove_path, set_path,
 };
@@ -148,12 +149,10 @@ impl PatchConfiguration {
             });
         }
         let mut document = match &existing {
-            Some(bytes) => {
-                serde_json::from_slice(bytes).map_err(|error| ConfigPatchError::Parse {
-                    path: path.to_path_buf(),
-                    reason: error.to_string(),
-                })?
-            }
+            Some(bytes) => parse_document(bytes).map_err(|reason| ConfigPatchError::Parse {
+                path: path.to_path_buf(),
+                reason,
+            })?,
             None => Value::Object(Map::new()),
         };
         let refused_before = document

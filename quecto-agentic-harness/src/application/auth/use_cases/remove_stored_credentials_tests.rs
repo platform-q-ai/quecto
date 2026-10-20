@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::*;
-use crate::application::auth::ports::CredentialStoreError;
+use crate::application::auth::ports::{CredentialStoreError, CredentialStoreFailure};
 use crate::domain::auth::credential::Credential;
 
 struct FakeStore {
@@ -40,7 +40,10 @@ impl CredentialStorePort for FakeStore {
     fn remove(&self, provider: &str) -> Result<bool, CredentialStoreError> {
         self.asked.lock().unwrap().push(provider.to_string());
         if let Some(reason) = &self.refusal {
-            return Err(CredentialStoreError(reason.clone()));
+            return Err(CredentialStoreError::new(
+                CredentialStoreFailure::Unavailable,
+                reason.clone(),
+            ));
         }
         let mut providers = self.providers.lock().unwrap();
         let held = providers.iter().any(|held| held == provider);

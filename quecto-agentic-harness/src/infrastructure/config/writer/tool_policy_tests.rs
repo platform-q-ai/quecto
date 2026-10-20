@@ -121,6 +121,10 @@ fn the_composed_hook_reports_a_malformed_config_file_and_leaves_it_alone() {
     let persist = tool_policy_persistence_for(tmp.path(), config_path.clone(), None);
     let error = persist(&applied("native:bash", ProfileAvailabilityScope::Both)).unwrap_err();
     assert!(error.contains("tool policy persistence"), "{error}");
+    assert!(
+        error.ends_with(": malformed JSON at line 1 column 3"),
+        "the readers' one wording (#2617): {error}"
+    );
     assert_eq!(std::fs::read_to_string(&config_path).unwrap(), "{ not json");
 }
 

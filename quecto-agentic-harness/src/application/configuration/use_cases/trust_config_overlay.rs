@@ -14,6 +14,7 @@ use crate::application::configuration::dto::{OverlayTrustError, OverlayTrustRequ
 use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigValidator, OverlayApproval, OverlayDocument, OverlayTrustStore,
 };
+use crate::application::configuration::services::document_parse::parse_document;
 use crate::application::configuration::services::overlay_policy::global_only_key;
 
 pub struct TrustConfigOverlay {
@@ -59,11 +60,10 @@ impl TrustConfigOverlay {
                     });
                 }
             };
-        let value: Value =
-            serde_json::from_slice(&bytes).map_err(|error| OverlayTrustError::Parse {
-                path: path.to_path_buf(),
-                reason: error.to_string(),
-            })?;
+        let value: Value = parse_document(&bytes).map_err(|reason| OverlayTrustError::Parse {
+            path: path.to_path_buf(),
+            reason,
+        })?;
         let Some(object) = value.as_object() else {
             return Err(OverlayTrustError::NotAnObject(path.to_path_buf()));
         };

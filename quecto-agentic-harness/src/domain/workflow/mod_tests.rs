@@ -625,3 +625,50 @@ fn selector_status_text_includes_issue_and_custom_prompt() {
     assert!(text.contains("Active issue: #42 — fix bug"));
     assert!(text.contains("Pick wisely"));
 }
+
+/// #2617 review: a template id or step key comes from a hand-editable
+/// file, so a validation error names it escaped, never raw.
+#[test]
+fn an_invalid_template_names_its_id_and_step_keys_escaped() {
+    let refused = |templates: Vec<WorkflowTemplate>| {
+        let config = WorkflowConfig {
+            templates,
+            ..WorkflowConfig::default()
+        };
+        match WorkflowEngine::new(config, false) {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("an invalid template is refused"),
+        }
+    };
+    let hostile = "x\u{1b}[31m";
+    let named = r"x\u{1b}[31m";
+    let mut empty = planned_feature_template_with_id(hostile);
+    empty.steps.clear();
+    let mut duplicate_key = planned_feature_template_with_id("dup");
+    duplicate_key.steps[0].key = hostile.into();
+    duplicate_key.steps[1].key = hostile.into();
+    let mut unknown_guard = planned_feature_template_with_id("guarded");
+    unknown_guard.guards[0].before_step_key = hostile.into();
+    for (templates, expected) in [
+        (
+            vec![
+                planned_feature_template_with_id(hostile),
+                planned_feature_template_with_id(hostile),
+            ],
+            format!("duplicate template id: {named}"),
+        ),
+        (vec![empty], format!("template '{named}' has no steps")),
+        (
+            vec![duplicate_key],
+            format!("template 'dup' has duplicate step key '{named}'"),
+        ),
+        (
+            vec![unknown_guard],
+            format!("template 'guarded' guard references unknown step key '{named}'"),
+        ),
+    ] {
+        let error = refused(templates);
+        assert!(error.contains(&expected), "{expected} not in: {error}");
+        assert!(!error.contains('\u{1b}'), "{error:?}");
+    }
+}

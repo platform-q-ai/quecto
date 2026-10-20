@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use crate::application::configuration::ports::{ConfigValidator, RunSettings, RunSettingsSource};
 use crate::infrastructure::config::{Config, ConfigError};
+use crate::infrastructure::persistence::file::json_failure;
 
 impl Config {
     /// Reject the keys the schema retired, before anything is deserialized:
@@ -47,7 +48,7 @@ impl Config {
     /// document the safe writer is about to persist. Every load-time
     /// validation applies.
     pub fn from_inherited_child_document(value: serde_json::Value) -> Result<Self, ConfigError> {
-        let config: Config = serde_json::from_value(value).map_err(ConfigError::Parse)?;
+        let config: Config = json_failure::from_value(value).map_err(ConfigError::Parse)?;
         config.validate_effort()?;
         config.validate_container_configs()?;
         super::extensions::validate(&config.extensions)?;
@@ -56,7 +57,7 @@ impl Config {
     }
 
     pub fn from_document(value: serde_json::Value) -> Result<Self, ConfigError> {
-        let config: Config = serde_json::from_value(value).map_err(ConfigError::Parse)?;
+        let config: Config = json_failure::from_value(value).map_err(ConfigError::Parse)?;
         config.validated()
     }
 
@@ -65,7 +66,7 @@ impl Config {
     /// only holds for the complete configuration, so a layer adding a
     /// non-default entry is valid and the merge is checked in full.
     pub fn layer_from_document(value: serde_json::Value) -> Result<Self, ConfigError> {
-        let config: Config = serde_json::from_value(value).map_err(ConfigError::Parse)?;
+        let config: Config = json_failure::from_value(value).map_err(ConfigError::Parse)?;
         config.validate_effort()?;
         config.validate_admission()?;
         config.validate_context_budgets()?;

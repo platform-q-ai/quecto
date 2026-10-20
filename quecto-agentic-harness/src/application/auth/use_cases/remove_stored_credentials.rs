@@ -23,7 +23,7 @@ impl RemoveStoredCredentials {
         match self.store.remove(provider) {
             Ok(true) => Ok(Removal::Removed),
             Ok(false) => Ok(Removal::NotStored),
-            Err(error) => Err(RemoveError::Store(error.0)),
+            Err(error) => Err(RemoveError::Store(error.reason)),
         }
     }
 }

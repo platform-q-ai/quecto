@@ -128,3 +128,57 @@ fn workflow_step_load_reports_nonexistent_base_dir() {
 
     assert!(err.contains("missing-base"), "{err}");
 }
+
+/// #2617 review: a step file or reference names a wrong-typed field and an
+/// unknown key without quoting the file's value, and every key or
+/// reference it does name is escaped.
+#[test]
+fn a_workflow_step_error_never_quotes_a_value_and_escapes_what_it_names() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("shared.json"), step_json("shared")).unwrap();
+    std::fs::write(
+        tmp.path().join("typed.json"),
+        r#"{"key":"t","label":"T","phase":"plan","guidance":98765432123}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("odd.json"),
+        r#"{"key":"o","label":"O","phase":"plan","x\u001b[31m":1}"#,
+    )
+    .unwrap();
+    std::fs::write(tmp.path().join("broken.json"), "{ nope").unwrap();
+    let cfg = tmp.path().join("config.json");
+    for (steps, expected) in [
+        (
+            r#"{"ref":"shared","guidance":12345678995}"#,
+            "shared: a field has the wrong type or value at guidance",
+        ),
+        (
+            r#""typed""#,
+            "typed.json: a field has the wrong type or value at guidance",
+        ),
+        (r#""odd""#, r"odd.json: unknown field `x\u{1b}[31m`"),
+        (
+            r#"{"ref":"shared","x\u001b[31m":1}"#,
+            r"step reference: unknown field `x\u{1b}[31m`",
+        ),
+        (
+            r#""broken""#,
+            "broken.json: malformed JSON at line 1 column 3",
+        ),
+        (r#""gone\u001b[31m""#, r"gone\u{1b}[31m.json"),
+    ] {
+        std::fs::write(
+            &cfg,
+            format!(
+                r#"{{"workflow":{{"templates":[{{"id":"tpl","label":"Tpl","description":"d","steps":[{steps}]}}]}}}}"#
+            ),
+        )
+        .unwrap();
+        let err = Config::load(cfg.to_str().unwrap()).unwrap_err().to_string();
+        assert!(err.contains(expected), "{expected} not in: {err}");
+        for quoted in ["12345678995", "98765432123", "\u{1b}"] {
+            assert!(!err.contains(quoted), "{quoted:?} quoted in: {err}");
+        }
+    }
+}

@@ -105,8 +105,11 @@ fn an_unreadable_file_is_refused_naming_its_path() {
 #[test]
 fn a_malformed_file_is_refused() {
     let (_dir, source) = file_holding("{ not json");
-    assert!(matches!(
-        source.load(),
-        Err(ExternalCredentialsError::Malformed(_))
-    ));
+    assert_eq!(
+        source.load().map(|found| found.len()),
+        Err(ExternalCredentialsError::Malformed(
+            "malformed JSON at line 1 column 3".to_string()
+        )),
+        "the domain's words and the position, never serde's text (#2617)"
+    );
 }
