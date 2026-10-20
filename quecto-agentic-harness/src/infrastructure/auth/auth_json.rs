@@ -11,6 +11,7 @@ use crate::application::auth::ports::{
 };
 use crate::domain::auth::provider::LoginProvider;
 use crate::infrastructure::auth::oauth::extract_openai_account_id;
+use crate::infrastructure::persistence::file::json_failure;
 
 /// The providers the file holds credentials for, in import order.
 const IMPORTED: [LoginProvider; 2] = [LoginProvider::Anthropic, LoginProvider::OpenAi];
@@ -52,8 +53,9 @@ impl ExternalCredentialSource for AuthJsonFile {
                 reason: error.to_string(),
             }
         })?;
-        let file: serde_json::Value = serde_json::from_str(&data)
-            .map_err(|error| ExternalCredentialsError::Malformed(error.to_string()))?;
+        // Described by kind and position, never in serde's words (#2617).
+        let file: serde_json::Value =
+            json_failure::from_str(&data).map_err(ExternalCredentialsError::Malformed)?;
         Ok(IMPORTED
             .into_iter()
             .filter_map(|provider| oauth_entry(&file, provider))

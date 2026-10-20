@@ -231,5 +231,40 @@ fn load_template_file_rejects_bad_step_entry_and_template_deserialize_error() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("bad_label_type.json"), "{err}");
-    assert!(err.contains("invalid type"), "{err}");
+    assert!(
+        err.contains("a field has the wrong type or value at label"),
+        "{err}"
+    );
+}
+
+/// #2617 review: a template file names a wrong-typed field and an unknown
+/// key without quoting the file's value, and every key it does name is
+/// escaped.
+#[test]
+fn a_template_error_never_quotes_a_value_and_escapes_what_it_names() {
+    for (body, expected) in [
+        (
+            r#"{"label":"T","description":"d","steps":[{"key":"s","label":"S","phase":"plan","guidance":12345678995}]}"#,
+            "t.json: a field has the wrong type or value at steps[0].guidance",
+        ),
+        (
+            r#"{"label":"T","description":"d","x\u001b[31m":1,"steps":[]}"#,
+            r"t.json: unknown field `x\u{1b}[31m`",
+        ),
+        ("{ nope", "t.json: malformed JSON at line 1 column 3"),
+        (
+            r#"{"label":"T","description":"d","steps":[{"key":"x\u001b","label":"X","phase":"plan"},{"key":"x\u001b","label":"Y","phase":"plan"}]}"#,
+            r"t.json: duplicate step key `x\u{1b}`",
+        ),
+    ] {
+        let tmp = TempDir::new().unwrap();
+        write_template(tmp.path(), "t.json", body);
+        let err = load_workflow_templates_from_dir(tmp.path())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(expected), "{expected} not in: {err}");
+        for quoted in ["12345678995", "\u{1b}"] {
+            assert!(!err.contains(quoted), "{quoted:?} quoted in: {err}");
+        }
+    }
 }

@@ -671,6 +671,7 @@ fn validate_step_index(step: u32, len: usize) -> Result<usize, WorkflowError> {
 }
 
 fn validate_templates(templates: &[WorkflowTemplate]) -> Result<(), WorkflowError> {
+    use crate::domain::shared::text::printable::printable_name as shown;
     use std::collections::HashSet;
     if templates.len() > MAX_TEMPLATE_COUNT {
         return Err(WorkflowError::InvalidConfig(format!(
@@ -681,52 +682,44 @@ fn validate_templates(templates: &[WorkflowTemplate]) -> Result<(), WorkflowErro
     }
     let mut ids = HashSet::new();
     for template in templates {
+        // The id and step keys come from a hand-editable file: named escaped.
+        let id = shown(&template.id);
         if template.id.trim().is_empty() {
             return Err(WorkflowError::InvalidConfig(
                 "template id cannot be empty".into(),
             ));
         }
         if !ids.insert(template.id.clone()) {
-            return Err(WorkflowError::InvalidConfig(format!(
-                "duplicate template id: {}",
-                template.id
-            )));
+            let message = format!("duplicate template id: {id}");
+            return Err(WorkflowError::InvalidConfig(message));
         }
         if template.steps.is_empty() {
-            return Err(WorkflowError::InvalidConfig(format!(
-                "template '{}' has no steps",
-                template.id
-            )));
+            let message = format!("template '{id}' has no steps");
+            return Err(WorkflowError::InvalidConfig(message));
         }
         if template.steps.len() > MAX_STEPS_PER_TEMPLATE {
             return Err(WorkflowError::InvalidConfig(format!(
-                "template '{}' has too many steps: {} > {}",
-                template.id,
-                template.steps.len(),
-                MAX_STEPS_PER_TEMPLATE
+                "template '{id}' has too many steps: {} > {MAX_STEPS_PER_TEMPLATE}",
+                template.steps.len()
             )));
         }
         let mut step_keys = HashSet::new();
         for step in &template.steps {
             if step.key.trim().is_empty() {
-                return Err(WorkflowError::InvalidConfig(format!(
-                    "template '{}' has a step with empty key",
-                    template.id
-                )));
+                let message = format!("template '{id}' has a step with empty key");
+                return Err(WorkflowError::InvalidConfig(message));
             }
             if !step_keys.insert(step.key.clone()) {
-                return Err(WorkflowError::InvalidConfig(format!(
-                    "template '{}' has duplicate step key '{}'",
-                    template.id, step.key
-                )));
+                let key = shown(&step.key);
+                let message = format!("template '{id}' has duplicate step key '{key}'");
+                return Err(WorkflowError::InvalidConfig(message));
             }
         }
         for guard in &template.guards {
             if !step_keys.contains(&guard.before_step_key) {
-                return Err(WorkflowError::InvalidConfig(format!(
-                    "template '{}' guard references unknown step key '{}'",
-                    template.id, guard.before_step_key
-                )));
+                let key = shown(&guard.before_step_key);
+                let message = format!("template '{id}' guard references unknown step key '{key}'");
+                return Err(WorkflowError::InvalidConfig(message));
             }
         }
     }

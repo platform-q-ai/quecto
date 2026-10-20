@@ -503,3 +503,81 @@ fn credential_mutation_errors_release_the_transaction_lock() {
         .try_lock()
         .expect("parse-error returns must release the transaction lock");
 }
+
+/// #2617: a hand-edited store with a wrong-typed field must never echo the
+/// field's value (part of a secret) in any error a caller passes on.
+#[test]
+fn a_wrong_typed_field_is_never_echoed_in_a_parse_error() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    for (content, secret) in [
+        (
+            r#"{"credentials":{"openai":{"provider":"openai","token":12345678,"method":"token","expires_at":null}}}"#,
+            "12345678",
+        ),
+        (
+            r#"{"credentials":{"openai":{"provider":"openai","token":"fake-secret-token","method":"fake-secret-method","expires_at":null}}}"#,
+            "fake-secret-method",
+        ),
+        (
+            r#"{"credentials":{"openai":{"provider":"openai","token":"x","method":"token","expires_at":"fake-secret-expiry"}}}"#,
+            "fake-secret-expiry",
+        ),
+        (
+            r#"{"credentials":{"openai":{"provider":"openai","token":["fake-secret-array"],"method":"token","expires_at":null}}}"#,
+            "fake-secret-array",
+        ),
+        (
+            r#"{"credentials":{"openai":{"provider":"openai","token":"x","method":"sk-FAKE-METHOD-SECRET","expires_at":null}}}"#,
+            "sk-FAKE-METHOD-SECRET",
+        ),
+        (
+            r#"{"credentials":{"openai":{"provider":"openai","token":"x","method":"token","expires_at":"sk-FAKE-SECRET-IN-WRONG-FIELD"}}}"#,
+            "sk-FAKE-SECRET-IN-WRONG-FIELD",
+        ),
+    ] {
+        std::fs::write(store.path(), content).unwrap();
+        let errors = [
+            store.load_snapshot().unwrap_err().to_string(),
+            store.list().unwrap_err().to_string(),
+            store.get("openai").unwrap_err().to_string(),
+            store.remove("openai").unwrap_err().to_string(),
+            store
+                .store(make_credential("anthropic", "sk-1", AuthMethod::Token))
+                .unwrap_err()
+                .to_string(),
+        ];
+        for error in errors {
+            assert!(!error.contains(secret), "{secret} echoed in: {error}");
+            assert!(
+                error.contains("failed to parse credentials"),
+                "the cause is still named: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_parse_error_names_its_category_and_position() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    std::fs::write(
+        store.path(),
+        "{\n  \"credentials\": {\"openai\": {\"provider\": \"openai\", \"token\": 7}}\n}",
+    )
+    .unwrap();
+    assert_eq!(
+        store.load_snapshot().unwrap_err().to_string(),
+        "config error: failed to parse credentials: a field has the wrong type or value at credentials.openai.token (line 2 column 61)"
+    );
+    std::fs::write(store.path(), "{ not json").unwrap();
+    assert_eq!(
+        store.load_snapshot().unwrap_err().to_string(),
+        "config error: failed to parse credentials: malformed JSON at line 1 column 3"
+    );
+    std::fs::write(store.path(), "{\"credentials\": {").unwrap();
+    assert_eq!(
+        store.load_snapshot().unwrap_err().to_string(),
+        "config error: failed to parse credentials: the file ends early at line 1 column 17"
+    );
+}

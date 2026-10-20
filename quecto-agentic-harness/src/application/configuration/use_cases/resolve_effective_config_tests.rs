@@ -332,7 +332,7 @@ fn a_trusted_but_broken_overlay_is_an_error_naming_the_file() {
     let (resolve, _) = use_case(store, FakeTrust::trusting(OVERLAY, content));
     let error = resolve.execute(&layered()).unwrap_err();
     assert!(
-        matches!(&error, EffectiveConfigError::Parse { path, .. } if path == Path::new(OVERLAY))
+        matches!(&error, EffectiveConfigError::Parse { path, reason } if path == Path::new(OVERLAY) && reason == "malformed JSON at line 1 column 3")
     );
     assert!(
         error

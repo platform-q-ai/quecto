@@ -76,7 +76,7 @@ impl ImportExternalCredentials {
                 false => stated,
             };
             debug_assert_eq!(credential.provider, provider.id());
-            let stored = self.store.store(credential).map_err(|error| error.0);
+            let stored = self.store.store(credential).map_err(|error| error.reason);
             report.entries.push(ImportedEntry {
                 provider,
                 refreshed,

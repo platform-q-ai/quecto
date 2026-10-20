@@ -15,6 +15,7 @@ use crate::application::configuration::dto::{
     ConfigReadError, ConfigReadRequest, ConfigReadScope, ConfigReadout,
 };
 use crate::application::configuration::ports::ConfigDocumentStore;
+use crate::application::configuration::services::document_parse::parse_document;
 use crate::application::configuration::services::overlay_policy::{get_path, key_segments};
 use crate::application::configuration::services::redaction::redact_secret_leaves;
 use crate::application::configuration::use_cases::ResolveEffectiveConfig;
@@ -82,9 +83,9 @@ impl ReadConfiguration {
                 reason,
             })?;
         match bytes {
-            Some(bytes) => serde_json::from_slice(&bytes).map_err(|error| ConfigReadError::Parse {
+            Some(bytes) => parse_document(&bytes).map_err(|reason| ConfigReadError::Parse {
                 path: path.to_path_buf(),
-                reason: error.to_string(),
+                reason,
             }),
             None => Ok(Value::Object(serde_json::Map::new())),
         }

@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::domain::catalogue::value_objects::model_facts::PromptLimit;
 use crate::domain::conversation::value_objects::message::{ModelPricing, model_pricing};
+use crate::infrastructure::persistence::file::json_failure;
 use crate::infrastructure::providers::transport::stream_idle::{StreamIdle, StreamLimits};
 
 /// The price of a Claude 5 built-in, `None` for any other id.
@@ -105,20 +106,24 @@ impl ProviderApi {
 #[derive(Debug)]
 pub enum ModelRegistryError {
     Io(std::io::Error),
-    Parse(serde_json::Error),
+    /// The file does not fit the registry schema, described without its
+    /// content (#2617).
+    Parse(String),
     UnknownApi(String),
-    UnknownAuthMode(String),
 }
 
 impl std::fmt::Display for ModelRegistryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io(e) => write!(f, "failed to read models registry: {e}"),
-            Self::Parse(e) => write!(f, "failed to parse models registry: {e}"),
-            Self::UnknownApi(api) => write!(f, "unknown api '{api}' in models registry"),
-            Self::UnknownAuthMode(mode) => {
-                write!(f, "unknown auth mode '{mode}' in models registry")
-            }
+            Self::Parse(why) => write!(f, "failed to parse models registry: {why}"),
+            // The declared api is quoted, escaped: it names a transport, not
+            // a secret, and saying which helps (#2617 review 2).
+            Self::UnknownApi(api) => write!(
+                f,
+                "unknown api '{}' in models registry",
+                crate::domain::shared::text::printable::printable_name(api)
+            ),
         }
     }
 }
@@ -258,7 +263,7 @@ impl ModelRegistry {
         }
         let content = std::fs::read_to_string(path).map_err(ModelRegistryError::Io)?;
         let file: RegistryFile =
-            serde_json::from_str(&content).map_err(ModelRegistryError::Parse)?;
+            json_failure::from_str(&content).map_err(ModelRegistryError::Parse)?;
         // Deterministic provider order regardless of the map's iteration.
         let mut providers: Vec<_> = file.providers.into_iter().collect();
         providers.sort_by(|a, b| a.0.cmp(&b.0));
@@ -310,11 +315,12 @@ impl ModelRegistry {
                         // unknown `api`): this provider's models are skipped
                         // with a diagnostic and the other blocks still load
                         // (#1581 review).
-                        other => {
+                        _unknown => {
                             skipped.push(SkippedProviderBlock {
                                 provider: provider_key.clone(),
                                 error: format!(
-                                    "provider '{provider_key}' declares unknown auth mode '{other}' (supported: apiKey, oauth); its models were skipped"
+                                    "provider '{}' declares an unknown auth mode (supported: apiKey, oauth); its models were skipped",
+                                    crate::domain::shared::text::printable::printable_name(&provider_key)
                                 ),
                             });
                             continue;
@@ -634,6 +640,9 @@ use builtin_tables::{BuiltinSpec, gpt_5_6_cost, gpt_5_6_window};
 #[cfg(test)]
 #[path = "model_registry_catalogue_2435_tests.rs"]
 mod catalogue_2435_tests;
+#[cfg(test)]
+#[path = "model_registry_escape_tests.rs"]
+mod escape_tests;
 #[cfg(test)]
 #[path = "model_registry_image_input_tests.rs"]
 mod image_input_tests;

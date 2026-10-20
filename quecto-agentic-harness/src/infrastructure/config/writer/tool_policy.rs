@@ -12,6 +12,7 @@ use crate::domain::tool_policy::value_objects::tool::{
     ToolPolicyMutationStatus, ToolPolicyReconciliation,
 };
 use crate::infrastructure::config::{Config, ToolPolicyEntryConfig};
+use crate::infrastructure::persistence::file::json_failure;
 
 /// The loop's persistence hook shape (`application::agent_turn::agent_loop::ToolPolicyPersistence`).
 pub type ToolPolicyPersistenceFn =
@@ -89,9 +90,9 @@ pub fn persist_tool_policy_results(
     // the ones the write replaces, whatever else is patching this file.
     let _hold = super::exclusive_hold(lock_dir, config_path)?;
     let mut document = match std::fs::read(config_path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| {
+        Ok(bytes) => json_failure::value_from_slice(&bytes).map_err(|why| {
             format!(
-                "failed to load config {} for tool policy persistence: {e}",
+                "failed to load config {} for tool policy persistence: {why}",
                 config_path.display()
             )
         })?,
