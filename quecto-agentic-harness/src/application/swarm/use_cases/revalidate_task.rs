@@ -4,14 +4,14 @@
 use std::sync::Arc;
 
 use super::OverRepository;
-use crate::application::swarm::board_completion::task_record;
-use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{RevalidateTaskRequest, TaskRow};
 use crate::application::swarm::ports::{
     board_repository::{BoardEncoding, BoardRepository},
     lifecycle::Clock,
 };
+use crate::application::swarm::services::board_completion::task_record;
+use crate::application::swarm::services::board_operation::{detail, operation};
+use crate::application::swarm::services::board_tasks::read_task;
 use crate::domain::swarm::services::validation::TEXT_MAX_BYTES;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind,

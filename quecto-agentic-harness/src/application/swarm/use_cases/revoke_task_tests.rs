@@ -3,11 +3,11 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use super::RevokeTask;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::{Revocation, RevokeTaskRequest};
+use crate::application::swarm::test_support::{
     BoardState, CompactEncoding, MemoryBoard, SteppingClock, StoredFile, StoredMessage, member_row,
     running_board, stored_task,
 };
-use crate::application::swarm::dto::{Revocation, RevokeTaskRequest};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

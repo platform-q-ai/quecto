@@ -1,10 +1,10 @@
 use serde_json::json;
 
 use super::ListTasks;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::ListTasksRequest;
+use crate::application::swarm::test_support::{
     MemoryBoard, SteppingClock, member_row, recorded, running_board, stored_task,
 };
-use crate::application::swarm::dto::ListTasksRequest;
 use crate::application::swarm::use_cases::OverRepository;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,

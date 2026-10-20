@@ -1,10 +1,10 @@
 use serde_json::{Value, json};
 
 use super::ReadInbox;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::ReadInboxRequest;
+use crate::application::swarm::test_support::{
     BoardState, MemoryBoard, SteppingClock, StoredMessage, member_row, running_board,
 };
-use crate::application::swarm::dto::ReadInboxRequest;
 
 /// Messages 1 (consumed) and 3 (unread) to `parent`, and 2 to `worker`.
 fn board() -> BoardState {

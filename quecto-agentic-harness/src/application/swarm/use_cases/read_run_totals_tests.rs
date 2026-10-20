@@ -4,11 +4,11 @@
 use serde_json::json;
 
 use super::ReadRunTotals;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::UsageRow;
+use crate::application::swarm::test_support::{
     MemoryBoard, RecordedEvent, SteppingClock, StoredMessage, member_row, recorded, running_board,
     stored_task, usage,
 };
-use crate::application::swarm::dto::UsageRow;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

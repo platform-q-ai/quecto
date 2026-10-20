@@ -3,12 +3,12 @@ use std::cell::RefCell;
 use serde_json::{Value, json};
 
 use super::{LOSS_GRACE, end_by_loss, grace_elapsed, lost};
-use crate::application::swarm::board_test_support::{
-    MemoryBoard, RecordedEvent, SteppingClock, member_row, paused, recorded, running_board,
-};
 use crate::application::swarm::dto::{DictRow, LatestActivity, ScopeObservation};
 use crate::application::swarm::ports::{
     board_events::BoardEvents, board_repository::BoardRepository,
+};
+use crate::application::swarm::test_support::{
+    MemoryBoard, RecordedEvent, SteppingClock, member_row, paused, recorded, running_board,
 };
 use crate::domain::swarm::{
     entities::records::{RunRecord, RunState},
@@ -150,7 +150,7 @@ fn an_observation_time_is_read_as_python_reads_it() {
 }
 
 fn ended(
-    state: crate::application::swarm::board_test_support::BoardState,
+    state: crate::application::swarm::test_support::BoardState,
 ) -> (bool, RunRecord, Vec<RecordedEvent>) {
     let board = MemoryBoard::with(state);
     let run = board.snapshot().run.unwrap().record;

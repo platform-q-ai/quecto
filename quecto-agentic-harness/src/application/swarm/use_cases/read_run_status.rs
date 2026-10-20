@@ -4,9 +4,9 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::OverRepository;
-use crate::application::swarm::board_operation::atomic;
 use crate::application::swarm::dto::RunStatusView;
 use crate::application::swarm::ports::board_repository::BoardRepository;
+use crate::application::swarm::services::board_operation::atomic;
 use crate::domain::swarm::value_objects::board_error::BoardError;
 
 /// Membership-free, so it runs in one plain transaction rather than the

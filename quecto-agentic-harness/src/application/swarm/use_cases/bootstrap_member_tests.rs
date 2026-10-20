@@ -1,8 +1,8 @@
 use serde_json::{Value, json};
 
 use super::BootstrapMember;
-use crate::application::swarm::board_test_support::{CounterIds, MemoryBoard, SteppingClock};
 use crate::application::swarm::dto::{BootstrapMemberRequest, Joined, RunSummary};
+use crate::application::swarm::test_support::{CounterIds, MemoryBoard, SteppingClock};
 use crate::application::swarm::use_cases::OverRepository;
 
 fn bootstrap() -> BootstrapMemberRequest {

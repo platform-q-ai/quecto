@@ -1,11 +1,11 @@
 use serde_json::{Value, json};
 
 use super::{paused_for, receipt};
-use crate::application::swarm::board_operation::atomic;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::ControlReceipt;
+use crate::application::swarm::services::board_operation::atomic;
+use crate::application::swarm::test_support::{
     BoardState, MemoryBoard, SteppingClock, UsageReads, paused, recorded, running_board, usage,
 };
-use crate::application::swarm::dto::ControlReceipt;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use super::ReadUsageReport;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::test_support::{
     MemoryBoard, SteppingClock, member_row, running_board, usage,
 };
 use crate::domain::swarm::{

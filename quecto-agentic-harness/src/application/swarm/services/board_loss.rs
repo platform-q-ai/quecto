@@ -9,11 +9,11 @@
 //! goes on (the `unknown_member_status_is_not_alive` divergence).
 use serde_json::Value;
 
-use super::board_control::edited;
-use super::board_operation::{detail, end, text};
-use super::ports::{
+use super::super::ports::{
     board_events::BoardEvents, board_members::BoardMembers, board_runs::BoardRuns, lifecycle::Clock,
 };
+use super::board_control::edited;
+use super::board_operation::{detail, end, text};
 use crate::domain::swarm::{
     entities::records::{RunRecord, RunState},
     services::policy::status_is_alive,
