@@ -3,10 +3,10 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use super::RevalidateTask;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::RevalidateTaskRequest;
+use crate::application::swarm::test_support::{
     BoardState, CompactEncoding, MemoryBoard, SteppingClock, member_row, running_board, stored_task,
 };
-use crate::application::swarm::dto::RevalidateTaskRequest;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

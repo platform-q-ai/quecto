@@ -2,8 +2,8 @@
 //! event batch wakes, judged by the domain policy
 //! ([`notification_targets`]) against the board as the transaction reads
 //! it. A capability-internal helper, not a use case and not a port.
-use super::dto::MemberRow;
-use super::ports::{board_members::BoardMembers, board_wakes::BoardWakes};
+use super::super::dto::MemberRow;
+use super::super::ports::{board_members::BoardMembers, board_wakes::BoardWakes};
 use crate::domain::swarm::{
     entities::records::{MemberRecord, MemberState, RunRecord, RunState},
     services::notification::{NotificationEvent, notification_targets},

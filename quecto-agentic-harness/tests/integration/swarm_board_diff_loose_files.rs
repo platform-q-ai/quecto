@@ -51,7 +51,7 @@ const SLICE_PINS: [(&str, &str, &str); 3] = [
     ),
     (
         "unknown_member_status_is_not_alive",
-        include_str!("../../src/application/swarm/board_recovery_tests.rs"),
+        include_str!("../../src/application/swarm/services/board_recovery_tests.rs"),
         "an_unknown_owner_status_is_not_told",
     ),
 ];

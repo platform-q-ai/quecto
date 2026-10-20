@@ -8,8 +8,6 @@ use serde_json::Value;
 
 use super::OverRepository;
 
-use crate::application::swarm::board_control::{edited, receipt_from};
-use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::{
     NewRequestUsage, RecordRequestUsageRequest, RecordedRequest, RequestDelivery,
 };
@@ -17,6 +15,8 @@ use crate::application::swarm::ports::{
     board_repository::{BoardEncoding, BoardRepository},
     lifecycle::Clock,
 };
+use crate::application::swarm::services::board_control::{edited, receipt_from};
+use crate::application::swarm::services::board_operation::operation;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind,
     services::policy::Access,

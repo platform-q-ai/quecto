@@ -1,10 +1,10 @@
 use serde_json::json;
 
 use super::woken;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::ports::board_repository::BoardRepository;
+use crate::application::swarm::test_support::{
     MemoryBoard, member_row, running_board, stored_member,
 };
-use crate::application::swarm::ports::board_repository::BoardRepository;
 use crate::domain::swarm::services::notification::NotificationEvent;
 
 /// An amendment wakes every live member but the actor, each answered as

@@ -1,5 +1,5 @@
 use super::ReadRunSnapshot;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, running_board,
 };
 use crate::application::swarm::use_cases::OverRepository;
