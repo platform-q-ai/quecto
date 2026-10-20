@@ -400,7 +400,7 @@ impl AnthropicProvider {
                 })?,
         };
         let parsed = Self::parse_sse_reply(&full, params.tool_defs)
-            .map_err(|cut| cut.account(trace.as_deref(), params.model));
+            .map_err(|cut| cut.account(trace.as_deref()));
         attempt.iter().for_each(|a| a.parsed(&parsed));
         parsed
     }
@@ -604,7 +604,6 @@ async fn dispatch_sse_event(
     event_type: &str,
     chunk: &serde_json::Value,
     acc: &mut SseAccumulator,
-    model: Option<&str>,
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
 ) -> bool {
     match event_type {
@@ -637,13 +636,7 @@ async fn dispatch_sse_event(
         }
         "message_delta" => acc.handle_message_delta(chunk),
         "message_stop" => {
-            let mut response = std::mem::take(acc).into_response();
-            if let Some(model) = model {
-                crate::domain::inference::services::usage_accounting::attach_cost(
-                    &mut response,
-                    model,
-                );
-            }
+            let response = std::mem::take(acc).into_response();
             let _ = tx.send(StreamEvent::Done(response)).await;
             return true;
         }

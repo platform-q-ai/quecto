@@ -162,3 +162,14 @@ fn the_whole_window_budget_ignores_the_reply_reserve() {
         300_000
     );
 }
+
+/// #1855: a price rate is finite and non-negative; zero is a rate.
+#[test]
+fn a_rate_is_in_range_only_when_finite_and_non_negative() {
+    for rate in [0.0, 0.01, 75.0] {
+        assert!(ModelCost::rate_in_range(rate), "{rate}");
+    }
+    for rate in [-0.01, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(!ModelCost::rate_in_range(rate), "{rate}");
+    }
+}

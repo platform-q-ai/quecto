@@ -43,6 +43,7 @@ fn entry(oauth: bool) -> CatalogueEntry {
                     output: 2.0,
                     cache_read: 0.25,
                     cache_write: 0.5,
+                    declared: true,
                 },
                 prompt_limit: Default::default(),
             },
@@ -165,4 +166,23 @@ fn renders_why_a_listed_model_cannot_run() {
     );
     assert_eq!(json["models"][1]["configured"], true);
     assert_eq!(json["models"][1]["unavailable"], serde_json::json!([]));
+}
+
+/// #2630 review round 4: a model whose cost is no price (nobody stated
+/// it) lists `"cost": null`, as billing treats it, never zeros that read as
+/// free.
+#[test]
+fn an_unpriced_model_lists_a_null_cost() {
+    let mut unpriced = entry(true);
+    unpriced.model.capabilities.cost = ModelCost::default();
+    let listing = ModelCatalogueListing {
+        generation: 1,
+        models: vec![ListedModel {
+            entry: unpriced,
+            runnable: true,
+        }],
+        rejected: Vec::new(),
+    };
+    let json = render(&ModelListingOutcome::Listed(listing));
+    assert!(json["models"][0]["cost"].is_null(), "{json}");
 }

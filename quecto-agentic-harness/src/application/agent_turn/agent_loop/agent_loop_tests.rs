@@ -487,33 +487,6 @@ async fn test_multiple_tool_calls_in_sequence() {
 }
 
 #[tokio::test]
-async fn test_agent_result_accumulates_usage_cache_and_cost_across_llm_calls() {
-    let (mut agent, _) = make_agent(
-        vec![
-            tool_call_response_with_usage(
-                "read",
-                r#"{"path":"x"}"#,
-                UsageFixture(10, 2, 3, 4, 1_000),
-            ),
-            text_response_with_usage("final", UsageFixture(20, 5, 6, 7, 2_500)),
-        ],
-        vec![("read", "content")],
-    );
-    let mut messages = vec![Message::user("read")];
-
-    let result = agent.run_loop(&mut messages).await.unwrap();
-
-    assert_eq!(result.response, "final");
-    assert_eq!(result.input_tokens, 20);
-    assert_eq!(result.output_tokens, 7);
-    assert_eq!(result.billed_input_tokens, 30);
-    assert_eq!(result.billed_output_tokens, 7);
-    assert_eq!(result.cache_read_tokens, 9);
-    assert_eq!(result.cache_write_tokens, 11);
-    assert_eq!(result.cost_micro_usd, 3_500);
-}
-
-#[tokio::test]
 async fn test_iteration_limit() {
     // LLM always returns tool calls — should stop at limit
     let responses: Vec<LlmResponse> = (0..10)

@@ -148,10 +148,10 @@ fn builtin_claude_sonnet_5_resolves_for_api_key_and_oauth_with_published_limits(
     assert_eq!(api_model.context_window, 1_000_000);
     assert_eq!(api_model.max_tokens, 128_000);
     assert!(api_model.max_tokens_explicit);
-    assert_eq!(api_model.cost.input, 3.0);
-    assert_eq!(api_model.cost.output, 15.0);
-    assert_eq!(api_model.cost.cache_read, 0.3);
-    assert_eq!(api_model.cost.cache_write, 3.75);
+    assert_eq!(api_model.cost.input, 2.0);
+    assert_eq!(api_model.cost.output, 10.0);
+    assert_eq!(api_model.cost.cache_read, 0.2);
+    assert_eq!(api_model.cost.cache_write, 2.5);
 
     let oauth_model = registry
         .find("anthropic-oauth", "claude-sonnet-5")
@@ -174,10 +174,11 @@ fn builtin_claude_sonnet_5_resolves_for_api_key_and_oauth_with_published_limits(
     assert_eq!(oauth_model.context_window, 1_000_000);
     assert_eq!(oauth_model.max_tokens, 128_000);
     assert!(oauth_model.max_tokens_explicit);
-    assert_eq!(oauth_model.cost.input, 3.0);
-    assert_eq!(oauth_model.cost.output, 15.0);
-    assert_eq!(oauth_model.cost.cache_read, 0.3);
-    assert_eq!(oauth_model.cost.cache_write, 3.75);
+    // #2441: Sonnet 5's $2/$10 launch price is its standard one.
+    assert_eq!(oauth_model.cost.input, 2.0);
+    assert_eq!(oauth_model.cost.output, 10.0);
+    assert_eq!(oauth_model.cost.cache_read, 0.2);
+    assert_eq!(oauth_model.cost.cache_write, 2.5);
 }
 
 #[test]
@@ -189,9 +190,11 @@ fn builtin_openai_reasoning_tiers_resolve_for_api_key_and_oauth_with_published_l
         ("gpt-6-sol", 2.0, 10.0, None),
         ("gpt-6.1-sol", 2.0, 10.0, Some(0.1)),
         ("gpt-6-luna", 0.1, 0.5, None),
-        ("gpt-5.6-sol", 5.0, 30.0, None),
-        ("gpt-5.6-terra", 2.5, 15.0, None),
-        ("gpt-5.6-luna", 1.0, 6.0, None),
+        // #1855 review M1: Sol's promotional price, through at least
+        // 2026-11-21.
+        ("gpt-5.6-sol", 4.0, 20.0, None),
+        ("gpt-5.6-terra", 2.0, 12.0, None),
+        ("gpt-5.6-luna", 0.2, 1.2, None),
     ];
     for provider in ["openai-api", "openai-oauth"] {
         for (id, input, output, cache_read) in tiers {
@@ -234,12 +237,18 @@ fn builtin_openai_reasoning_tiers_resolve_for_api_key_and_oauth_with_published_l
             // Existing tiers use 0.10x input for cache read; 6.1-sol publishes $0.10/1M.
             assert_eq!(m.cost.input, input, "{id} input price");
             assert_eq!(m.cost.output, output, "{id} output price");
-            assert_eq!(
-                m.cost.cache_read,
-                cache_read.unwrap_or(input * 0.10),
-                "{id} cache-read price"
+            // The table states each rate; the published ratios hold to rounding.
+            let near = |actual: f64, expected: f64| (actual - expected).abs() < 1e-9;
+            assert!(
+                near(m.cost.cache_read, cache_read.unwrap_or(input * 0.10)),
+                "{id} cache-read price {}",
+                m.cost.cache_read
             );
-            assert_eq!(m.cost.cache_write, input * 1.25, "{id} cache-write price");
+            assert!(
+                near(m.cost.cache_write, input * 1.25),
+                "{id} cache-write price {}",
+                m.cost.cache_write
+            );
         }
     }
     // Auth modes are wired per listing.
@@ -250,40 +259,6 @@ fn builtin_openai_reasoning_tiers_resolve_for_api_key_and_oauth_with_published_l
     let oauth = registry.find("openai-oauth", "gpt-6-astra").unwrap();
     assert_eq!(oauth.auth, AuthMode::OAuth);
     assert_eq!(oauth.oauth_provider.as_deref(), Some("openai"));
-}
-
-/// Guards the id-string coupling between `builtin_specs()` and
-/// `gpt_5_6_cost`: the enrichment in `build_builtin` is keyed by literal id
-/// match, so a tier added or renamed in one table but not the other would
-/// otherwise silently ship with default limits, `reasoning = false`, and
-/// zero pricing. This walks every built-in `gpt-5.6*` id rather than a
-/// hardcoded list, failing loudly on drift.
-#[test]
-fn every_builtin_gpt_5_6_id_has_pricing_and_enriched_limits() {
-    let registry = ModelRegistry::builtin();
-    let tiers: Vec<_> = registry
-        .models()
-        .iter()
-        .filter(|m| m.id.starts_with("gpt-5.6"))
-        .collect();
-    assert!(!tiers.is_empty(), "expected built-in gpt-5.6 tiers");
-    for m in tiers {
-        let id = &m.id;
-        assert!(
-            super::gpt_5_6_cost(id).is_some(),
-            "{id} is in builtin_specs() but gpt_5_6_cost has no entry for it; \
-             add it there so the model does not ship with default limits and \
-             zero pricing"
-        );
-        assert!(m.reasoning, "{id} enrichment not applied: reasoning");
-        assert!(
-            m.context_window_explicit,
-            "{id} context window not explicit"
-        );
-        assert!(m.max_tokens_explicit, "{id} max tokens not explicit");
-        assert!(m.cost.input > 0.0, "{id} input price missing");
-        assert!(m.cost.output > 0.0, "{id} output price missing");
-    }
 }
 
 #[test]

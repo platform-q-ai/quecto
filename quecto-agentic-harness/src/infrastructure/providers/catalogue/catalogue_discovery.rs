@@ -226,8 +226,12 @@ fn cached_entry(provider: &str, model: &CachedModel) -> Result<CatalogueEntry, S
             // carries no effort vocabulary until the user's record says so;
             // a listing says nothing of its input, so a built-in model keeps
             // the built-in table's (#2421 review L1).
+            // A listing states no price either: the published one for the
+            // id holds, so a discovered entry replacing a built-in keeps its
+            // cost (#1855 review M3).
             capabilities: crate::domain::catalogue::value_objects::model_facts::ModelCapabilities {
                 input_modalities: super::model_registry::builtin_input(provider, &model.id),
+                cost: crate::domain::catalogue::services::published_prices::cost_of_id(&model.id),
                 ..super::catalogue_registry::default_capabilities()
             },
             availability: Availability::runnable(),
