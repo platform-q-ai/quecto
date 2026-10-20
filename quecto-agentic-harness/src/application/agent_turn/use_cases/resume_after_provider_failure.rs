@@ -12,6 +12,7 @@ use crate::domain::inference::services::turn_suspension::{
     AutomaticTurns, OwedTurn, SuspendedProbe, SuspensionCause, Work,
 };
 use crate::domain::shared::error::DomainError;
+use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 use crate::domain::swarm::value_objects::run_control::RunControlAction;
 
 /// One session's automatic turns: whether they run, why not, and what
@@ -92,6 +93,16 @@ impl ResumeAfterProviderFailure {
         self.turns.needs_self_wake()
     }
 
+    /// Which suspension this is (a self-wake for an older one is stale).
+    pub fn suspension_epoch(&self) -> u64 {
+        self.turns.suspension_epoch()
+    }
+
+    /// Whether a wake's re-arm owes the run a turn not yet taken.
+    pub fn owes_turn(&self) -> bool {
+        self.turns.owes_turn()
+    }
+
     /// Date a provider-failure suspension at the control generation current
     /// after the failure (#1721), so a pause and resume during the failed
     /// turn cannot re-arm it; only a later resume can. Without a swarm, or
@@ -117,8 +128,9 @@ impl ResumeAfterProviderFailure {
         debug_assert!(!self.turns.allowed(), "only a suspended session probes");
         let receipt = control.apply(RunControlAction::Status).await?;
         let generation = receipt.generation;
+        let run_takes_turns = matches!(receipt.status, RunStatus::Setup | RunStatus::Running);
         Ok(SuspendedProbe {
-            outcome: self.turns.wake(generation),
+            outcome: self.turns.wake(generation, run_takes_turns),
             generation,
         })
     }

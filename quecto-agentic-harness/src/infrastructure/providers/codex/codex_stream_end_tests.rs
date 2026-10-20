@@ -358,7 +358,8 @@ fn a_typed_stream_failure_renders_the_status_its_name_stands_for() {
 /// (`service_unavailable_error` / `server_is_overloaded`), rendered as the
 /// wire classes it (`classed_stream_failure`), suspends a member as a
 /// recoverable failure, and the next swarm wake re-arms it and owes the run
-/// a turn to continue the interrupted work.
+/// a turn to continue the interrupted work. The message names no overload,
+/// so the typed class, not a keyword, decides (#2626 review).
 #[test]
 fn a_codex_overload_mid_stream_suspends_as_recoverable_and_the_next_wake_re_arms() {
     use crate::domain::inference::services::turn_suspension::{
@@ -370,7 +371,7 @@ fn a_codex_overload_mid_stream_suspends_as_recoverable_and_the_next_wake_re_arms
         "error": {
             "type": "service_unavailable_error",
             "code": "server_is_overloaded",
-            "message": "The server is overloaded"
+            "message": "Please try again later."
         }
     }))
     .expect("a failure");
@@ -384,7 +385,10 @@ fn a_codex_overload_mid_stream_suspends_as_recoverable_and_the_next_wake_re_arms
         turns.suspension().map(|suspension| suspension.cause),
         Some(SuspensionCause::RecoverableProviderFailure)
     );
-    assert_eq!(turns.wake(3), WakeOutcome::RearmedAfterRecoverableFailure);
+    assert_eq!(
+        turns.wake(3, true),
+        WakeOutcome::RearmedAfterRecoverableFailure
+    );
     assert!(turns.allowed());
     assert_eq!(
         turns.take_owed_turn(),

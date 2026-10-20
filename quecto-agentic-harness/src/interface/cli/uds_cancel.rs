@@ -46,7 +46,9 @@ pub type CancelHandle = std::sync::Arc<std::sync::Mutex<CancelSlot>>;
 /// - `pending_steers` counts admitted redirects: the auto-continue nudge yields
 ///   so the steered instruction is obeyed next instead of being overridden.
 pub struct TurnControl {
-    pending_swarm_wake: std::sync::Mutex<Option<u64>>,
+    /// The pending wake's generation, and the suspension epoch when only a
+    /// self-wake sent it (#2531, #2626 review).
+    pending_swarm_wake: std::sync::Mutex<Option<(u64, Option<u64>)>>,
     /// A wake the dispatch loop could not apply; folded into the next take (0 = none).
     deferred_swarm_wake: std::sync::atomic::AtomicU64,
     pub(crate) swarm_control:

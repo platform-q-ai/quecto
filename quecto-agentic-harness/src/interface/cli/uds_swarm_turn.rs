@@ -79,25 +79,48 @@ pub(in crate::interface::cli) async fn arm_swarm_cancel(
 }
 
 impl TurnControl {
+    /// A wake from outside this process (or a resume): it rides any
+    /// pending message, and the message is no longer a self-wake alone.
     pub fn queue_swarm_wake(&self, generation: u64) -> bool {
         let mut pending = self
             .pending_swarm_wake
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let first = pending.is_none();
-        *pending = Some(pending.unwrap_or(0).max(generation));
+        let highest = pending.map_or(generation, |(seen, _)| seen.max(generation));
+        *pending = Some((highest, None));
+        first
+    }
+    /// A self-wake for suspension `epoch` (#2626 review): it sends its own
+    /// message only when none is pending, and then carries the epoch.
+    fn queue_self_wake(&self, generation: u64, epoch: u64) -> bool {
+        let mut pending = self
+            .pending_swarm_wake
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let first = pending.is_none();
+        *pending = Some(match *pending {
+            None => (generation, Some(epoch)),
+            Some((seen, source)) => (seen.max(generation), source),
+        });
         first
     }
     pub fn take_swarm_wake(&self, fallback: u64) -> u64 {
+        self.take_swarm_wake_from(fallback).0
+    }
+    /// The wake to apply, and the suspension epoch when only a self-wake
+    /// sent it.
+    pub fn take_swarm_wake_from(&self, fallback: u64) -> (u64, Option<u64>) {
         let deferred = self
             .deferred_swarm_wake
             .swap(0, std::sync::atomic::Ordering::SeqCst);
-        self.pending_swarm_wake
+        let (generation, self_epoch) = self
+            .pending_swarm_wake
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take()
-            .unwrap_or(fallback)
-            .max(deferred)
+            .unwrap_or((fallback, None));
+        (generation.max(deferred), self_epoch)
     }
 
     /// Dispatch loop: keep a wake it could not apply (store contention) for
@@ -119,12 +142,17 @@ impl TurnControl {
     }
 
     /// Wake this process after `delay` (#2531) at the latest control
-    /// generation it has seen: a wake at or below the run's wake cursor
-    /// claims nothing, but a suspended member's probe still runs. One is
+    /// generation it has seen, for suspension `epoch` (a newer suspension
+    /// makes it stale): a wake at or below the run's wake cursor claims
+    /// nothing, but a suspended member's probe still runs. One is
     /// scheduled at a time; returns whether this call scheduled it. Without
     /// a bound channel, or once the loop or the process is ending, nothing
     /// is sent.
-    pub(crate) fn schedule_self_wake(self: &Arc<Self>, delay: std::time::Duration) -> bool {
+    pub(crate) fn schedule_self_wake(
+        self: &Arc<Self>,
+        delay: std::time::Duration,
+        epoch: u64,
+    ) -> bool {
         let Some(waker) = self.self_waker.get().cloned() else {
             return false;
         };
@@ -152,7 +180,7 @@ impl TurnControl {
                 return;
             };
             let generation = control.control_generation().unwrap_or(0);
-            if control.queue_swarm_wake(generation) {
+            if control.queue_self_wake(generation, epoch) {
                 let message =
                     crate::interface::cli::uds_multi::ClientMessage::SwarmWake { generation };
                 if sender.send(message).await.is_err() {

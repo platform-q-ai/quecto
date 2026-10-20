@@ -279,10 +279,19 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
         value_objects::lifecycle::RunStatus, value_objects::run_control::RunControlAction,
     };
 
-    let generation = ctx.turn_control.take_swarm_wake(generation);
+    let (generation, self_wake_epoch) = ctx.turn_control.take_swarm_wake_from(generation);
     let Some(control) = ctx.turn_control.swarm_control.clone() else {
         return false;
     };
+    // A self-wake for a suspension a newer one has replaced is stale: the
+    // newer one's own self-wake keeps its delay (#2626 review).
+    let current_epoch = ctx.session.automatic_turns().suspension_epoch();
+    match self_wake_epoch {
+        // A wake from outside this process, or a self-wake for this one.
+        None => {}
+        Some(epoch) if epoch == current_epoch => {}
+        Some(_) => return false,
+    }
     // #1721: while suspended, learn the control generation without claiming
     // wake events; a pause/resume since the provider failure re-arms us, and
     // so does this wake after a recoverable failure (#2531).
@@ -329,6 +338,11 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
                     ),
                 );
                 emit_event_to_broadcast_or_writer(ctx, &event).await;
+                // A locked store must not strand a member no one else
+                // wakes (#2626 review): wake again after the delay.
+                if deferred {
+                    keep_self_waking(ctx);
+                }
                 return false;
             }
         }
@@ -393,6 +407,9 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
                     format!("generation {generation} deferred: {error}"),
                 );
                 emit_event_to_broadcast_or_writer(ctx, &event).await;
+                // The re-arm's owed turn waits for the next wake (#2626
+                // review): wake again after the delay.
+                keep_self_waking(ctx);
             }
             // A durable rejection stops automatic turns until a human prompt.
             StoreFailure::Durable => {
@@ -449,9 +466,21 @@ pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'
     // #2531: a swarm member a recoverable failure suspended wakes itself
     // once after a delay, so the last active member (or a coordinator no
     // member wakes) still continues; the wake re-arms it within the bound.
-    if ctx.session.automatic_turns().needs_self_wake() && ctx.turn_control.swarm_control.is_some() {
+    keep_self_waking(ctx);
+}
+
+/// Schedule a self-wake (#2531) while this swarm member needs one: a
+/// recoverable failure suspended it, or a re-arm owes the run a turn a
+/// locked store kept it from taking (#2626 review). Tagged with the
+/// suspension it is for, so it goes stale when a newer one begins.
+fn keep_self_waking(ctx: &mut super::uds::DispatchCtx<'_>) {
+    let turns = ctx.session.automatic_turns();
+    let needed = turns.needs_self_wake() || turns.owes_turn();
+    let epoch = turns.suspension_epoch();
+    if needed && ctx.turn_control.swarm_control.is_some() {
         ctx.turn_control.schedule_self_wake(
             crate::domain::inference::services::turn_suspension::RECOVERABLE_SELF_WAKE_DELAY,
+            epoch,
         );
     }
 }

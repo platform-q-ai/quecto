@@ -148,6 +148,9 @@ pub struct AutomaticTurns {
     owed_turn: Option<OwedTurn>,
     /// Recoverable failures re-armed since a turn last succeeded.
     recoverable_rearms: u32,
+    /// Suspensions so far: a self-wake scheduled for one is stale once a
+    /// newer one begins (#2626 review).
+    suspension_epoch: u64,
 }
 
 impl Default for AutomaticTurns {
@@ -158,6 +161,7 @@ impl Default for AutomaticTurns {
             last_control_generation: None,
             owed_turn: None,
             recoverable_rearms: 0,
+            suspension_epoch: 0,
         }
     }
 }
@@ -188,6 +192,14 @@ impl AutomaticTurns {
     /// else at the latest control generation this session has seen. Any
     /// turn a resume owed is cancelled.
     pub fn suspend(&mut self, cause: SuspensionCause, generation: Option<u64>) {
+        // A recoverable suspension only within the bound (#2626 review).
+        match cause {
+            SuspensionCause::RecoverableProviderFailure => {
+                debug_assert!(self.recoverable_rearms < MAX_RECOVERABLE_REARMS)
+            }
+            SuspensionCause::ProviderFailure | SuspensionCause::StoreRejection => {}
+        }
+        self.suspension_epoch = self.suspension_epoch.wrapping_add(1);
         self.allowed = false;
         self.owed_turn = None;
         self.suspension = Some(TurnSuspension {
@@ -218,6 +230,17 @@ impl AutomaticTurns {
     /// Whether this session should wake itself after
     /// [`RECOVERABLE_SELF_WAKE_DELAY`] (#2531): a recoverable failure
     /// suspended it, so nothing else may wake it again.
+    /// Which suspension this is: a self-wake carries the epoch it was
+    /// scheduled for, and one for an older suspension is stale.
+    pub fn suspension_epoch(&self) -> u64 {
+        self.suspension_epoch
+    }
+
+    /// Whether a wake's re-arm owes the run a turn not yet taken.
+    pub fn owes_turn(&self) -> bool {
+        self.owed_turn.is_some()
+    }
+
     pub fn needs_self_wake(&self) -> bool {
         self.recoverable()
     }
@@ -287,19 +310,26 @@ impl AutomaticTurns {
     /// failure re-arms it and owes the run a turn; otherwise a recoverable
     /// failure is re-armed by the wake (#2531), within its bound, and owes
     /// the run a turn to continue the interrupted work, whether or not the
-    /// wake itself brings work.
-    pub fn wake(&mut self, generation: u64) -> WakeOutcome {
+    /// wake itself brings work, while the run takes turns (Setup or
+    /// Running, `run_takes_turns`).
+    pub fn wake(&mut self, generation: u64, run_takes_turns: bool) -> WakeOutcome {
         if self.resume_after_control_change(generation) {
             return WakeOutcome::RearmedByResume;
         }
-        match self.suspension.map(|suspension| suspension.cause) {
-            None => WakeOutcome::NotSuspended,
-            Some(SuspensionCause::RecoverableProviderFailure) => {
+        // A paused or ended run takes no turn: a recoverable failure waits
+        // for it to run again (#2626 review), spending none of its bound.
+        match (
+            self.suspension.map(|suspension| suspension.cause),
+            run_takes_turns,
+        ) {
+            (None, _) => WakeOutcome::NotSuspended,
+            (Some(SuspensionCause::RecoverableProviderFailure), true) => {
                 self.rearm_recoverable();
                 self.owed_turn = Some(OwedTurn::AfterRecoverableFailure);
                 WakeOutcome::RearmedAfterRecoverableFailure
             }
-            Some(SuspensionCause::ProviderFailure | SuspensionCause::StoreRejection) => {
+            (Some(SuspensionCause::RecoverableProviderFailure), false)
+            | (Some(SuspensionCause::ProviderFailure | SuspensionCause::StoreRejection), _) => {
                 WakeOutcome::StillSuspended
             }
         }

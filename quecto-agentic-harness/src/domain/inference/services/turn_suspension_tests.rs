@@ -203,7 +203,10 @@ fn the_next_wake_re_arms_a_recoverable_suspension() {
     let mut turns = AutomaticTurns::default();
     turns.suspend(SuspensionCause::RecoverableProviderFailure, Some(4));
     assert!(turns.needs_self_wake());
-    assert_eq!(turns.wake(4), WakeOutcome::RearmedAfterRecoverableFailure);
+    assert_eq!(
+        turns.wake(4, true),
+        WakeOutcome::RearmedAfterRecoverableFailure
+    );
     assert!(turns.allowed());
     assert!(!turns.needs_self_wake());
     assert_eq!(
@@ -248,7 +251,10 @@ fn recoverable_re_arms_are_bounded_until_a_turn_succeeds() {
     let mut turns = AutomaticTurns::default();
     for _ in 0..MAX_RECOVERABLE_REARMS {
         turns.suspend_after_failure(&provider("HTTP 503 from OpenAI: overloaded"), Some(1));
-        assert_eq!(turns.wake(1), WakeOutcome::RearmedAfterRecoverableFailure);
+        assert_eq!(
+            turns.wake(1, true),
+            WakeOutcome::RearmedAfterRecoverableFailure
+        );
     }
     turns.suspend_after_failure(&provider("HTTP 503 from OpenAI: overloaded"), Some(1));
     assert_eq!(
@@ -256,12 +262,15 @@ fn recoverable_re_arms_are_bounded_until_a_turn_succeeds() {
         Some(SuspensionCause::ProviderFailure),
         "escalated past the bound"
     );
-    assert_eq!(turns.wake(1), WakeOutcome::StillSuspended);
-    assert_eq!(turns.wake(2), WakeOutcome::RearmedByResume);
+    assert_eq!(turns.wake(1, true), WakeOutcome::StillSuspended);
+    assert_eq!(turns.wake(2, true), WakeOutcome::RearmedByResume);
     // A turn that succeeds gives the bound back.
     turns.turn_succeeded();
     turns.suspend_after_failure(&provider("HTTP 503 from OpenAI: overloaded"), Some(2));
-    assert_eq!(turns.wake(2), WakeOutcome::RearmedAfterRecoverableFailure);
+    assert_eq!(
+        turns.wake(2, true),
+        WakeOutcome::RearmedAfterRecoverableFailure
+    );
 }
 
 /// An explicit instruction gives the bound back too.
@@ -270,7 +279,7 @@ fn an_instruction_gives_the_recoverable_bound_back() {
     let mut turns = AutomaticTurns::default();
     for _ in 0..MAX_RECOVERABLE_REARMS {
         turns.suspend_after_failure(&provider("HTTP 503 from OpenAI: overloaded"), Some(1));
-        turns.wake(1);
+        turns.wake(1, true);
     }
     turns.start(Work::Instruction(Instruction::Prompt));
     turns.suspend_after_failure(&provider("HTTP 503 from OpenAI: overloaded"), Some(1));
@@ -285,13 +294,13 @@ fn an_instruction_gives_the_recoverable_bound_back() {
 fn a_wake_lifts_a_terminal_suspension_only_on_a_newer_generation() {
     let mut turns = AutomaticTurns::default();
     turns.suspend(SuspensionCause::ProviderFailure, Some(4));
-    assert_eq!(turns.wake(4), WakeOutcome::StillSuspended);
-    assert_eq!(turns.wake(5), WakeOutcome::RearmedByResume);
+    assert_eq!(turns.wake(4, true), WakeOutcome::StillSuspended);
+    assert_eq!(turns.wake(5, true), WakeOutcome::RearmedByResume);
     assert_eq!(turns.take_owed_turn(), Some(OwedTurn::AfterResume));
     turns.suspend(SuspensionCause::StoreRejection, Some(5));
-    assert_eq!(turns.wake(9), WakeOutcome::StillSuspended);
+    assert_eq!(turns.wake(9, true), WakeOutcome::StillSuspended);
     turns.start(Work::Instruction(Instruction::FollowUp));
-    assert_eq!(turns.wake(10), WakeOutcome::NotSuspended);
+    assert_eq!(turns.wake(10, true), WakeOutcome::NotSuspended);
 }
 
 /// A recoverable suspension needs dating like a terminal one, and dating
@@ -314,4 +323,41 @@ fn a_recoverable_suspension_is_dated_like_a_terminal_one() {
         !turns.suspension().unwrap().dated,
         "a store rejection is never dated"
     );
+}
+
+/// #2626 review: a paused or ended run takes no turn, so its wake leaves a
+/// recoverable failure suspended and spends none of the bound.
+#[test]
+fn a_wake_while_the_run_takes_no_turns_leaves_a_recoverable_failure_suspended() {
+    let mut turns = AutomaticTurns::default();
+    turns.suspend_after_failure(&provider("HTTP 503 from OpenAI: overloaded"), Some(1));
+    assert_eq!(turns.wake(1, false), WakeOutcome::StillSuspended);
+    assert!(!turns.owes_turn());
+    for _ in 0..MAX_RECOVERABLE_REARMS {
+        assert_eq!(turns.wake(1, false), WakeOutcome::StillSuspended);
+    }
+    assert_eq!(
+        turns.wake(1, true),
+        WakeOutcome::RearmedAfterRecoverableFailure
+    );
+    assert!(turns.owes_turn());
+}
+
+/// #2626 review: each suspension has its own epoch, so a self-wake
+/// scheduled for one is told apart from a newer one.
+#[test]
+fn each_suspension_has_its_own_epoch() {
+    let mut turns = AutomaticTurns::default();
+    let before = turns.suspension_epoch();
+    turns.suspend_after_failure(&provider("HTTP 503 from OpenAI: overloaded"), Some(1));
+    let first = turns.suspension_epoch();
+    assert_ne!(first, before);
+    turns.wake(1, true);
+    assert_eq!(
+        turns.suspension_epoch(),
+        first,
+        "a re-arm starts no suspension"
+    );
+    turns.suspend_after_failure(&provider("HTTP 503 from OpenAI: overloaded"), Some(1));
+    assert_ne!(turns.suspension_epoch(), first);
 }
