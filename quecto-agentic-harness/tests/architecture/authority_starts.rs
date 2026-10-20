@@ -34,7 +34,7 @@ const SERVER_NAMERS: &[&str] = &[
     "src/composition/admission.rs",
     "src/infrastructure/admission/mod.rs",
     "src/infrastructure/admission/server.rs",
-    "src/interface/cli/admission_broker.rs",
+    "src/interface/cli/controllers/admission_broker.rs",
     "tests/bdd/inference_admission_authority_steps.rs",
     "tests/contracts/admission_observation.rs",
     "tests/contracts/authority_admin.rs",
@@ -50,7 +50,7 @@ const BACKSTOP_EXEMPT: &[&str] = &["tests/architecture/authority_starts.rs"];
 const STARTERS: &[&str] = &[
     "src/infrastructure/admission/server.rs",
     "src/composition/admission.rs",
-    "src/interface/cli/admission_broker.rs",
+    "src/interface/cli/controllers/admission_broker.rs",
 ];
 
 struct Starts<'a> {

@@ -61,7 +61,7 @@ pub(super) fn decided_before_admission(
     ctx: &crate::interface::cli::CliContext,
     flags: &super::AgentFlags,
 ) -> bool {
-    let env_overrides = crate::interface::cli::config_loading::quecto_env_overrides();
+    let env_overrides = crate::interface::cli::controllers::config_loading::quecto_env_overrides();
     decided_with(ctx, flags, &env_overrides)
 }
 

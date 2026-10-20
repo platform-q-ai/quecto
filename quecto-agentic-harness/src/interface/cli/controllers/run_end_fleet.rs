@@ -59,7 +59,7 @@ pub(crate) const RUN_END_NOTICE: std::time::Duration = std::time::Duration::from
 /// A one-shot run's composed handles: its retained context, and the fleet
 /// its orderly end settles.
 pub(crate) struct RunHandles<'a> {
-    pub retention: &'a crate::interface::cli::retention_handles::RetentionHandles,
+    pub retention: &'a super::retention_handles::RetentionHandles,
     pub run_end: RunEnd,
 }
 
@@ -67,7 +67,7 @@ impl<'a> RunHandles<'a> {
     /// A run that settles no children at its end (no spawn tool composed).
     #[cfg(test)]
     pub(crate) fn without_children(
-        retention: &'a crate::interface::cli::retention_handles::RetentionHandles,
+        retention: &'a super::retention_handles::RetentionHandles,
     ) -> Self {
         Self {
             retention,
@@ -132,7 +132,7 @@ impl RunEnd {
     pub(crate) fn after(
         self,
         rt: &tokio::runtime::Runtime,
-        out: &mut super::controllers::agent::AgentOutput<'_>,
+        out: &mut super::agent::AgentOutput<'_>,
         code: i32,
     ) -> i32 {
         if self.live_output {

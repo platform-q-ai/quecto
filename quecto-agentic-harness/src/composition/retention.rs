@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::application::agent_turn::context::ContextRetention;
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::sessions::use_cases::{ListRetainedContext, RecallContext, RetainContext};
-use crate::interface::cli::retention_handles::RetentionHandles;
+use crate::interface::cli::controllers::retention_handles::RetentionHandles;
 
 /// The retention handles of one run over `store`.
 pub fn retention_handles_over(store: Arc<dyn ContextSpillStore>) -> RetentionHandles {

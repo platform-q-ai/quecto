@@ -4,7 +4,7 @@ use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
 pub(super) struct ToolRegistryBuild {
     pub(super) registry: ToolRegistryImpl,
-    pub(super) retention: crate::interface::cli::retention_handles::RetentionHandles,
+    pub(super) retention: crate::interface::cli::controllers::retention_handles::RetentionHandles,
     pub(super) session_key: String,
     pub(super) model: String,
     pub(super) ext_registry: ExtensionRegistry,
@@ -38,7 +38,7 @@ pub(super) struct ToolRegistryArgs<'a> {
     /// the spawn tool launches through and the discovery query the spawn
     /// description and agent_cmd list through.
     pub(super) container_configs:
-        crate::interface::cli::container_config_handles::ContainerConfigHandles,
+        crate::interface::cli::controllers::container_config_handles::ContainerConfigHandles,
     pub(super) web_fetch_tool: Option<Arc<dyn crate::application::tools::ports::Tool>>,
     pub(super) flags: &'a AgentFlags,
     pub(super) stderr: &'a mut String,

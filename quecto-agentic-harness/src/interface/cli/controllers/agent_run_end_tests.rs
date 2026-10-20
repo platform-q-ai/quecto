@@ -14,7 +14,7 @@ use crate::domain::environments::entities::environment_registry::{
     mint_environment_uuid,
 };
 use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
-use crate::interface::cli::run_end_fleet::{RunEnd, RunHandles};
+use crate::interface::cli::controllers::run_end_fleet::{RunEnd, RunHandles};
 
 /// One launched plain container child, the only member of the environment
 /// the run created; its cleanup logs itself to `scripts.log`.

@@ -1539,7 +1539,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
         }
     };
     let runtime_configuration =
-        quecto::interface::cli::catalogue_handles::RuntimeConfigurationInputs {
+        quecto::interface::cli::controllers::catalogue_handles::RuntimeConfigurationInputs {
             selection: quecto::application::configuration::dto::ConfigSelection::Explicit(
                 config_path,
             ),

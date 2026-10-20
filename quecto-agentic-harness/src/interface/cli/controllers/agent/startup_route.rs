@@ -6,7 +6,7 @@
 //! built-in) or one refused for the account starts with a warning too.
 use crate::application::catalogue::dto::{CatalogueStanding, ModelLimits};
 use crate::application::providers::ports::RouteCheck;
-use crate::interface::cli::catalogue_handles::CatalogueHandles;
+use crate::interface::cli::controllers::catalogue_handles::CatalogueHandles;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum StartupRoute {

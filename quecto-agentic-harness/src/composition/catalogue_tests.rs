@@ -38,16 +38,17 @@ fn composed_handles_list_the_real_catalogue_of_a_base_directory() {
 #[test]
 fn the_handles_and_the_runtime_inputs_describe_themselves_without_the_client_or_builders() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let inputs = crate::interface::cli::catalogue_handles::RuntimeConfigurationInputs {
-        selection: crate::application::configuration::dto::ConfigSelection::Explicit(
-            tmp.path().join("config.json"),
-        ),
-        inherited_child: false,
-        env_overrides: std::collections::HashMap::from([("K".to_string(), "v".to_string())]),
-        http_client: reqwest::Client::new(),
-        provider_runtime: crate::composition::runtime::build_agent_provider,
-        configuration: crate::composition::configuration::build_configuration_handles,
-    };
+    let inputs =
+        crate::interface::cli::controllers::catalogue_handles::RuntimeConfigurationInputs {
+            selection: crate::application::configuration::dto::ConfigSelection::Explicit(
+                tmp.path().join("config.json"),
+            ),
+            inherited_child: false,
+            env_overrides: std::collections::HashMap::from([("K".to_string(), "v".to_string())]),
+            http_client: reqwest::Client::new(),
+            provider_runtime: crate::composition::runtime::build_agent_provider,
+            configuration: crate::composition::configuration::build_configuration_handles,
+        };
     let rendered = format!("{inputs:?}");
     assert!(
         rendered.starts_with("RuntimeConfigurationInputs { selection: Explicit("),

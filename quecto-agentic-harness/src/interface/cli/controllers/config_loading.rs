@@ -7,12 +7,12 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::ConfigurationHandlesBuilder;
 use super::configuration_handles::ConfigurationEnvironment;
 use crate::application::configuration::dto::{
     ConfigSelection, ConfigSources, OverlayOrigin, OverlayState,
 };
 use crate::infrastructure::config::Config;
+use crate::interface::cli::ConfigurationHandlesBuilder;
 
 pub(crate) struct LoadedConfig {
     pub config: Config,

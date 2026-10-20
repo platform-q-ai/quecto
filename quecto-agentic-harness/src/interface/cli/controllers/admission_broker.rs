@@ -11,7 +11,6 @@
 //! it addressed.
 use std::path::PathBuf;
 
-use super::CliContext;
 use crate::application::admission::dto::{
     authority::AuthorityAdminError, service::InstallServiceRequest, service::ServiceAction,
     service::ServiceReport,
@@ -21,6 +20,7 @@ use crate::infrastructure::admission::{
 };
 use crate::infrastructure::config::Config;
 use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
+use crate::interface::cli::CliContext;
 
 /// Parsed options shared by the broker actions.
 struct BrokerArgs {

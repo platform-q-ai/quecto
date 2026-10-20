@@ -14,10 +14,10 @@ pub(crate) struct AgentBuildResult {
     pub agent: AgentLoopImpl,
     /// The run's catalogue handles (#1845, #1848), the same instances the
     /// spawn tool and the startup effort admission used.
-    pub catalogue: crate::interface::cli::catalogue_handles::CatalogueHandles,
+    pub catalogue: crate::interface::cli::controllers::catalogue_handles::CatalogueHandles,
     /// The run's retained-context handles (D9 #1978): the store the loop's
     /// session recovers through and the scrub the ephemeral exit reaches.
-    pub retention: crate::interface::cli::retention_handles::RetentionHandles,
+    pub retention: crate::interface::cli::controllers::retention_handles::RetentionHandles,
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,
     pub extension_prompt_snippets: String,
     pub model: String,

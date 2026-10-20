@@ -12,7 +12,7 @@ use crate::application::configuration::dto::{ConfigLayers, ConfigSelection};
 use crate::domain::tool_policy::value_objects::tool::{ToolPolicyApplyMode, ToolPolicyMutation};
 use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::config::Config;
-use crate::interface::cli::config_loading::load_selected_config;
+use crate::interface::cli::controllers::config_loading::load_selected_config;
 use crate::interface::cli::{CliContext, run_with_output};
 
 const RUNBOOK: &str = include_str!("../../../../../docs/docs-tool-embeds/config.md");

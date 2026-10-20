@@ -46,7 +46,7 @@ pub(super) struct Fixture {
     /// reload use case over it and installs its tool-policy persistence on
     /// the agent, as the CLI's agent build does.
     pub(super) runtime_configuration:
-        Option<crate::interface::cli::catalogue_handles::RuntimeConfigurationInputs>,
+        Option<crate::interface::cli::controllers::catalogue_handles::RuntimeConfigurationInputs>,
     /// The retention store paired with the active session (D9 #1978): the
     /// loop hands it to the sessions graph itself, never via the agent.
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,

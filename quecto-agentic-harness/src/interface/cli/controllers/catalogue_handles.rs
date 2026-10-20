@@ -69,7 +69,7 @@ pub struct RuntimeConfigurationInputs {
     pub http_client: reqwest::Client,
     pub provider_runtime:
         crate::infrastructure::config::runtime_configuration::ProviderRuntimeBuilder,
-    pub configuration: super::ConfigurationHandlesBuilder,
+    pub configuration: crate::interface::cli::ConfigurationHandlesBuilder,
 }
 
 impl std::fmt::Debug for RuntimeConfigurationInputs {
@@ -83,7 +83,7 @@ impl std::fmt::Debug for RuntimeConfigurationInputs {
 
 /// The effort fields of a dispatch loop's state snapshot (#1848).
 pub(crate) fn effort_view(
-    ctx: &super::uds::DispatchCtx<'_>,
+    ctx: &crate::interface::cli::uds::DispatchCtx<'_>,
 ) -> crate::interface::uds::catalogue::effort_presenter::EffortStateView {
     ctx.catalogue
         .effort_view(ctx.agent.effort(), ctx.session.model())

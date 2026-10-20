@@ -20,7 +20,7 @@ use crate::infrastructure::admission::{AuthorityServer, ServerError};
 use crate::infrastructure::processes::local::SystemdUserServiceManager;
 #[cfg(any(test, feature = "test-support"))]
 use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
-use crate::interface::cli::admission_handles::AdmissionHandles;
+use crate::interface::cli::controllers::admission_handles::AdmissionHandles;
 
 pub fn build_admission_handles() -> AdmissionHandles {
     let admin = Arc::new(SocketAuthorityAdmin::new());
