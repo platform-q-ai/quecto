@@ -208,6 +208,28 @@ pub fn run_items(
     folded
 }
 
+/// Every revision the evidence of the swarm items `plan`'s task items
+/// stand for names (as [`run_items`] matches them), once each, as the
+/// swarm gave it, in the plan's order: what a run recorded from `view`
+/// claims as its work (#2666). An extra item no plan item takes is never
+/// recorded, so its evidence is not among them.
+pub fn evidence_revisions(plan: &Plan, view: &SwarmRunView) -> Vec<String> {
+    let mut revisions: Vec<String> = Vec::new();
+    let named = plan
+        .fields()
+        .items
+        .iter()
+        .filter_map(|item| matched(item, view))
+        .flat_map(|(_, swarm)| swarm.evidence.iter());
+    for entry in named {
+        match revisions.contains(&entry.revision) {
+            true => {}
+            false => revisions.push(entry.revision.clone()),
+        }
+    }
+    revisions
+}
+
 /// The swarm item plan item `item` stands for, by its place in the view:
 /// of those carrying its
 /// title exactly, or else its `<slug>: ` prefix, the most progressed, the

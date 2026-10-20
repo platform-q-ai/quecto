@@ -197,11 +197,14 @@ pub struct Reported {
 /// A run ends as succeeded only when every task item of its plan is
 /// reported done ([`undone_items`]): a success over items the board shows
 /// undone (a swarm whose report never reached the board leaves every one
-/// todo) is refused, never recorded.
+/// todo) is refused, never recorded. Nor is one whose evidence names a
+/// revision the board's remote does not hold (`unpushed`, #2666): work
+/// committed in the swarm's container and never pushed goes with it.
 ///
 /// # Errors
 /// A claim `actor` does not hold live; a run of another task, or one that
-/// has ended; as [`fold_back`]; a success with a task item not done.
+/// has ended; as [`fold_back`]; a success with a task item not done, or
+/// with evidence not on the remote.
 pub fn end_held(
     task: &Task,
     ran: (&Run, &Plan),
@@ -217,7 +220,7 @@ pub fn end_held(
         items,
         cost,
         report,
-        unpushed: _,
+        unpushed,
     } = reported;
     // Folded first, so a run that has ended, or items the plan does not
     // have, answer as such before the items are judged.
@@ -232,6 +235,17 @@ pub fn end_held(
                         run: folded.fields().number,
                         items: undone,
                         report,
+                    });
+                }
+            }
+            // Only work that left the swarm's container is a success
+            // (#2666): every revision its evidence names is on the remote.
+            match unpushed {
+                0 => {}
+                revisions => {
+                    return Err(BoardRuleError::NotPushed {
+                        run: folded.fields().number,
+                        revisions,
                     });
                 }
             }

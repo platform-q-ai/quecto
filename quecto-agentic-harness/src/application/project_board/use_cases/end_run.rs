@@ -16,7 +16,11 @@
 //! back as a swarm that ended so with nothing reported is: every task item
 //! as todo, its cost unknown. A run ends as `succeeded` only when every
 //! task item is done there (`items_not_done` otherwise, from the domain),
-//! so no success is recorded over items the board shows undone. A run
+//! so no success is recorded over items the board shows undone; nor while
+//! a revision the recorded items' evidence names is on no branch or tag of
+//! the board's remote ([`RemoteRevisions`], `not_pushed` from the domain,
+//! #2666), so no success is recorded over work that never left the swarm's
+//! container (a remote that cannot be read refuses it too). A run
 //! that would leave the board past its bytes is ended once more without
 //! its evidence, as a fold-back is. Never while its swarm is still running:
 //! while this front end sees it running ([`RunLiveness`]: its session
@@ -37,7 +41,9 @@ use crate::application::project_board::dto::{
     EndedRun, LivenessCheck, ProjectBoardError, RunEnd, RunEndOutcome, RunReport,
 };
 use crate::application::project_board::dto::{SwarmEnd, SwarmRunView};
-use crate::application::project_board::fold_back::{Evidence, cost_of, run_items};
+use crate::application::project_board::fold_back::{
+    Evidence, cost_of, evidence_revisions, run_items,
+};
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardStoreError, BoardTextCells, ProjectBoardStore, RemoteRevisions,
     RunLiveness, SwarmRunReports,
@@ -54,6 +60,9 @@ pub struct EndRun {
     store: Arc<dyn ProjectBoardStore>,
     clock: Arc<dyn BoardClock>,
     cells: Arc<dyn BoardTextCells>,
+    /// Which revisions the board's remote holds: a success is recorded
+    /// only over evidence that left the swarm's container (#2666).
+    revisions: Arc<dyn RemoteRevisions>,
     /// Whether a run's swarm still runs here (`None`: this front end can
     /// see none).
     liveness: Option<Arc<dyn RunLiveness>>,
@@ -71,7 +80,7 @@ impl EndRun {
         store: Arc<dyn ProjectBoardStore>,
         clock: Arc<dyn BoardClock>,
         cells: Arc<dyn BoardTextCells>,
-        _revisions: Arc<dyn RemoteRevisions>,
+        revisions: Arc<dyn RemoteRevisions>,
         liveness: Option<Arc<dyn RunLiveness>>,
         reports: Option<Arc<dyn SwarmRunReports>>,
     ) -> Result<Self, ProjectBoardError> {
@@ -80,6 +89,7 @@ impl EndRun {
             store,
             clock,
             cells,
+            revisions,
             liveness,
             reports,
             actor,
@@ -136,11 +146,13 @@ impl EndRun {
             id.as_str(),
             request.outcome.as_str()
         );
+        // What the remote answered, asked at most once for every pass.
+        let mut asked = None;
         let mut written = self.write(
             request,
             &message,
             report.as_ref(),
-            Evidence::Kept,
+            (Evidence::Kept, &mut asked),
             &mut facts,
         );
         // Only a run past the board's bytes is ended again, smaller (an
@@ -151,7 +163,7 @@ impl EndRun {
                 request,
                 &message,
                 report.as_ref(),
-                Evidence::Left,
+                (Evidence::Left, &mut asked),
                 &mut facts,
             );
             if let (Some(facts), Some((attempts, lost))) = (facts, first) {
@@ -201,13 +213,16 @@ impl EndRun {
     /// One pass at ending the run, as `request` says, with `report`'s
     /// items, owners and cost when there is one (its evidence kept or left
     /// out as `evidence` says), noting in `facts`, when given, the write's
-    /// attempts and the task as last read.
+    /// attempts and the task as last read. A success over a kept report
+    /// counts the revisions its evidence names that the remote does not
+    /// hold, asking the remote only for revisions `asked` holds no answer
+    /// for.
     fn write(
         &self,
         request: &RunEnd,
         message: &str,
         report: Option<&SwarmRunView>,
-        evidence: Evidence,
+        (evidence, asked): (Evidence, &mut Asked),
         facts: &mut Option<&mut OpFacts>,
     ) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
         let (id, number) = (&request.task, request.run);
@@ -240,6 +255,16 @@ impl EndRun {
                 let runs = board_view::runs_of(board, id)?;
                 let plans = board_view::plans_of(board, id)?;
                 let (run, plan) = run_and_plan(&runs, &plans, number)?;
+                // Only a success is judged by where its evidence is.
+                let unpushed = match (request.outcome, report) {
+                    (RunEndOutcome::Succeeded, Some(view)) => {
+                        self.unpushed(evidence_revisions(plan, view), asked)?
+                    }
+                    (RunEndOutcome::Succeeded, None)
+                    | (RunEndOutcome::Stopped | RunEndOutcome::Failed | RunEndOutcome::Lost, _) => {
+                        0
+                    }
+                };
                 let held = |end: HeldEnd, swarm: SwarmEnd| {
                     let reported = match report {
                         // What the swarm's board showed as it ended.
@@ -247,7 +272,7 @@ impl EndRun {
                             items: run_items(plan, view, &*self.cells, evidence).items,
                             cost: Some(cost_of(view)),
                             report: SwarmReport::Kept,
-                            unpushed: 0,
+                            unpushed,
                         },
                         // Nothing reported: every item as a fold-back maps
                         // a swarm that reported nothing (a start's undo's
@@ -284,7 +309,38 @@ impl EndRun {
         }
         written
     }
+
+    /// How many of `revisions` the board's remote does not hold: asked
+    /// once (none when there are none), the answer kept in `asked` for a
+    /// later attempt or pass at the same revisions.
+    fn unpushed(
+        &self,
+        revisions: Vec<String>,
+        asked: &mut Asked,
+    ) -> Result<usize, ProjectBoardError> {
+        if let Some((kept, unpushed)) = asked.as_ref() {
+            if *kept == revisions {
+                return Ok(*unpushed);
+            }
+        }
+        let unpushed = match revisions.as_slice() {
+            [] => 0,
+            [_, ..] => {
+                let missing = self.revisions.not_on_remote(&revisions)?;
+                assert!(
+                    missing.iter().all(|revision| revisions.contains(revision)),
+                    "the remote answers only for the revisions asked"
+                );
+                missing.len()
+            }
+        };
+        *asked = Some((revisions, unpushed));
+        Ok(unpushed)
+    }
 }
+
+/// The revisions the remote was asked about and how many it did not hold.
+type Asked = Option<(Vec<String>, usize)>;
 
 #[cfg(test)]
 #[path = "end_run_tests.rs"]
