@@ -4,14 +4,13 @@
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use quecto::domain::admission::value_objects::inference_admission::WorkloadClass;
 use quecto::infrastructure::admission::{AdminConnection, AuthorityConnection, AuthorityDirectory};
-use quecto::infrastructure::processes::parent_death_signal::{DeathSignal, arm_in_child};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -132,84 +131,9 @@ fn write_config(dir: &Path, provider_base: &str, admission: Option<(usize, u64)>
     path
 }
 
-/// A child the test kills and reaps when it is dropped, so a failed
-/// assertion never strands it (#2631). `into_inner` hands it over, unkilled,
-/// to be waited on to its own end.
-struct Proc(Option<Child>);
-
-impl Proc {
-    fn new(child: Child) -> Self {
-        Self(Some(child))
-    }
-
-    fn child(&mut self) -> &mut Child {
-        self.0
-            .as_mut()
-            .expect("the child is held until it is handed over")
-    }
-
-    fn id(&self) -> u32 {
-        self.0
-            .as_ref()
-            .expect("the child is held until it is handed over")
-            .id()
-    }
-
-    fn into_inner(mut self) -> Child {
-        self.0
-            .take()
-            .expect("the child is held until it is handed over")
-    }
-}
-
-impl Drop for Proc {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.0.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-/// Every child of this test dies with the thread that spawned it, even when
-/// the test binary itself is killed and no `Drop` runs (#2631): the kernel
-/// sends it SIGTERM (Linux `PR_SET_PDEATHSIG`, armed as the harness arms its
-/// own children).
-fn dies_with_the_test(command: &mut Command) {
-    use std::os::unix::process::CommandExt;
-    let parent = libc::pid_t::try_from(std::process::id()).expect("a process id fits pid_t");
-    // The closure runs in the forked child before exec.
-    // SAFETY: there, arm_in_child's contract holds.
-    unsafe {
-        command.pre_exec(move || arm_in_child(parent, DeathSignal::Terminate));
-    }
-}
-
-/// The guard proven (#2631): a child armed by [`dies_with_the_test`] is
-/// signalled when the thread that spawned it ends, with nothing reaping it.
-#[cfg(target_os = "linux")]
-#[test]
-fn a_test_child_dies_with_the_thread_that_spawned_it() {
-    use std::os::unix::process::ExitStatusExt;
-    let child = std::thread::spawn(|| {
-        let mut command = Command::new("sleep");
-        command.arg("30");
-        dies_with_the_test(&mut command);
-        command.spawn().expect("spawn sleep")
-    })
-    .join()
-    .expect("the spawning thread ends");
-    let mut child = Proc::new(child);
-    let deadline = Instant::now() + LIMIT;
-    let status = loop {
-        if let Some(status) = child.child().try_wait().unwrap() {
-            break status;
-        }
-        assert!(Instant::now() < deadline, "the orphaned child kept running");
-        std::thread::sleep(Duration::from_millis(20));
-    };
-    assert_eq!(status.signal(), Some(libc::SIGTERM), "{status:?}");
-}
+#[path = "inference_admission_processes_guard.rs"]
+mod guard;
+use guard::{Proc, dies_with_the_test};
 
 fn quecto(dir: &Path, args: &[&str]) -> Command {
     let mut command = Command::new(quecto_binary());
@@ -253,7 +177,7 @@ fn start_broker(dir: &Path, config: &Path) -> Proc {
     Proc::new(child)
 }
 
-fn root_agent(dir: &Path, config: &Path, extra: &[&str]) -> Child {
+fn root_agent(dir: &Path, config: &Path, extra: &[&str]) -> Proc {
     let mut args = vec![
         "--config",
         config.to_str().unwrap(),
@@ -263,11 +187,11 @@ fn root_agent(dir: &Path, config: &Path, extra: &[&str]) -> Child {
         "--no-session",
     ];
     args.extend_from_slice(extra);
-    quecto(dir, &args).spawn().expect("spawn agent")
+    Proc::new(quecto(dir, &args).spawn().expect("spawn agent"))
 }
 
-fn finish(child: Child) -> (bool, String, String) {
-    let output = child.wait_with_output().unwrap();
+fn finish(child: Proc) -> (bool, String, String) {
+    let output = child.into_inner().wait_with_output().unwrap();
     (
         output.status.success(),
         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -281,7 +205,7 @@ async fn independent_root_processes_share_the_configured_bound() {
     let provider = fake_provider(Duration::from_millis(600)).await;
     let config = write_config(temp.path(), &provider.base, Some((2, 20_000)));
     let _broker = start_broker(temp.path(), &config);
-    let roots: Vec<Child> = (0..3)
+    let roots: Vec<Proc> = (0..3)
         .map(|_| root_agent(temp.path(), &config, &[]))
         .collect();
     let results: Vec<_> =
@@ -322,7 +246,7 @@ async fn without_admission_the_fake_provider_observes_the_unbounded_burst() {
     let temp = tempfile::tempdir().unwrap();
     let provider = fake_provider(Duration::from_millis(600)).await;
     let config = write_config(temp.path(), &provider.base, None);
-    let roots: Vec<Child> = (0..3)
+    let roots: Vec<Proc> = (0..3)
         .map(|_| root_agent(temp.path(), &config, &[]))
         .collect();
     let results: Vec<_> =
@@ -653,7 +577,6 @@ async fn sigterm_stops_the_authority_cleanly() {
         std::thread::sleep(Duration::from_millis(20));
     }
     let pid = broker.id();
-    let broker = broker.into_inner();
     assert!(
         Command::new("kill")
             .args(["-TERM", &pid.to_string()])
@@ -661,6 +584,7 @@ async fn sigterm_stops_the_authority_cleanly() {
             .unwrap()
             .success()
     );
+    let broker = broker.into_inner();
     let output = tokio::task::spawn_blocking(move || broker.wait_with_output().unwrap())
         .await
         .unwrap();
@@ -701,7 +625,7 @@ async fn burst_versus_admitted_fake_workload_is_measured() {
         let config = write_config(temp, &provider.base, admission);
         let _broker = admission.map(|_| start_broker(temp, &config));
         let started = Instant::now();
-        let roots: Vec<Child> = (0..ROOTS).map(|_| root_agent(temp, &config, &[])).collect();
+        let roots: Vec<Proc> = (0..ROOTS).map(|_| root_agent(temp, &config, &[])).collect();
         let results: Vec<_> =
             tokio::task::spawn_blocking(move || roots.into_iter().map(finish).collect::<Vec<_>>())
                 .await
