@@ -28,7 +28,7 @@ pub(crate) struct AgentBuildResult {
     /// The environment control slot (#2070) the loop hands its teardown.
     pub environment_control:
         Option<crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot>,
-    pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
+    pub workflow_state: Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>, // #562
     pub workspace: std::path::PathBuf,
     /// `telemetry.event_log.enabled` (#2150).
     pub event_log: bool,

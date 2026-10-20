@@ -153,7 +153,7 @@ impl Fx {
 
     pub(crate) fn ctx_with_workflow(
         &mut self,
-        workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+        workflow_state: Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
     ) -> crate::interface::cli::uds::DispatchCtx<'_> {
         let initial_stats = compute_session_stats_with_usage(
             &self.session_key,
@@ -214,7 +214,8 @@ impl Fx {
     }
 }
 
-fn workflow_engine_for_get_state_since_tests() -> crate::interface::shared::WorkflowStateHandle {
+fn workflow_engine_for_get_state_since_tests()
+-> crate::interface::cli::controllers::shared::WorkflowStateHandle {
     Arc::new(std::sync::Mutex::new(
         WorkflowEngine::new(
             WorkflowConfig {

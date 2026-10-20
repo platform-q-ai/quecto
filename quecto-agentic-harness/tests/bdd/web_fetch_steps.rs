@@ -42,7 +42,7 @@ fn given_web_fetch_workspace(world: &mut QuectoWorld) {
     // with the local mock server, so no public DNS is used, and web_fetch
     // never uses a proxy (#1942).
     let tool = quecto::composition::web_fetch::build_allowing_loopback_for_tests(
-        quecto::interface::shared::web_fetch_client_recipe(),
+        quecto::interface::cli::controllers::shared::web_fetch_client_recipe(),
         32,
     );
     registry.register(tool);
@@ -75,7 +75,7 @@ fn given_web_fetch_workspace_1kb(world: &mut QuectoWorld) {
     // with the local mock server, so no public DNS is used, and web_fetch
     // never uses a proxy (#1942).
     let tool = quecto::composition::web_fetch::build_allowing_loopback_for_tests(
-        quecto::interface::shared::web_fetch_client_recipe(),
+        quecto::interface::cli::controllers::shared::web_fetch_client_recipe(),
         1,
     );
     registry.register(tool);

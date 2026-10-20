@@ -21,7 +21,7 @@ fn parent_playbook_is_excluded_from_children() {
 
 #[test]
 fn parent_playbook_is_an_external_document_loaded_only_for_parent() {
-    let document = include_str!("../../../PARENT_PLAYBOOK.md").trim_end();
+    let document = include_str!("../../../../../PARENT_PLAYBOOK.md").trim_end();
     assert_eq!(parent_coordination_policy(), document);
     assert!(build_system_prompt(&None, false).contains(document));
     assert!(!build_system_prompt(&None, true).contains(document));
@@ -44,7 +44,7 @@ fn selected_playbook_replaces_default_only_for_parent() {
 /// never the parent's or a worker's.
 #[test]
 fn coordinator_gets_only_the_coordinator_playbook() {
-    let document = include_str!("../../../COORDINATOR_PLAYBOOK.md").trim_end();
+    let document = include_str!("../../../../../COORDINATOR_PLAYBOOK.md").trim_end();
     let marker = "CUSTOM_PARENT_PLAYBOOK_ONLY";
     let coordinator =
         build_agent_system_prompt_with_playbook(None, None, PromptRole::Coordinator, "", marker);
@@ -59,7 +59,7 @@ fn coordinator_gets_only_the_coordinator_playbook() {
 /// #2461: the coordinator playbook reaches no other role.
 #[test]
 fn coordinator_playbook_is_excluded_from_parent_and_subagents() {
-    let document = include_str!("../../../COORDINATOR_PLAYBOOK.md").trim_end();
+    let document = include_str!("../../../../../COORDINATOR_PLAYBOOK.md").trim_end();
     for role in [PromptRole::Parent, PromptRole::Subagent] {
         let prompt = build_agent_system_prompt_with_playbook(None, None, role, "", "PLAYBOOK");
         assert!(!prompt.contains(document), "{role:?}");

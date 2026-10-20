@@ -19,7 +19,7 @@ pub fn agent_role_preamble() -> &'static str {
 
 /// Parent-only routing policy, kept out of the shared manual.
 fn parent_coordination_policy() -> &'static str {
-    include_str!("../../../PARENT_PLAYBOOK.md").trim_ascii_end()
+    include_str!("../../../../../PARENT_PLAYBOOK.md").trim_ascii_end()
 }
 
 /// Child ownership boundary permits useful decomposition without coordinator chains.
@@ -34,7 +34,7 @@ fn coordinator_role_preamble() -> &'static str {
 
 /// Coordinator-only policy, packaged beside the parent playbook (#2461).
 fn coordinator_playbook() -> &'static str {
-    include_str!("../../../COORDINATOR_PLAYBOOK.md").trim_ascii_end()
+    include_str!("../../../../../COORDINATOR_PLAYBOOK.md").trim_ascii_end()
 }
 
 /// Which core prompt an agent starts from (#2461), chosen only by its
@@ -386,7 +386,7 @@ pub fn build_official_tool_registry(
         workspace,
         sandbox,
         exec_options,
-        crate::interface::tool_runtime::swarm_context(),
+        super::tool_runtime::swarm_context(),
     )
 }
 
@@ -434,7 +434,7 @@ pub fn register_bundled_native_extension_tools(
     }
 }
 
-pub(crate) use crate::interface::tool_runtime::{
+pub(crate) use super::tool_runtime::{
     ToolEntrypoint, ToolRuntimeBuildArgs, ToolRuntimeWorkflowPolicy, build_tool_runtime,
 };
 

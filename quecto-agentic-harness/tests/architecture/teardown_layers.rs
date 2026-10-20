@@ -116,11 +116,11 @@ fn whole_crate_dependency_direction_holds() {
     ];
     let baseline: &[(&str, &str)] = &[
         (
-            "src/interface/tool_runtime.rs",
+            "src/interface/cli/controllers/tool_runtime.rs",
             "crate::composition::find::build_find_tool",
         ),
         (
-            "src/interface/shared.rs",
+            "src/interface/cli/controllers/shared.rs",
             "crate::composition::find::build_find_tool",
         ),
     ];

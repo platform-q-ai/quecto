@@ -1,7 +1,7 @@
 use crate::domain::tool_policy::value_objects::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolRestrictionReason,
 };
-use crate::interface::tool_runtime::{
+use crate::interface::cli::controllers::tool_runtime::{
     ToolEntrypoint, ToolRuntimeBuildArgs, ToolRuntimeProfileContext, ToolRuntimeWorkflowPolicy,
     build_tool_runtime,
 };
@@ -10,7 +10,7 @@ fn build_runtime_with_flags(
     profile_context: ToolRuntimeProfileContext,
     spawned: bool,
     disabled_tools: &[String],
-) -> crate::interface::tool_runtime::ToolRuntimeBuild {
+) -> crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuild {
     build_runtime_with_entrypoint(
         ToolEntrypoint::UdsAgent,
         profile_context,
@@ -24,7 +24,7 @@ fn build_runtime_with_entrypoint(
     profile_context: ToolRuntimeProfileContext,
     spawned: bool,
     disabled_tools: &[String],
-) -> crate::interface::tool_runtime::ToolRuntimeBuild {
+) -> crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuild {
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = crate::infrastructure::config::Config::default();
     let client = reqwest::Client::new();

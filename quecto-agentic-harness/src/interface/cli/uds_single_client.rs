@@ -23,7 +23,7 @@ pub(super) struct SingleClientArgs<'a> {
     pub(super) ext_registry: Option<ExtRegistry>,
     pub(super) subagent_registry:
         Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
-    pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    pub(super) workflow_state: Option<super::controllers::shared::WorkflowStateHandle>,
 }
 
 pub(super) async fn single_client_loop(

@@ -1,5 +1,5 @@
 use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
-use crate::interface::tool_runtime::{
+use crate::interface::cli::controllers::tool_runtime::{
     ToolEntrypoint, ToolRuntimeBuildArgs, ToolRuntimeProfileContext, ToolRuntimeWorkflowPolicy,
     build_tool_runtime,
 };
@@ -8,7 +8,7 @@ fn runtime(
     profile_context: ToolRuntimeProfileContext,
     spawned: bool,
     disabled_tools: &[String],
-) -> crate::interface::tool_runtime::ToolRuntimeBuild {
+) -> crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuild {
     runtime_with_board(profile_context, spawned, disabled_tools, None)
 }
 
@@ -17,7 +17,7 @@ fn runtime_with_board(
     spawned: bool,
     disabled_tools: &[String],
     project_board: Option<crate::interface::tools::project_board::site::ProjectBoardHandlesBuilder>,
-) -> crate::interface::tool_runtime::ToolRuntimeBuild {
+) -> crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuild {
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = crate::infrastructure::config::Config::default();
     let client = reqwest::Client::new();
@@ -58,7 +58,7 @@ fn runtime_with_board(
 }
 
 fn names_for(
-    built: &crate::interface::tool_runtime::ToolRuntimeBuild,
+    built: &crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuild,
     context: ToolProfileContext,
 ) -> std::collections::BTreeSet<String> {
     built
@@ -250,7 +250,7 @@ fn trial_isolated_runtime_build_does_not_enroll_in_full_ambient_swarm() {
         )
         .unwrap();
     let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "interface::tool_runtime::profile_tests::tool_visibility_is_selected_by_runtime_profile_not_spawned_role_bit", "--nocapture"])
+        .args(["--exact", "interface::cli::controllers::tool_runtime::profile_tests::tool_visibility_is_selected_by_runtime_profile_not_spawned_role_bit", "--nocapture"])
         .env("QUECTO_SWARM_CHECKOUT", tmp.path())
         .env("QUECTO_SWARM_CONTAINER", "isolated-pid-v1")
         // Emulate inherited container metadata without changing the test host's namespace.
@@ -293,7 +293,7 @@ fn runtime_in_container(
     context: crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext,
     tmp: &std::path::Path,
     participation: crate::infrastructure::tools::swarm::swarm_bridge::Participation,
-) -> Result<crate::interface::tool_runtime::ToolRuntimeBuild, String> {
+) -> Result<crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuild, String> {
     let config = crate::infrastructure::config::Config::default();
     let client = reqwest::Client::new();
     let sandbox = crate::infrastructure::security::sandbox::Sandbox::new(Some(tmp.to_path_buf()));

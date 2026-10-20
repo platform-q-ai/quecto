@@ -430,10 +430,11 @@ pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'
 /// This process's turn control: its swarm's run control when it runs under
 /// a container contract, launched as its coordinator or not (#2467).
 pub(super) fn process_turn_control(coordinator: bool) -> super::uds_cancel::TurnControlHandle {
-    let swarm_control = crate::interface::tool_runtime::swarm_context().map(|context| {
-        std::sync::Arc::new(context)
-            as std::sync::Arc<dyn crate::application::swarm::ports::lifecycle::SwarmRunControl>
-    });
+    let swarm_control =
+        crate::interface::cli::controllers::tool_runtime::swarm_context().map(|context| {
+            std::sync::Arc::new(context)
+                as std::sync::Arc<dyn crate::application::swarm::ports::lifecycle::SwarmRunControl>
+        });
     let turn_control = std::sync::Arc::new(
         super::uds_cancel::TurnControl::with_swarm_control(swarm_control)
             .launched_as_coordinator(coordinator),

@@ -89,7 +89,7 @@ pub(super) fn bind_deadline(override_ms: Option<&str>) -> std::time::Duration {
 /// Auto-generated socket path in `$XDG_RUNTIME_DIR` (or temp) for a harness
 /// started without `--socket`.
 pub(super) fn auto_socket_path() -> std::path::PathBuf {
-    let dir = crate::interface::shared::xdg_runtime_dir_or_temp();
+    let dir = crate::interface::cli::controllers::shared::xdg_runtime_dir_or_temp();
     // Best-effort: reap dead quecto-agent-*.sock files (kernel-table
     // probed, #1460 — a live agent is never touched, let alone severed,
     // regardless of age; the 24 h threshold only gates files whose probe

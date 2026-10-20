@@ -166,7 +166,7 @@ pub(crate) struct BusySnapshotSources<'a> {
     pub tool_catalogue: &'a crate::interface::cli::uds_extensions::ToolCatalogueSnapshot,
     pub subagents:
         &'a Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
-    pub workflow: &'a Option<crate::interface::shared::WorkflowStateHandle>,
+    pub workflow: &'a Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
     pub execution: &'a super::uds_execution_state::ExecutionStateHandle,
 }
 
@@ -210,14 +210,14 @@ pub(crate) async fn busy_connect_snapshot_lines(sources: BusySnapshotSources<'_>
 
 pub(crate) fn build_busy_get_state_line(
     state: &SessionState,
-    workflow_state: &Option<crate::interface::shared::WorkflowStateHandle>,
+    workflow_state: &Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
     execution_state: &super::uds_execution_state::ExecutionStateHandle,
 ) -> String {
     build_connect_get_state_line(state, workflow_state, execution_state, true)
 }
 pub(crate) fn build_connect_get_state_line(
     state: &SessionState,
-    workflow_state: &Option<crate::interface::shared::WorkflowStateHandle>,
+    workflow_state: &Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
     execution_state: &super::uds_execution_state::ExecutionStateHandle,
     is_busy: bool,
 ) -> String {

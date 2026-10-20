@@ -10,8 +10,8 @@ use crate::application::providers::ports::LlmProvider;
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::conversation::value_objects::message::Role;
 use crate::domain::inference::services::turn_suspension::Work;
+use crate::interface::cli::controllers::shared::WorkflowStateHandle;
 use crate::interface::cli::uds_session::PendingMessage;
-use crate::interface::shared::WorkflowStateHandle;
 const QUEUED: Work = Work::FOLLOW_UP; // a queued follow-up
 
 // ─── #895: abort = full stop ────────────────────────────────────────────────

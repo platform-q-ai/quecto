@@ -34,7 +34,7 @@ pub(crate) fn build_get_state_line_with_streaming(
 /// the frozen snapshot (they come from workflow config, not the engine).
 pub(crate) fn build_get_state_line_live(
     state: &SessionState,
-    workflow_state: &Option<crate::interface::shared::WorkflowStateHandle>,
+    workflow_state: &Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
     is_streaming: bool,
 ) -> String {
     let mut state = state.clone();

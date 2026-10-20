@@ -18,7 +18,8 @@ pub(super) struct ToolRegistryBuild {
     /// The environment control slot (#2070) the loop hands its teardown.
     pub(super) environment_control:
         Option<crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot>,
-    pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
+    pub(super) workflow_state:
+        Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>, // #562
     pub(super) workspace: std::path::PathBuf,
 }
 
@@ -85,7 +86,9 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
     let workspace = if let Some(cwd) = flags.cwd_override.as_ref() {
         cwd.clone()
     } else {
-        crate::interface::shared::resolve_agent_workspace(&config.workspace_path())
+        crate::interface::cli::controllers::shared::resolve_agent_workspace(
+            &config.workspace_path(),
+        )
     };
     let model = resolve_agent_model(
         flags.model_override.as_deref(),
@@ -116,9 +119,9 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         }
     });
     let entrypoint = if flags.uds_mode {
-        crate::interface::shared::ToolEntrypoint::UdsAgent
+        crate::interface::cli::controllers::shared::ToolEntrypoint::UdsAgent
     } else {
-        crate::interface::shared::ToolEntrypoint::CliAgent
+        crate::interface::cli::controllers::shared::ToolEntrypoint::CliAgent
     };
     // The interface never constructs the retention store or the recall
     // graph (D9 #1978): the run is composed over the builder `main` handed
@@ -133,13 +136,13 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
     let environment_registry = flags
         .environment_registry
         .map(|build| build(base_dir, &session_key, !flags.spawned));
-    let runtime = crate::interface::shared::build_tool_runtime(
-        crate::interface::shared::ToolRuntimeBuildArgs {
-            swarm_context: crate::interface::tool_runtime::swarm_context(),
+    let runtime = crate::interface::cli::controllers::shared::build_tool_runtime(
+        crate::interface::cli::controllers::shared::ToolRuntimeBuildArgs {
+            swarm_context: crate::interface::cli::controllers::tool_runtime::swarm_context(),
             swarm_participation: flags.swarm_participation.clone(),
             entrypoint,
             profile_context:
-                crate::interface::tool_runtime::ToolRuntimeProfileContext::from_spawned(
+                crate::interface::cli::controllers::tool_runtime::ToolRuntimeProfileContext::from_spawned(
                     flags.spawned,
                 ),
             base_dir,
@@ -162,7 +165,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             project_board: flags.project_board,
             disabled_tools: &flags.disabled_tools,
             inherited_tool_policy: flags.inherited_tool_policy.clone(),
-            workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy {
+            workflow: crate::interface::cli::controllers::shared::ToolRuntimeWorkflowPolicy {
                 workflow_disabled: flags.workflow_disabled,
                 workflow_requested: flags.workflow,
                 workflow_guards: flags.workflow_guards,

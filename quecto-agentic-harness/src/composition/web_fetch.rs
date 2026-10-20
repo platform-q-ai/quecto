@@ -6,7 +6,7 @@ use crate::{
 };
 use std::sync::Arc;
 /// The web-fetch graph over its client recipe (the settings production
-/// chooses, [`crate::interface::shared::web_fetch_client_recipe`]): the
+/// chooses, [`crate::interface::cli::controllers::shared::web_fetch_client_recipe`]): the
 /// adapter builds its client from it and lays destination enforcement over
 /// it (#1942).
 pub fn build(recipe: WebFetchClientRecipe, max_response_kb: u32) -> Arc<dyn Tool> {

@@ -8,8 +8,7 @@ use crate::application::swarm::ports::lifecycle::SwarmRunControl;
 use crate::domain::swarm::services::watch::Nudge;
 use crate::infrastructure::tools::swarm::swarm_bridge::{bind_process_board, process_board};
 
-const CHILD: &str =
-    "interface::tool_runtime::swarm_board_tests::the_process_contexts_share_the_process_board";
+const CHILD: &str = "interface::cli::controllers::tool_runtime::swarm_board_tests::the_process_contexts_share_the_process_board";
 const CHILD_ENV: &str = "QUECTO_2390_SHARED_BOARD_CHILD";
 const CHECKED: &str = "the process contexts share the process board";
 

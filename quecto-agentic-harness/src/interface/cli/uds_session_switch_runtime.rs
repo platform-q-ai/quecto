@@ -11,7 +11,7 @@ use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
 use crate::application::sessions::ports::{SessionKeyPropagation, SessionSwitchRuntime};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::interface::shared::WorkflowStateHandle;
+use crate::interface::cli::controllers::shared::WorkflowStateHandle;
 
 pub struct LoopSessionSwitchRuntime<'a> {
     agent: &'a mut AgentLoopImpl,

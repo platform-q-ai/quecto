@@ -633,7 +633,7 @@ async fn register_workflow_tool_with_broadcast_emitter() {
         Default::default(),
     );
 
-    let _engine = crate::interface::shared::register_workflow_tool(
+    let _engine = crate::interface::cli::controllers::shared::register_workflow_tool(
         &mut registry,
         workflow_test_config(),
         false,

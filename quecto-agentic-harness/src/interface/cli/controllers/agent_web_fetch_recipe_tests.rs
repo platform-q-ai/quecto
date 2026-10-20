@@ -93,7 +93,8 @@ fn every_agent_entry_point_builds_web_fetch_from_the_production_recipe() {
         let (timeout, returned) = *received.last().unwrap();
         assert_eq!(
             timeout,
-            crate::interface::shared::web_fetch_client_recipe().configured_connect_timeout(),
+            crate::interface::cli::controllers::shared::web_fetch_client_recipe()
+                .configured_connect_timeout(),
             "{entry}: the production recipe"
         );
         assert_eq!(
