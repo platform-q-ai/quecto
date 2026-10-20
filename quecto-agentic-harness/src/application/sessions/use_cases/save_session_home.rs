@@ -3,7 +3,7 @@
 //! failure ever costs a transcript.
 use crate::application::sessions::dto::SaveSessionError;
 use crate::application::sessions::ports::SessionStore;
-use crate::application::sessions::session_home::SessionHomeContext;
+use crate::application::sessions::services::session_home::SessionHomeContext;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 /// A new persistent identity acquires its home before its first transcript

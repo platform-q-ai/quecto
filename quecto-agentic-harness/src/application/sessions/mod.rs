@@ -9,11 +9,7 @@
 //! the active-session state; interface and infrastructure hold injected
 //! handles.
 
-pub mod active_session;
-pub mod conversation_ledger;
 pub mod dto;
-pub mod history_paging;
 pub mod ports;
+pub mod services;
 pub mod use_cases;
-
-pub mod session_home;

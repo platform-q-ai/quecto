@@ -8,10 +8,12 @@ use std::sync::{Arc, Mutex};
 
 use super::SaveSession;
 use crate::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch;
-use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSessionState};
 use crate::application::sessions::dto::SessionListQuery;
 use crate::application::sessions::ports::{
     HistoricalRosterSource, SessionStore, WorkflowRunSource,
+};
+use crate::application::sessions::services::active_session::{
+    ActiveSessionHandle, ActiveSessionState,
 };
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::{

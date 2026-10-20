@@ -15,7 +15,7 @@ use crate::domain::agents::value_objects::agent::AgentProgressEvent;
 /// unchanged republish emits nothing.
 pub(crate) async fn publish_turn_progress(
     event: &AgentProgressEvent,
-    session: Option<&crate::application::sessions::active_session::ActiveSessionHandle>,
+    session: Option<&crate::application::sessions::services::active_session::ActiveSessionHandle>,
     sink: &mut EventSink<'_>,
 ) {
     let (Some(session), AgentProgressEvent::TurnCompleted { messages }) = (session, event) else {

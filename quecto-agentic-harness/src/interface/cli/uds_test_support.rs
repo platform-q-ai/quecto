@@ -96,7 +96,7 @@ pub fn completed_live_execution_state(
 /// hints (the child-progress-freeze fix, 2026-07-29).
 pub async fn ledger_hint_lines_for_turn_events(
     events: &[crate::domain::agents::value_objects::agent::AgentProgressEvent],
-    session: &crate::application::sessions::active_session::ActiveSessionHandle,
+    session: &crate::application::sessions::services::active_session::ActiveSessionHandle,
 ) -> Vec<serde_json::Value> {
     let mut buf: Vec<u8> = Vec::new();
     let mut sink = uds_cancel::EventSink::writer(&mut buf);

@@ -6,8 +6,8 @@
 //! would be re-issued after a restart and hide the later message.
 use std::collections::HashSet;
 
-use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::dto::SaveSessionError;
+use crate::application::sessions::services::active_session::ActiveSessionHandle;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::assign_missing_ordinals;
 use crate::domain::shared::error::DomainError;

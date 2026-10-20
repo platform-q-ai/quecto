@@ -334,7 +334,7 @@ async fn run_turn(
     responses: Vec<LlmResponse>,
     tools: Vec<(ToolDefinition, String)>,
     prompt: &str,
-    snapshot: Option<crate::application::sessions::active_session::ActiveSessionHandle>,
+    snapshot: Option<crate::application::sessions::services::active_session::ActiveSessionHandle>,
 ) -> (Vec<Message>, Vec<u8>) {
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     for (def, output) in tools {

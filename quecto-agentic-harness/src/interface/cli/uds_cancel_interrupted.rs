@@ -11,7 +11,7 @@ pub(super) struct InterruptedTurn<'a, 's> {
     pub(super) prompt_id: uuid::Uuid,
     pub(super) turn_save: Option<&'a crate::interface::cli::uds::TurnSave>,
     pub(super) active_session:
-        Option<&'a crate::application::sessions::active_session::ActiveSessionHandle>,
+        Option<&'a crate::application::sessions::services::active_session::ActiveSessionHandle>,
     pub(super) execution_state:
         &'a Option<crate::interface::cli::uds_execution_state::ExecutionStateHandle>,
     pub(super) system_prompt: &'a str,
@@ -62,7 +62,7 @@ pub(super) async fn save_turn(
 /// `get_message` by id serves what `get_messages` does (#2235 review). The
 /// copies stay full; only their stamps change.
 pub(super) fn restamp_ledger(
-    state: &mut crate::application::sessions::active_session::ActiveSessionState,
+    state: &mut crate::application::sessions::services::active_session::ActiveSessionState,
     live: &[Message],
 ) {
     let restamped: Vec<Message> = live

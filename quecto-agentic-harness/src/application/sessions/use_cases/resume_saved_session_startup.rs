@@ -3,7 +3,7 @@
 //! in ANOTHER folder is told to go there), and the orphan rule for a lone home.
 use crate::application::sessions::dto::resume_saved_session::ResumeDisposition;
 use crate::application::sessions::dto::{ResumeSavedSessionError, StartupRefusal};
-use crate::application::sessions::session_home::SessionHomeContext;
+use crate::application::sessions::services::session_home::SessionHomeContext;
 use crate::domain::sessions::entities::{session_home::SessionHomeScope, session_identity::*};
 pub(super) async fn admit_at_startup(
     home: &SessionHomeContext,

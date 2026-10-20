@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use super::super::fixture_tests::Fixture;
 use super::persisted;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
-use crate::application::sessions::active_session::ActiveSessionHandle;
+use crate::application::sessions::services::active_session::ActiveSessionHandle;
 use crate::application::tools::ports::Tool;
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::shared::error::DomainError;

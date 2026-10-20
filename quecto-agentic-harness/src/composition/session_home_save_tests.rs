@@ -7,7 +7,9 @@ use crate::application::sessions::dto::{
     ListSessionsRequest, SaveTrigger, SessionListQuery, SessionListScope,
 };
 use crate::application::sessions::use_cases::{ListSessions, SaveSession};
-use crate::application::sessions::{active_session::ActiveSessionState, ports::SessionStore};
+use crate::application::sessions::{
+    ports::SessionStore, services::active_session::ActiveSessionState,
+};
 use crate::domain::sessions::entities::session_home::SessionHomeScope;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::{

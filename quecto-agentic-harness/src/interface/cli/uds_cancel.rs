@@ -223,7 +223,7 @@ impl<'a> EventSink<'a> {
     /// variant.
     pub(crate) async fn emit_ledger_advanced(
         &mut self,
-        advance: crate::application::sessions::conversation_ledger::LedgerAdvance,
+        advance: crate::application::sessions::services::conversation_ledger::LedgerAdvance,
     ) {
         if advance.changed {
             self.emit_serialized(
@@ -272,7 +272,8 @@ pub(crate) struct PromptRun<'a, 's> {
     pub messages: &'a mut Vec<Message>,
     /// The active session's read model, published as the turn appends
     /// (#1971); `None` on rigs without a busy reader.
-    pub active_session: Option<crate::application::sessions::active_session::ActiveSessionHandle>,
+    pub active_session:
+        Option<crate::application::sessions::services::active_session::ActiveSessionHandle>,
     pub execution_state: Option<super::uds_execution_state::ExecutionStateHandle>,
     pub session: &'a mut AgentSession,
     /// Sink the streamed events are delivered to (writer XOR broadcast).
@@ -517,7 +518,8 @@ struct TokenDrainArgs<'a, 's> {
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
     notification_rx: &'a mut Option<NotificationRx>,
     subagent_registry: &'a Option<SubagentRegistry>,
-    active_session: Option<&'a crate::application::sessions::active_session::ActiveSessionHandle>,
+    active_session:
+        Option<&'a crate::application::sessions::services::active_session::ActiveSessionHandle>,
 }
 
 /// Run `agent.process()` while draining progress events (especially tokens)

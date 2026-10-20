@@ -1,7 +1,7 @@
 //! Discovery composition (#2010): the metadata-search use case over the
 //! loop's one home context, its controller, and the discovery handles that
 //! carry it beside the list controller the sessions composition built.
-use crate::application::sessions::session_home::SessionHomeContext;
+use crate::application::sessions::services::session_home::SessionHomeContext;
 use crate::application::sessions::use_cases::SearchSessionMetadata;
 use crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles;
 use crate::interface::uds::sessions::controller::ListSessionsController;
