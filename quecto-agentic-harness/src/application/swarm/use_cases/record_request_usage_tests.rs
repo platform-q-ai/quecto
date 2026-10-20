@@ -1,12 +1,12 @@
 use serde_json::{Value, json};
 
 use super::RecordRequestUsage;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::{NewRequestUsage, RecordRequestUsageRequest, RequestDelivery};
+use crate::application::swarm::ports::board_repository::BoardEncoding;
+use crate::application::swarm::test_support::{
     BoardState, CompactEncoding, MemoryBoard, SteppingClock, UsageReads, member_row, running_board,
     usage,
 };
-use crate::application::swarm::dto::{NewRequestUsage, RecordRequestUsageRequest, RequestDelivery};
-use crate::application::swarm::ports::BoardEncoding;
 use crate::domain::swarm::{
     entities::records::RunState, events::telemetry::RefusalKind,
     value_objects::board_error::BoardError,

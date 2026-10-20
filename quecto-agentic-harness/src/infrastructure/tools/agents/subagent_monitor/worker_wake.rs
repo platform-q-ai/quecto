@@ -20,7 +20,7 @@ use super::super::subagent_registry::{
     NotificationTx, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
     SwarmNoteState,
 };
-use crate::application::swarm::ports::WorkerBoardRead;
+use crate::application::swarm::ports::lifecycle::WorkerBoardRead;
 use crate::domain::swarm::services::worker_wake::{Stranded, stranded_work};
 
 /// A worker's part in its coordinator's wakes, on its registry entry.

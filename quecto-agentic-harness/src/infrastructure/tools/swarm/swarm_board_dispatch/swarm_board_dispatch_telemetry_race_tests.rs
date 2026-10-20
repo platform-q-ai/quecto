@@ -12,7 +12,10 @@ use serde_json::{Value, json};
 use super::{ActorRefs, BoardTelemetry, Recorded, SwarmBoardHandles, call, create_args};
 use super::{location, only, plain};
 use crate::application::swarm::dto::CallMeasure;
-use crate::application::swarm::ports::{BoardCallMeter, BoardRepository, BoardWork, MeteredCall};
+use crate::application::swarm::ports::{
+    board_repository::{BoardRepository, BoardWork},
+    board_telemetry::{BoardCallMeter, MeteredCall},
+};
 use crate::domain::swarm::{
     events::telemetry::{BoardOpDetail, BoardOpOutcome, RefusalKind},
     value_objects::board_error::BoardError,

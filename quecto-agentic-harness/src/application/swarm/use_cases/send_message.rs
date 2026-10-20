@@ -6,12 +6,15 @@ use std::sync::Arc;
 use serde_json::{Map, Value};
 
 use super::OverRepository;
-use crate::application::swarm::board_messages::{
+use crate::application::swarm::dto::{NewMessage, SendMessageRequest, SentMessage};
+use crate::application::swarm::ports::{
+    board_repository::{BoardEncoding, BoardRepository, BoardTransaction},
+    lifecycle::Clock,
+};
+use crate::application::swarm::services::board_messages::{
     ACCEPTED, INBOX_CAPACITY, Retirement, is_message_id, retire,
 };
-use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::dto::{NewMessage, SendMessageRequest, SentMessage};
-use crate::application::swarm::ports::{BoardEncoding, BoardRepository, BoardTransaction, Clock};
+use crate::application::swarm::services::board_operation::{detail, operation};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind,
     services::policy::{Access, status_is_alive},

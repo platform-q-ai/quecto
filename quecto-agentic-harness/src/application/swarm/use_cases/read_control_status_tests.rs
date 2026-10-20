@@ -1,5 +1,5 @@
 use super::ReadControlStatus;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::test_support::{
     MemoryBoard, SteppingClock, member_row, paused, running_board,
 };
 use crate::domain::swarm::{

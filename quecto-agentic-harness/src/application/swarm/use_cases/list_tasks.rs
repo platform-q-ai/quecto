@@ -3,11 +3,13 @@
 use std::sync::Arc;
 
 use super::OverRepository;
-use crate::application::swarm::board_operation::operation;
-use crate::application::swarm::board_read_models::{page_bounds, reading, with_owner_liveness};
-use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{ListTasksRequest, TaskPage};
-use crate::application::swarm::ports::{BoardRepository, Clock};
+use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
+use crate::application::swarm::services::board_operation::operation;
+use crate::application::swarm::services::board_read_models::{
+    page_bounds, reading, with_owner_liveness,
+};
+use crate::application::swarm::services::board_tasks::read_task;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

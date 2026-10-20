@@ -1,0 +1,233 @@
+//! CLI composition of container identity and the shared lifecycle adapter.
+use super::AgentFlags;
+use crate::application::swarm::ports::lifecycle::CoordinationPort;
+use crate::domain::external_agent::backend::MemberBackend;
+use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
+use crate::infrastructure::tools::swarm::{swarm_bridge, swarm_lifecycle};
+use crate::interface::cli::CliContext;
+
+/// Admit this process: a swarm member's board is composition's (#2278),
+/// bound as the process's board before its context is discovered, and a
+/// process launched under the container contract without one is refused.
+pub(super) fn admit(ctx: &CliContext, flags: &mut AgentFlags, stderr: &mut String) -> bool {
+    let contracted = SwarmContext::contracted_checkout().is_some();
+    let context = match admission_board(ctx, flags, contracted) {
+        Ok(Some(board)) => {
+            swarm_bridge::bind_process_board(board);
+            crate::interface::tool_runtime::swarm_context()
+        }
+        Ok(None) => None,
+        Err(refusal) => {
+            stderr.push_str(refusal);
+            return false;
+        }
+    };
+    admit_with(context, swarm_lifecycle::is_creator(), flags, stderr)
+}
+
+/// The board this process is admitted with ([`board_admission`]),
+/// recording from admission on when [`records_admission`] says so (#2313).
+pub(super) fn admission_board(
+    ctx: &CliContext,
+    flags: &AgentFlags,
+    contracted: bool,
+) -> Result<Option<swarm_bridge::SwarmBoard>, &'static str> {
+    let board = board_admission(board(ctx), contracted)?;
+    if let Some(board) = &board {
+        let backend = flags.backend.unwrap_or_default();
+        board.record_from_admission(records_admission(contracted, backend, || {
+            super::event_log::decided_before_admission(ctx, flags)
+        }));
+    }
+    Ok(board)
+}
+
+/// Whether the admission's own board calls are measured and recorded
+/// (#2313): a member launched under the container contract (only its
+/// admission calls the board) whose event log is on, as `decided` reads it
+/// before admission, and only for the quecto backend: a `--backend
+/// claude-code` member opens no event log of its own (E2).
+pub(super) fn records_admission(
+    contracted: bool,
+    backend: MemberBackend,
+    decided: impl FnOnce() -> bool,
+) -> bool {
+    match (contracted, backend) {
+        (true, MemberBackend::Quecto) => decided(),
+        (true, MemberBackend::ClaudeCode) | (false, _) => false,
+    }
+}
+
+/// The board a process is admitted with: composition's, when composed; a
+/// process launched under the container contract (`contracted`) without
+/// one is refused, since the interface never constructs the board.
+pub(super) fn board_admission(
+    board: Option<swarm_bridge::SwarmBoard>,
+    contracted: bool,
+) -> Result<Option<swarm_bridge::SwarmBoard>, &'static str> {
+    match (board, contracted) {
+        (Some(board), _) => Ok(Some(board)),
+        (None, false) => Ok(None),
+        (None, true) => Err(SWARM_BOARD_NOT_COMPOSED),
+    }
+}
+
+/// The refusal for a swarm member whose run composed no board (#2278).
+pub(super) const SWARM_BOARD_NOT_COMPOSED: &str = "agent: swarm board capability not composed\n";
+
+/// The board composition's builders carried on `ctx` make (#2278), with
+/// composition's codec (#2279): it records in the session's event log
+/// when `ctx` also carries composition's `board_op_log`. Without the
+/// builder or the codec no board is composed.
+pub(super) fn board(ctx: &CliContext) -> Option<swarm_bridge::SwarmBoard> {
+    match (ctx.swarm_board, ctx.swarm_board_wire, ctx.swarm_board_log) {
+        (Some(build), Some(wire), Some(session_log)) => Some(
+            swarm_bridge::SwarmBoard::with_session_log(build, wire, session_log),
+        ),
+        (Some(build), Some(wire), None) => Some(swarm_bridge::SwarmBoard::new(build, wire)),
+        (Some(_), None, _) | (None, _, _) => None,
+    }
+}
+
+/// Workflow eligibility follows swarm participation, not containerization
+/// (#1715). A workflow request is checked against a membership-free status
+/// read BEFORE joining, so a refused process never leaves a member row behind
+/// (a live row with a dead pid would fail the whole run at the next
+/// reconcile). The join then records participation; a swarm member has its
+/// workflow disabled, an ordinary container keeps it. The `--backend` is
+/// decided the same way, before the join (#2287).
+pub(super) fn admit_with(
+    context: Option<SwarmContext>,
+    creator: bool,
+    flags: &mut AgentFlags,
+    stderr: &mut String,
+) -> bool {
+    let Some(context) = context else {
+        return admit_backend(flags.backend.unwrap_or_default(), false, creator, stderr);
+    };
+    let created = match context.run_created() {
+        Ok(created) => created,
+        Err(error) => {
+            stderr.push_str(&format!("swarm admission rejected: {error}\n"));
+            return false;
+        }
+    };
+    if !admit_backend(flags.backend.unwrap_or_default(), created, creator, stderr) {
+        return false;
+    }
+    if created && let Err(error) = disable_workflow(flags) {
+        stderr.push_str(&format!("swarm admission rejected: {error}\n"));
+        return false;
+    }
+    // The join records participation on the shared handle; the workflow flag
+    // was already settled above (a created run implies participation).
+    if let Err(error) = swarm_lifecycle::join_current_process(
+        &context,
+        flags.socket_path.as_deref(),
+        flags.swarm_participation.clone(),
+        creator,
+    ) {
+        stderr.push_str(&format!("swarm admission rejected: {error}\n"));
+        return false;
+    }
+    // A created run implies participation; a claude-code member that did
+    // not come to participate (the run ended meanwhile) is still refused.
+    match (
+        flags.backend.unwrap_or_default(),
+        flags.swarm_participation.participating(),
+    ) {
+        (MemberBackend::Quecto, _) | (MemberBackend::ClaudeCode, true) => true,
+        (MemberBackend::ClaudeCode, false) => {
+            stderr.push_str(CLAUDE_CODE_NOT_A_SWARM_WORKER);
+            false
+        }
+    }
+}
+
+/// The refusal for a claude-code member that is not a swarm worker
+/// (#2287, O1).
+pub(super) const CLAUDE_CODE_NOT_A_SWARM_WORKER: &str =
+    "agent: --backend claude-code runs only as a swarm worker admitted to a created swarm run\n";
+
+/// Whether this process may run `backend`, decided before it joins: a
+/// claude-code member must be a swarm worker (O1), a process joining a
+/// `created` run that is not the run's creator (its coordinator).
+fn admit_backend(
+    backend: MemberBackend,
+    created: bool,
+    creator: bool,
+    stderr: &mut String,
+) -> bool {
+    let admitted = match (backend, created, creator) {
+        (MemberBackend::Quecto, _, _) | (MemberBackend::ClaudeCode, true, false) => true,
+        (MemberBackend::ClaudeCode, false, _) | (MemberBackend::ClaudeCode, true, true) => false,
+    };
+    if !admitted {
+        stderr.push_str(CLAUDE_CODE_NOT_A_SWARM_WORKER);
+    }
+    admitted
+}
+
+pub(super) fn bind_socket(socket: &std::path::Path, stderr: &mut String) -> bool {
+    swarm_bridge::set_process_socket(socket.to_path_buf());
+    if let Some(context) = crate::interface::tool_runtime::swarm_context() {
+        if context.database().exists() {
+            if let Err(error) = context.register_endpoint(&socket.to_string_lossy()) {
+                stderr.push_str(&format!("swarm endpoint registration failed: {error}\n"));
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn disable_workflow(
+    flags: &mut AgentFlags,
+) -> Result<(), crate::domain::shared::error::DomainError> {
+    crate::domain::swarm::services::participation::validate_workflow(
+        true,
+        flags.workflow || flags.workflow_guards || flags.workflow_spec_path.is_some(),
+    )?;
+    flags.workflow_disabled = true;
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "swarm_runtime_tests.rs"]
+mod tests;
+
+/// Writes the swarm run watch's held ticks when the agent command ends
+/// (#2338 review round 1): a normal return, a signal's orderly shutdown
+/// (SIGTERM or SIGINT: the dispatch loop returns through here), or a
+/// panic unwinding through it. Only an exit that skips this return loses
+/// them: SIGKILL, the OOM killer, a panic the harness's hook aborts on, or
+/// the forced exit of a second signal past the shutdown's 45 s budget.
+pub(super) struct WatchTicksOnExit(
+    Option<&'static crate::infrastructure::tools::swarm::swarm_bridge::SwarmBoard>,
+);
+
+impl WatchTicksOnExit {
+    /// Flushes `board`'s held ticks on drop, when there is one.
+    pub(super) fn of(
+        board: Option<&'static crate::infrastructure::tools::swarm::swarm_bridge::SwarmBoard>,
+    ) -> Self {
+        Self(board)
+    }
+
+    /// Flushes this process's board (the one admission bound, if any).
+    pub(super) fn of_process() -> Self {
+        Self::of(crate::infrastructure::tools::swarm::swarm_bridge::process_board())
+    }
+}
+
+impl Drop for WatchTicksOnExit {
+    fn drop(&mut self) {
+        if let Some(board) = self.0 {
+            board.flush_all_watch_polls();
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "swarm_runtime_exit_tests.rs"]
+mod exit_tests;

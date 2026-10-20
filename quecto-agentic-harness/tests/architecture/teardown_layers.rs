@@ -350,7 +350,7 @@ fn a_retired_port_row_naming_a_missing_file_fails() {
 }
 
 const TOOLS_PORTS: &str = "src/application/tools/ports.rs";
-const SWARM_PORTS: &str = "src/application/swarm/ports.rs";
+const SWARM_PORTS: &str = "src/application/swarm/ports/lifecycle.rs";
 
 /// Pure domain: no trait carrying I/O, no async, no process, socket or
 /// runtime types in any domain module. The legacy domain files that still

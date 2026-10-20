@@ -4,7 +4,7 @@
 //! push a silent no-op.
 use std::time::Duration;
 
-use crate::application::swarm::ports::SwarmRunControl;
+use crate::application::swarm::ports::lifecycle::SwarmRunControl;
 use crate::domain::swarm::services::watch::Nudge;
 use crate::infrastructure::tools::swarm::swarm_bridge::{bind_process_board, process_board};
 

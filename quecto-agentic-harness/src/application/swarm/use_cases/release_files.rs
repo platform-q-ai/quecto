@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use super::OverRepository;
 
-use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_tasks::{owned, stored_id};
 use crate::application::swarm::dto::{ReleaseFilesRequest, ReleasedFiles};
-use crate::application::swarm::ports::{BoardRepository, Clock};
+use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
+use crate::application::swarm::services::board_operation::{detail, operation};
+use crate::application::swarm::services::board_tasks::{owned, stored_id};
 use crate::domain::swarm::{services::policy::Access, value_objects::board_error::BoardError};
 
 /// Through the operation gate (`operation(active=False)`: the run need not

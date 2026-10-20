@@ -5,7 +5,9 @@
 //! L2).
 use std::time::Duration;
 
-use quecto::application::swarm::ports::{BoardCallMeter, BoardRepository};
+use quecto::application::swarm::ports::{
+    board_repository::BoardRepository, board_telemetry::BoardCallMeter,
+};
 
 use super::board_call_meter::board;
 

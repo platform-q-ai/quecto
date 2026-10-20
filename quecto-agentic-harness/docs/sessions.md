@@ -594,7 +594,7 @@ a copy (#1979).
 - `src/composition/fleet_settlement.rs` — the fleet adaptation of the switch.
 
 The interface holds plain handle structs (`src/interface/cli/uds_session_handles.rs`,
-`retention_handles.rs`) filled through `CliComposition`; it names neither the
+`src/interface/cli/controllers/retention_handles.rs`) filled through `CliComposition`; it names neither the
 composition layer nor an adapter, converts no raw key, and reaches no store
 method — the architecture tests under `tests/architecture/sessions_*.rs` pin
 every one of these rules with exact, decrease-only inventories.

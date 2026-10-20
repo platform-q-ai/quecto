@@ -917,7 +917,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
     let http_client = reqwest::Client::new();
     let provider = build_agent_provider(&config, base, &http_client).expect("provider");
     let runtime_configuration =
-        quecto::interface::cli::catalogue_handles::RuntimeConfigurationInputs {
+        quecto::interface::cli::controllers::catalogue_handles::RuntimeConfigurationInputs {
             selection: quecto::application::configuration::dto::ConfigSelection::Explicit(
                 config_path,
             ),

@@ -17,7 +17,7 @@ use super::repository::{
 use crate::application::swarm::dto::{
     LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, NewMember,
 };
-use crate::application::swarm::ports::BoardMembers;
+use crate::application::swarm::ports::board_members::BoardMembers;
 use crate::domain::swarm::{
     entities::records::{MemberRecord, MemberState},
     value_objects::board_error::BoardError,

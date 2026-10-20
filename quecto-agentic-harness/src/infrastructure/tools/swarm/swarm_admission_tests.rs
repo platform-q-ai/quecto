@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde_json::json;
 
 use super::LaunchReservation;
-use crate::application::swarm::ports::BoardOpLog;
+use crate::application::swarm::ports::board_telemetry::BoardOpLog;
 use crate::domain::swarm::{
     events::telemetry::BoardOpObservation, value_objects::lifecycle::MemberExit,
 };
@@ -37,7 +37,7 @@ impl BoardOpLog for SlowLog {
     fn summarize(&self, _summary: crate::domain::swarm::events::run_summary::SwarmRunSummary) {}
 }
 
-impl crate::application::swarm::ports::SessionOpLog for SlowLog {
+impl crate::application::swarm::ports::board_telemetry::SessionOpLog for SlowLog {
     fn dropped(&self, _drops: crate::application::swarm::dto::DroppedRecords) {}
 
     fn take_unnoted(&self) -> crate::application::swarm::dto::DroppedRecords {

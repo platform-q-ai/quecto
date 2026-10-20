@@ -29,7 +29,7 @@ pub(super) async fn single_client_loop(
     args: SingleClientArgs<'_>,
     std_stream: std::os::unix::net::UnixStream,
     sessions: &SessionHandles,
-    catalogue: &super::catalogue_handles::CatalogueHandles,
+    catalogue: &super::controllers::catalogue_handles::CatalogueHandles,
 ) -> i32 {
     let SingleClientArgs {
         mut agent,
@@ -120,8 +120,8 @@ pub(super) async fn single_client_loop(
     {
         tracing::warn!("failed to persist session on exit: {err}");
     }
-    super::launch_rollback_wait::await_launch_rollbacks(
-        super::launch_rollback_wait::LAUNCH_ROLLBACK_LIMIT,
+    super::controllers::launch_rollback_wait::await_launch_rollbacks(
+        super::controllers::launch_rollback_wait::LAUNCH_ROLLBACK_LIMIT,
     )
     .await;
     0

@@ -3,7 +3,7 @@
 //! its whole count, the usage ledger's totals and the revision, in a read
 //! transaction that creates nothing.
 use quecto::application::swarm::dto::{BoardLocation, NewTask, ProjectionLimits, ProjectionRows};
-use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
+use quecto::application::swarm::ports::board_repository::{BoardRepository, BoardTransaction};
 use quecto::domain::swarm::value_objects::board_error::BoardError;
 use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;

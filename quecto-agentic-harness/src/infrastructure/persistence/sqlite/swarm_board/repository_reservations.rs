@@ -10,7 +10,7 @@ use serde_json::Value;
 use super::binding;
 use super::repository::{SqliteBoard, cell_at, failed, fetched, loose};
 use crate::application::swarm::dto::{FileRow, NewReservation};
-use crate::application::swarm::ports::BoardFiles;
+use crate::application::swarm::ports::board_files::BoardFiles;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

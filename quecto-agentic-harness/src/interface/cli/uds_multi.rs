@@ -153,7 +153,7 @@ pub(super) async fn multi_client_loop(
     args: MultiClientArgs<'_>,
     listener: tokio::net::UnixListener,
     sessions: &super::uds_session_handles::SessionHandles,
-    catalogue: &super::catalogue_handles::CatalogueHandles,
+    catalogue: &super::controllers::catalogue_handles::CatalogueHandles,
 ) -> i32 {
     let MultiClientArgs {
         mut agent,
@@ -241,7 +241,7 @@ pub(super) async fn multi_client_loop(
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(256);
     let (disconnect_tx, disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
     let cancel_handle: CancelHandle = std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle));
-    super::swarm_composition::bind_suspension(
+    super::controllers::swarm_composition::bind_suspension(
         &cancel_handle,
         crate::interface::tool_runtime::swarm_context(),
     );
@@ -397,8 +397,8 @@ pub(super) async fn multi_client_loop(
         tracing::warn!("failed to persist session on exit: {err}");
     }
 
-    super::launch_rollback_wait::await_launch_rollbacks(
-        super::launch_rollback_wait::LAUNCH_ROLLBACK_LIMIT,
+    super::controllers::launch_rollback_wait::await_launch_rollbacks(
+        super::controllers::launch_rollback_wait::LAUNCH_ROLLBACK_LIMIT,
     )
     .await;
     0

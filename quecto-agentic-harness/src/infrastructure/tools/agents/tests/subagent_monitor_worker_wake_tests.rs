@@ -3,7 +3,7 @@
 // or the first good turn after a failure; a reply comes as `reply_ready`.
 
 use super::*;
-use crate::application::swarm::ports::WorkerBoardRead;
+use crate::application::swarm::ports::lifecycle::WorkerBoardRead;
 use crate::domain::swarm::services::worker_wake::WorkerBoard;
 use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 use crate::infrastructure::tools::agents::subagent_registry::{

@@ -469,7 +469,7 @@ struct BoardCalls(
     std::sync::Mutex<Vec<quecto::domain::swarm::events::telemetry::BoardOpObservation>>,
 );
 
-impl quecto::application::swarm::ports::BoardOpLog for BoardCalls {
+impl quecto::application::swarm::ports::board_telemetry::BoardOpLog for BoardCalls {
     fn record(&self, observation: quecto::domain::swarm::events::telemetry::BoardOpObservation) {
         self.0.lock().unwrap().push(observation);
     }
@@ -478,7 +478,7 @@ impl quecto::application::swarm::ports::BoardOpLog for BoardCalls {
     fn summarize(&self, _summary: quecto::domain::swarm::events::run_summary::SwarmRunSummary) {}
 }
 
-impl quecto::application::swarm::ports::SessionOpLog for BoardCalls {
+impl quecto::application::swarm::ports::board_telemetry::SessionOpLog for BoardCalls {
     fn dropped(&self, _drops: quecto::application::swarm::dto::DroppedRecords) {}
 
     fn take_unnoted(&self) -> quecto::application::swarm::dto::DroppedRecords {

@@ -1,0 +1,402 @@
+use super::*;
+
+#[test]
+fn swarm_cli_disables_default_workflow_and_rejects_explicit_activation() {
+    for flag in [
+        None,
+        Some("--workflow"),
+        Some("--workflow-guards"),
+        Some("--workflow-spec"),
+    ] {
+        let mut args = vec!["--mode".to_string(), "uds".to_string()];
+        if let Some(flag) = flag {
+            args.push(flag.into());
+            if flag == "--workflow-spec" {
+                args.push("/unread/spec.json".into());
+            }
+        }
+        let mut flags = super::super::parse_agent_flags(&args, &mut String::new()).unwrap();
+        let result = disable_workflow(&mut flags);
+        if flag.is_some() {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("workflow is unavailable for swarm agents")
+            );
+        } else {
+            result.unwrap();
+            assert!(flags.workflow_disabled);
+            assert!(!flags.workflow_guards);
+        }
+    }
+}
+
+/// A container store at its bootstrap placeholder, created by its
+/// coordinator: what every container carries before anyone creates a run.
+fn bootstrapped(checkout: &std::path::Path) -> SwarmContext {
+    std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
+    let coordinator = member(checkout, "coordinator");
+    coordinator.join(&identity(), None, None).unwrap();
+    coordinator
+}
+
+fn member(checkout: &std::path::Path, name: &str) -> SwarmContext {
+    SwarmContext {
+        board: crate::composition::swarm::swarm_board(),
+        checkout: checkout.to_path_buf(),
+        member: name.into(),
+        lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
+    }
+}
+
+fn identity() -> crate::domain::swarm::value_objects::lifecycle::ProcessIdentity {
+    crate::domain::swarm::value_objects::lifecycle::ProcessIdentity {
+        pid: std::process::id(),
+        started: swarm_bridge::process_start(std::process::id()).unwrap(),
+    }
+}
+
+fn flags_with(args: &[&str]) -> AgentFlags {
+    let mut all = vec!["--mode".to_string(), "uds".to_string()];
+    all.extend(args.iter().map(|a| a.to_string()));
+    super::super::parse_agent_flags(&all, &mut String::new()).unwrap()
+}
+
+fn create_run(context: &SwarmContext) {
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 300;
+    context
+        .create_run(
+            &serde_json::json!({"goal":"g","constraints":[],
+                "criteria":[{"id":"t","kind":"command","description":"pass"}],
+                "member_limit":3,"deadline":deadline}),
+            &identity(),
+            None,
+        )
+        .unwrap();
+}
+
+/// #1715: a newcomer joining an ordinary container (bootstrap placeholder
+/// run) keeps its workflow; joining a container whose run has been created
+/// is refused with a workflow request and joins workflow-disabled without.
+/// The newcomer is not a member before the join, as a host-side join is not.
+#[test]
+fn startup_workflow_follows_swarm_participation_not_containerization() {
+    let ordinary = tempfile::tempdir().unwrap();
+    bootstrapped(ordinary.path());
+    let mut flags = flags_with(&["--workflow"]);
+    let mut stderr = String::new();
+    assert!(
+        admit_with(
+            Some(member(ordinary.path(), "newcomer")),
+            false,
+            &mut flags,
+            &mut stderr
+        ),
+        "{stderr}"
+    );
+    assert!(
+        !flags.workflow_disabled,
+        "ordinary container keeps workflow"
+    );
+    assert!(flags.workflow);
+    assert!(!flags.swarm_participation.participating());
+
+    let swarm = tempfile::tempdir().unwrap();
+    create_run(&bootstrapped(swarm.path()));
+    let mut flags = flags_with(&["--workflow"]);
+    let mut stderr = String::new();
+    assert!(!admit_with(
+        Some(member(swarm.path(), "late-with-workflow")),
+        false,
+        &mut flags,
+        &mut stderr
+    ));
+    assert!(
+        stderr.contains("swarm admission rejected")
+            && stderr.contains("workflow is unavailable for swarm agents"),
+        "{stderr}"
+    );
+    let mut flags = flags_with(&[]);
+    let mut stderr = String::new();
+    assert!(
+        admit_with(
+            Some(member(swarm.path(), "late")),
+            false,
+            &mut flags,
+            &mut stderr
+        ),
+        "{stderr}"
+    );
+    assert!(flags.workflow_disabled);
+    assert!(flags.swarm_participation.participating());
+    // No container context at all: nothing changes.
+    let mut flags = flags_with(&["--workflow"]);
+    assert!(admit_with(None, false, &mut flags, &mut String::new()));
+    assert!(!flags.workflow_disabled);
+}
+
+/// Outside any container there is no swarm context: admission is a no-op.
+#[test]
+fn admit_without_a_container_context_changes_nothing() {
+    let mut flags = flags_with(&["--workflow"]);
+    let mut stderr = String::new();
+    assert!(
+        admit(
+            &crate::interface::cli::CliContext::default(),
+            &mut flags,
+            &mut stderr
+        ),
+        "{stderr}"
+    );
+    assert!(!flags.workflow_disabled && !flags.swarm_participation.participating());
+}
+
+/// #2145: the creator's join creates the store in the checkout's git
+/// directory; a member arriving before any store exists is refused and
+/// creates nothing.
+#[test]
+fn the_creator_creates_the_store_in_the_git_directory() {
+    let checkout = tempfile::tempdir().unwrap();
+    std::fs::create_dir(checkout.path().join(".git")).unwrap();
+    let mut flags = flags_with(&[]);
+    let mut stderr = String::new();
+    assert!(!admit_with(
+        Some(member(checkout.path(), "late")),
+        false,
+        &mut flags,
+        &mut stderr,
+    ));
+    assert!(stderr.contains("store missing"), "{stderr}");
+    assert!(!checkout.path().join(".git/quecto").exists());
+    let creator = member(checkout.path(), "creator");
+    let mut stderr = String::new();
+    assert!(
+        admit_with(Some(creator.clone()), true, &mut flags, &mut stderr),
+        "{stderr}"
+    );
+    assert_eq!(
+        creator.database(),
+        checkout.path().join(".git/quecto/swarm.sqlite")
+    );
+    assert!(creator.database().is_file());
+}
+
+/// Whether `name` holds a member row in the container at `checkout`, as
+/// its coordinator reads the board.
+fn has_member_row(checkout: &std::path::Path, name: &str) -> bool {
+    let board = member(checkout, "coordinator")
+        .call("_snapshot", serde_json::json!([]))
+        .expect("the coordinator reads the board");
+    board.to_string().contains(&format!("\"{name}\""))
+}
+
+/// #2287 review round 2 (L4): the backend is decided BEFORE the join, from
+/// the membership-free run status and the creator flag, so a refused
+/// claude-code process never leaves a member row behind (#1715).
+#[test]
+fn a_claude_code_member_is_decided_before_it_joins() {
+    let claude = || flags_with(&["--backend", "claude-code"]);
+
+    // An ordinary container: no created run to be a worker of.
+    let ordinary = tempfile::tempdir().unwrap();
+    bootstrapped(ordinary.path());
+    let mut stderr = String::new();
+    assert!(!admit_with(
+        Some(member(ordinary.path(), "claude-ordinary")),
+        false,
+        &mut claude(),
+        &mut stderr
+    ));
+    assert_eq!(stderr, CLAUDE_CODE_NOT_A_SWARM_WORKER);
+    assert!(
+        !has_member_row(ordinary.path(), "claude-ordinary"),
+        "a refused process leaves no member row"
+    );
+
+    // A created run: its creator is the coordinator, not a worker.
+    let swarm = tempfile::tempdir().unwrap();
+    create_run(&bootstrapped(swarm.path()));
+    let mut stderr = String::new();
+    assert!(!admit_with(
+        Some(member(swarm.path(), "claude-creator")),
+        true,
+        &mut claude(),
+        &mut stderr
+    ));
+    assert_eq!(stderr, CLAUDE_CODE_NOT_A_SWARM_WORKER);
+    assert!(!has_member_row(swarm.path(), "claude-creator"));
+
+    // A worker of the created run is admitted and joins.
+    let mut flags = claude();
+    let mut stderr = String::new();
+    assert!(
+        admit_with(
+            Some(member(swarm.path(), "claude-worker")),
+            false,
+            &mut flags,
+            &mut stderr
+        ),
+        "{stderr}"
+    );
+    assert!(flags.swarm_participation.participating());
+    assert!(has_member_row(swarm.path(), "claude-worker"));
+
+    // No container at all: nothing to be a worker of.
+    let mut stderr = String::new();
+    assert!(!admit_with(None, false, &mut claude(), &mut stderr));
+    assert_eq!(stderr, CLAUDE_CODE_NOT_A_SWARM_WORKER);
+
+    // quecto needs no swarm identity.
+    assert!(admit_with(
+        None,
+        false,
+        &mut flags_with(&[]),
+        &mut String::new()
+    ));
+}
+
+static ADMITTED_BUILDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn counted(
+    location: crate::application::swarm::dto::BoardLocation,
+    log: Option<std::sync::Arc<dyn crate::application::swarm::ports::board_telemetry::BoardOpLog>>,
+) -> crate::infrastructure::tools::swarm::swarm_board_dispatch::SwarmBoardHandles {
+    ADMITTED_BUILDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    crate::composition::swarm::build_swarm_board_handles(location, log)
+}
+
+/// Set in the child that runs the real admission (#2278 review M2).
+const ADMIT_CHILD: &str = "QUECTO_TEST_2278_ADMIT_CHILD";
+
+/// The board admission binds for this process is built by the builder
+/// `CliContext` carries from composition (#2278): the real `admit`, under
+/// the container contract, binds it as the process's board, its own reads
+/// reach the board through it, and the context the tools discover calls
+/// that same board. The process's board is bound once per process, so the
+/// admission runs in a child of its own.
+#[test]
+fn admission_reaches_the_board_through_the_contexts_builder() {
+    assert!(
+        super::board(&crate::interface::cli::CliContext::default()).is_none(),
+        "no builder, no board"
+    );
+    if let Ok(checkout) = std::env::var(ADMIT_CHILD) {
+        return admitted_child(std::path::Path::new(&checkout));
+    }
+    let checkout = tempfile::tempdir().unwrap();
+    bootstrapped(checkout.path());
+    let name = std::thread::current().name().unwrap().to_owned();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", &name, "--nocapture", "--test-threads=1"])
+        .env(ADMIT_CHILD, checkout.path())
+        .env("QUECTO_SWARM_CHECKOUT", checkout.path())
+        .env("QUECTO_SWARM_CONTAINER", "isolated-pid-v1")
+        // Any namespace but this process's own: the child is "contained".
+        .env("QUECTO_SWARM_HOST_PID_NS", "pid:[1]")
+        .env("QUECTO_SWARM_MEMBER", "worker")
+        .env_remove("QUECTO_SWARM_BOOTSTRAP")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The child's half: the real admission of a quecto member.
+fn admitted_child(checkout: &std::path::Path) {
+    use std::sync::atomic::Ordering;
+    assert!(swarm_bridge::process_board().is_none(), "nothing bound yet");
+    let ctx = crate::interface::cli::CliContext {
+        swarm_board: Some(counted),
+        swarm_board_wire: Some(crate::composition::swarm::board_wire()),
+        swarm_board_log: Some(crate::composition::swarm::board_op_log),
+        ..Default::default()
+    };
+    let mut flags = flags_with(&[]);
+    let mut stderr = String::new();
+    assert!(super::admit(&ctx, &mut flags, &mut stderr), "{stderr}");
+    let admitted = ADMITTED_BUILDS.load(Ordering::SeqCst);
+    assert!(
+        admitted >= 1,
+        "the admission's reads went through the composed builder"
+    );
+    let bound = swarm_bridge::process_board().expect("admission bound the process's board");
+    let context = crate::interface::tool_runtime::swarm_context().expect("a contracted context");
+    assert_eq!(context.checkout, checkout);
+    assert!(
+        context.board.is_the_same_board(bound),
+        "the tools' context calls the board admission bound"
+    );
+    context.summary().expect("a read through the bound board");
+    assert_eq!(
+        ADMITTED_BUILDS.load(Ordering::SeqCst),
+        admitted,
+        "the same file: the handles admission built"
+    );
+}
+
+/// A process launched under the container contract with no composed board
+/// is refused; outside the contract nothing is needed (#2278).
+#[test]
+fn a_contracted_process_needs_a_composed_board() {
+    let board = crate::composition::swarm::swarm_board;
+    assert!(matches!(
+        super::board_admission(Some(board()), true),
+        Ok(Some(_))
+    ));
+    assert!(matches!(
+        super::board_admission(Some(board()), false),
+        Ok(Some(_))
+    ));
+    assert!(matches!(super::board_admission(None, false), Ok(None)));
+    assert_eq!(
+        super::board_admission(None, true).unwrap_err(),
+        super::SWARM_BOARD_NOT_COMPOSED
+    );
+}
+
+/// #2313: the admission's board calls are recorded only for a contracted
+/// quecto member whose event log was decided on; the decision is read
+/// only then (a claude-code member opens no event log of its own).
+#[test]
+fn only_a_contracted_quecto_members_admission_is_recorded() {
+    let read = std::cell::Cell::new(0);
+    let decided = |on: bool| {
+        let read = &read;
+        move || {
+            read.set(read.get() + 1);
+            on
+        }
+    };
+    assert!(records_admission(
+        true,
+        MemberBackend::Quecto,
+        decided(true)
+    ));
+    assert!(!records_admission(
+        true,
+        MemberBackend::Quecto,
+        decided(false)
+    ));
+    assert_eq!(read.get(), 2);
+    assert!(!records_admission(
+        true,
+        MemberBackend::ClaudeCode,
+        decided(true)
+    ));
+    assert!(!records_admission(
+        false,
+        MemberBackend::Quecto,
+        decided(true)
+    ));
+    assert_eq!(read.get(), 2, "the switch is read only when it matters");
+}

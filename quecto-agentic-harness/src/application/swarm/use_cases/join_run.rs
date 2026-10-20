@@ -21,14 +21,17 @@ use serde_json::Value;
 use super::OverRepository;
 use super::activate_member::activate;
 use super::admit_member::admit;
-use crate::application::swarm::board_membership::{
-    MEMBER_MAX_BYTES, holds_reservation, live, same_process,
-};
-use crate::application::swarm::board_operation::atomic;
 use crate::application::swarm::dto::{
     ActivateMemberRequest, AdmitMemberRequest, JoinRunRequest, Joined,
 };
-use crate::application::swarm::ports::{BoardRepository, Clock, IdSource};
+use crate::application::swarm::ports::{
+    board_repository::{BoardRepository, IdSource},
+    lifecycle::Clock,
+};
+use crate::application::swarm::services::board_membership::{
+    MEMBER_MAX_BYTES, holds_reservation, live, same_process,
+};
+use crate::application::swarm::services::board_operation::atomic;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, services::validation::bounded,
     value_objects::board_error::BoardError, value_objects::python_value::python_truthy,

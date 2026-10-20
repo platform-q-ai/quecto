@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::OverRepository;
 use crate::application::swarm::dto::ControlAnswer;
-use crate::application::swarm::ports::BoardRepository;
+use crate::application::swarm::ports::board_repository::BoardRepository;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

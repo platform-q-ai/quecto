@@ -1,0 +1,280 @@
+use super::startup_prompt;
+use crate::interface::cli::{CliContext, run_with_output};
+
+#[test]
+fn one_shot_startup_stops_on_invalid_agents_md_utf8() {
+    let initialization_dir = tempfile::tempdir().unwrap();
+    let path = initialization_dir.path().join("AGENTS.md");
+    std::fs::write(&path, [0xff]).unwrap();
+    let context = CliContext {
+        base_dir: Some(initialization_dir.path().join("config")),
+        cwd: Some(initialization_dir.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
+        retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
+        fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
+        ..CliContext::default()
+    };
+
+    let output = run_with_output(
+        vec!["quecto".into(), "agent".into(), "-m".into(), "hello".into()],
+        &context,
+    );
+
+    assert_eq!(output.exit_code, 1);
+    assert!(output.stderr.contains("AGENTS.md is not valid UTF-8"));
+    assert!(output.stderr.contains(&path.display().to_string()));
+    assert!(!output.stderr.contains("config file not found"));
+}
+
+#[test]
+fn one_shot_and_uds_share_the_same_startup_prompt_composer() {
+    let instructions = Some("AGENTS marker".to_string());
+    let explicit = Some("Explicit marker".to_string());
+
+    let one_shot = startup_prompt::compose(
+        instructions.as_deref(),
+        explicit.as_deref(),
+        crate::interface::shared::PromptRole::Parent,
+        "Extension marker",
+        "Parent playbook marker",
+    );
+    let uds = startup_prompt::compose(
+        instructions.as_deref(),
+        explicit.as_deref(),
+        crate::interface::shared::PromptRole::Parent,
+        "Extension marker",
+        "Parent playbook marker",
+    );
+
+    assert_eq!(one_shot, uds);
+    assert!(one_shot.find("AGENTS marker").unwrap() < one_shot.find("Explicit marker").unwrap());
+    assert!(one_shot.find("Explicit marker").unwrap() < one_shot.find("Extension marker").unwrap());
+}
+
+#[test]
+fn uds_startup_stops_on_invalid_agents_md_utf8_before_socket_loop() {
+    let initialization_dir = tempfile::tempdir().unwrap();
+    let path = initialization_dir.path().join("AGENTS.md");
+    std::fs::write(&path, [0xff]).unwrap();
+    let socket = initialization_dir.path().join("agent.sock");
+    let context = CliContext {
+        base_dir: Some(initialization_dir.path().join("config")),
+        cwd: Some(initialization_dir.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
+        retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
+        fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
+        ..CliContext::default()
+    };
+
+    let output = run_with_output(
+        vec![
+            "quecto".into(),
+            "agent".into(),
+            "--mode".into(),
+            "uds".into(),
+            "--socket".into(),
+            socket.display().to_string(),
+        ],
+        &context,
+    );
+
+    assert_eq!(output.exit_code, 1);
+    assert!(output.stderr.contains("AGENTS.md is not valid UTF-8"));
+    assert!(output.stderr.contains(&path.display().to_string()));
+    assert!(!socket.exists(), "UDS socket loop must not start");
+}
+
+#[test]
+fn uds_startup_stops_on_agents_md_read_error_before_socket_loop() {
+    let initialization_dir = tempfile::tempdir().unwrap();
+    let path = initialization_dir.path().join("AGENTS.md");
+    std::fs::create_dir(&path).unwrap();
+    let socket = initialization_dir.path().join("agent.sock");
+    let context = CliContext {
+        base_dir: Some(initialization_dir.path().join("config")),
+        cwd: Some(initialization_dir.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
+        retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
+        fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
+        ..CliContext::default()
+    };
+
+    let output = run_with_output(
+        vec![
+            "quecto".into(),
+            "agent".into(),
+            "--mode".into(),
+            "uds".into(),
+            "--socket".into(),
+            socket.display().to_string(),
+        ],
+        &context,
+    );
+
+    assert_eq!(output.exit_code, 1);
+    assert!(output.stderr.contains("failed to read AGENTS.md"));
+    assert!(output.stderr.contains(&path.display().to_string()));
+    assert!(!socket.exists(), "UDS socket loop must not start");
+}
+
+#[test]
+fn one_shot_startup_stops_on_agents_md_read_error() {
+    let initialization_dir = tempfile::tempdir().unwrap();
+    let path = initialization_dir.path().join("AGENTS.md");
+    std::fs::create_dir(&path).unwrap();
+    let context = CliContext {
+        base_dir: Some(initialization_dir.path().join("config")),
+        cwd: Some(initialization_dir.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
+        retention: Some(crate::composition::sessions::build_retention_handles),
+        catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
+        provider_runtime: Some(crate::composition::runtime::build_agent_provider),
+        tool_policy_persistence: Some(
+            crate::composition::tool_policy::build_tool_policy_persistence,
+        ),
+        fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
+        ..CliContext::default()
+    };
+
+    let output = run_with_output(
+        vec!["quecto".into(), "agent".into(), "-m".into(), "hello".into()],
+        &context,
+    );
+
+    assert_eq!(output.exit_code, 1);
+    assert!(output.stderr.contains("failed to read AGENTS.md"));
+    assert!(output.stderr.contains(&path.display().to_string()));
+}
+
+#[test]
+fn override_is_composed_only_for_parent_and_keeps_other_prompt_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("PARENT_PLAYBOOK.md"),
+        "Unique project playbook",
+    )
+    .unwrap();
+    let context = CliContext {
+        cwd: Some(directory.path().to_path_buf()),
+        ..CliContext::default()
+    };
+    let mut errors = String::new();
+    let playbook = startup_prompt::load_parent_playbook(&context, false, &mut errors).unwrap();
+    assert!(errors.is_empty());
+    let parent = startup_prompt::compose(
+        Some("Project AGENTS"),
+        Some("Explicit instructions"),
+        crate::interface::shared::PromptRole::Parent,
+        "Extension instructions",
+        &playbook,
+    );
+    assert!(parent.contains("Unique project playbook"));
+    assert!(
+        parent.find("Unique project playbook").unwrap() < parent.find("Project AGENTS").unwrap()
+    );
+    assert!(parent.find("Project AGENTS").unwrap() < parent.find("Explicit instructions").unwrap());
+    assert!(
+        parent.find("Explicit instructions").unwrap()
+            < parent.find("Extension instructions").unwrap()
+    );
+    let child_playbook = startup_prompt::load_parent_playbook(&context, true, &mut errors).unwrap();
+    let child = startup_prompt::compose(
+        None,
+        Some("Explicit child instructions"),
+        crate::interface::shared::PromptRole::Subagent,
+        "",
+        &child_playbook,
+    );
+    assert!(!child.contains("Unique project playbook"));
+    assert!(child.contains("Explicit child instructions"));
+}
+
+#[tokio::test]
+async fn custom_playbook_prompt_path_uses_initialization_directory() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("project");
+    let other = directory.path().join("other");
+    std::fs::create_dir_all(project.join("docs")).unwrap();
+    std::fs::create_dir(&other).unwrap();
+    std::fs::write(project.join("docs/spike.md"), "project spike brief").unwrap();
+    std::fs::write(
+        project.join("PARENT_PLAYBOOK.md"),
+        "Read docs/spike.md relative to the initialization directory",
+    )
+    .unwrap();
+    let context = CliContext {
+        cwd: Some(project.clone()),
+        ..CliContext::default()
+    };
+    let playbook =
+        startup_prompt::load_parent_playbook(&context, false, &mut String::new()).unwrap();
+    assert!(playbook.contains("docs/spike.md"));
+    let workspace = context.cwd.as_ref().unwrap();
+    let tool = crate::infrastructure::tools::native::filesystem::ReadTool::new(
+        std::sync::Arc::new(workspace.clone()),
+        std::sync::Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
+            Some(workspace.clone()),
+        )),
+    );
+    let result =
+        crate::application::tools::ports::Tool::execute(&tool, r#"{"path":"docs/spike.md"}"#)
+            .await
+            .unwrap();
+    assert!(result.content.contains("project spike brief"));
+    assert!(!other.join("docs/spike.md").exists());
+    assert_eq!(
+        crate::infrastructure::config::parent_playbook::load(&other).unwrap(),
+        include_str!("../../../../../PARENT_PLAYBOOK.md")
+    );
+}
+
+#[test]
+fn present_invalid_override_fails_parent_startup_but_does_not_affect_child() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("PARENT_PLAYBOOK.md"), [0xff]).unwrap();
+    let context = CliContext {
+        cwd: Some(directory.path().to_path_buf()),
+        ..CliContext::default()
+    };
+    let mut errors = String::new();
+    assert!(startup_prompt::load_parent_playbook(&context, false, &mut errors).is_none());
+    assert!(errors.contains("not valid UTF-8"));
+    assert!(startup_prompt::load_parent_playbook(&context, true, &mut String::new()).is_some());
+}
+
+/// #2461 review: startup takes the prompt role from the parsed launch flags,
+/// so `--spawned --coordinator` composes the coordinator playbook.
+#[test]
+fn startup_composes_the_role_named_by_the_launch_flags() {
+    let document = include_str!("../../../../../COORDINATOR_PLAYBOOK.md").trim_end();
+    let argv = |parts: &[&str]| parts.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let mut errors = String::new();
+    for (parts, coordinator) in [
+        (&["--mode", "uds", "--spawned", "--coordinator"][..], true),
+        (&["--mode", "uds", "--spawned"][..], false),
+        (&["--mode", "uds"][..], false),
+    ] {
+        let flags = super::parse_agent_flags(&argv(parts), &mut errors).unwrap();
+        let prompt = startup_prompt::compose_for(&flags, None, "", "");
+        assert_eq!(prompt.contains(document), coordinator, "{parts:?}");
+    }
+}

@@ -1,10 +1,10 @@
 use serde_json::json;
 
 use super::ReleaseUnlaunchedMember;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::ReleaseUnlaunchedMemberRequest;
+use crate::application::swarm::test_support::{
     MemoryBoard, SteppingClock, member_row, running_board, stored_member,
 };
-use crate::application::swarm::dto::ReleaseUnlaunchedMemberRequest;
 use crate::application::swarm::use_cases::OverRepository;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,

@@ -8,8 +8,10 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 
 use crate::application::swarm::ports::{
-    CoordinationPort, PortFuture, ProcessControl, ProcessObservation, SettlementStep,
-    SwarmLifecycle,
+    PortFuture,
+    lifecycle::{
+        CoordinationPort, ProcessControl, ProcessObservation, SettlementStep, SwarmLifecycle,
+    },
 };
 use crate::application::tools::ports::Tool;
 use crate::domain::shared::error::DomainError;
@@ -90,7 +92,7 @@ impl SwarmLifecycle for CountingLifecycle {
     fn observed_outcome(
         &self,
         snapshot: &Snapshot,
-        clock: &dyn crate::application::swarm::ports::Clock,
+        clock: &dyn crate::application::swarm::ports::lifecycle::Clock,
     ) -> crate::domain::swarm::value_objects::lifecycle::RunStatus {
         crate::application::swarm::LifecycleService.observed_outcome(snapshot, clock)
     }
@@ -100,7 +102,7 @@ impl SwarmLifecycle for CountingLifecycle {
 #[derive(Default)]
 pub(super) struct Recorded(Mutex<Vec<BoardOpObservation>>);
 
-impl crate::application::swarm::ports::BoardOpLog for Recorded {
+impl crate::application::swarm::ports::board_telemetry::BoardOpLog for Recorded {
     fn record(&self, observation: BoardOpObservation) {
         self.0.lock().unwrap().push(observation);
     }
@@ -109,7 +111,7 @@ impl crate::application::swarm::ports::BoardOpLog for Recorded {
     fn summarize(&self, _summary: crate::domain::swarm::events::run_summary::SwarmRunSummary) {}
 }
 
-impl crate::application::swarm::ports::SessionOpLog for Recorded {
+impl crate::application::swarm::ports::board_telemetry::SessionOpLog for Recorded {
     fn dropped(&self, _drops: crate::application::swarm::dto::DroppedRecords) {}
 
     fn take_unnoted(&self) -> crate::application::swarm::dto::DroppedRecords {

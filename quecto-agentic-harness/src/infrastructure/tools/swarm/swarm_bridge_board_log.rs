@@ -25,7 +25,7 @@ use std::time::Instant;
 use serde_json::Value;
 
 use crate::application::swarm::dto::DroppedRecords;
-use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
+use crate::application::swarm::ports::board_telemetry::{BoardOpLog, SessionOpLog};
 use crate::domain::swarm::events::telemetry::board_run_id;
 
 use crate::domain::swarm::{

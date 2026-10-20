@@ -315,7 +315,7 @@ fn then_spill_file(world: &mut QuectoWorld, session_name: String, first: String,
 /// One real-loop run of the retained-context scenario.
 pub struct RetainedContextRun {
     agent: Option<AgentLoopImpl>,
-    retention: Option<quecto::interface::cli::retention_handles::RetentionHandles>,
+    retention: Option<quecto::interface::cli::controllers::retention_handles::RetentionHandles>,
     session_key: String,
     events: Vec<serde_json::Value>,
 }

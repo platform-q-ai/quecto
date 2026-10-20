@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use super::binding::bind;
 use super::{Method, Parameter, SwarmBoardHandles, TELEMETRY_TARGET, call, required};
 use crate::application::swarm::dto::BoardLocation;
-use crate::application::swarm::ports::{Clock, IdSource};
+use crate::application::swarm::ports::{board_repository::IdSource, lifecycle::Clock};
 use crate::composition::swarm::build_swarm_board_handles_with;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
@@ -61,7 +61,7 @@ pub(super) fn metered_board_and_repository(
     now: f64,
 ) -> (tempfile::TempDir, SwarmBoardHandles, SqliteBoardRepository) {
     struct Discarded;
-    impl crate::application::swarm::ports::BoardOpLog for Discarded {
+    impl crate::application::swarm::ports::board_telemetry::BoardOpLog for Discarded {
         fn record(&self, _: crate::domain::swarm::events::telemetry::BoardOpObservation) {}
         fn summarize(&self, _: crate::domain::swarm::events::run_summary::SwarmRunSummary) {}
     }

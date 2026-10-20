@@ -37,7 +37,7 @@ use crate::infrastructure::tools::agents::environment_commands::{
     HostedStoreObservation, ScriptEnvironmentCommands,
 };
 use crate::infrastructure::tools::swarm::swarm_bridge::SwarmBoard;
-pub use crate::interface::cli::container_handles::ContainerInventoryHandles;
+pub use crate::interface::cli::controllers::container_handles::ContainerInventoryHandles;
 
 /// The host's reads of the boards its environments hold (#1924), through
 /// composition's board handles (#2278): the process's board when the

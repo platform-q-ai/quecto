@@ -4,10 +4,13 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::OverRepository;
-use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{CreateTaskRequest, CreatedTask, NewTask};
-use crate::application::swarm::ports::{BoardEncoding, BoardRepository, BoardTransaction, Clock};
+use crate::application::swarm::ports::{
+    board_repository::{BoardEncoding, BoardRepository, BoardTransaction},
+    lifecycle::Clock,
+};
+use crate::application::swarm::services::board_operation::{detail, operation};
+use crate::application::swarm::services::board_tasks::read_task;
 use crate::domain::swarm::services::validation::{TEXT_MAX_BYTES, TITLE_MAX_BYTES, has_content};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind,

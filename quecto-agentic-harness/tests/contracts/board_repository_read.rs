@@ -6,7 +6,10 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use quecto::application::swarm::dto::BoardLocation;
-use quecto::application::swarm::ports::{BoardCallMeter, BoardRepository, BoardTransaction};
+use quecto::application::swarm::ports::{
+    board_repository::{BoardRepository, BoardTransaction},
+    board_telemetry::BoardCallMeter,
+};
 use quecto::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

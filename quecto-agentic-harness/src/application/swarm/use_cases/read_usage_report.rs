@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use super::OverRepository;
-use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::UsageReport;
-use crate::application::swarm::ports::{BoardRepository, Clock};
+use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
+use crate::application::swarm::services::board_operation::operation;
 use crate::domain::swarm::{services::policy::Access, value_objects::board_error::BoardError};
 
 /// Through the operation gate for reading: the report, whose read creates

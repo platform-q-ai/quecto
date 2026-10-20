@@ -159,8 +159,9 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     /// selection the spawn tool resolves `container: true` through and the
     /// discovery query it and agent_cmd list through; `None` refuses new
     /// containers and lists nothing.
-    pub container_configs:
-        Option<crate::interface::cli::container_config_handles::ContainerConfigHandles>,
+    pub container_configs: Option<
+        crate::interface::cli::controllers::container_config_handles::ContainerConfigHandles,
+    >,
     /// Composition's durable environment registry (#2024 S4d) the spawn
     /// tool commits to; `None` (unit rigs) builds an in-memory one.
     pub environment_registry:

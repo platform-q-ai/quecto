@@ -8,7 +8,7 @@ use super::*;
 use crate::application::configuration::dto::ConfigLayers;
 use crate::application::configuration::ports::{OverlayTrust, OverlayTrustStore};
 use crate::infrastructure::config::persistence::PersistentOverlayTrustStore;
-use crate::interface::cli::configuration_handles::ConfigurationEnvironment;
+use crate::interface::cli::controllers::configuration_handles::ConfigurationEnvironment;
 use tempfile::TempDir;
 
 struct Fixture {

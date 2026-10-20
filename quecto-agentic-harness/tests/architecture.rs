@@ -5058,7 +5058,7 @@ fn find_composition_delegation_allowed(file: &str, source: &str) -> bool {
                 ),
                 ["crate", "composition", "web_fetch", "build"] => matches!(
                     file,
-                    "src/interface/cli/agent/agent_tool_registry.rs"
+                    "src/interface/cli/controllers/agent/agent_tool_registry.rs"
                         | "src/interface/find_runtime_tests.rs"
                         | "src/interface/shared_cov_tests.rs"
                         | "src/interface/tool_runtime_catalogue_tests.rs"
@@ -5880,7 +5880,13 @@ fn subagent_interface_modules_never_import_composition() {
     for path in SUBAGENT_PROCESS_MODULES
         .iter()
         .filter(|path| path.starts_with("src/interface/"))
-        .chain(["src/interface/cli/agent.rs", "src/interface/cli/mod.rs"].iter())
+        .chain(
+            [
+                "src/interface/cli/controllers/agent.rs",
+                "src/interface/cli/mod.rs",
+            ]
+            .iter(),
+        )
     {
         let source = production_source(path);
         assert!(
@@ -6098,7 +6104,7 @@ fn parent_control_capability_never_travels_on_argv_or_env() {
         touched >= 2,
         "the launch ports and the args builder must be scanned"
     );
-    let flags = production_source("src/interface/cli/agent/flag_parse.rs");
+    let flags = production_source("src/interface/cli/controllers/agent/flag_parse.rs");
     assert!(flags.contains("parent_control: Option<std::path::PathBuf>"));
     // The material is exposed only where it is written out of band and
     // where the bound connection presents it.
@@ -6166,7 +6172,21 @@ fn termination_paths_never_consult_a_lease_or_a_pid() {
         "src/infrastructure/tools/swarm/swarm_member_termination.rs",
         "src/infrastructure/tools/swarm/swarm_lifecycle.rs",
         "src/application/swarm/mod.rs",
-        "src/application/swarm/ports.rs",
+        "src/application/swarm/ports/board_events.rs",
+        "src/application/swarm/ports/board_evidence.rs",
+        "src/application/swarm/ports/board_files.rs",
+        "src/application/swarm/ports/board_members.rs",
+        "src/application/swarm/ports/board_messages.rs",
+        "src/application/swarm/ports/board_projection.rs",
+        "src/application/swarm/ports/board_repository.rs",
+        "src/application/swarm/ports/board_requests.rs",
+        "src/application/swarm/ports/board_runs.rs",
+        "src/application/swarm/ports/board_tasks.rs",
+        "src/application/swarm/ports/board_telemetry.rs",
+        "src/application/swarm/ports/board_usage.rs",
+        "src/application/swarm/ports/board_wakes.rs",
+        "src/application/swarm/ports/lifecycle.rs",
+        "src/application/swarm/ports/mod.rs",
     ] {
         let source = production_source(path);
         for forbidden in [
@@ -7224,10 +7244,51 @@ const SWARM_BOARD_PORTS: &[&str] = &[
     "BoardEvidence",
 ];
 
-/// Where the swarm capability declares ports: `ports.rs` (and a
-/// `ports/` folder, should it grow one).
+/// Where the swarm capability declares ports: its `ports/` folder (#2367).
 fn swarm_port_file(path: &str) -> bool {
-    path == "src/application/swarm/ports.rs" || path.starts_with("src/application/swarm/ports/")
+    path.starts_with("src/application/swarm/ports/")
+}
+
+/// The files of `application/swarm/ports/` (#2367): one per concern.
+const SWARM_PORT_FILES: &[&str] = &[
+    "board_events.rs",
+    "board_evidence.rs",
+    "board_files.rs",
+    "board_members.rs",
+    "board_messages.rs",
+    "board_projection.rs",
+    "board_repository.rs",
+    "board_requests.rs",
+    "board_runs.rs",
+    "board_tasks.rs",
+    "board_telemetry.rs",
+    "board_usage.rs",
+    "board_wakes.rs",
+    "lifecycle.rs",
+    "mod.rs",
+];
+
+/// The swarm ports folder holds exactly `SWARM_PORT_FILES`, and no ports
+/// file re-exports anything: importers name each port at its owning file.
+#[test]
+fn swarm_ports_folder_is_pinned_and_holds_no_reexport() {
+    let mut ports_files = Vec::new();
+    teardown_authority::walk(Path::new("src/application/swarm/ports"), &mut ports_files);
+    let listed: Vec<String> = SWARM_PORT_FILES
+        .iter()
+        .map(|file| format!("src/application/swarm/ports/{file}"))
+        .collect();
+    assert_eq!(
+        ports_files, listed,
+        "application/swarm/ports/ must hold exactly SWARM_PORT_FILES"
+    );
+    for file in &ports_files {
+        let reexports = reexports_in(&fs::read_to_string(file).unwrap());
+        assert!(
+            reexports.is_empty(),
+            "{file} re-exports {reexports:?}; importers name each port at its owning file"
+        );
+    }
 }
 
 #[test]
@@ -7451,7 +7512,7 @@ fn swarm_application_depends_only_inward() {
     }
     for dep in [
         "crate::domain::swarm::entities::records::RunRecord",
-        "crate::application::swarm::ports::BoardRepository",
+        "crate::application::swarm::ports::board_repository::BoardRepository",
         "crate::application::swarm::dto::CreateRunRequest",
         "serde_json::Value",
         "serde_json::Map",
@@ -7557,7 +7618,7 @@ fn kill_container_asks_members_before_the_retained_kill_and_never_twice() {
 /// termination path reads a pid, and the numeric member termination is gone.
 #[test]
 fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
-    let ports = production_source("src/application/swarm/ports.rs");
+    let ports = production_source("src/application/swarm/ports/lifecycle.rs");
     assert!(
         ports.contains("fn terminate<'a>(&'a self, member: &'a Member)"),
         "ProcessControl::terminate takes the member"
@@ -7706,7 +7767,7 @@ fn swarm_tool_has_no_pid_signalling() {
     }
     // The execution ports are gone with the jobs they cancelled; the port
     // keeps its inference suspension and member termination.
-    let ports = production_source("src/application/swarm/ports.rs");
+    let ports = production_source("src/application/swarm/ports/lifecycle.rs");
     for gone in ["fn cancel_local_executions", "fn suspend_local_executions"] {
         assert!(!ports.contains(gone), "ProcessControl still has `{gone}`");
     }

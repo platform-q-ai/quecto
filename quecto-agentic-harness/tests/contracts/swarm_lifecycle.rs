@@ -1,6 +1,7 @@
 use quecto::application::swarm::LifecycleService;
 use quecto::application::swarm::ports::{
-    Clock, CoordinationPort, PortFuture, ProcessControl, ProcessObservation, SwarmLifecycle,
+    PortFuture,
+    lifecycle::{Clock, CoordinationPort, ProcessControl, ProcessObservation, SwarmLifecycle},
 };
 use quecto::domain::shared::error::DomainError;
 use quecto::domain::swarm::value_objects::lifecycle::MemberExit;

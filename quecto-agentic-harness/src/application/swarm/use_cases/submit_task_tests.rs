@@ -1,10 +1,10 @@
 use serde_json::{Value, json};
 
 use super::SubmitTask;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::{SubmitTaskRequest, TaskTransition};
+use crate::application::swarm::test_support::{
     BoardState, CompactEncoding, MemoryBoard, SteppingClock, member_row, running_board, stored_task,
 };
-use crate::application::swarm::dto::{SubmitTaskRequest, TaskTransition};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

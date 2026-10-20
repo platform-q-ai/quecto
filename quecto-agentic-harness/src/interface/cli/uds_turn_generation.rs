@@ -17,6 +17,8 @@ impl Default for TurnControl {
             coordinator_reported: std::sync::atomic::AtomicBool::new(false),
             client_prompts: std::sync::atomic::AtomicU32::new(0),
             launched_coordinator: false,
+            self_waker: std::sync::OnceLock::new(),
+            self_wake_scheduled: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -61,7 +63,7 @@ impl TurnControl {
     }
 
     pub fn with_swarm_control(
-        control: Option<Arc<dyn crate::application::swarm::ports::SwarmRunControl>>,
+        control: Option<Arc<dyn crate::application::swarm::ports::lifecycle::SwarmRunControl>>,
     ) -> Self {
         Self {
             swarm_control: control,

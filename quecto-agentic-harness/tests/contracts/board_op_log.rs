@@ -2,7 +2,7 @@
 //! synchronously from a plain thread (no async runtime), as one `swarm_op`
 //! line filed under no turn; a record the log cannot take is dropped
 //! without a panic, the first such record capping the log.
-use quecto::application::swarm::ports::BoardOpLog;
+use quecto::application::swarm::ports::board_telemetry::BoardOpLog;
 use quecto::domain::shared::redaction::Redacted;
 use quecto::domain::swarm::events::telemetry::{
     ArgumentFaults, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,

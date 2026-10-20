@@ -160,7 +160,7 @@ pub(crate) struct DispatchCtx<'a> {
     /// #1977): the two session transitions this loop requests once admitted.
     pub switch: super::uds_session_handles::SessionSwitchHandles,
     /// The catalogue handles (#1845, #1848): `list_models` and effort changes.
-    pub catalogue: super::catalogue_handles::CatalogueHandles,
+    pub catalogue: super::controllers::catalogue_handles::CatalogueHandles,
 }
 type FleetTeardown = std::sync::Arc<TerminateAllDelegatedAgents>;
 type SaveSessionHandle = std::sync::Arc<crate::application::sessions::use_cases::SaveSession>;

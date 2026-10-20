@@ -18,7 +18,7 @@ pub use self::coordination::RunWatch;
 pub struct SwarmContext {
     pub checkout: PathBuf,
     pub member: String,
-    pub lifecycle: std::sync::Arc<dyn crate::application::swarm::ports::SwarmLifecycle>,
+    pub lifecycle: std::sync::Arc<dyn crate::application::swarm::ports::lifecycle::SwarmLifecycle>,
     /// The board this context calls: composition's handles (#2278).
     pub board: SwarmBoard,
 }
@@ -27,7 +27,7 @@ impl SwarmContext {
     /// Explicit context supplied by the container launch adapter. Host-local
     /// reference scripts deliberately do not set this contract.
     pub fn discover(
-        lifecycle: std::sync::Arc<dyn crate::application::swarm::ports::SwarmLifecycle>,
+        lifecycle: std::sync::Arc<dyn crate::application::swarm::ports::lifecycle::SwarmLifecycle>,
         board: SwarmBoard,
     ) -> Option<Self> {
         let checkout = Self::contracted_checkout()?;

@@ -3,7 +3,7 @@
 //! outside is refused with the board's text.
 use std::os::unix::fs::symlink;
 
-use quecto::application::swarm::ports::CheckoutPaths;
+use quecto::application::swarm::ports::board_files::CheckoutPaths;
 use quecto::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

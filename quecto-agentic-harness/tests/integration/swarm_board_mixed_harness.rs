@@ -13,7 +13,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::{Value, json};
 
 use quecto::application::swarm::dto::BoardLocation;
-use quecto::application::swarm::ports::{BoardOpLog, Clock, IdSource};
+use quecto::application::swarm::ports::{
+    board_repository::IdSource, board_telemetry::BoardOpLog, lifecycle::Clock,
+};
 use quecto::composition::swarm::{SwarmBoardHandles, build_swarm_board_handles_with};
 use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use quecto::infrastructure::tools::registry::call_work::off_the_runtime;
@@ -80,7 +82,7 @@ async fn board_op(context: &SwarmContext, request: Value) {
 
 #[tokio::test]
 async fn member_board_ops_and_rust_harness_share_one_board() {
-    use quecto::application::swarm::ports::CoordinationPort;
+    use quecto::application::swarm::ports::lifecycle::CoordinationPort;
     use quecto::domain::swarm::value_objects::lifecycle::{MemberExit, ProcessIdentity};
     use quecto::infrastructure::tools::swarm::swarm_bridge::process_start;
     // The start's own time, with a fraction: the stored times' float text

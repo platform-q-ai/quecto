@@ -3,7 +3,7 @@
 //! the task writes, each by Python's SQL; a task id bound as Python's
 //! `sqlite3` binds it (epic P3).
 use quecto::application::swarm::dto::{BoardLocation, NewTask, TaskUpdate};
-use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
+use quecto::application::swarm::ports::board_repository::{BoardRepository, BoardTransaction};
 use quecto::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

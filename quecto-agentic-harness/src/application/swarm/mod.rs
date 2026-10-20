@@ -1,32 +1,24 @@
 //! Swarm lifecycle capability: sequencing and fail-closed ownership
 //! decisions over the effect ports in [`ports`]. The coordination board's
 //! use cases (epic #2265) live in [`use_cases`], over the board ports and
-//! the operation gate (`board_operation`).
+//! the capability-internal helpers in `services` (the operation gate,
+//! `services::board_operation`, among them).
 use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::{
     entities::run::{Member, Snapshot},
     value_objects::lifecycle::{MemberExit, MemberStatus},
 };
 
-mod board_completion;
-mod board_control;
-mod board_loss;
-mod board_membership;
-mod board_messages;
-mod board_operation;
-mod board_read_models;
-mod board_recovery;
-mod board_tasks;
-#[cfg(test)]
-pub(crate) mod board_test_support;
-mod board_wakes;
 pub mod dto;
 pub mod ports;
+mod services;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod use_cases;
 
-use ports::{
-    Clock, CoordinationPort, PortFuture, ProcessControl, ProcessObservation, SettlementStep,
-    SwarmLifecycle,
+use ports::PortFuture;
+use ports::lifecycle::{
+    Clock, CoordinationPort, ProcessControl, ProcessObservation, SettlementStep, SwarmLifecycle,
 };
 
 pub fn reconcile(
@@ -328,5 +320,5 @@ impl SwarmLifecycle for LifecycleService {
 }
 
 #[cfg(test)]
-#[path = "swarm_tests.rs"]
+#[path = "mod_tests.rs"]
 mod tests;

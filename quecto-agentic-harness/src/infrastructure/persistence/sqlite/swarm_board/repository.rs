@@ -39,7 +39,11 @@ use crate::application::swarm::dto::{
     AmendedContract, BoardLocation, DictRow, LatestActivity, MemberRow, NewRun, RunContract,
     RunOwnerRow, RunRoles, RunStatusRow, ScopeObservation, StoredContract,
 };
-use crate::application::swarm::ports::{BoardEvents, BoardRepository, BoardRuns, BoardWork};
+use crate::application::swarm::ports::{
+    board_events::BoardEvents,
+    board_repository::{BoardRepository, BoardWork},
+    board_runs::BoardRuns,
+};
 use crate::domain::swarm::{
     entities::records::{RunRecord, RunState},
     events::telemetry::RefusalKind,
@@ -71,7 +75,7 @@ pub(super) const PYTHON_SOCKET_PARAMETER: usize = 5;
 /// runs its transactions through its own [`MeteredCall`] instead
 /// (`meter.rs`), over the same [`atomic_on`].
 ///
-/// [`MeteredCall`]: crate::application::swarm::ports::MeteredCall
+/// [`MeteredCall`]: crate::application::swarm::ports::board_telemetry::MeteredCall
 ///
 /// Its clones, and the metered calls over it, share the request ledger's
 /// sums the process keeps between transactions (#2340, [`usage_sums`]).

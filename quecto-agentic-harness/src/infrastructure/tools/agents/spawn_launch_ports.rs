@@ -720,7 +720,7 @@ pub(super) fn worker_launcher_board(
         member,
         tool.swarm_context.clone().map(|context| {
             std::sync::Arc::new(context)
-                as std::sync::Arc<dyn crate::application::swarm::ports::WorkerBoardRead>
+                as std::sync::Arc<dyn crate::application::swarm::ports::lifecycle::WorkerBoardRead>
         }),
     )
 }

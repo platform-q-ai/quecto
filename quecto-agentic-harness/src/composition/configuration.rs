@@ -29,7 +29,7 @@ use crate::infrastructure::config::persistence::{
 use crate::infrastructure::config::reload::ReloadSource;
 use crate::infrastructure::config::runtime_configuration::ConfigLoader;
 use crate::infrastructure::config::writer::JsonDocumentWriter;
-use crate::interface::cli::configuration_handles::{
+use crate::interface::cli::controllers::configuration_handles::{
     ConfigRealizer, ConfigurationEnvironment, ConfigurationHandles,
 };
 

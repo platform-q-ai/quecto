@@ -9,6 +9,7 @@
 //! handles; both are siblings in `interface/cli/controllers/`. The
 //! interface resolves no config and runs no script itself.
 
+use super::container_handles;
 use crate::application::configuration::dto::ConfigSelection;
 use crate::application::environments::dto::{
     CheckStatus, ContainerRuntimeDiagnosis, ContainerRuntimeTarget,
@@ -18,7 +19,6 @@ use crate::application::environments::use_cases::{
 };
 use crate::domain::shared::redaction::redact_url_userinfo;
 use crate::interface::cli::CliContext;
-use crate::interface::cli::container_handles;
 
 /// Composition's builder of the container-runtime doctor: the create
 /// preflight of the effective container config, over the run's own
