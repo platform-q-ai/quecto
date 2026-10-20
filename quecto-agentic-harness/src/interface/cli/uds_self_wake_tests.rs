@@ -40,11 +40,7 @@ impl SwarmRunControl for LockedOnce {
             RunControlAction::Wake { .. } => &self.wake,
             _ => &self.status,
         };
-        let locked = counter
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                left.checked_sub(1)
-            })
-            .is_ok();
+        let locked = take_one(counter);
         Box::pin(async move {
             match locked {
                 true => Err(crate::domain::shared::error::DomainError::Tool(
@@ -459,4 +455,20 @@ async fn an_ending_process_sends_no_self_wake() {
         None
     );
     drop(waker);
+}
+
+/// Take one from `counter` unless it is already zero: whether one was taken.
+/// A compare-exchange loop, not `fetch_update` (deprecated from Rust 1.99)
+/// or `try_update` (stable from 1.95, above the clippy MSRV).
+fn take_one(counter: &std::sync::atomic::AtomicUsize) -> bool {
+    let mut left = counter.load(Ordering::SeqCst);
+    loop {
+        let Some(less) = left.checked_sub(1) else {
+            return false;
+        };
+        match counter.compare_exchange_weak(left, less, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return true,
+            Err(now) => left = now,
+        }
+    }
 }
