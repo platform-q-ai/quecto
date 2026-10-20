@@ -10,7 +10,7 @@ pub mod handles;
 pub use handles::{ClaudeMemberHandles, ClaudeMemberHandlesBuilder, ClaudeMemberSettings};
 
 use super::CliContext;
-use super::agent::AgentFlags;
+use super::controllers::agent::AgentFlags;
 
 /// The member's name when `-s` is not given.
 const DEFAULT_MEMBER: &str = "claude-member";

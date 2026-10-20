@@ -540,13 +540,12 @@ fn composed_admission_startup_child_root_and_disabled() {
     }
     for case in ["root", "disabled", "child"] {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "interface::cli::agent::build_tests::composed_admission_startup_child_root_and_disabled", "--nocapture"])
+            .args(["--exact", "interface::cli::controllers::agent::build_tests::composed_admission_startup_child_root_and_disabled", "--nocapture"])
             .env(CHILD, case)
             .output().unwrap();
-        assert!(
-            output.status.success(),
-            "{case}: {}",
-            String::from_utf8_lossy(&output.stdout)
-        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{case}: {stdout}");
+        // A stale `--exact` name runs nothing and still exits 0.
+        assert!(stdout.contains("1 passed"), "{case} ran no test: {stdout}");
     }
 }

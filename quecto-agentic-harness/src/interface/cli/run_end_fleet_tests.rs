@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use super::super::agent::AgentOutput;
+use super::super::controllers::agent::AgentOutput;
 use super::{RunEnd, RunEndFleetBuilder, waiting_for};
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,

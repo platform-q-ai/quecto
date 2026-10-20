@@ -243,7 +243,7 @@ async fn custom_playbook_prompt_path_uses_initialization_directory() {
     assert!(!other.join("docs/spike.md").exists());
     assert_eq!(
         crate::infrastructure::config::parent_playbook::load(&other).unwrap(),
-        include_str!("../../../../PARENT_PLAYBOOK.md")
+        include_str!("../../../../../PARENT_PLAYBOOK.md")
     );
 }
 
@@ -265,7 +265,7 @@ fn present_invalid_override_fails_parent_startup_but_does_not_affect_child() {
 /// so `--spawned --coordinator` composes the coordinator playbook.
 #[test]
 fn startup_composes_the_role_named_by_the_launch_flags() {
-    let document = include_str!("../../../../COORDINATOR_PLAYBOOK.md").trim_end();
+    let document = include_str!("../../../../../COORDINATOR_PLAYBOOK.md").trim_end();
     let argv = |parts: &[&str]| parts.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     let mut errors = String::new();
     for (parts, coordinator) in [

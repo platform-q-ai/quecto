@@ -309,7 +309,7 @@ rebuild after a refresh in `src/infrastructure/providers/routing/provider_factor
 `main` hands composition's `build_agent_provider` to the CLI through
 `CliComposition` as the one `ProviderRuntimeBuilder` type
 (`src/infrastructure/config/runtime_configuration.rs`, aliased by the CLI); agent
-startup (`src/interface/cli/agent.rs`) calls the injected builder, never
+startup (`src/interface/cli/controllers/agent.rs`) calls the injected builder, never
 constructs provider state itself (#1849 PR 1), and threads the same builder
 into the reload inputs. Reloading a running session is the
 reload-runtime-configuration use case

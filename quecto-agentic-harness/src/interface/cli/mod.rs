@@ -1,6 +1,5 @@
 mod admission_broker;
 pub mod admission_handles;
-mod agent;
 pub mod auth;
 pub mod board;
 pub mod catalogue_handles;
@@ -579,7 +578,7 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
 
     let exit_code = {
         match args[1].as_str() {
-            "agent" => agent::cmd_agent(ctx, &args[2..], &mut stdout, &mut stderr),
+            "agent" => controllers::agent::cmd_agent(ctx, &args[2..], &mut stdout, &mut stderr),
             "status" => controllers::commands::cmd_status(ctx, &mut stdout, &mut stderr),
             "config" => {
                 controllers::config_cmd::cmd_config(ctx, &args[2..], &mut stdout, &mut stderr)

@@ -8,7 +8,7 @@ use crate::domain::tool_policy::value_objects::tool_descriptor::{
     ProfileAvailabilityScope, ToolSource,
 };
 use crate::infrastructure::config::ToolPolicyEntryConfig;
-use crate::interface::cli::agent::flag_parse::AgentFlags;
+use crate::interface::cli::controllers::agent::flag_parse::AgentFlags;
 
 /// Build the tool registry for `flags` and `config`; returns it with stderr.
 pub(super) fn build(flags: &AgentFlags, config: &Config) -> (ToolRegistryBuild, String) {
