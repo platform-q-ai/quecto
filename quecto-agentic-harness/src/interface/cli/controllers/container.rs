@@ -6,9 +6,9 @@
 //! and present the standard bundle's initialisation and standing the
 //! same way (`container_setup.rs`); `quecto container ls|kill|gc` (#2024
 //! S4d) live in `container_inventory.rs` over the composed inventory
-//! handles. The interface resolves no config and runs no script itself.
+//! handles; both are siblings in `interface/cli/controllers/`. The
+//! interface resolves no config and runs no script itself.
 
-use super::CliContext;
 use crate::application::configuration::dto::ConfigSelection;
 use crate::application::environments::dto::{
     CheckStatus, ContainerRuntimeDiagnosis, ContainerRuntimeTarget,
@@ -17,6 +17,8 @@ use crate::application::environments::use_cases::{
     ContainerStatus, DiagnoseContainerRuntime, InitialiseStandardContainer,
 };
 use crate::domain::shared::redaction::redact_url_userinfo;
+use crate::interface::cli::CliContext;
+use crate::interface::cli::container_handles;
 
 /// Composition's builder of the container-runtime doctor: the create
 /// preflight of the effective container config, over the run's own
@@ -45,7 +47,7 @@ pub type ContainerInventoryBuilder = fn(
     &std::path::Path,
     &ConfigSelection,
     crate::application::environments::dto::RestoreMode,
-) -> super::container_handles::ContainerInventoryHandles;
+) -> container_handles::ContainerInventoryHandles;
 
 const USAGE: &str = "usage: quecto container doctor [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
 pub(super) const TOP_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\nusage: quecto container status [--project <abs dir>]\nusage: quecto container doctor [--name <config>]\nusage: quecto container ls [--all] [--json]\nusage: quecto container kill <ref|name>\nusage: quecto container kill <ref> --created-by <key>\nusage: quecto container gc [--dry-run] [--name <config>] [--abandoned | --abandoned-after <duration>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";

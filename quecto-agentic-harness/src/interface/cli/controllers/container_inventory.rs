@@ -9,9 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-use super::CliContext;
 use super::container::TOP_USAGE as USAGE;
-use super::container_handles::ContainerInventoryHandles;
 use crate::application::environments::dto::{
     AbandonedRuns, GcCandidate, GcRemoval, GcReport, GcRequest, RestoreMode,
 };
@@ -20,6 +18,8 @@ use crate::domain::environments::entities::environment_registry::{
     ClaimCondition, CreatorKey, EnvironmentLookupError, EnvironmentRecord, EnvironmentStatus,
     EnvironmentTarget, ref_number,
 };
+use crate::interface::cli::CliContext;
+use crate::interface::cli::container_handles::ContainerInventoryHandles;
 
 /// `quecto container kill <ref> --created-by <key>` found the record
 /// created by another key: nothing was killed.

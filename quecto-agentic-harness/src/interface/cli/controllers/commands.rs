@@ -1,8 +1,8 @@
-use super::auth::{credential_entry, shown_name, shown_text};
-use super::config_loading::{layer_diagnostics, overlay_summary};
-use super::{CliContext, selected_config_missing};
 use crate::application::configuration::dto::ConfigurationInspection;
 use crate::application::configuration::ports::StoredCredentialsUnavailable;
+use crate::interface::cli::auth::{credential_entry, shown_name, shown_text};
+use crate::interface::cli::config_loading::{layer_diagnostics, overlay_summary};
+use crate::interface::cli::{CliContext, selected_config_missing};
 
 pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut String) -> i32 {
     let selection = match ctx.config_selection() {
