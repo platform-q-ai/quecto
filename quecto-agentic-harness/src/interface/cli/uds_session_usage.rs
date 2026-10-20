@@ -34,7 +34,7 @@ pub fn present_session_stats(report: SessionUsageReport) -> SessionStats {
         },
         cost: cost_usd,
         cost_micro_usd,
-        unpriced_requests: usage.unpriced_requests,
+        unpriced_attempts: usage.unpriced_attempts,
         cache_hit_ratio,
         context_tokens,
         max_context_tokens,

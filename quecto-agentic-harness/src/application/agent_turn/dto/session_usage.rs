@@ -19,10 +19,13 @@ pub struct TokenTotals {
 pub struct SessionUsage {
     pub request_diagnostics: RequestDiagnostics,
     pub tokens: TokenTotals,
-    /// What the priced replies cost.
+    /// What the priced attempts cost.
     pub cost_micro_usd: u64,
-    /// Replies that billed tokens with no price to cost them at (#1855).
-    pub unpriced_requests: u64,
+    /// Provider attempts that reported usage with no price to cost it at
+    /// (#1855), counted as `cost_micro_usd` is summed: every attempt that
+    /// reported usage, a cut-short attempt included, not logical requests.
+    /// Their usage counts, but their cost is unknown, never zero.
+    pub unpriced_attempts: u64,
 }
 
 impl SessionUsage {
@@ -35,7 +38,7 @@ impl SessionUsage {
     /// session billed usage and none of it was priced, so unpriced never
     /// reads as free. A session that used nothing cost zero.
     pub fn known_cost_micro_usd(&self) -> Option<u64> {
-        match (self.cost_micro_usd, self.unpriced_requests) {
+        match (self.cost_micro_usd, self.unpriced_attempts) {
             (0, unpriced) if unpriced > 0 => None,
             (cost, _) => Some(cost),
         }

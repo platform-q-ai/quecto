@@ -237,7 +237,7 @@ fn usage_totals_record_saturates_counters() {
         cost_micro_usd: u64::MAX,
         output_tokens: u32::MAX,
         context_input_tokens: 0,
-        unpriced_requests: u64::MAX,
+        unpriced_attempts: u64::MAX,
     };
     totals.record(&UsageInfo {
         prompt_tokens: 1,
@@ -285,6 +285,24 @@ fn a_billed_reply_with_no_price_is_counted_unpriced() {
     totals.record(&usage(0, None));
     totals.record(&usage(10, Some(0)));
     totals.record(&usage(10, Some(7)));
-    assert_eq!(totals.unpriced_requests, 1);
+    assert_eq!(totals.unpriced_attempts, 1);
     assert_eq!(totals.cost_micro_usd, 7);
+}
+
+/// #2635 review L2: a reply that billed only cache tokens with no price is
+/// unpriced too.
+#[test]
+fn a_cache_only_reply_with_no_price_is_counted_unpriced() {
+    for (read, write) in [(Some(5), None), (None, Some(5))] {
+        let mut totals = UsageTotals::default();
+        totals.record(&UsageInfo {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            cache_read_tokens: read,
+            cache_write_tokens: write,
+            context_tokens: None,
+            cost: None,
+        });
+        assert_eq!(totals.unpriced_attempts, 1, "{read:?} {write:?}");
+    }
 }

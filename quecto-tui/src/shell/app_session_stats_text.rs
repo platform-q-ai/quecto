@@ -16,7 +16,7 @@ pub(super) fn session_stats_text(stats: &session_payloads::SessionStats) -> Stri
     }
     // #1855: usage the harness could not price is unknown, never $0.
     let cost = stats.cost_micro_usd as f64 / 1_000_000.0;
-    match (stats.cost_micro_usd > 0, stats.unpriced_requests > 0) {
+    match (stats.cost_micro_usd > 0, stats.unpriced_attempts > 0) {
         (true, false) => text.push_str(&format!(" | Cost: ${cost:.6}")),
         (true, true) => text.push_str(&format!(" | Cost: ${cost:.6} + unpriced")),
         (false, true) => text.push_str(" | Cost: unpriced"),

@@ -91,10 +91,10 @@ fn footer_hides_zero_cost() {
 /// #1855: usage the harness could not price shows as unpriced, never $0.
 #[test]
 fn footer_shows_unpriced_usage_as_unpriced() {
-    let stats = |cost_micro_usd: u64, unpriced_requests: u64| {
+    let stats = |cost_micro_usd: u64, unpriced_attempts: u64| {
         crate::protocol::session_payloads::parse_session_stats(&serde_json::json!({
             "costMicroUsd": if cost_micro_usd == 0 { serde_json::Value::Null } else { cost_micro_usd.into() },
-            "unpricedRequests": unpriced_requests,
+            "unpricedAttempts": unpriced_attempts,
         }))
     };
     let mut f = Footer::new();
@@ -112,6 +112,20 @@ fn footer_shows_unpriced_usage_as_unpriced() {
         joined.contains("cost $0.042100") && !joined.contains("unpriced"),
         "{joined}"
     );
+}
+
+/// #2635 review L3: a context reset clears the unpriced mark with the cost.
+#[test]
+fn a_context_reset_clears_the_unpriced_mark() {
+    let mut f = Footer::new();
+    f.update_context_usage(120_000, 200_000);
+    f.apply_session_stats(&crate::protocol::session_payloads::parse_session_stats(
+        &serde_json::json!({"costMicroUsd": null, "unpricedAttempts": 1}),
+    ));
+    assert!(f.render(120).join("\n").contains("unpriced"));
+    f.set_context(None, 0);
+    let joined = f.render(120).join("\n");
+    assert!(!joined.contains("unpriced"), "{joined}");
 }
 
 #[test]

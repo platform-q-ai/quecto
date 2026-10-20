@@ -65,6 +65,8 @@ fn record_agent_result_emits_normalized_session_usage_log() {
     assert_eq!(fields["total"], 90);
     assert_eq!(fields["contextTokens"], 105);
     assert_eq!(fields["costMicroUsd"], 1_234);
+    assert_eq!(fields["costPriced"], true);
+    assert_eq!(fields["unpricedAttempts"], 0);
     let ratio = fields["cacheHitRatio"].as_f64().expect("ratio field");
     assert!((ratio - (30.0 / 105.0)).abs() < 1e-9, "{event}");
 }
@@ -94,4 +96,36 @@ fn record_agent_result_without_usage_does_not_emit_session_usage_log() {
         "{output}"
     );
     assert!(!output.contains("\"target\":\"session_usage\""), "{output}");
+}
+
+/// #2635 review L1: unpriced usage logs no `costMicroUsd` (never 0),
+/// `costPriced: false`, and how many attempts went unpriced.
+#[test]
+fn unpriced_usage_is_logged_as_unpriced_never_zero() {
+    let logs = CapturedLog::default();
+    let sink = logs.0.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .with_writer(logs)
+        .with_ansi(false)
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("m".into());
+        session.record_usage(
+            "cli:test",
+            crate::application::agent_turn::agent_loop::UsageTotals {
+                unpriced_attempts: 2,
+                ..crate::application::agent_turn::agent_loop::UsageTotals::billed(70, 20, 0, 0, 0)
+            },
+        );
+    });
+    let output = sink.lock().unwrap().clone();
+    let event: serde_json::Value = output
+        .lines()
+        .find_map(|line| serde_json::from_str(line).ok())
+        .expect("json log event");
+    let fields = &event["fields"];
+    assert!(fields.get("costMicroUsd").is_none(), "{event}");
+    assert_eq!(fields["costPriced"], false);
+    assert_eq!(fields["unpricedAttempts"], 2);
 }

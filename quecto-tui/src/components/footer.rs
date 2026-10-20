@@ -220,7 +220,7 @@ impl Footer {
             self.update_context_usage(used, window);
         }
         self.set_cost((stats.cost > 0.0).then_some(stats.cost));
-        self.session_cost_unpriced = stats.unpriced_requests > 0;
+        self.session_cost_unpriced = stats.unpriced_attempts > 0;
         self.session_cache_read = stats.cache_read_tokens;
         self.session_cache_write = stats.cache_write_tokens;
         self.session_cache_hit_ratio = stats.cache_hit_ratio;

@@ -614,9 +614,12 @@ pub struct SessionStats {
     /// which was priced (#1855): unpriced is never zero. Always present.
     #[serde(default)]
     pub cost_micro_usd: Option<u64>,
-    /// Replies that billed tokens with no price to cost them at (#1855).
+    /// Provider attempts that reported usage with no price to cost it at
+    /// (#1855), counted as `cost_micro_usd` is summed: every attempt that
+    /// reported usage, a cut-short attempt included, not logical requests.
+    /// Their usage counts, but their cost is unknown, never zero.
     #[serde(default)]
-    pub unpriced_requests: u64,
+    pub unpriced_attempts: u64,
     #[serde(default)]
     pub cache_hit_ratio: Option<f64>,
     /// User-facing context occupancy: provider-reported prompt tokens when

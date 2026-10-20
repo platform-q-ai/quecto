@@ -117,7 +117,7 @@ fn diagnostics_are_merged_and_a_clear_drops_everything() {
 #[test]
 fn unpriced_usage_is_reported_unknown_never_free() {
     let unpriced = UsageTotals {
-        unpriced_requests: 1,
+        unpriced_attempts: 1,
         ..turn(10, 2, 0, 0, 0)
     };
     let mut usage = InspectSessionUsage::new();
@@ -125,12 +125,12 @@ fn unpriced_usage_is_reported_unknown_never_free() {
     usage.record_turn("k", unpriced, 0);
     let report = usage.report("k", &[], 0, 0);
     assert_eq!(report.cost_micro_usd, None, "unpriced is not free");
-    assert_eq!(report.usage.unpriced_requests, 1);
+    assert_eq!(report.usage.unpriced_attempts, 1);
     usage.record_turn("k", turn(10, 2, 0, 0, 40), 0);
     let report = usage.report("k", &[], 0, 0);
     assert_eq!(report.cost_micro_usd, Some(40));
     assert_eq!(
-        report.usage.unpriced_requests, 1,
+        report.usage.unpriced_attempts, 1,
         "the unpriced part is said"
     );
 }

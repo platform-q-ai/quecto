@@ -91,14 +91,14 @@ fn test_stats_present_unpriced_usage_as_null() {
     session.record_usage(
         "cli:test",
         UsageTotals {
-            unpriced_requests: 2,
+            unpriced_attempts: 2,
             ..UsageTotals::billed(100, 25, 0, 0, 0)
         },
     );
     let stats = present_session_stats(session.usage_report("k", &[], 0));
     let wire = serde_json::to_value(&stats).unwrap();
     assert!(wire["costMicroUsd"].is_null(), "{wire}");
-    assert_eq!(wire["unpricedRequests"], 2);
+    assert_eq!(wire["unpricedAttempts"], 2);
 }
 
 #[test]

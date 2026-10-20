@@ -398,8 +398,8 @@ fn a_message_s_image_count_is_read_in_place_and_clamped() {
 
 /// #1855: the harness's count of replies it could not price.
 #[test]
-fn parse_session_stats_reads_unpriced_requests() {
-    let stats = parse_session_stats(&json!({"costMicroUsd": null, "unpricedRequests": 3}));
-    assert_eq!((stats.cost_micro_usd, stats.unpriced_requests), (0, 3));
-    assert_eq!(parse_session_stats(&json!({})).unpriced_requests, 0);
+fn parse_session_stats_reads_unpriced_attempts() {
+    let stats = parse_session_stats(&json!({"costMicroUsd": null, "unpricedAttempts": 3}));
+    assert_eq!((stats.cost_micro_usd, stats.unpriced_attempts), (0, 3));
+    assert_eq!(parse_session_stats(&json!({})).unpriced_attempts, 0);
 }

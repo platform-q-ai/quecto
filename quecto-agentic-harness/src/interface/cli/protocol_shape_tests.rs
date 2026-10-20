@@ -139,7 +139,7 @@ fn make_test_stats() -> SessionStats {
         },
         cost: 0.45,
         cost_micro_usd: Some(450_000),
-        unpriced_requests: 0,
+        unpriced_attempts: 0,
         cache_hit_ratio: Some(40_000.0 / 95_000.0),
         context_tokens: 12_345,
         max_context_tokens: 200_000,

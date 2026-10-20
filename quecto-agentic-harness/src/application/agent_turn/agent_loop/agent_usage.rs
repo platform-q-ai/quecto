@@ -9,9 +9,11 @@ pub struct UsageTotals {
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
     pub cost_micro_usd: u64,
-    /// Replies that billed tokens with no price to cost them at (#1855):
-    /// their usage counts, but their cost is unknown, never zero.
-    pub unpriced_requests: u64,
+    /// Provider attempts that reported usage with no price to cost it at
+    /// (#1855), counted as `cost_micro_usd` is summed: every attempt that
+    /// reported usage, a cut-short attempt included, not logical requests.
+    /// Their usage counts, but their cost is unknown, never zero.
+    pub unpriced_attempts: u64,
 }
 
 impl UsageTotals {
@@ -59,7 +61,7 @@ impl UsageTotals {
                     .cost_micro_usd
                     .saturating_add(cost.total_cost_micro_usd);
             }
-            (None, true) => self.unpriced_requests = self.unpriced_requests.saturating_add(1),
+            (None, true) => self.unpriced_attempts = self.unpriced_attempts.saturating_add(1),
             (None, false) => {}
         }
     }

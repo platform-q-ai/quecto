@@ -38,17 +38,17 @@ impl InspectSessionUsage {
             .usage
             .cost_micro_usd
             .saturating_add(turn.cost_micro_usd);
-        self.usage.unpriced_requests = self
+        self.usage.unpriced_attempts = self
             .usage
-            .unpriced_requests
-            .saturating_add(turn.unpriced_requests);
+            .unpriced_attempts
+            .saturating_add(turn.unpriced_attempts);
         let billed = [
             turn.billed_input_tokens,
             turn.billed_output_tokens,
             turn.cache_read_tokens,
             turn.cache_write_tokens,
             turn.cost_micro_usd,
-            turn.unpriced_requests,
+            turn.unpriced_attempts,
         ];
         if billed.iter().any(|amount| *amount > 0) {
             let usage = &self.usage;
@@ -61,8 +61,11 @@ impl InspectSessionUsage {
                 cacheWrite = usage.tokens.cache_write,
                 total = usage.tokens.total,
                 contextTokens = context_tokens,
+                // Absent when unknown (tracing omits a `None`), never 0;
+                // `costPriced` says which (#2635 review).
                 costMicroUsd = usage.known_cost_micro_usd(),
-                unpricedRequests = usage.unpriced_requests,
+                costPriced = usage.known_cost_micro_usd().is_some(),
+                unpricedAttempts = usage.unpriced_attempts,
                 cacheHitRatio = usage.cache_hit_ratio(),
                 "normalized session usage recorded"
             );
