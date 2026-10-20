@@ -550,3 +550,6 @@ mod stuck;
 
 #[path = "start_board_task_undo_tests.rs"]
 mod undo;
+
+#[path = "start_board_task_dependency_tests.rs"]
+mod dependency;

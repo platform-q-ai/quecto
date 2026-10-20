@@ -2060,5 +2060,189 @@
         "steps": "If start is refused for any other reason, say why in a sentence and stop; do not start the task any other way."
       }
     }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "dep-a",
+      "title": "Dependency",
+      "status": "ready"
+    },
+    "answer": {
+      "ok": true,
+      "op": "create",
+      "task": {
+        "id": "dep-a",
+        "title": "Dependency",
+        "kind": "task",
+        "description": "",
+        "status": "ready",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "needs-a",
+      "title": "Needs the dependency",
+      "status": "ready",
+      "depends_on": [
+        "dep-a"
+      ]
+    },
+    "answer": {
+      "ok": true,
+      "op": "create",
+      "task": {
+        "id": "needs-a",
+        "title": "Needs the dependency",
+        "kind": "task",
+        "description": "",
+        "status": "ready",
+        "parent": null,
+        "depends_on": [
+          "dep-a"
+        ],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "needs-a",
+      "to": "claimed"
+    },
+    "answer": {
+      "ok": false,
+      "op": "move",
+      "error": {
+        "code": "rule",
+        "message": "tasks it depends on are not done yet: dep-a; it is claimed or started once each is done or archived",
+        "rule": {
+          "code": "dependency_not_done",
+          "tasks": [
+            "dep-a"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "kids",
+      "title": "Parent epic",
+      "kind": "epic"
+    },
+    "answer": {
+      "ok": true,
+      "op": "create",
+      "task": {
+        "id": "kids",
+        "title": "Parent epic",
+        "kind": "epic",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "kid",
+      "title": "Child",
+      "status": "ready",
+      "parent": "kids"
+    },
+    "answer": {
+      "ok": true,
+      "op": "create",
+      "task": {
+        "id": "kid",
+        "title": "Child",
+        "kind": "task",
+        "description": "",
+        "status": "ready",
+        "parent": "kids",
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "kid",
+      "to": "claimed"
+    },
+    "answer": {
+      "ok": true,
+      "op": "move",
+      "task": {
+        "id": "kid",
+        "title": "Child",
+        "kind": "task",
+        "description": "",
+        "status": "claimed",
+        "parent": "kids",
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:01Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "kids",
+      "to": "archived"
+    },
+    "answer": {
+      "ok": false,
+      "op": "move",
+      "error": {
+        "code": "rule",
+        "message": "its child tasks are still being worked on: kid; finish or release them before archiving it",
+        "rule": {
+          "code": "children_active",
+          "tasks": [
+            "kid"
+          ]
+        }
+      }
+    }
   }
 ]

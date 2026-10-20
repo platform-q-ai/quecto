@@ -173,9 +173,25 @@ fn show_tells_a_task_set_aside_from_one_not_on_the_board() {
         ops.execute(&BoardRequest::Complete(slug("b"))),
         Err(set_aside_task("b"))
     );
+    // #2658: a task that links no pull request has nothing to ask a host
+    // about: it is refused by the completion rule itself, as with a host.
     ops.execute(&ready_task("d")).unwrap();
     assert_eq!(
         ops.execute(&BoardRequest::Complete(slug("d"))),
+        Err(ProjectBoardError::Rule(BoardRuleError::NoPrs))
+    );
+    // One that links a pull request needs the host to read it.
+    let e = slug("e");
+    for request in [
+        ready_task("e"),
+        BoardRequest::Change(e.clone(), BoardOp::Move(TaskStatus::Claimed)),
+        BoardRequest::Change(e.clone(), BoardOp::Move(TaskStatus::InProgress)),
+        BoardRequest::Change(e.clone(), BoardOp::AddPr(8)),
+    ] {
+        ops.execute(&request).unwrap();
+    }
+    assert_eq!(
+        ops.execute(&BoardRequest::Complete(e)),
         Err(ProjectBoardError::NoPullRequestHost(
             NoPullRequestHost::NotAPullRequestHost
         ))
