@@ -573,13 +573,24 @@ fn classify_keyword_paths(lowered: &str) -> ProviderErrorClass {
     }
 }
 
+/// A status read from a status position: after an `http`, `status` or `code`
+/// marker, never inside a URL (#2653). An `http://host` span is a URL, so a
+/// connect failure to `http://100.83.173.59` does not read the first octet
+/// as HTTP status 100.
 fn extract_http_status(lowered: &str) -> Option<u16> {
+    let urls = url_spans(lowered);
+    let in_url = |at: usize| urls.iter().any(|span| span.contains(&at));
     for marker in ["http", "status", "code"] {
         let mut search_from = 0;
         while let Some(rel) = lowered[search_from..].find(marker) {
-            let idx = search_from + rel + marker.len();
-            if let Some(code) = parse_status_near(&lowered[idx..]) {
-                return Some(code);
+            let start = search_from + rel;
+            let idx = start + marker.len();
+            if !in_url(start) {
+                if let Some((offset, code)) = parse_status_near(&lowered[idx..]) {
+                    if !in_url(idx + offset) {
+                        return Some(code);
+                    }
+                }
             }
             search_from = idx;
         }
@@ -587,22 +598,53 @@ fn extract_http_status(lowered: &str) -> Option<u16> {
     None
 }
 
-fn parse_status_near(s: &str) -> Option<u16> {
+/// The byte ranges of the `http://` and `https://` URLs in `lowered`, each
+/// running to the first whitespace, quote, bracket or angle bracket.
+fn url_spans(lowered: &str) -> Vec<std::ops::Range<usize>> {
+    let ends_url = |c: char| {
+        c.is_ascii_whitespace() || matches!(c, '"' | '\'' | '`' | '(' | ')' | '<' | '>' | '[' | ']')
+    };
+    let mut spans = Vec::new();
+    let mut search_from = 0;
+    while let Some(rel) = lowered[search_from..].find("http") {
+        let start = search_from + rel;
+        let rest = &lowered[start..];
+        let Some(scheme) = ["http://", "https://"]
+            .into_iter()
+            .find(|scheme| rest.starts_with(scheme))
+        else {
+            search_from = start + "http".len();
+            continue;
+        };
+        let body = &rest[scheme.len()..];
+        let end = start + scheme.len() + body.find(ends_url).unwrap_or(body.len());
+        spans.push(start..end);
+        search_from = end;
+    }
+    spans
+}
+
+/// A three-digit status in 100–599 after optional separators, with its byte
+/// offset in `s`. Any other character first, or a longer digit run, is no
+/// status.
+fn parse_status_near(s: &str) -> Option<(usize, u16)> {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
         if b.is_ascii_digit() {
-            if i + 2 >= bytes.len()
-                || !bytes[i + 1].is_ascii_digit()
-                || !bytes[i + 2].is_ascii_digit()
+            let digits = &bytes[i..];
+            if digits.len() < 3
+                || !digits[1].is_ascii_digit()
+                || !digits[2].is_ascii_digit()
+                || digits.get(3).is_some_and(u8::is_ascii_digit)
             {
                 return None;
             }
-            let code = ((bytes[i] - b'0') as u16) * 100
-                + ((bytes[i + 1] - b'0') as u16) * 10
-                + ((bytes[i + 2] - b'0') as u16);
-            return (100..=599).contains(&code).then_some(code);
+            let code = ((digits[0] - b'0') as u16) * 100
+                + ((digits[1] - b'0') as u16) * 10
+                + ((digits[2] - b'0') as u16);
+            return (100..=599).contains(&code).then_some((i, code));
         }
         if !(b.is_ascii_whitespace() || b == b':' || b == b'=' || b == b'-' || b == b'/') {
             return None;
