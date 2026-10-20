@@ -585,11 +585,12 @@ fn extract_http_status(lowered: &str) -> Option<u16> {
         while let Some(rel) = lowered[search_from..].find(marker) {
             let start = search_from + rel;
             let idx = start + marker.len();
+            // A marker inside a URL is part of it. One outside cannot reach
+            // a URL's digits: only separators may follow it, and a URL starts
+            // with `http`.
             if !in_url(start) {
-                if let Some((offset, code)) = parse_status_near(&lowered[idx..]) {
-                    if !in_url(idx + offset) {
-                        return Some(code);
-                    }
+                if let Some(code) = parse_status_near(&lowered[idx..]) {
+                    return Some(code);
                 }
             }
             search_from = idx;
@@ -624,10 +625,9 @@ fn url_spans(lowered: &str) -> Vec<std::ops::Range<usize>> {
     spans
 }
 
-/// A three-digit status in 100–599 after optional separators, with its byte
-/// offset in `s`. Any other character first, or a longer digit run, is no
-/// status.
-fn parse_status_near(s: &str) -> Option<(usize, u16)> {
+/// A three-digit status in 100–599 after optional separators. Any other
+/// character first, or a longer digit run, is no status.
+fn parse_status_near(s: &str) -> Option<u16> {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -644,7 +644,7 @@ fn parse_status_near(s: &str) -> Option<(usize, u16)> {
             let code = ((digits[0] - b'0') as u16) * 100
                 + ((digits[1] - b'0') as u16) * 10
                 + ((digits[2] - b'0') as u16);
-            return (100..=599).contains(&code).then_some((i, code));
+            return (100..=599).contains(&code).then_some(code);
         }
         if !(b.is_ascii_whitespace() || b == b':' || b == b'=' || b == b'-' || b == b'/') {
             return None;
