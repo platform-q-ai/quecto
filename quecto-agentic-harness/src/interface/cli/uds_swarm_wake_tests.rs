@@ -450,3 +450,28 @@ async fn without_a_swarm_the_next_note_re_arms_a_recoverable_failure() {
         "the note past the bound is kept"
     );
 }
+
+/// #2531 review: one self-wake is scheduled at a time, and another may be
+/// scheduled once it fired; none without a bound channel.
+#[tokio::test(start_paused = true)]
+async fn one_self_wake_is_scheduled_at_a_time() {
+    let turn_control = Arc::new(crate::interface::cli::uds_cancel::TurnControl::default());
+    assert!(
+        !turn_control.schedule_self_wake(RECOVERABLE_SELF_WAKE_DELAY),
+        "no channel bound"
+    );
+    let (waker, mut wakes) = tokio::sync::mpsc::channel(4);
+    turn_control.bind_self_waker(waker.downgrade());
+    assert!(turn_control.schedule_self_wake(RECOVERABLE_SELF_WAKE_DELAY));
+    assert!(
+        !turn_control.schedule_self_wake(RECOVERABLE_SELF_WAKE_DELAY),
+        "one at a time"
+    );
+    let first = tokio::time::timeout(RECOVERABLE_SELF_WAKE_DELAY * 2, wakes.recv()).await;
+    assert!(matches!(first, Ok(Some(_))), "the first fired");
+    turn_control.take_swarm_wake(0);
+    assert!(
+        turn_control.schedule_self_wake(RECOVERABLE_SELF_WAKE_DELAY),
+        "another once it fired"
+    );
+}
