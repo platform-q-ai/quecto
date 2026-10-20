@@ -14,6 +14,7 @@
 //! [`ModelDefaultPersistence`] port this use case owns. The record comes
 //! before the apply: a refused record leaves the session as it was.
 
+use crate::domain::catalogue::services::published_prices::cost_of_id;
 use crate::domain::inference::value_objects::model_price::ModelPrice;
 use std::sync::Arc;
 
@@ -85,7 +86,10 @@ impl ChangeActiveModel {
         let reached = route
             .as_ref()
             .and_then(|(provider, id)| Self::listed(&resolved.snapshot, provider, id));
-        let limits = Self::limits_of(reached);
+        // A model the catalogue does not list is still priced by its id
+        // (#1855 review M3): the id the request reaches, else the id asked.
+        let priced_id = route.as_ref().map_or(model, |(_, id)| *id);
+        let limits = Self::limits_of(reached, priced_id);
         let standing = self.standing_of(&resolved.snapshot, route.as_ref(), reached);
         let verdict = match reference {
             Some(reference) => self.verdict(&reference),
@@ -319,10 +323,14 @@ impl ChangeActiveModel {
 
     /// Only explicitly declared values clamp: a synthesized default is not a
     /// real limit. A model the catalogue does not hold has none, and takes
-    /// no image.
-    fn limits_of(entry: Option<&CatalogueEntry>) -> ModelLimits {
+    /// no image; it is priced at the published rates of `id`, if any
+    /// (#1855 review M3: a dated or retired id stays costed).
+    fn limits_of(entry: Option<&CatalogueEntry>, id: &str) -> ModelLimits {
         let Some(entry) = entry else {
-            return ModelLimits::default();
+            return ModelLimits {
+                price: ModelPrice::of(&cost_of_id(id)),
+                ..ModelLimits::default()
+            };
         };
         let capabilities = &entry.model.capabilities;
         ModelLimits {

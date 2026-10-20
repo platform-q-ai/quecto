@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::domain::catalogue::services::published_prices::{cost_of_id, declared_cost};
 use crate::domain::catalogue::value_objects::model_facts::PromptLimit;
 use crate::infrastructure::persistence::file::json_failure;
 use crate::infrastructure::providers::transport::stream_idle::{StreamIdle, StreamLimits};
@@ -79,6 +80,19 @@ pub struct ModelCost {
     pub output: f64,
     pub cache_read: f64,
     pub cache_write: f64,
+}
+
+impl From<crate::domain::catalogue::value_objects::model_facts::ModelCost> for ModelCost {
+    /// A cost the domain's published table (or a declaration it filled)
+    /// states, as the registry records it (#1855).
+    fn from(cost: crate::domain::catalogue::value_objects::model_facts::ModelCost) -> Self {
+        Self {
+            input: cost.input,
+            output: cost.output,
+            cache_read: cost.cache_read,
+            cache_write: cost.cache_write,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -331,13 +345,17 @@ impl ModelRegistry {
                 if let Some(v) = model.reasoning {
                     record.reasoning = v;
                 }
+                // #1855: a declared cost drives billing; a rate it leaves
+                // out is the published one for the id, never a free one.
                 if let Some(cost) = model.cost {
-                    record.cost = ModelCost {
-                        input: cost.input.unwrap_or(0.0),
-                        output: cost.output.unwrap_or(0.0),
-                        cache_read: cost.cache_read.or(cost.cache_read_camel).unwrap_or(0.0),
-                        cache_write: cost.cache_write.or(cost.cache_write_camel).unwrap_or(0.0),
-                    };
+                    record.cost = declared_cost(
+                        &record.id,
+                        cost.input,
+                        cost.output,
+                        cost.cache_read.or(cost.cache_read_camel),
+                        cost.cache_write.or(cost.cache_write_camel),
+                    )
+                    .into();
                 }
                 records.push(record);
             }
@@ -439,7 +457,7 @@ impl ModelRecord {
             prompt_limit: PromptLimit::SharedWithRequest,
             // #1855: a model the one published table knows is priced
             // from it; a `models.json` declaration may override it.
-            cost: prices::known_cost(id).unwrap_or_default(),
+            cost: cost_of_id(id).into(),
             reasoning: false,
             auth: AuthMode::ApiKey,
             oauth_provider: None,
@@ -596,8 +614,6 @@ use file_format::RegistryFile;
 mod builtin_tables;
 pub(crate) use builtin_tables::builtin_input;
 use builtin_tables::{BuiltinSpec, gpt_5_6_tier, gpt_5_6_window};
-#[path = "model_registry_prices.rs"]
-mod prices;
 
 #[cfg(test)]
 #[path = "model_registry_catalogue_2435_tests.rs"]

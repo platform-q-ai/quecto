@@ -32,9 +32,10 @@ impl ModelPrice {
 
     /// What `usage` cost at this price, in exact integer micro-USD.
     /// `prompt_tokens` is the full-price input: cache reads and writes are
-    /// costed at their own rates, never twice.
+    /// costed at their own rates, never twice. An absurd rate saturates
+    /// rather than wrapping (#1855 review L2).
     pub fn cost_of(&self, usage: &UsageInfo) -> CostInfo {
-        let calc = |tokens: u32, rate: u64| (u64::from(tokens) * rate) / 1_000_000;
+        let calc = |tokens: u32, rate: u64| u64::from(tokens).saturating_mul(rate) / 1_000_000;
         let input = calc(usage.prompt_tokens, self.input);
         let output = calc(usage.completion_tokens, self.output);
         let cache_read = calc(usage.cache_read_tokens.unwrap_or(0), self.cache_read);
@@ -44,7 +45,10 @@ impl ModelPrice {
             output_cost_micro_usd: output,
             cache_read_cost_micro_usd: cache_read,
             cache_write_cost_micro_usd: cache_write,
-            total_cost_micro_usd: input + output + cache_read + cache_write,
+            total_cost_micro_usd: input
+                .saturating_add(output)
+                .saturating_add(cache_read)
+                .saturating_add(cache_write),
         }
     }
 }

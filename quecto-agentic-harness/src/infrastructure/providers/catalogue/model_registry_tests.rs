@@ -190,9 +190,11 @@ fn builtin_openai_reasoning_tiers_resolve_for_api_key_and_oauth_with_published_l
         ("gpt-6-sol", 2.0, 10.0, None),
         ("gpt-6.1-sol", 2.0, 10.0, Some(0.1)),
         ("gpt-6-luna", 0.1, 0.5, None),
-        ("gpt-5.6-sol", 5.0, 30.0, None),
-        ("gpt-5.6-terra", 2.5, 15.0, None),
-        ("gpt-5.6-luna", 1.0, 6.0, None),
+        // #1855 review M1: Sol's promotional price, through at least
+        // 2026-11-21.
+        ("gpt-5.6-sol", 4.0, 20.0, None),
+        ("gpt-5.6-terra", 2.0, 12.0, None),
+        ("gpt-5.6-luna", 0.2, 1.2, None),
     ];
     for provider in ["openai-api", "openai-oauth"] {
         for (id, input, output, cache_read) in tiers {
@@ -263,7 +265,8 @@ fn builtin_openai_reasoning_tiers_resolve_for_api_key_and_oauth_with_published_l
 /// `gpt_5_6_tier`: the enrichment in `build_builtin` is keyed by literal id
 /// match, so a tier added or renamed in one table but not the other would
 /// otherwise silently ship with default limits and `reasoning = false`; its
-/// price is the one table's (`model_registry_prices.rs`, #1855). This walks every built-in `gpt-5.6*` id rather than a
+/// price is the one table's (`domain::catalogue::services::published_prices`, #1855).
+/// This walks every built-in `gpt-5.6*` id rather than a
 /// hardcoded list, failing loudly on drift.
 #[test]
 fn every_builtin_gpt_5_6_id_has_pricing_and_enriched_limits() {

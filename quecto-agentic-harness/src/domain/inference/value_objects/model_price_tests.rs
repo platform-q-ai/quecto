@@ -84,3 +84,13 @@ fn absent_cache_counts_cost_nothing() {
     );
     assert_eq!(cost.total_cost_micro_usd, 5_000_000 + 2_500_000);
 }
+
+/// #1855 review L2: an absurd declared rate saturates, never wraps.
+#[test]
+fn an_absurd_rate_saturates_rather_than_wrapping() {
+    let price = ModelPrice::of(&cost(1e30, 1e30, 1e30, 1e30)).unwrap();
+    assert_eq!(price.input, u64::MAX, "the float cast saturates");
+    let cost = price.cost_of(&usage(u32::MAX, u32::MAX, Some(u32::MAX), Some(u32::MAX)));
+    assert_eq!(cost.input_cost_micro_usd, u64::MAX / 1_000_000);
+    assert_eq!(cost.total_cost_micro_usd, (u64::MAX / 1_000_000) * 4);
+}

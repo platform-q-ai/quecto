@@ -110,7 +110,6 @@ untracked_nouns = [
   # Message sub-types — Message itself is the tracked aggregate
   "CostInfo",
   "LlmResponse",
-  "ModelPricing",
   "StopReason",
   "ThinkingBlock",
   "UsageInfo",

@@ -158,8 +158,12 @@ fn unsupported_entry(
             reference,
             display_name: name.map(str::to_string),
             // An unsupported transport has no reasoning-option adapter, so the
-            // synthesized defaults carry no effort vocabulary.
-            capabilities: default_capabilities(),
+            // synthesized defaults carry no effort vocabulary; the price is
+            // the published one for the id (#1855 review M3).
+            capabilities: ModelCapabilities {
+                cost: crate::domain::catalogue::services::published_prices::cost_of_id(model_id),
+                ..default_capabilities()
+            },
             availability: Availability::runnable(),
         },
     })

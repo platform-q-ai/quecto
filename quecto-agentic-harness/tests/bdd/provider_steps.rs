@@ -1943,44 +1943,71 @@ fn when_calculate_cost(world: &mut QuectoWorld) {
         context_tokens: None,
         cost: None,
     };
-    // #1855: the catalogue is the one price authority. A model declared in
-    // `models.json` by id alone is priced from the published table.
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join("models.json");
-    let declared = serde_json::json!({"providers": {"anthropic-api": {
-        "api": "anthropic-messages",
-        "models": [{"id": model}]
-    }}});
-    std::fs::write(&path, declared.to_string()).expect("write models.json");
-    let registry =
-        quecto::infrastructure::providers::catalogue::model_registry::ModelRegistry::load_from_path(
-            &path,
-        )
-        .expect("models.json loads");
-    let record = registry.find("anthropic-api", &model).expect("declared");
-    // The catalogue hands the domain the record's cost as a model fact.
-    let cost = quecto::domain::catalogue::value_objects::model_facts::ModelCost {
-        input: record.cost.input,
-        output: record.cost.output,
-        cache_read: record.cost.cache_read,
-        cache_write: record.cost.cache_write,
-    };
-    let price = quecto::domain::inference::value_objects::model_price::ModelPrice::of(&cost);
-    if let Some(price) = price {
-        let cost = price.cost_of(&usage);
-        world
-            .env_overrides
-            .insert("_cost_total".into(), cost.total_cost_usd().to_string());
-        world
-            .env_overrides
-            .insert("_cost_input".into(), cost.input_cost_usd().to_string());
-        world
-            .env_overrides
-            .insert("_cost_output".into(), cost.output_cost_usd().to_string());
-    } else {
-        world
-            .env_overrides
-            .insert("_cost_total".into(), "none".into());
+    // #1855: the real catalogue, through `ChangeActiveModel`, gives the
+    // loop the model's price (the one price authority); the loop costs the
+    // usage the provider reports with it.
+    let base = tempfile::tempdir().expect("temp dir");
+    let qualified = format!("anthropic-api/{model}");
+    let limits =
+        quecto::composition::catalogue::published_model_limits_for(base.path(), &qualified);
+    let price = limits.price;
+    let provider = Arc::new(MockLlmProvider::new());
+    provider.push_response(LlmResponse {
+        content: Some("done".to_string()),
+        tool_calls: vec![],
+        usage: Some(usage.clone()),
+        stop_reason: None,
+        thinking_blocks: vec![],
+    });
+    let mut agent = AgentLoopImpl::new(
+        quecto::application::agent_turn::agent_loop::AgentLoopConfig {
+            provider: provider as Arc<dyn LlmProvider>,
+            tool_registry: Box::new(ToolRegistryImpl::new()),
+            model: qualified,
+            max_tokens: 4096,
+            temperature: 0.7,
+            retention: None,
+            session_key: String::new(),
+            max_context_tokens: 190_000,
+            progress_callback: None,
+            streaming: false,
+            effort: None,
+            audit_log: None,
+            pin_recent_turns: 2,
+            context_marks: Default::default(),
+            model_context_window: None,
+            tool_profile_context:
+                quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
+        },
+    )
+    .with_model_limits(limits);
+    let mut messages = vec![Message::user("hi")];
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(agent.process(&mut messages))
+        .expect("the turn completes");
+    match price {
+        Some(price) => {
+            // The per-kind split is the same price's, applied to the
+            // reported usage; the total is what the loop costed.
+            let split = price.cost_of(&usage);
+            let total = result.cost_micro_usd as f64 / 1_000_000.0;
+            world
+                .env_overrides
+                .insert("_cost_total".into(), total.to_string());
+            world
+                .env_overrides
+                .insert("_cost_input".into(), split.input_cost_usd().to_string());
+            world
+                .env_overrides
+                .insert("_cost_output".into(), split.output_cost_usd().to_string());
+        }
+        None => {
+            assert_eq!(result.cost_micro_usd, 0, "an unpriced turn costs nothing");
+            world
+                .env_overrides
+                .insert("_cost_total".into(), "none".into());
+        }
     }
 }
 

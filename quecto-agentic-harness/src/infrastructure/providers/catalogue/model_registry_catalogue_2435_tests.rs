@@ -217,8 +217,10 @@ fn every_claude_5_built_in_declares_its_published_limits_and_price() {
                 Some(128_000),
                 "{provider}/{id} output cap"
             );
-            let published = super::prices::known_cost(id).expect("priced");
-            assert_eq!(m.cost, published, "{provider}/{id} price");
+            let published =
+                crate::domain::catalogue::services::published_prices::published_cost(id)
+                    .expect("priced");
+            assert_eq!(m.cost, published.into(), "{provider}/{id} price");
         }
     }
 }

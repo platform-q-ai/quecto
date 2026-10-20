@@ -173,7 +173,7 @@ pub(super) fn builtin_specs() -> Vec<BuiltinSpec> {
 }
 
 /// The built-in OpenAI reasoning tiers enriched with published GPT-5.6+/GPT-6
-/// limits (their prices are the one table's, `model_registry_prices.rs`).
+/// limits (their prices are the one table's, the domain's `published_prices`).
 pub(super) fn gpt_5_6_tier(id: &str) -> bool {
     matches!(
         id,

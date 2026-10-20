@@ -47,52 +47,30 @@ fn gpt_6_1_sol_carries_its_published_rates() {
     }
 }
 
-/// The one table prices a model by case-insensitive id prefix, dated
-/// variants included, and knows only its allowlist.
+/// #1855 review M2: a `models.json` model the table knows is priced from
+/// it; a declared cost drives billing, and a rate it leaves out is the
+/// table's for the id (else, for a cache rate, the declared input rate),
+/// never a free one.
 #[test]
-fn the_table_prices_by_prefix_and_knows_only_its_allowlist() {
-    let known = |id: &str| prices::known_cost(id).map(|cost| rates(&cost));
-    assert_eq!(
-        known("claude-sonnet-5-20260630"),
-        Some((2.0, 10.0, 0.2, 2.5))
-    );
-    assert_eq!(known("Claude-Sonnet-5-5"), Some((2.0, 10.0, 0.1, 2.5)));
-    assert_eq!(known("claude-opus-4-6"), Some((5.0, 25.0, 0.5, 6.25)));
-    assert_eq!(known("claude-sonnet-4-6"), Some((3.0, 15.0, 0.3, 3.75)));
-    assert_eq!(
-        known("claude-haiku-4-5-20251001"),
-        Some((1.0, 5.0, 0.1, 1.25))
-    );
-    // Opus 4.1 and the original Opus 4 kept the $15/$75 tier.
-    assert_eq!(known("claude-opus-4-1"), Some((15.0, 75.0, 1.5, 18.75)));
-    assert_eq!(
-        known("claude-opus-4-20250514"),
-        Some((15.0, 75.0, 1.5, 18.75))
-    );
-    for unknown in ["gpt-4o", "claude-3-5-sonnet-20241022", "unknown-model", ""] {
-        assert_eq!(known(unknown), None, "{unknown:?}");
-    }
-}
-
-/// A `models.json` model the table knows is priced from it unless its
-/// declaration states a cost, which wins.
-#[test]
-fn a_declared_model_is_priced_from_the_table_unless_it_declares_a_cost() {
+fn a_declared_cost_wins_and_its_missing_rates_are_never_free() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("models.json");
     std::fs::write(
         &path,
         r#"{"providers":{"anthropic-api":{"api":"anthropic-messages","models":[
             {"id":"claude-sonnet-4-6"},
-            {"id":"claude-opus-4-6","cost":{"input":1.0,"output":2.0}}
+            {"id":"claude-opus-4-6","cost":{"input":1.0,"output":2.0}},
+            {"id":"local-model","cost":{"input":1.0,"output":2.0}},
+            {"id":"free-model","cost":{"input":0.0,"output":0.0,"cacheRead":0.0,"cacheWrite":0.0}}
         ]}}}"#,
     )
     .unwrap();
     let registry = ModelRegistry::load_from_path(&path).unwrap();
-    let sonnet = registry.find("anthropic-api", "claude-sonnet-4-6").unwrap();
-    assert_eq!(rates(&sonnet.cost), (3.0, 15.0, 0.3, 3.75));
-    let opus = registry.find("anthropic-api", "claude-opus-4-6").unwrap();
-    assert_eq!(rates(&opus.cost), (1.0, 2.0, 0.0, 0.0));
+    let cost = |id: &str| rates(&registry.find("anthropic-api", id).unwrap().cost);
+    assert_eq!(cost("claude-sonnet-4-6"), (3.0, 15.0, 0.3, 3.75));
+    assert_eq!(cost("claude-opus-4-6"), (1.0, 2.0, 0.5, 6.25));
+    assert_eq!(cost("local-model"), (1.0, 2.0, 1.0, 1.0));
+    assert_eq!(cost("free-model"), (0.0, 0.0, 0.0, 0.0));
 }
 
 /// Every built-in Grok is priced from the table too (#1855: before, its
@@ -101,9 +79,9 @@ fn a_declared_model_is_priced_from_the_table_unless_it_declares_a_cost() {
 fn every_grok_built_in_is_priced() {
     let registry = ModelRegistry::builtin();
     for (id, expected) in [
-        ("grok-4.7", (2.0, 6.0, 0.0, 0.0)),
-        ("grok-4.6", (2.0, 6.0, 0.5, 0.0)),
-        ("grok-4.5", (2.0, 6.0, 0.0, 0.0)),
+        ("grok-4.7", (2.0, 6.0, 0.5, 2.0)),
+        ("grok-4.6", (2.0, 6.0, 0.5, 2.0)),
+        ("grok-4.5", (2.0, 6.0, 0.3, 2.0)),
     ] {
         let record = registry.find("xai", id).expect("built in");
         assert_eq!(rates(&record.cost), expected, "{id}");
