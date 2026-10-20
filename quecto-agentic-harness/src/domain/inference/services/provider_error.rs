@@ -660,3 +660,6 @@ mod refusal_tests;
 #[cfg(test)]
 #[path = "provider_error_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "provider_error_url_tests.rs"]
+mod url_tests;
