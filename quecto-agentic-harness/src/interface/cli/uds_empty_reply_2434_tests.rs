@@ -159,7 +159,7 @@ async fn run_limited(
     })
     .with_max_tool_iterations(max_tool_iterations);
     let mut messages: Vec<Message> = vec![];
-    let mut session = AgentSession::new("stub".into());
+    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;

@@ -51,28 +51,34 @@ impl AgentSession {
         id: Option<&str>,
         command: &str,
         body: super::PromptBody,
-        steer: bool,
+        work: crate::domain::inference::services::turn_suspension::Work,
     ) -> bool {
+        use crate::domain::inference::services::turn_suspension::Work;
         if self.pending.len() < Self::MAX_PENDING {
             let super::PromptBody {
                 text: content,
                 images,
             } = body;
-            let message = match id {
-                Some(id) => PendingMessage::Control {
+            // The work the caller knows (#1909), never re-derived from the
+            // command name.
+            let message = match (work, id) {
+                (Work::Instruction(_), Some(id)) => PendingMessage::Control {
                     id: id.into(),
                     command: command.into(),
                     content,
                     images,
                 },
+                (Work::Instruction(_), None) => PendingMessage::User { content, images },
                 // A harness nudge carries no id, no human intent, no images.
-                None if command == crate::interface::cli::uds_swarm_control::SWARM_WAKE => {
-                    assert!(images.is_empty(), "a swarm wake carries no images");
+                (Work::Automatic, None) => {
+                    assert!(images.is_empty(), "automatic work carries no images");
                     PendingMessage::Automatic(content)
                 }
-                None => PendingMessage::User { content, images },
+                (Work::Automatic, Some(id)) => {
+                    panic!("automatic work carries no correlation id ({id})")
+                }
             };
-            if steer {
+            if work.is_steer() {
                 self.pending.push_front(message);
             } else {
                 self.pending.push_back(message);

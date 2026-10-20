@@ -202,6 +202,9 @@ async fn approval_exchange(busy: bool) {
                     type_name: "prompt".into(),
                     message: "Waiting for master feedback".into(),
                     streaming_behavior: None,
+                    work: crate::domain::inference::services::turn_suspension::Work::Instruction(
+                        crate::domain::inference::services::turn_suspension::Instruction::Prompt,
+                    ),
                 },
             ),
         )
@@ -353,6 +356,14 @@ async fn an_idle_wake_is_unmarked_and_a_prompt_or_steer_is_a_prompt() {
                 type_name: type_name.into(),
                 message: text.clone().into(),
                 streaming_behavior: None,
+                work: match type_name {
+                    SWARM_WAKE => {
+                        crate::domain::inference::services::turn_suspension::Work::Automatic
+                    }
+                    _ => crate::domain::inference::services::turn_suspension::Work::Instruction(
+                        crate::domain::inference::services::turn_suspension::Instruction::Prompt,
+                    ),
+                },
             },
         )
         .await;

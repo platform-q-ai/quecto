@@ -4,21 +4,21 @@ mod subagent_notification_dedupe_tests {
     use super::*;
     #[test]
     fn same_monotonic_subagent_notification_is_recorded_once() {
-        let mut session = AgentSession::new("m".into());
+        let mut session = AgentSession::new("m".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
         assert!(session.record_subagent_notification("worker".into(), 1));
         assert!(!session.record_subagent_notification("worker".into(), 1));
         assert!(session.drain_pending().is_empty());
     }
     #[test]
     fn later_monotonic_subagent_notification_is_recorded() {
-        let mut session = AgentSession::new("m".into());
+        let mut session = AgentSession::new("m".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
         assert!(session.record_subagent_notification("worker".into(), 1));
         assert!(session.record_subagent_notification("worker".into(), 2));
         assert!(session.drain_pending().is_empty());
     }
     #[test]
     fn full_queue_does_not_block_recording_notification_seen() {
-        let mut session = AgentSession::new("m".into());
+        let mut session = AgentSession::new("m".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
         for i in 0..AgentSession::MAX_PENDING {
             session.enqueue_pending(format!("filler-{i}"));
         }
@@ -67,7 +67,7 @@ mod passive_subagent_notification_tests {
     use super::*;
     #[test]
     fn subagent_notification_recording_does_not_enqueue_pending_prompt() {
-        let mut session = AgentSession::new("m".into());
+        let mut session = AgentSession::new("m".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
         assert!(session.record_subagent_notification("worker".into(), 1));
         assert_eq!(
             session

@@ -67,7 +67,7 @@ impl EffortFx {
         Self {
             agent: make_effort_test_agent(effort),
             messages: Vec::new(),
-            session: AgentSession::new(super::uds_dispatch::fixture_tests::RIG_MODEL.into()),
+            session: AgentSession::new(super::uds_dispatch::fixture_tests::RIG_MODEL.into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new()),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
             _tmp: tmp,

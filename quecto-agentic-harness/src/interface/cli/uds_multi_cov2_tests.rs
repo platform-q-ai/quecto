@@ -121,6 +121,7 @@ fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
         broadcast_tx: None,
         parent_control: None,
         teardown_graph: None,
+        automatic_turns: crate::composition::bootstrap::agent_turn::build_automatic_turns,
         environment_control: None,
     }
 }
@@ -295,7 +296,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         .unwrap();
     drop(cmd_tx);
 
-    let mut session = super::super::uds_session::AgentSession::new("stub".into());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     let mut messages = vec![Message::user("seed")];
     let session_key = "cli:cov".to_string();
     let mut writer = tokio::io::sink();

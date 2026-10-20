@@ -1,6 +1,7 @@
-//! Configuration composition (#1966, #2024): the configuration use cases
-//! over the filesystem document store, the `Config` schema and the
-//! persistent overlay trust store. `main` hands
+//! Configuration composition (#1966, #2024, #1843): the configuration use
+//! cases over the filesystem document store, the `Config` schema, the
+//! persistent overlay trust store and the auth capability's credential
+//! status. `main` hands
 //! [`build_configuration_handles`] to the CLI entry point; the interface
 //! only invokes the handles it receives. [`build_config_loader`] is the
 //! same graph as one reloadable function for the runtime-configuration
@@ -10,12 +11,15 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use super::bootstrap::credential_presence::AuthStatusPresence;
 use crate::application::configuration::dto::ConfigSelection;
 use crate::application::configuration::use_cases::{
-    PatchConfiguration, ReadConfiguration, ResolveEffectiveConfig, SelectConfig, TrustConfigOverlay,
+    InspectEffectiveConfiguration, PatchConfiguration, ReadConfiguration, ResolveEffectiveConfig,
+    SelectConfig, TrustConfigOverlay,
 };
 use crate::infrastructure::config::loaders::FilesystemConfigDocumentStore;
 use crate::infrastructure::config::main_worktree::GitMetadataWorktreeLocator;
+use crate::infrastructure::config::mapping::ConfigRunSettings;
 use crate::infrastructure::config::mapping::{
     ConfigValidatorAdapter, realize_config, realize_inherited_child_config,
 };
@@ -48,6 +52,13 @@ pub fn build_configuration_handles(env: &ConfigurationEnvironment) -> Configurat
             Arc::new(GitMetadataWorktreeLocator),
         )),
         read: Arc::new(ReadConfiguration::new(store.clone(), resolve.clone())),
+        inspect: Arc::new(InspectEffectiveConfiguration::new(
+            resolve.clone(),
+            Arc::new(ConfigRunSettings::for_base_dir(&env.base_dir)),
+            Arc::new(AuthStatusPresence::new(
+                super::bootstrap::auth::build_auth_status(&env.base_dir),
+            )),
+        )),
         patch: Arc::new(PatchConfiguration::new(
             store.clone(),
             writer,

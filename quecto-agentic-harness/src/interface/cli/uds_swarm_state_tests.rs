@@ -269,16 +269,18 @@ async fn a_busy_prompt_the_member_refuses_owes_no_reply() {
 #[tokio::test]
 async fn a_follow_up_the_full_queue_does_not_keep_owes_no_reply() {
     let replies = reply_after(async |ctx| {
-        while ctx
-            .session
-            .enqueue_control(None, "follow_up", "fill".into(), false)
-        {}
+        while ctx.session.enqueue_control(
+            None,
+            "follow_up",
+            "fill".into(),
+            crate::domain::inference::services::turn_suspension::Work::FOLLOW_UP,
+        ) {}
         crate::interface::cli::uds::pending::queue_prompt(
             ctx,
             None,
             "follow_up",
             "x".into(),
-            false,
+            crate::domain::inference::services::turn_suspension::Work::FOLLOW_UP,
         )
         .await;
     })

@@ -9,8 +9,10 @@ use super::dispatch_test_env::{DispatchTestEnv as Env, make_dispatch_test_agent}
 use crate::application::providers::ports::LlmProvider;
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::conversation::value_objects::message::Role;
+use crate::domain::inference::services::turn_suspension::Work;
 use crate::interface::cli::uds_session::PendingMessage;
 use crate::interface::shared::WorkflowStateHandle;
+const QUEUED: Work = Work::FOLLOW_UP; // a queued follow-up
 
 // ─── #895: abort = full stop ────────────────────────────────────────────────
 
@@ -618,7 +620,7 @@ async fn retained_clarification_has_queryable_correlated_handling_receipt() {
             Some("approval-42"),
             "follow_up",
             "Approved schema v2".into(),
-            false
+            QUEUED
         )
         .await
     );
@@ -647,7 +649,7 @@ async fn aborted_queued_clarification_receipt_is_cancelled_without_inference() {
         Some("cancelled-approval"),
         "follow_up",
         "approved".into(),
-        false,
+        QUEUED,
     )
     .await;
     ctx.turn_control.mark_abort();
@@ -667,7 +669,7 @@ async fn failed_clarification_receipt_is_failed_and_later_controls_remain_queued
     )));
     let mut ctx = env.ctx();
     for id in ["first", "second"] {
-        super::pending::queue_prompt(&mut ctx, Some(id), "follow_up", "approved".into(), false)
+        super::pending::queue_prompt(&mut ctx, Some(id), "follow_up", "approved".into(), QUEUED)
             .await;
     }
     super::drain_and_run_pending(&mut ctx).await;
@@ -693,6 +695,9 @@ async fn session_stats_expose_request_diagnostics_after_failed_prompt() {
             type_name: "prompt".into(),
             message: "work".into(),
             streaming_behavior: None,
+            work: crate::domain::inference::services::turn_suspension::Work::Instruction(
+                crate::domain::inference::services::turn_suspension::Instruction::Prompt,
+            ),
         },
     )
     .await;
@@ -728,6 +733,9 @@ async fn direct_rejected_and_precancelled_prompts_have_correlated_receipts() {
                 type_name: "prompt".into(),
                 message: "approved".into(),
                 streaming_behavior: None,
+                work: crate::domain::inference::services::turn_suspension::Work::Instruction(
+                    crate::domain::inference::services::turn_suspension::Instruction::Prompt,
+                ),
             },
         )
         .await;

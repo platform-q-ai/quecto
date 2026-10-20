@@ -109,6 +109,9 @@ async fn work_drained_behind_a_stale_abort_is_durably_numbered() {
                 type_name: "prompt".into(),
                 message: "cancelled before it starts".into(),
                 streaming_behavior: None,
+                work: crate::domain::inference::services::turn_suspension::Work::Instruction(
+                    crate::domain::inference::services::turn_suspension::Instruction::Prompt,
+                ),
             },
         )
         .await;
@@ -135,6 +138,9 @@ async fn a_prompt_is_saved_before_its_snapshots_publish() {
                 type_name: "prompt".into(),
                 message: "reply ok".into(),
                 streaming_behavior: None,
+                work: crate::domain::inference::services::turn_suspension::Work::Instruction(
+                    crate::domain::inference::services::turn_suspension::Instruction::Prompt,
+                ),
             },
         )
         .await;

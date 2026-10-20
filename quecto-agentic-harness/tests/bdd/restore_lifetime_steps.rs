@@ -348,6 +348,7 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             broadcast_tx,
             parent_control: None,
             teardown_graph: Some(build_teardown_graph),
+            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
             environment_control: None,
         })
     });

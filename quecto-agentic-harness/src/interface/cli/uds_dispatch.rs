@@ -329,16 +329,9 @@ pub(super) async fn handle_steer(
         );
         emit_event_to_broadcast_or_writer(ctx, &event).await;
     }
-    super::handle_prompt(
-        ctx,
-        super::PromptCommand {
-            id: id.map(str::to_owned),
-            type_name: type_name.into(),
-            message,
-            streaming_behavior: Some(super::StreamingBehavior::Steer),
-        },
-    )
-    .await
+    let steer = Some(super::StreamingBehavior::Steer);
+    let cmd = super::PromptCommand::client(id.map(str::to_owned), type_name.into(), message, steer);
+    super::handle_prompt(ctx, cmd).await
 }
 
 pub(super) async fn handle_follow_up(
@@ -349,7 +342,14 @@ pub(super) async fn handle_follow_up(
 ) -> bool {
     // A retained follow-up cannot revoke a later admitted steer. Only that
     // steer's handler (or explicit abort) releases the priority gate.
-    let retained = super::pending::queue_prompt(ctx, id, type_name, message, false).await;
+    let retained = super::pending::queue_prompt(
+        ctx,
+        id,
+        type_name,
+        message,
+        crate::domain::inference::services::turn_suspension::Work::FOLLOW_UP,
+    )
+    .await;
     if retained && !ctx.session.is_streaming() {
         super::drain_pending_and_nudge(ctx).await;
     }

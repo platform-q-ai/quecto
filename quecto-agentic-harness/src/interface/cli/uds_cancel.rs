@@ -499,10 +499,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
                 interrupted::restamp_ledger(&mut *session.write().await, messages);
             }
             // Dated by the dispatch loop once it knows the control generation.
-            agent_session.suspend_automatic_turns(
-                super::uds_session::SuspensionCause::ProviderFailure,
-                None,
-            );
+            agent_session.automatic_turns().suspend_after_failure();
             sink.emit(&AgentEvent::err(None, "agent_error", format!("{e}")))
                 .await;
             PromptOutcome::Error

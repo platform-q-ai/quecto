@@ -212,6 +212,8 @@ mod refreshable_catalogue_source;
 mod reload_runtime;
 #[path = "contracts/retained_context.rs"]
 mod retained_context;
+#[path = "contracts/run_settings_source.rs"]
+mod run_settings_source;
 #[path = "contracts/runtime_composition.rs"]
 mod runtime_composition;
 #[path = "contracts/runtime_configuration_source.rs"]
@@ -236,6 +238,8 @@ mod session_op_log;
 mod session_store;
 #[path = "contracts/session_switch_runtime.rs"]
 mod session_switch_runtime;
+#[path = "contracts/stored_credential_presence.rs"]
+mod stored_credential_presence;
 #[path = "contracts/subagent_launch_ports.rs"]
 mod subagent_launch_ports;
 #[path = "contracts/swarm_run_reports.rs"]
