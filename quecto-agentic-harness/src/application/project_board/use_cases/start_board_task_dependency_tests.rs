@@ -5,6 +5,7 @@ use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{BoardArtifact, ProjectBoardStore};
 use crate::application::project_board::use_cases::fixtures_tests::{at, board, fields, slug};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
+use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::vocabulary::{PlanState, Resolution, TaskStatus};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 
@@ -46,9 +47,11 @@ fn a_task_whose_dependency_is_not_done_is_not_started() {
     let store = depending_on(TaskStatus::Ready);
     let writes = store.writes();
     let refused = starter(&store, Some(super::Launcher::launching())).execute(&confirmed(1));
-    assert!(
-        matches!(&refused, Err(ProjectBoardError::Rule(rule)) if rule.to_string().contains("dep")),
-        "{refused:?}"
+    assert_eq!(
+        refused,
+        Err(ProjectBoardError::Rule(BoardRuleError::DependencyNotDone(
+            vec![slug("dep")]
+        )))
     );
     assert_eq!(store.writes(), writes, "nothing is written");
     for done in [TaskStatus::Done, TaskStatus::Archived] {

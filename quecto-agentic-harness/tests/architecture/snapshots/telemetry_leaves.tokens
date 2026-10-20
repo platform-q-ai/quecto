@@ -150,6 +150,8 @@ const KNOWN_KINDS : & [
 "not_draft" ,
 "no_edit" ,
 "superseded" ,
+"dependency_not_done" ,
+"children_active" ,
 "issue_shared" ,
 "issue_is_pr" ,
 "own_pr_referenced" ,

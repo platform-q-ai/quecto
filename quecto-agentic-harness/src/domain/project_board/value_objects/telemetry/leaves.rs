@@ -196,6 +196,9 @@ const KNOWN_KINDS: &[&str] = &[
     "not_draft",
     "no_edit",
     "superseded",
+    // A dependency not done, children still active (#2661).
+    "dependency_not_done",
+    "children_active",
     "issue_shared",
     "issue_is_pr",
     "own_pr_referenced",

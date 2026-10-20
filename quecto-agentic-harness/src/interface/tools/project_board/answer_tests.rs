@@ -408,6 +408,8 @@ board_rules! {
     R::NotDraft(_) => R::NotDraft(TaskStatus::Ready), "not_draft", ["status"];
     R::NoEdit => R::NoEdit, "no_edit", [];
     R::Superseded { .. } => R::Superseded { by: vec![Slug::parse("next").unwrap()] }, "superseded", ["by"];
+    R::DependencyNotDone(_) => R::DependencyNotDone(vec![Slug::parse("dep").unwrap()]), "dependency_not_done", ["tasks"];
+    R::ChildrenActive(_) => R::ChildrenActive(vec![Slug::parse("kid").unwrap()]), "children_active", ["tasks"];
     R::IssueShared { .. } => R::IssueShared { issue: 7, tasks: [Slug::parse("a").unwrap(), Slug::parse("b").unwrap()] }, "issue_shared", ["issue", "tasks"];
     R::IssueIsPr { .. } => R::IssueIsPr { issue: 7, task: Slug::parse("a").unwrap(), pr_holder: Slug::parse("b").unwrap() }, "issue_is_pr", ["issue", "task", "pr_holder"];
     R::OwnPrReferenced { .. } => R::OwnPrReferenced { task: Slug::parse("a").unwrap(), pr: 7, change: 1 }, "own_pr_referenced", ["task", "pr", "change"];

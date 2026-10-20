@@ -560,7 +560,7 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
     })
     .unwrap();
     let started = Timestamp::parse("2026-10-10T09:00:00Z").unwrap();
-    let (task, run) = start(&ready, &[], Some(&plan), &ada, &started)
+    let (task, run) = start(&ready, &[], &[], Some(&plan), &ada, &started)
         .unwrap()
         .into_writes();
     let head = alice.read().unwrap().head;

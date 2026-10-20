@@ -264,5 +264,5 @@ pub struct BoardOperationParts {
     pub end_run: EndRun,
     pub start: StartBoardTask,
     pub clear: ClearSetAside,
-    pub complete: Result<CompleteMergedTask, NoPullRequestHost>,
+    pub complete: CompleteMergedTask,
 }

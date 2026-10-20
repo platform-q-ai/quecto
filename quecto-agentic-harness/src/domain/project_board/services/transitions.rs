@@ -4,6 +4,7 @@ use super::super::entities::claim::Identity;
 use super::super::entities::run::Run;
 use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
+use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::Resolution;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
@@ -145,6 +146,60 @@ pub fn move_task(
         "{from:?} -> {to:?}: a task leaves its claim behind for a status that holds none"
     );
     settle(next, &at)
+}
+
+/// Whether the tasks `task` relates to on the board (`tasks`: every task
+/// the board holds) let it move to `to` (#2661), an allowlist of the moves
+/// they hold back:
+/// - a claim waits for every task it depends on to release its
+///   dependents ([`TaskStatus::releases_dependents`]: done or archived,
+///   as `list_ready` lists it); one not on the board holds it too;
+/// - an archive waits for every child task to be free of work: none
+///   claimed, in progress, in review or blocked.
+///
+/// A start claims a ready task as a move to claimed does, so it asks the
+/// same ([`super::starts::start`]).
+///
+/// # Errors
+/// The tasks that hold it back, by id.
+pub fn relations_allow(task: &Task, to: TaskStatus, tasks: &[Task]) -> Result<(), BoardRuleError> {
+    let fields = task.fields();
+    let status_of = |id: &Slug| {
+        tasks
+            .iter()
+            .find(|other| other.fields().id == *id)
+            .map(|other| other.fields().status)
+    };
+    match to {
+        Claimed => {
+            let undone: Vec<Slug> = fields
+                .depends_on
+                .iter()
+                .filter(|id| !status_of(id).is_some_and(TaskStatus::releases_dependents))
+                .cloned()
+                .collect();
+            match undone.as_slice() {
+                [] => Ok(()),
+                [_, ..] => Err(BoardRuleError::DependencyNotDone(undone)),
+            }
+        }
+        Archived => {
+            let active: Vec<Slug> = tasks
+                .iter()
+                .filter(|other| other.fields().parent.as_ref() == Some(&fields.id))
+                .filter(|child| match child.fields().status {
+                    Claimed | InProgress | Review | Blocked => true,
+                    Draft | Ready | Done | Archived => false,
+                })
+                .map(|child| child.fields().id.clone())
+                .collect();
+            match active.as_slice() {
+                [] => Ok(()),
+                [_, ..] => Err(BoardRuleError::ChildrenActive(active)),
+            }
+        }
+        Draft | Ready | InProgress | Review | Blocked | Done => Ok(()),
+    }
 }
 
 /// What a move does to the claim, when the table and its actor allow it,
@@ -346,3 +401,7 @@ mod tests;
 #[cfg(test)]
 #[path = "transitions_archive_tests.rs"]
 mod archive_tests;
+
+#[cfg(test)]
+#[path = "transitions_relations_tests.rs"]
+mod relations_tests;

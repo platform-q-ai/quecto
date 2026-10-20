@@ -180,7 +180,15 @@ fn show_tells_a_task_set_aside_from_one_not_on_the_board() {
         ops.execute(&BoardRequest::Complete(slug("d"))),
         Err(ProjectBoardError::Rule(BoardRuleError::NoPrs))
     );
-    // One that links a pull request needs the host to read it.
+}
+
+/// #2658: with no pull request host, only a task that links a pull
+/// request needs one to complete.
+#[test]
+fn a_complete_with_no_host_needs_one_only_for_pull_requests() {
+    let store = MemoryBoardStore::default();
+    let ops = operations(&store, SetClock::at("10:00:00"), no_host());
+    ops.execute(&BoardRequest::Bootstrap).unwrap();
     let e = slug("e");
     for request in [
         ready_task("e"),
@@ -254,9 +262,9 @@ impl crate::application::project_board::ports::ProjectBoardStore for PlanTwice {
     }
 }
 
-/// Review round 2: with no pull request host, `complete` asks only whether
-/// the task is on the board (its plans and runs are not read), so a plan
-/// held twice does not stand in for the missing host.
+/// Review round 2: with no pull request host, `complete` never reads a
+/// task's plans, so a plan held twice does not stand in for its answer:
+/// a task linking no pull request is the completion rule's (#2658).
 #[test]
 fn a_complete_with_no_host_looks_the_task_up_alone() {
     let memory = MemoryBoardStore::default();
@@ -273,9 +281,7 @@ fn a_complete_with_no_host_looks_the_task_up_alone() {
     ));
     assert_eq!(
         ops.execute(&BoardRequest::Complete(slug("a"))),
-        Err(ProjectBoardError::NoPullRequestHost(
-            NoPullRequestHost::NotAPullRequestHost
-        ))
+        Err(ProjectBoardError::Rule(BoardRuleError::NoPrs))
     );
 }
 

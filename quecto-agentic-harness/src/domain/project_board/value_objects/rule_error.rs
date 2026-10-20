@@ -161,6 +161,12 @@ pub enum BoardRuleError {
     /// Other tasks took this one over (`by`): it is archived as
     /// superseded, never done.
     Superseded { by: Vec<Slug> },
+    /// These tasks the task depends on are not done or archived (or not on
+    /// the board): it is claimed or started only once each is (#2661).
+    DependencyNotDone(Vec<Slug>),
+    /// These child tasks of the task are held (claimed, in progress, in
+    /// review or blocked): it is archived only once none is (#2661).
+    ChildrenActive(Vec<Slug>),
     /// Two tasks name the same issue.
     IssueShared { issue: u64, tasks: [Slug; 2] },
     /// `task`'s issue is a pull request `pr_holder` links on the board
@@ -359,6 +365,24 @@ impl fmt::Display for BoardRuleError {
                     f,
                     "other tasks took this one over ({}): archive it as superseded instead",
                     by.join(", ")
+                )
+            }
+            Self::DependencyNotDone(tasks) => {
+                let tasks: Vec<&str> = tasks.iter().map(Slug::as_str).collect();
+                write!(
+                    f,
+                    "tasks it depends on are not done yet: {}; it is claimed or started once \
+                     each is done or archived",
+                    tasks.join(", ")
+                )
+            }
+            Self::ChildrenActive(tasks) => {
+                let tasks: Vec<&str> = tasks.iter().map(Slug::as_str).collect();
+                write!(
+                    f,
+                    "its child tasks are still being worked on: {}; finish or release them \
+                     before archiving it",
+                    tasks.join(", ")
                 )
             }
             Self::IssueShared { issue, tasks } => write!(

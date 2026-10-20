@@ -384,6 +384,7 @@ fn a_start_that_cannot_launch_writes_nothing() {
         let (_, run) = crate::domain::project_board::services::starts::start(
             &task,
             &[],
+            &[],
             Some(&plan(1, PlanState::Accepted)),
             &person("Ada"),
             &at("09:30:00"),

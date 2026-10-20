@@ -254,16 +254,11 @@ impl RunBoardOperation {
         Ok(BoardOutcome::Listing(Listed::skipped(listing, skipped)))
     }
 
-    /// Task `id` completed, noted in `facts` when given; with no pull
-    /// request host, a task not on the board is answered as such first.
+    /// Task `id` completed, noted in `facts` when given: with no pull
+    /// request host, a task not on the board, or one linking none, is
+    /// answered as such first (#2658).
     fn complete(&self, id: &Slug, facts: Option<&mut OpFacts>) -> Result<Task, ProjectBoardError> {
-        match &self.parts.complete {
-            Ok(complete) => complete.execute_noted(id, facts),
-            Err(why) => {
-                self.parts.query.task(id)?;
-                Err(ProjectBoardError::NoPullRequestHost(why.clone()))
-            }
-        }
+        self.parts.complete.execute_noted(id, facts)
     }
 }
 

@@ -112,14 +112,7 @@ pub fn assembled_reporting(
         liveness,
         reports,
     } = swarms;
-    let complete = match prs {
-        Ok(prs) => Ok(CompleteMergedTask::new(
-            Arc::clone(&store),
-            Arc::clone(&clock),
-            prs,
-        )?),
-        Err(why) => Err(why),
-    };
+    let complete = CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs)?;
     Ok(RunBoardOperation::new(BoardOperationParts {
         bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
         create: CreateBoardTask::new(Arc::clone(&store), Arc::clone(&clock))?,
