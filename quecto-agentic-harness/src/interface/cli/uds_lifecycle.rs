@@ -1,4 +1,3 @@
-use super::uds_session_handles::SessionLoopInputs;
 use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 pub(crate) use crate::domain::conversation::services::conversation_view::inject_system_prompt;
 #[cfg(test)]
@@ -6,8 +5,9 @@ pub(crate) use crate::domain::conversation::services::conversation_view::remove_
 #[cfg(test)]
 use crate::domain::conversation::value_objects::message::Role;
 use crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot;
-use crate::interface::uds::controllers::{uds_extensions, uds_parent_control};
+use crate::interface::uds::controllers::{uds_extensions, uds_parent_control, uds_session_handles};
 use crate::interface::uds::framing::{uds_multi, uds_single_client, uds_wire};
+use crate::interface::uds::presenters::uds_admission_warnings;
 #[cfg(test)]
 #[path = "uds_lifecycle_cov2_tests.rs"]
 mod cov2_tests;
@@ -106,7 +106,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         extensions,
     } = args;
     let session_key = identity.runtime_key().to_string(); // presenters, owner uuid
-    let sessions = sessions(SessionLoopInputs {
+    let sessions = sessions(uds_session_handles::SessionLoopInputs {
         base_dir: base_dir.to_path_buf(),
         identity,
         ephemeral,
@@ -129,7 +129,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     };
     let messages = opened.messages;
     let admission_slots =
-        super::uds_admission_warnings::publish_startup_warnings(&catalogue.runtime_store);
+        uds_admission_warnings::publish_startup_warnings(&catalogue.runtime_store);
     if let (Some(ws), Some(persisted)) = (&workflow_state, opened.workflow_run) {
         crate::domain::workflow::lock_engine(ws).restore_run(persisted);
     }

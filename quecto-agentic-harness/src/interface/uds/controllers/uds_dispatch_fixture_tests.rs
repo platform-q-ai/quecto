@@ -27,7 +27,7 @@ pub(super) struct Fixture {
     pub(super) session: AgentSession,
     pub(super) session_key: String,
     pub(super) store: std::sync::Arc<FileSessionStore>,
-    pub(super) sessions: crate::interface::cli::uds_session_handles::SessionHandles,
+    pub(super) sessions: crate::interface::uds::controllers::uds_session_handles::SessionHandles,
     /// The dirty latch shared between the agent and the save transaction;
     /// a swapped agent adopts it (`set_agent`).
     latch: std::sync::Arc<
@@ -246,7 +246,7 @@ impl Fixture {
 /// its real graph is composed from the complete inputs.
 fn list_handle_placeholder(
     store: &std::sync::Arc<FileSessionStore>,
-) -> crate::interface::cli::uds_session_handles::SessionHandles {
+) -> crate::interface::uds::controllers::uds_session_handles::SessionHandles {
     crate::interface::uds::controllers::uds::dispatch_session_roster_tests::handles_over(
         store.clone(),
         "cli:test",

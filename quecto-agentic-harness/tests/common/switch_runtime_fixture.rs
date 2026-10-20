@@ -16,9 +16,11 @@ use quecto::domain::workflow::{
     WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
 };
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-use quecto::interface::cli::uds_execution_state::{ExecutionState, ExecutionStateHandle};
 use quecto::interface::cli::uds_session::AgentSession;
 use quecto::interface::shared::WorkflowStateHandle;
+use quecto::interface::uds::presenters::uds_execution_state::{
+    ExecutionState, ExecutionStateHandle,
+};
 
 #[derive(Debug)]
 struct SilentProvider;

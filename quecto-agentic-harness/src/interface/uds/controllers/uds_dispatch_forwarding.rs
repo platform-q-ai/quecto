@@ -24,7 +24,7 @@ pub(super) async fn try_forward_subagent_targeted_command(
         ..
     } = cmd
     {
-        let event = crate::interface::cli::uds_busy_subagents::forward_child_command(
+        let event = crate::interface::uds::controllers::uds_busy_subagents::forward_child_command(
             &ctx.subagent_registry,
             id.as_deref(),
             agent_id,

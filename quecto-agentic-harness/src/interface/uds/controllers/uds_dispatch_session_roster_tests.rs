@@ -15,6 +15,7 @@ use crate::infrastructure::persistence::file::sessions::session_layout::FlatSess
 use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use crate::infrastructure::tools::agents::subagent_compact_roster::build_compact_subagent_roster;
 use crate::infrastructure::tools::agents::subagent_registry;
+use crate::interface::uds::presenters::subagent_info_list::build_live_subagent_info_list;
 use subagent_registry::{
     SubagentEntry, SubagentRegistry, SubagentStatus, lookup_subagent_socket, new_registry,
 };
@@ -59,8 +60,8 @@ pub(crate) async fn persisted_roster_via_save_async(
 /// The composed sessions handles of `inputs` (#1970): the one place the
 /// dispatch rigs reach composition, so no rig file names the layer itself.
 pub(crate) fn composed_sessions_from(
-    inputs: crate::interface::cli::uds_session_handles::SessionLoopInputs,
-) -> crate::interface::cli::uds_session_handles::SessionHandles {
+    inputs: crate::interface::uds::controllers::uds_session_handles::SessionLoopInputs,
+) -> crate::interface::uds::controllers::uds_session_handles::SessionHandles {
     crate::composition::sessions::build_session_handles(inputs)
 }
 
@@ -76,8 +77,8 @@ pub(crate) fn rig_store(base: &std::path::Path) -> RigStore {
 /// and the home context (#2009) composition pairs with it.
 pub(crate) fn composed_sessions_over(
     store: RigStore,
-    inputs: crate::interface::cli::uds_session_handles::SessionLoopInputs,
-) -> crate::interface::cli::uds_session_handles::SessionHandles {
+    inputs: crate::interface::uds::controllers::uds_session_handles::SessionLoopInputs,
+) -> crate::interface::uds::controllers::uds_session_handles::SessionHandles {
     crate::composition::sessions::build_session_handles_over(store, inputs)
 }
 
@@ -397,10 +398,7 @@ async fn restore_creates_no_operational_row_and_probes_nothing() {
             .subagents
             .is_empty()
     );
-    assert!(
-        crate::interface::uds::wire::protocol::build_live_subagent_info_list(&Some(registry))
-            .is_empty()
-    );
+    assert!(build_live_subagent_info_list(&Some(registry)).is_empty());
 }
 
 /// A legacy row can neither be sent to nor killed after restore: it is not
@@ -558,8 +556,8 @@ fn snapshot_and_restore_recover_from_a_poisoned_registry_lock() {
 pub(crate) fn loop_inputs(
     base: &std::path::Path,
     session_key: &str,
-) -> crate::interface::cli::uds_session_handles::SessionLoopInputs {
-    crate::interface::cli::uds_session_handles::SessionLoopInputs {
+) -> crate::interface::uds::controllers::uds_session_handles::SessionLoopInputs {
+    crate::interface::uds::controllers::uds_session_handles::SessionLoopInputs {
         base_dir: base.to_path_buf(),
         identity: SessionIdentity::from_persisted_key(session_key),
         ephemeral: false,
@@ -576,7 +574,7 @@ pub(crate) fn loop_inputs(
 /// shared dispatch test env never names the composition layer itself.
 pub(crate) fn composed_sessions(
     base: &std::path::Path,
-) -> crate::interface::cli::uds_session_handles::SessionHandles {
+) -> crate::interface::uds::controllers::uds_session_handles::SessionHandles {
     composed_sessions_for(base, "cli:test", None)
 }
 
@@ -586,7 +584,7 @@ pub(crate) fn composed_sessions_for(
     base: &std::path::Path,
     session_key: &str,
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
-) -> crate::interface::cli::uds_session_handles::SessionHandles {
+) -> crate::interface::uds::controllers::uds_session_handles::SessionHandles {
     let mut inputs = loop_inputs(base, session_key);
     inputs.spill_store = spill_store;
     crate::composition::sessions::build_session_handles(inputs)
@@ -600,7 +598,7 @@ pub(crate) fn handles_over(
     session_key: &str,
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
     messages: &[Message],
-) -> crate::interface::cli::uds_session_handles::SessionHandles {
+) -> crate::interface::uds::controllers::uds_session_handles::SessionHandles {
     let mut inputs = loop_inputs(std::path::Path::new(""), session_key);
     inputs.spill_store = spill_store;
     let handles = composed_sessions_over(store, inputs);
@@ -629,7 +627,7 @@ pub(crate) fn read_handles_over(
     session_key: &str,
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
     messages: &[Message],
-) -> crate::interface::cli::uds_session_handles::SessionReadHandles {
+) -> crate::interface::uds::controllers::uds_session_handles::SessionReadHandles {
     handles_over(store, session_key, spill_store, messages).read_handles()
 }
 
@@ -648,7 +646,7 @@ pub(crate) fn save_handle_for(
 /// a throwaway base directory, for rigs that never clear or rewind.
 pub(crate) fn rewrite_handles_for(
     session_key: &str,
-) -> crate::interface::cli::uds_session_handles::ConversationRewriteHandles {
+) -> crate::interface::uds::controllers::uds_session_handles::ConversationRewriteHandles {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let base = tmp.path().to_path_buf();
     std::mem::forget(tmp);
@@ -659,7 +657,7 @@ pub(crate) fn rewrite_handles_for(
 /// throwaway base directory, for rigs that never switch (#1976).
 pub(crate) fn switch_handles_for(
     session_key: &str,
-) -> crate::interface::cli::uds_session_handles::SessionSwitchHandles {
+) -> crate::interface::uds::controllers::uds_session_handles::SessionSwitchHandles {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let base = tmp.path().to_path_buf();
     std::mem::forget(tmp);
@@ -673,7 +671,7 @@ pub(crate) fn seeded_read_handles(
     session_key: &str,
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
     messages: &[Message],
-) -> crate::interface::cli::uds_session_handles::SessionReadHandles {
+) -> crate::interface::uds::controllers::uds_session_handles::SessionReadHandles {
     let handles = composed_sessions_for(base, session_key, spill_store).read_handles();
     let _ = handles
         .active_session
@@ -689,7 +687,7 @@ pub(crate) fn read_handles_for(
     session_key: &str,
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
     messages: &[Message],
-) -> crate::interface::cli::uds_session_handles::SessionReadHandles {
+) -> crate::interface::uds::controllers::uds_session_handles::SessionReadHandles {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let base = tmp.path().to_path_buf();
     std::mem::forget(tmp);
@@ -699,11 +697,11 @@ pub(crate) fn read_handles_for(
 /// The full message a stable ref resolves to through the composed recovery
 /// owner (ledger, live view, retention store), without a fallback slice.
 pub(crate) async fn resolve_message(
-    handles: &crate::interface::cli::uds_session_handles::SessionReadHandles,
+    handles: &crate::interface::uds::controllers::uds_session_handles::SessionReadHandles,
     message_id: &str,
 ) -> Option<Message> {
     use crate::application::sessions::dto::RecoveredContent;
-    use crate::interface::uds::sessions::recover_message_controller::GetMessageFields;
+    use crate::interface::uds::controllers::recover_message_controller::GetMessageFields;
     match handles
         .recover_message
         .recover(
@@ -726,14 +724,14 @@ pub(crate) async fn resolve_message(
 /// Read handles of an ephemeral session with `messages` published.
 pub(crate) fn ephemeral_read_handles(
     messages: &[Message],
-) -> crate::interface::cli::uds_session_handles::SessionReadHandles {
+) -> crate::interface::uds::controllers::uds_session_handles::SessionReadHandles {
     read_handles_for("", None, messages)
 }
 
 /// The composed `list_sessions` handle a dispatch rig holds over `base`.
 pub(crate) fn list_handle(
     base: &std::path::Path,
-) -> crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles {
+) -> crate::interface::uds::controllers::uds_discovery_handles::SessionDiscoveryHandles {
     composed_sessions(base).discovery
 }
 

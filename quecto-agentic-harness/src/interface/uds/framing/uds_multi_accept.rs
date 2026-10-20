@@ -1,8 +1,8 @@
 use super::uds_multi::{
     BusyFlag, ClientGuard, ClientHandlerArgs, ClientMessage, StateSnapshot, handle_client,
 };
-use crate::interface::cli::uds_session_handles::SessionReadHandles;
 use crate::interface::uds::controllers::uds_cancel::CancelHandle;
+use crate::interface::uds::controllers::uds_session_handles::SessionReadHandles;
 
 use super::uds_multi::{MAX_CLIENTS, NEXT_CLIENT_ID};
 use crate::interface::cli;
@@ -24,7 +24,8 @@ pub(in crate::interface) struct AcceptLoopArgs {
     pub(in crate::interface) state_snapshot: StateSnapshot,
     pub(in crate::interface) runtime_store:
         crate::application::provider_runtime::RuntimeSnapshotStore,
-    pub(in crate::interface) execution_state: cli::uds_execution_state::ExecutionStateHandle,
+    pub(in crate::interface) execution_state:
+        crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle,
     pub(in crate::interface) session_stats_snapshot: cli::uds_snapshots::SessionStatsSnapshot,
     pub(in crate::interface) tool_catalogue_snapshot:
         controllers::uds_extensions::ToolCatalogueSnapshot,
@@ -44,7 +45,8 @@ pub(in crate::interface) struct AcceptLoopArgs {
     pub(in crate::interface) extensions: controllers::uds_extensions::Extensions,
     /// The board view's handle (#2478): every connection's
     /// `get_swarm_board`, and the `swarm_board_changed` poll.
-    pub(in crate::interface) swarm_boards: Option<cli::uds_swarm_board::SwarmBoards>,
+    pub(in crate::interface) swarm_boards:
+        Option<crate::interface::uds::controllers::uds_swarm_board::SwarmBoards>,
 }
 
 /// Spawn the accept loop that listens for new client connections.
@@ -75,16 +77,17 @@ pub(in crate::interface) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::ta
     tokio::spawn(async move {
         // The board view's change hints (#2478) live as long as the loop;
         // what they have seen is told to each new connection.
-        let board_hints = cli::uds_swarm_board::BoardHints::default();
+        let board_hints =
+            crate::interface::uds::controllers::uds_swarm_board::BoardHints::default();
         let hints = swarm_boards.clone().map(|boards| {
-            cli::uds_swarm_board::spawn_change_hints(
+            crate::interface::uds::controllers::uds_swarm_board::spawn_change_hints(
                 boards,
                 board_hints.clone(),
                 broadcast_tx.clone(),
                 live_clients.clone(),
             )
         });
-        let _hints = cli::uds_swarm_board::AbortOnDrop(hints);
+        let _hints = crate::interface::uds::controllers::uds_swarm_board::AbortOnDrop(hints);
         loop {
             match listener.accept().await {
                 Ok((mut stream, _addr)) => {
@@ -146,7 +149,10 @@ pub(in crate::interface) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::ta
                         // current point-in-time projection on connect so callers
                         // never depend on the serialized command loop replying.
                         let mut live = state_snapshot.read().await.clone();
-                        cli::uds_admission_warnings::overlay_current(&mut live, &runtime_store);
+                        crate::interface::uds::presenters::uds_admission_warnings::overlay_current(
+                            &mut live,
+                            &runtime_store,
+                        );
                         let state_line = cli::uds_snapshots::build_connect_get_state_line(
                             &live,
                             &workflow_state,

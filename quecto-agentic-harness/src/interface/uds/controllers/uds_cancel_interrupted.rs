@@ -13,7 +13,7 @@ pub(super) struct InterruptedTurn<'a, 's> {
     pub(super) active_session:
         Option<&'a crate::application::sessions::active_session::ActiveSessionHandle>,
     pub(super) execution_state:
-        &'a Option<crate::interface::cli::uds_execution_state::ExecutionStateHandle>,
+        &'a Option<crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle>,
     pub(super) system_prompt: &'a str,
     pub(super) sink: &'a mut EventSink<'s>,
 }

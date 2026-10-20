@@ -182,13 +182,15 @@ async fn test_support_probes_report_live_and_completed_execution_state() {
         name: "bash".into(),
         arguments: "{}".into(),
     };
-    let live = super::live_execution_state_for_events(std::slice::from_ref(&started));
+    let live = crate::interface::uds::test_support::live_execution_state_for_events(
+        std::slice::from_ref(&started),
+    );
     assert_eq!(live["execution"]["phase"], "runningTool");
     assert_eq!(live["execution"]["tools"]["started"], 1);
-    let done = super::completed_live_execution_state(&[started]);
+    let done = crate::interface::uds::test_support::completed_live_execution_state(&[started]);
     assert_eq!(done["execution"]["phase"], "idle");
     assert_eq!(done["messageCount"], 0);
-    let hints = super::ledger_hint_lines_for_turn_events(
+    let hints = crate::interface::uds::test_support::ledger_hint_lines_for_turn_events(
         &[AgentProgressEvent::Done],
         &crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
             .active_session,

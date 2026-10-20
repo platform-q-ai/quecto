@@ -180,7 +180,7 @@ pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
         "TurnAccountingReset",
         &[
             "src/interface/cli/uds_session_switch_runtime.rs",
-            "src/interface/cli/uds_turn_accounting.rs",
+            "src/interface/uds/controllers/uds_turn_accounting.rs",
         ],
     ),
     (
@@ -235,7 +235,7 @@ const SESSION_STORE_HOLDERS: &[&str] = &[
     "src/infrastructure/persistence/file/ended_child_records.rs",
     // #2192 the bounded read of a session its owner no longer holds.
     "src/infrastructure/persistence/file/sessions/session_store_bounded.rs",
-    "src/interface/cli/uds_session_handles.rs",
+    "src/interface/uds/controllers/uds_session_handles.rs",
 ];
 
 /// Vocabulary no domain or application file of the capability may spell:

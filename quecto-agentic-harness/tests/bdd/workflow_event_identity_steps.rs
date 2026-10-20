@@ -26,7 +26,7 @@ use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentStatus, WorkflowSnapshot, new_registry,
 };
 use quecto::infrastructure::tools::native::workflow_tool::{broadcast_emitter, snapshot_to_event};
-use quecto::interface::uds::wire::protocol::build_subagent_info_list;
+use quecto::interface::uds::presenters::subagent_info_list::build_subagent_info_list;
 use std::path::PathBuf;
 
 // ─── Stage B / R-B1: identity on workflow_state events ──────────────────────

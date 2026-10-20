@@ -272,7 +272,7 @@ fn listing_and_session_state_surfaces_report_the_snapshot_effort_vocabulary() {
     // the same published snapshot (#1848).
     let handles = quecto::composition::catalogue::build_catalogue_handles(tmp.path(), None);
     for qualified in ["anthropic-api/claude-opus-5", "openai-api/gpt-5.6-sol"] {
-        let view = quecto::interface::uds::catalogue::effort_presenter::EffortStateView::new(
+        let view = quecto::interface::uds::presenters::effort_presenter::EffortStateView::new(
             None,
             &handles.effort.choices(qualified),
         );

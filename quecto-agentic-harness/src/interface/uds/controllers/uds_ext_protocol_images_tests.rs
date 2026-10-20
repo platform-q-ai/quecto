@@ -247,8 +247,9 @@ fn an_intercepted_tool_result_line_carries_its_images() {
         "imageBlocks": [{"mimeType": "image/png", "data": data}],
     })
     .to_string();
-    let parsed = crate::interface::cli::uds_tool_intercept::try_intercept_tool_result(&line)
-        .expect("a tool_result line is intercepted");
+    let parsed =
+        crate::interface::uds::mapping::uds_tool_intercept::try_intercept_tool_result(&line)
+            .expect("a tool_result line is intercepted");
     let registry = new_client_tool_registry();
     let mut rx = park(&registry, "call-1");
     deliver(
@@ -402,8 +403,9 @@ fn the_tool_result_intercept_counts_a_huge_image_blocks_list_without_keeping_it(
         r#"{{"type":"tool_result","toolCallId":"call-1","content":"","imageBlocks":[{}]}}"#,
         vec!["0"; count].join(",")
     );
-    let parsed = crate::interface::cli::uds_tool_intercept::try_intercept_tool_result(&line)
-        .expect("a tool_result line is intercepted");
+    let parsed =
+        crate::interface::uds::mapping::uds_tool_intercept::try_intercept_tool_result(&line)
+            .expect("a tool_result line is intercepted");
     assert_eq!(
         sent_image_blocks(parsed.image_blocks.clone()),
         SentImageBlocks::TooMany(count)

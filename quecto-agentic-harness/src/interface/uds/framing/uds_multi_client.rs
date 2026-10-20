@@ -10,13 +10,13 @@
 use std::sync::Arc;
 
 use super::{ClientGuard, ClientMessage};
-use crate::interface::cli::uds_session_handles::SessionReadHandles;
-use crate::interface::cli::uds_teardown_adapters::SharedWriter;
 use crate::interface::uds::controllers::uds::MAX_FRAME_PAYLOAD_BYTES;
 use crate::interface::uds::controllers::uds_cancel::CancelHandle;
 use crate::interface::uds::controllers::uds_parent_control::{
     ConnectionRole, ConnectionTeardown, Intercept, LineContext,
 };
+use crate::interface::uds::controllers::uds_session_handles::SessionReadHandles;
+use crate::interface::uds::controllers::uds_teardown_adapters::SharedWriter;
 
 /// Arguments for [`handle_client`].
 pub(crate) struct ClientHandlerArgs {
@@ -50,7 +50,8 @@ pub(crate) struct ClientHandlerArgs {
     pub(crate) teardown: Option<Arc<ConnectionTeardown>>,
     /// The board view's handle (#2478): `get_swarm_board` is answered off
     /// this reader.
-    pub(crate) swarm_boards: Option<crate::interface::cli::uds_swarm_board::SwarmBoards>,
+    pub(crate) swarm_boards:
+        Option<crate::interface::uds::controllers::uds_swarm_board::SwarmBoards>,
     /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
     pub(crate) _guard: ClientGuard,
 }
@@ -136,7 +137,7 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
     // speaking neither framing is an explicit version mismatch and the
     // connection closes — never a silent misparse or a hang.
     let mut role = ConnectionRole::default();
-    let board_requests = crate::interface::cli::uds_swarm_board::board_requests();
+    let board_requests = crate::interface::uds::controllers::uds_swarm_board::board_requests();
     loop {
         let line = match read_line(&mut reader, &wire_mode, client_id).await {
             Read::Line(line) => line,
@@ -176,9 +177,9 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
                 &line,
             );
         }
-        if crate::interface::cli::uds_swarm_board::intercept(
+        if crate::interface::uds::controllers::uds_swarm_board::intercept(
             &line,
-            crate::interface::cli::uds_swarm_board::BoardViewCtx {
+            crate::interface::uds::controllers::uds_swarm_board::BoardViewCtx {
                 boards: swarm_boards.as_ref(),
                 clients: &client_tool_registry,
                 subagents: &subagent_registry,

@@ -22,15 +22,17 @@
 use std::sync::{Arc, Mutex};
 
 use crate::domain::agents::entities::parent_control::{ConnectionLoss, ParentControlBinding};
-use crate::interface::uds::parent_control::wire::{BindParentControlWire, bound_ack_line};
-use crate::interface::uds::subagent_teardown::controller::{
+use crate::interface::uds::controllers::subagent_teardown_controller::{
     ConnectionAuthority, ControllerOutcome, DeliveryState, SubagentTeardownController,
 };
-use crate::interface::uds::subagent_teardown::wire::{
+use crate::interface::uds::wire::parent_control_wire::{BindParentControlWire, bound_ack_line};
+use crate::interface::uds::wire::subagent_teardown_wire::{
     SHUTDOWN_COMMAND, TERMINATE_DELEGATED_AGENT_COMMAND,
 };
 
-use crate::interface::cli::uds_teardown_adapters::{ConnectionAckWriter, SharedWriter};
+use crate::interface::uds::controllers::uds_teardown_adapters::{
+    ConnectionAckWriter, SharedWriter,
+};
 use crate::interface::uds::framing::uds_multi::BusyFlag;
 use crate::interface::uds::framing::uds_wire::ConnectionWireMode;
 

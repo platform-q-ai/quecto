@@ -514,16 +514,25 @@ fn teardown_interface_only_parses_maps_and_presents() {
         "claim_terminal(",
     ];
     let mut files = Vec::new();
-    walk(Path::new("src/interface/uds/subagent_teardown"), &mut files);
+    files.extend(
+        [
+            "src/interface/uds/controllers/subagent_teardown_controller.rs",
+            "src/interface/uds/mapping/subagent_teardown_mapping.rs",
+            "src/interface/uds/presenters/subagent_teardown_presenter.rs",
+            "src/interface/uds/wire/subagent_teardown_wire.rs",
+        ]
+        .into_iter()
+        .map(str::to_string),
+    );
     files.extend(
         [
             "src/interface/tools/agent_cmd_kill.rs",
             "src/interface/uds/controllers/uds_delete_all_subagents.rs",
-            "src/interface/cli/uds_busy_subagents.rs",
+            "src/interface/uds/controllers/uds_busy_subagents.rs",
             "src/interface/uds/framing/uds_shutdown.rs",
             "src/interface/uds/controllers/uds_dispatch_session.rs",
             "src/interface/uds/controllers/uds_parent_control.rs",
-            "src/interface/cli/uds_teardown_handles.rs",
+            "src/interface/uds/controllers/uds_teardown_handles.rs",
         ]
         .into_iter()
         .map(str::to_string),

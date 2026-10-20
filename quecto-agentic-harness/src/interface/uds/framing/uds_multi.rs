@@ -6,13 +6,13 @@
 //! shared `mpsc` channel → single dispatch loop (no concurrent session
 //! mutation).  Agent shuts down when all clients disconnect.
 
-use crate::application::agent_turn::agent_loop::AgentLoopImpl;
-use crate::application::sessions::dto::SaveTrigger;
+use crate::application::{agent_turn::agent_loop::AgentLoopImpl, sessions::dto::SaveTrigger};
 use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot;
 use crate::infrastructure::tools::agents::owner_exit::OwnerExitFlag;
 
-use super::super::wire::protocol::{self, AgentEvent};
+use super::super::presenters::subagent_info_list::build_live_subagent_info_list;
+use super::super::{controllers::uds_swarm_board::SwarmBoards, wire::protocol::AgentEvent};
 pub(in crate::interface) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
 use crate::interface::cli;
 pub(crate) use crate::interface::cli::uds_snapshots::StateSnapshot;
@@ -153,7 +153,7 @@ impl Drop for ClientGuard {
 pub(in crate::interface) async fn multi_client_loop(
     args: MultiClientArgs<'_>,
     listener: tokio::net::UnixListener,
-    sessions: &cli::uds_session_handles::SessionHandles,
+    sessions: &controllers::uds_session_handles::SessionHandles,
     catalogue: &cli::controllers::catalogue_handles::CatalogueHandles,
 ) -> i32 {
     let MultiClientArgs {
@@ -206,7 +206,7 @@ pub(in crate::interface) async fn multi_client_loop(
     );
     let state_snapshot: StateSnapshot =
         std::sync::Arc::new(tokio::sync::RwLock::new(initial_state));
-    let execution_state: cli::uds_execution_state::ExecutionStateHandle =
+    let execution_state: super::super::presenters::uds_execution_state::ExecutionStateHandle =
         std::sync::Arc::new(std::sync::Mutex::new(Default::default()));
     let session_stats_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
         cli::uds_session::compute_session_stats_with_usage(
@@ -235,7 +235,7 @@ pub(in crate::interface) async fn multi_client_loop(
     // #1679 P4: admission activity rides on `get_state` (revision folded into
     // the public cursor) and is pushed as `admission_state_changed`.
     if let Some(process) = crate::infrastructure::admission::process::current() {
-        cli::uds_admission_projection::attach_process_admission(
+        super::super::presenters::uds_admission_projection::attach_process_admission(
             &execution_state,
             &process,
             &broadcast_tx,
@@ -272,11 +272,11 @@ pub(in crate::interface) async fn multi_client_loop(
     clients::end_with_the_fleet(&extensions, harness_lifecycle.clone());
     // The board view's own handle (#2478): the boards the environment
     // control carries, once composition has installed it.
-    let swarm_boards = environment_control.clone().map(|slot| {
-        cli::uds_swarm_board::SwarmBoards::new(move || slot.get().map(|control| control.boards))
-    });
+    let swarm_boards = environment_control
+        .clone()
+        .map(|slot| SwarmBoards::new(move || slot.get().map(|control| control.boards)));
     let teardown = teardown_graph.map(|build| {
-        build(cli::uds_teardown_handles::TeardownLoopInputs {
+        build(controllers::uds_teardown_handles::TeardownLoopInputs {
             owner: crate::domain::identity::ids::AgentUuid::new(if session_key.is_empty() {
                 "harness".to_string()
             } else {
@@ -485,7 +485,7 @@ async fn run_dispatch_loop(
                     }
                 }
                 // Broadcast state_changed event to all UDS clients (#524).
-                let list = protocol::build_live_subagent_info_list(&ctx.subagent_registry);
+                let list = build_live_subagent_info_list(&ctx.subagent_registry);
                 let ev = AgentEvent::SubagentStateChanged { subagents: list };
                 emit_event_to_broadcast_or_writer(ctx, &ev).await;
                 // Auto-await (#816): this branch runs only while the parent is IDLE

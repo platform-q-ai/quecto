@@ -20,8 +20,8 @@ use quecto::domain::workflow::WorkflowRunPersisted;
 use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use quecto::infrastructure::workspace::git_scope_discovery::GitScopeDiscovery;
-use quecto::interface::cli::uds_session_handles::{SessionHandles, SessionLoopInputs};
-use quecto::interface::uds::sessions::controller::ListSessionsController;
+use quecto::interface::uds::controllers::sessions_controller::ListSessionsController;
+use quecto::interface::uds::controllers::uds_session_handles::{SessionHandles, SessionLoopInputs};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

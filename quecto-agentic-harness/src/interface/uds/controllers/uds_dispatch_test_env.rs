@@ -129,7 +129,7 @@ pub(super) struct DispatchTestEnv {
     /// `session_store` and its `list_sessions` handle see the same files.
     pub(super) store: super::dispatch_session_roster_tests::RigStore,
     /// The composed sessions handles built over `store` (#1970).
-    pub(super) sessions: crate::interface::cli::uds_session_handles::SessionHandles,
+    pub(super) sessions: crate::interface::uds::controllers::uds_session_handles::SessionHandles,
     pub(super) writer: tokio::io::Sink,
     pub(super) workflow: WorkflowStateHandle,
     pub(super) turn_control: crate::interface::uds::controllers::uds_cancel::TurnControlHandle,

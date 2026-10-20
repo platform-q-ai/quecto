@@ -11,6 +11,7 @@ use crate::interface::uds::controllers::uds::dispatch_session_roster_tests::{
     catalogue_handles, handles_over, read_handles_for, resolve_message,
 };
 use crate::interface::uds::controllers::uds::{DispatchCtx, dispatch_command};
+use crate::interface::uds::controllers::uds_busy_get_message;
 use crate::interface::uds::controllers::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::uds::controllers::uds_ext_protocol::{self, new_client_tool_registry};
 use crate::interface::uds::wire::protocol::AgentCommand;
@@ -136,7 +137,7 @@ struct Fixture {
     /// composed sessions graph), so the store the tests seed is the one the
     /// transactions run against; `ctx()` publishes the messages into it.
     store: Arc<crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore>,
-    handles: crate::interface::cli::uds_session_handles::SessionHandles,
+    handles: crate::interface::uds::controllers::uds_session_handles::SessionHandles,
     _tmp: tempfile::TempDir,
     cancel: CancelHandle,
 }
@@ -374,7 +375,7 @@ async fn get_message_busy_reassembles_all_bounded_pages_for_oversized_snapshot_m
     let mut range = TestRangeAccumulator::new(oversized);
 
     loop {
-        let parsed = crate::interface::cli::uds_busy_get_message::parse(
+        let parsed = uds_busy_get_message::parse(
             &serde_json::json!({
                 "type": "get_message",
                 "id": format!("busy-range-{}", range.pages()),
@@ -386,7 +387,7 @@ async fn get_message_busy_reassembles_all_bounded_pages_for_oversized_snapshot_m
         )
         .expect("busy range get_message parses");
 
-        crate::interface::cli::uds_busy_get_message::service(parsed, &snapshot, &registry, 7).await;
+        uds_busy_get_message::service(parsed, &snapshot, &registry, 7).await;
 
         let line = rx.recv().await.expect("busy resolver emits a response");
         if !range.apply_response(
@@ -548,8 +549,8 @@ async fn get_message_busy_recalls_full_content_for_collapsed_snapshot_message() 
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     uds_ext_protocol::register_client_writer(&registry, 7, tx);
 
-    crate::interface::cli::uds_busy_get_message::service(
-        crate::interface::cli::uds_busy_get_message::ParsedGetMessage {
+    uds_busy_get_message::service(
+        uds_busy_get_message::ParsedGetMessage {
             request_id: Some("busy-collapsed".into()),
             message_id: message_id.clone(),
             tool_call_id: None,
@@ -583,8 +584,8 @@ async fn get_message_busy_recalls_full_content_for_collapsed_snapshot_message() 
         "first lookup should consult spill store"
     );
 
-    crate::interface::cli::uds_busy_get_message::service(
-        crate::interface::cli::uds_busy_get_message::ParsedGetMessage {
+    uds_busy_get_message::service(
+        uds_busy_get_message::ParsedGetMessage {
             request_id: Some("busy-collapsed-cached".into()),
             message_id,
             tool_call_id: None,

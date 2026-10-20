@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::application::catalogue::use_cases::{
     ChangeActiveModel, ChangeReasoningEffort, RefreshCatalogueSources, ReloadRuntimeConfiguration,
 };
-use crate::interface::uds::catalogue::list_models_controller::ListModelsController;
+use crate::interface::uds::controllers::list_models_controller::ListModelsController;
 
 /// The composed `list_models` controller a dispatch loop holds.
 pub type ListModelsHandle = Arc<ListModelsController>;
@@ -84,7 +84,7 @@ impl std::fmt::Debug for RuntimeConfigurationInputs {
 /// The effort fields of a dispatch loop's state snapshot (#1848).
 pub(crate) fn effort_view(
     ctx: &crate::interface::uds::controllers::uds::DispatchCtx<'_>,
-) -> crate::interface::uds::catalogue::effort_presenter::EffortStateView {
+) -> crate::interface::uds::presenters::effort_presenter::EffortStateView {
     ctx.catalogue
         .effort_view(ctx.agent.effort(), ctx.session.model())
 }
@@ -96,8 +96,8 @@ impl CatalogueHandles {
         &self,
         current: Option<crate::domain::inference::value_objects::provider::EffortLevel>,
         model: &str,
-    ) -> crate::interface::uds::catalogue::effort_presenter::EffortStateView {
-        crate::interface::uds::catalogue::effort_presenter::EffortStateView::new(
+    ) -> crate::interface::uds::presenters::effort_presenter::EffortStateView {
+        crate::interface::uds::presenters::effort_presenter::EffortStateView::new(
             current,
             &self.effort.choices(model),
         )

@@ -9,7 +9,7 @@ use super::uds::DispatchCtx;
 /// renders the legacy wire shape. Nothing here parses `models.json` or
 /// constructs a use case.
 pub(super) fn list_models_response(ctx: &DispatchCtx<'_>) -> serde_json::Value {
-    crate::interface::uds::catalogue::list_models_presenter::render(
+    crate::interface::uds::presenters::list_models_presenter::render(
         &ctx.catalogue.list_models.list(),
     )
 }
@@ -38,7 +38,7 @@ pub fn refresh_models_data(
         Some(name) => RefreshSelection::Only(vec![name.to_string()]),
         None => RefreshSelection::All,
     };
-    crate::interface::uds::catalogue::refresh_presenter::render(
+    crate::interface::uds::presenters::refresh_presenter::render(
         &refresh.execute(&selection, UDS_REFRESH_BOUNDS),
     )
 }

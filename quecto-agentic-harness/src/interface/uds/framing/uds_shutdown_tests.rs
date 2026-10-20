@@ -11,9 +11,9 @@ use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
 use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
-use crate::interface::cli::uds_teardown_handles::TeardownLoopInputs;
+use crate::interface::uds::controllers::subagent_teardown_controller::ControllerOutcome;
 use crate::interface::uds::controllers::uds_cancel::{CancelHandle, CancelSlot, TurnControl};
-use crate::interface::uds::subagent_teardown::controller::ControllerOutcome;
+use crate::interface::uds::controllers::uds_teardown_handles::TeardownLoopInputs;
 
 /// A first signal that fires at once, repeats that never come, and a
 /// forced exit that would fail the test.
@@ -73,7 +73,7 @@ struct Rig {
     cancel: CancelHandle,
     notify: Arc<tokio::sync::Notify>,
     busy: super::super::uds_multi::BusyFlag,
-    graph: crate::interface::cli::uds_teardown_handles::TeardownHandles,
+    graph: crate::interface::uds::controllers::uds_teardown_handles::TeardownHandles,
 }
 
 /// The composed graph over a registry holding one script-managed member
@@ -378,7 +378,7 @@ async fn a_repeated_signal_past_the_budget_forces_the_exit() {
 
 #[test]
 fn the_settled_outcome_is_logged_by_its_kind_alone() {
-    use crate::interface::uds::subagent_teardown::presenter::AckWriteError;
+    use crate::interface::uds::presenters::subagent_teardown_presenter::AckWriteError;
     assert_eq!(super::summary(&ControllerOutcome::Ignored), "ignored");
     assert_eq!(
         super::summary(&ControllerOutcome::Rejected {

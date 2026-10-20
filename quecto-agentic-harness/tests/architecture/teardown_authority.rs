@@ -413,9 +413,8 @@ const NO_PID_FILES: &[&str] = &[
     "src/application/environments/use_cases/mod.rs",
     "src/application/environments/use_cases/list_environments.rs",
     "src/application/environments/use_cases/read_swarm_board.rs",
-    "src/interface/uds/subagent_teardown/mod.rs",
-    "src/interface/uds/subagent_teardown/mapping.rs",
-    "src/interface/uds/subagent_teardown/wire.rs",
+    "src/interface/uds/mapping/subagent_teardown_mapping.rs",
+    "src/interface/uds/wire/subagent_teardown_wire.rs",
     "src/application/subagents/use_cases/mod.rs",
     "src/application/subagents/use_cases/bounded_settlement.rs",
     "src/application/subagents/use_cases/kill_delegated_agent.rs",
@@ -463,14 +462,14 @@ const NO_PID_FILES: &[&str] = &[
     "src/application/swarm/ports/lifecycle.rs",
     "src/application/swarm/ports/mod.rs",
     "src/interface/tools/agent_cmd_kill.rs",
-    "src/interface/uds/subagent_teardown/controller.rs",
-    "src/interface/uds/subagent_teardown/presenter.rs",
+    "src/interface/uds/controllers/subagent_teardown_controller.rs",
+    "src/interface/uds/presenters/subagent_teardown_presenter.rs",
     "src/interface/uds/controllers/uds_delete_all_subagents.rs",
-    "src/interface/cli/uds_busy_subagents.rs",
+    "src/interface/uds/controllers/uds_busy_subagents.rs",
     "src/interface/uds/framing/uds_shutdown.rs",
     "src/interface/uds/controllers/uds_dispatch_session.rs",
-    "src/interface/cli/uds_teardown_adapters.rs",
-    "src/interface/cli/uds_teardown_handles.rs",
+    "src/interface/uds/controllers/uds_teardown_adapters.rs",
+    "src/interface/uds/controllers/uds_teardown_handles.rs",
     "src/composition/subagent_teardown.rs",
     "src/composition/subagent_termination.rs",
     "src/composition/subagent_lifecycle.rs",
@@ -519,7 +518,16 @@ fn teardown_paths_carry_no_pid() {
     let mut files = Vec::new();
     walk(Path::new("src/application/subagents"), &mut files);
     walk(Path::new("src/application/environments"), &mut files);
-    walk(Path::new("src/interface/uds/subagent_teardown"), &mut files);
+    files.extend(
+        [
+            "src/interface/uds/controllers/subagent_teardown_controller.rs",
+            "src/interface/uds/mapping/subagent_teardown_mapping.rs",
+            "src/interface/uds/presenters/subagent_teardown_presenter.rs",
+            "src/interface/uds/wire/subagent_teardown_wire.rs",
+        ]
+        .into_iter()
+        .map(str::to_string),
+    );
     for path in files.iter().filter(|p| !p.ends_with("_tests.rs")) {
         assert!(
             NO_PID_FILES.contains(&path.as_str()),

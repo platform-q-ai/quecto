@@ -5228,15 +5228,14 @@ fn teardown_interface_dependency_allowed(path: &str) -> bool {
     match parts.as_slice() {
         ["crate", "domain", ..]
         | ["crate", "application", "subagents", ..]
-        // Its own folders and the wire schema; never the dispatch loop's
-        // controllers (#2369 moved them under `uds`).
-        | [
-            "crate",
-            "interface",
-            "uds",
-            "subagent_teardown" | "parent_control" | "wire",
-            ..,
-        ] => true,
+        // Its own edge files and the wire schema; never the dispatch loop's
+        // controllers, which share its role folders since #2370.
+        | ["crate", "interface", "uds", "wire", ..] => true,
+        ["crate", "interface", "uds", "controllers" | "mapping" | "presenters", name, ..]
+            if TEARDOWN_EDGE_MODULES.contains(name) =>
+        {
+            true
+        }
         ["crate", ..] => false,
         ["super", "super", "super", ..] => false,
         ["tokio" | "quecto_line_io" | "reqwest" | "futures", ..] => false,
@@ -5307,16 +5306,75 @@ fn subagent_teardown_domain_is_pure() {
     }
 }
 
+/// The UDS edge files of each capability (#2370 folded the capability
+/// folders into the adapter's role folders): its module names, which the
+/// capability's own files may name, and the files each edge rule reads.
+const TEARDOWN_EDGE_MODULES: &[&str] = &[
+    "subagent_teardown_controller",
+    "subagent_teardown_mapping",
+    "subagent_teardown_presenter",
+];
+const TEARDOWN_EDGE_FILES: &[&str] = &[
+    "src/interface/uds/controllers/subagent_teardown_controller.rs",
+    "src/interface/uds/mapping/subagent_teardown_mapping.rs",
+    "src/interface/uds/presenters/subagent_teardown_presenter.rs",
+    "src/interface/uds/wire/subagent_teardown_wire.rs",
+    "src/interface/uds/wire/parent_control_wire.rs",
+];
+const SESSIONS_EDGE_MODULES: &[&str] = &[
+    "sessions_controller",
+    "export_report_controller",
+    "read_history_controller",
+    "recover_message_controller",
+    "resume_session_controller",
+    "rewind_conversation_controller",
+    "search_session_metadata_controller",
+    "synchronize_transcript_controller",
+];
+const CATALOGUE_EDGE_FILES: &[&str] = &[
+    "src/interface/uds/controllers/list_models_controller.rs",
+    "src/interface/uds/presenters/effort_presenter.rs",
+    "src/interface/uds/presenters/list_models_presenter.rs",
+    "src/interface/uds/presenters/model_presenter.rs",
+    "src/interface/uds/presenters/refresh_presenter.rs",
+    "src/interface/uds/presenters/reload_presenter.rs",
+    "src/interface/uds/mapping/persist_scope.rs",
+];
+
+/// The module name of an edge file: its basename without `.rs`.
+fn edge_module_name(file: &str) -> &str {
+    file.rsplit('/')
+        .next()
+        .and_then(|name| name.strip_suffix(".rs"))
+        .expect("edge files are named Rust sources")
+}
+
+fn sessions_edge_files() -> Vec<String> {
+    SESSIONS_EDGE_MODULES
+        .iter()
+        .map(|name| format!("src/interface/uds/controllers/{name}.rs"))
+        .collect()
+}
+
+/// As `assert_dependencies`, over named files rather than a folder: each
+/// listed file must exist, and every path it names must pass `allowed`.
+fn assert_file_dependencies<S: AsRef<str>>(files: &[S], allowed: fn(&str) -> bool) {
+    assert!(!files.is_empty(), "an edge rule must name its files");
+    for path in files.iter().map(AsRef::as_ref) {
+        let source =
+            fs::read_to_string(path).unwrap_or_else(|error| panic!("read {path}: {error}"));
+        let paths = dependency_paths(&source).unwrap_or_else(|| panic!("parse {path}"));
+        let violations: Vec<_> = paths.iter().filter(|dep| !allowed(dep)).collect();
+        assert!(
+            violations.is_empty(),
+            "{path} depends outward or on forbidden vocabulary: {violations:?}"
+        );
+    }
+}
+
 #[test]
 fn subagent_teardown_interface_only_parses_maps_and_presents() {
-    assert_dependencies(
-        "src/interface/uds/subagent_teardown",
-        teardown_interface_dependency_allowed,
-    );
-    assert_dependencies(
-        "src/interface/uds/parent_control",
-        teardown_interface_dependency_allowed,
-    );
+    assert_file_dependencies(TEARDOWN_EDGE_FILES, teardown_interface_dependency_allowed);
 }
 
 /// The UDS sessions edge (#1970) maps the wire command onto the sessions
@@ -5326,9 +5384,14 @@ fn subagent_teardown_interface_only_parses_maps_and_presents() {
 fn sessions_interface_dependency_allowed(path: &str) -> bool {
     let parts: Vec<_> = path.split("::").collect();
     match parts.as_slice() {
-        ["crate", "domain", ..]
-        | ["crate", "application", "sessions", "dto" | "use_cases", ..]
-        | ["crate", "interface", "uds", "sessions", ..] => true,
+        ["crate", "domain", ..] | ["crate", "application", "sessions", "dto" | "use_cases", ..] => {
+            true
+        }
+        ["crate", "interface", "uds", "controllers", name, ..]
+            if SESSIONS_EDGE_MODULES.contains(name) =>
+        {
+            true
+        }
         ["crate", ..] => false,
         ["super", "super", "super", ..] => false,
         ["tokio" | "quecto_line_io" | "reqwest" | "futures", ..] => false,
@@ -5348,8 +5411,20 @@ fn catalogue_interface_dependency_allowed(path: &str) -> bool {
     let parts: Vec<_> = path.split("::").collect();
     match parts.as_slice() {
         ["crate", "domain", ..]
-        | ["crate", "application", "catalogue", "dto" | "use_cases", ..]
-        | ["crate", "interface", "uds", "catalogue", ..] => true,
+        | ["crate", "application", "catalogue", "dto" | "use_cases", ..] => true,
+        [
+            "crate",
+            "interface",
+            "uds",
+            "controllers" | "mapping" | "presenters",
+            name,
+            ..,
+        ] if CATALOGUE_EDGE_FILES
+            .iter()
+            .any(|file| edge_module_name(file) == *name) =>
+        {
+            true
+        }
         ["crate", ..] => false,
         ["super", "super", "super", ..] => false,
         ["tokio" | "quecto_line_io" | "reqwest" | "futures", ..] => false,
@@ -5364,42 +5439,60 @@ fn catalogue_interface_dependency_allowed(path: &str) -> bool {
 
 #[test]
 fn catalogue_interface_only_parses_maps_and_presents() {
-    assert_dependencies(
-        "src/interface/uds/catalogue",
-        catalogue_interface_dependency_allowed,
-    );
+    assert_file_dependencies(CATALOGUE_EDGE_FILES, catalogue_interface_dependency_allowed);
 }
 
 #[test]
 fn sessions_interface_only_parses_maps_and_presents() {
-    assert_dependencies(
-        "src/interface/uds/sessions",
+    assert_file_dependencies(
+        &sessions_edge_files(),
         sessions_interface_dependency_allowed,
     );
-    // Every UDS edge directory is covered by exactly one of the edge rules;
-    // `framing` and `wire` are the delivery adapter's transport roles
-    // (#2368) and `controllers` its dispatch (#2369), held to the layout policy (`MIGRATED`) and the socket rules
+    // The adapter's role folders, held to the layout policy (`MIGRATED`):
+    // `framing` and `wire` are its transport roles (#2368), `controllers` its
+    // dispatch (#2369) and `presenters`/`mapping` its result and request
+    // mapping (#2370), with the socket rules
     // (`all_four_socket_consumers_read_via_the_shared_frame_reader`,
     // `multi_client_agent_announces_protocol_version_via_shared_helper`).
-    let mut edges: Vec<_> = fs::read_dir("src/interface/uds")
+    let mut roles: Vec<_> = fs::read_dir("src/interface/uds")
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_dir())
         .map(|e| e.file_name().to_string_lossy().to_string())
         .collect();
-    edges.sort();
+    roles.sort();
     assert_eq!(
-        edges,
+        roles,
         [
-            "catalogue",
             "controllers",
             "framing",
-            "parent_control",
-            "sessions",
-            "subagent_teardown",
+            "mapping",
+            "presenters",
+            "test_support",
             "wire"
         ]
     );
+    // Every capability controller, presenter and mapping in the role folders
+    // is held by exactly one edge rule.
+    let edge_files: Vec<String> = TEARDOWN_EDGE_FILES
+        .iter()
+        .chain(CATALOGUE_EDGE_FILES)
+        .map(|file| file.to_string())
+        .chain(sessions_edge_files())
+        .collect();
+    for role in ["controllers", "presenters", "mapping"] {
+        for entry in fs::read_dir(format!("src/interface/uds/{role}")).unwrap() {
+            let name = entry.unwrap().file_name().to_string_lossy().to_string();
+            let edge = ["_controller.rs", "_presenter.rs", "_mapping.rs"]
+                .iter()
+                .any(|suffix| name.ends_with(suffix));
+            if edge {
+                let path = format!("src/interface/uds/{role}/{name}");
+                let held = edge_files.iter().filter(|file| **file == path).count();
+                assert_eq!(held, 1, "{path} must be held by exactly one edge rule");
+            }
+        }
+    }
 }
 
 /// `pub trait` names declared in a source file, in declaration order.
@@ -5568,7 +5661,7 @@ fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
         "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
         "crate::application::sessions::ports::SessionStore",
         "crate::application::environments::use_cases::ListEnvironmentsQuery",
-        "crate::interface::uds::subagent_teardown::wire::TeardownResponse",
+        "crate::interface::uds::wire::subagent_teardown_wire::TeardownResponse",
         "tokio::sync::Notify",
         "serde_json::Value",
         "std::process::Command",
@@ -5606,7 +5699,7 @@ fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
     }
     for dep in [
         "crate::application::subagents::use_cases::PrepareHarnessShutdown",
-        "crate::interface::uds::subagent_teardown::wire::TeardownResponse",
+        "crate::interface::uds::wire::subagent_teardown_wire::TeardownResponse",
         "serde::Deserialize",
         "serde_json::from_str",
     ] {
@@ -5865,11 +5958,11 @@ const SUBAGENT_PROCESS_MODULES: &[&str] = &[
     "src/interface/uds/framing/uds_multi.rs",
     "src/interface/uds/framing/uds_multi_client.rs",
     "src/interface/uds/controllers/uds_parent_control.rs",
-    "src/interface/cli/uds_teardown_adapters.rs",
-    "src/interface/cli/uds_teardown_handles.rs",
+    "src/interface/uds/controllers/uds_teardown_adapters.rs",
+    "src/interface/uds/controllers/uds_teardown_handles.rs",
     "src/interface/uds/framing/uds_shutdown.rs",
     "src/interface/uds/controllers/uds_delete_all_subagents.rs",
-    "src/interface/cli/uds_busy_subagents.rs",
+    "src/interface/uds/controllers/uds_busy_subagents.rs",
     "src/interface/uds/controllers/uds_dispatch_session.rs",
     "src/composition/subagent_teardown.rs",
     "src/composition/subagent_lifecycle.rs",
@@ -6157,7 +6250,7 @@ fn termination_paths_never_consult_a_lease_or_a_pid() {
         "src/infrastructure/tools/agents/spawn_registry.rs",
         "src/infrastructure/tools/agents/process_tree.rs",
         "src/interface/uds/controllers/uds_delete_all_subagents.rs",
-        "src/interface/cli/uds_busy_subagents.rs",
+        "src/interface/uds/controllers/uds_busy_subagents.rs",
         "src/interface/uds/framing/uds_shutdown.rs",
         "src/interface/uds/controllers/uds_dispatch_session.rs",
         "src/interface/uds/framing/uds_multi.rs",
@@ -6476,7 +6569,7 @@ fn kill_result_vocabulary_is_graceful_fallback_already_exited_failed() {
 fn no_interface_registry_drain_remains_after_the_fleet_teardown() {
     for path in [
         "src/interface/uds/controllers/uds_delete_all_subagents.rs",
-        "src/interface/cli/uds_busy_subagents.rs",
+        "src/interface/uds/controllers/uds_busy_subagents.rs",
         "src/interface/uds/framing/uds_shutdown.rs",
         "src/interface/uds/controllers/uds_dispatch_session.rs",
         "src/interface/uds/framing/uds_multi.rs",
@@ -6558,7 +6651,7 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
             );
         }
     }
-    let handles = production_source("src/interface/cli/uds_teardown_handles.rs");
+    let handles = production_source("src/interface/uds/controllers/uds_teardown_handles.rs");
     assert!(handles.contains("pub fleet: Arc<TerminateAllDelegatedAgents>"));
     assert!(handles.contains("pub controller: Arc<SubagentTeardownController>"));
     let composition = production_source("src/composition/subagent_teardown.rs");

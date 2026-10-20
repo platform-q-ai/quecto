@@ -5,8 +5,8 @@ use cucumber::then;
 use quecto::application::subagents::dto::{ReleaseOutcome, TerminationRouted};
 use quecto::domain::agents::services::subagent_teardown::{LaunchGeneration, ShutdownReason};
 use quecto::domain::identity::ids::AgentUuid;
-use quecto::interface::uds::subagent_teardown::controller::ControllerOutcome;
-use quecto::interface::uds::subagent_teardown::presenter::AckWriteError;
+use quecto::interface::uds::controllers::subagent_teardown_controller::ControllerOutcome;
+use quecto::interface::uds::presenters::subagent_teardown_presenter::AckWriteError;
 
 use crate::QuectoWorld;
 use crate::common::teardown_fixture::{Call, identity};

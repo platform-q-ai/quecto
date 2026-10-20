@@ -1,6 +1,8 @@
-use super::uds_execution_state::{ExecutionSnapshot, ProgressSummary, ToolSummary};
 use super::uds_state_projection::{
     slim_progress, slim_state_projection, slim_state_response_data, slim_workflow,
+};
+use crate::interface::uds::presenters::uds_execution_state::{
+    ExecutionSnapshot, ProgressSummary, ToolSummary,
 };
 use crate::interface::uds::wire::protocol::SessionState;
 
@@ -397,7 +399,7 @@ fn get_state_carries_the_startup_warnings() {
         0,
         None,
         0,
-        crate::interface::uds::catalogue::effort_presenter::EffortStateView::new(None, &[]),
+        crate::interface::uds::presenters::effort_presenter::EffortStateView::new(None, &[]),
     );
     let data = slim_state_response_data(&state, None);
     assert_eq!(data["startupWarnings"], serde_json::json!([warning]));
@@ -407,7 +409,7 @@ fn get_state_carries_the_startup_warnings() {
         0,
         None,
         0,
-        crate::interface::uds::catalogue::effort_presenter::EffortStateView::new(None, &[]),
+        crate::interface::uds::presenters::effort_presenter::EffortStateView::new(None, &[]),
     );
     assert!(
         slim_state_response_data(&state, None)
@@ -423,7 +425,7 @@ fn get_state_carries_the_startup_warnings() {
 #[test]
 fn a_model_switch_clears_the_startup_warnings_of_the_previous_model() {
     let view =
-        || crate::interface::uds::catalogue::effort_presenter::EffortStateView::new(None, &[]);
+        || crate::interface::uds::presenters::effort_presenter::EffortStateView::new(None, &[]);
     let mut session = super::uds_session::AgentSession::new("openai-oauth/gpt-5.5".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     session
         .set_startup_warnings(&["agent: warning: model `openai-oauth/gpt-5.5` was retired".into()]);

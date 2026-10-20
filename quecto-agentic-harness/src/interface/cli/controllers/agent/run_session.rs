@@ -9,7 +9,7 @@ use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::file::crash_record;
 
-use crate::interface::cli::uds_session_handles::SessionLoopInputs;
+use crate::interface::uds::controllers::uds_session_handles::SessionLoopInputs;
 
 pub(crate) fn run_agent_session(
     base_dir: &std::path::Path,

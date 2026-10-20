@@ -3,7 +3,7 @@
 //! rendering of the change-active-model plan's verdict over the published
 //! runtime generation, so these pin the wire-visible shape of every verdict.
 
-use crate::interface::uds::catalogue::model_presenter::render_verdict;
+use crate::interface::uds::presenters::model_presenter::render_verdict;
 
 fn write_models_json(dir: &std::path::Path, body: &str) {
     std::fs::write(dir.join("models.json"), body).unwrap();

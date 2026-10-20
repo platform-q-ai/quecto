@@ -25,13 +25,13 @@ use crate::infrastructure::persistence::file::sessions::session_snapshot_sources
     RegistryRosterSource, WorkflowEngineRunSource,
 };
 use crate::infrastructure::tools::agents::delegated_roster::RegistryDelegatedRoster;
-use crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles;
-use crate::interface::cli::uds_session_handles::{
+use crate::interface::uds::controllers::read_history_controller::ReadHistoryController;
+use crate::interface::uds::controllers::recover_message_controller::RecoverMessageController;
+use crate::interface::uds::controllers::synchronize_transcript_controller::SynchronizeTranscriptController;
+use crate::interface::uds::controllers::uds_discovery_handles::SessionDiscoveryHandles;
+use crate::interface::uds::controllers::uds_session_handles::{
     ConversationRewriteHandles, SessionHandles, SessionLoopInputs, SessionSwitchHandles,
 };
-use crate::interface::uds::sessions::read_history_controller::ReadHistoryController;
-use crate::interface::uds::sessions::recover_message_controller::RecoverMessageController;
-use crate::interface::uds::sessions::synchronize_transcript_controller::SynchronizeTranscriptController;
 
 /// The handles of a loop opened on `inputs.identity` with the loop's
 /// retention backstop, injected prompt, dirty latch, workflow and roster

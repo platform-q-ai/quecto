@@ -440,7 +440,7 @@ impl AgentSession {
         message_count: usize,
         workflow: Option<serde_json::Value>,
         max_context_tokens: usize,
-        effort: impl Into<crate::interface::uds::catalogue::effort_presenter::EffortStateView>,
+        effort: impl Into<crate::interface::uds::presenters::effort_presenter::EffortStateView>,
     ) -> SessionState {
         let effort = effort.into();
         SessionState {

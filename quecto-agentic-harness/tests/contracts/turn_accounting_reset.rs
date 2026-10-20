@@ -7,9 +7,11 @@ use quecto::application::agent_turn::agent_loop::UsageTotals;
 use std::sync::{Arc, Mutex};
 
 use quecto::application::sessions::ports::session_runtime::TurnAccountingReset;
-use quecto::interface::cli::uds_execution_state::{ExecutionState, ExecutionStateHandle};
 use quecto::interface::cli::uds_session::AgentSession;
-use quecto::interface::cli::uds_turn_accounting::LoopTurnAccounting;
+use quecto::interface::uds::controllers::uds_turn_accounting::LoopTurnAccounting;
+use quecto::interface::uds::presenters::uds_execution_state::{
+    ExecutionState, ExecutionStateHandle,
+};
 
 fn accounted_session() -> AgentSession {
     let mut session = AgentSession::new("model".into(), quecto::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());

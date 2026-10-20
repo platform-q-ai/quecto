@@ -63,7 +63,7 @@ impl Tool for CatalogueFixtureTool {
         })
     }
 }
-use crate::interface::uds::sessions::recover_message_controller::GetMessageFields;
+use crate::interface::uds::controllers::recover_message_controller::GetMessageFields;
 use crate::interface::uds::wire::protocol::{AgentCommand, HISTORY_PAGE_SIZE};
 
 /// The idle `get_message` path: the composed recovery owner over the rig's
@@ -99,7 +99,8 @@ pub(crate) struct Fx {
     agent: AgentLoopImpl,
     messages: Vec<Message>,
     session: AgentSession,
-    pub(crate) execution_state: crate::interface::cli::uds_execution_state::ExecutionStateHandle,
+    pub(crate) execution_state:
+        crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle,
     session_key: String,
     store: Arc<FileSessionStore>,
     _tmp: tempfile::TempDir,
