@@ -261,6 +261,7 @@ async fn a_model_switch_forgets_the_observed_scale() {
             context_window: None,
             prompt_limit: Default::default(),
             image_input: Default::default(),
+            price: None,
         },
     );
 

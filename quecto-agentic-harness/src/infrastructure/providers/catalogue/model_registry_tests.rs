@@ -148,10 +148,10 @@ fn builtin_claude_sonnet_5_resolves_for_api_key_and_oauth_with_published_limits(
     assert_eq!(api_model.context_window, 1_000_000);
     assert_eq!(api_model.max_tokens, 128_000);
     assert!(api_model.max_tokens_explicit);
-    assert_eq!(api_model.cost.input, 3.0);
-    assert_eq!(api_model.cost.output, 15.0);
-    assert_eq!(api_model.cost.cache_read, 0.3);
-    assert_eq!(api_model.cost.cache_write, 3.75);
+    assert_eq!(api_model.cost.input, 2.0);
+    assert_eq!(api_model.cost.output, 10.0);
+    assert_eq!(api_model.cost.cache_read, 0.2);
+    assert_eq!(api_model.cost.cache_write, 2.5);
 
     let oauth_model = registry
         .find("anthropic-oauth", "claude-sonnet-5")
@@ -174,10 +174,11 @@ fn builtin_claude_sonnet_5_resolves_for_api_key_and_oauth_with_published_limits(
     assert_eq!(oauth_model.context_window, 1_000_000);
     assert_eq!(oauth_model.max_tokens, 128_000);
     assert!(oauth_model.max_tokens_explicit);
-    assert_eq!(oauth_model.cost.input, 3.0);
-    assert_eq!(oauth_model.cost.output, 15.0);
-    assert_eq!(oauth_model.cost.cache_read, 0.3);
-    assert_eq!(oauth_model.cost.cache_write, 3.75);
+    // #2441: Sonnet 5's $2/$10 launch price is its standard one.
+    assert_eq!(oauth_model.cost.input, 2.0);
+    assert_eq!(oauth_model.cost.output, 10.0);
+    assert_eq!(oauth_model.cost.cache_read, 0.2);
+    assert_eq!(oauth_model.cost.cache_write, 2.5);
 }
 
 #[test]
@@ -234,12 +235,18 @@ fn builtin_openai_reasoning_tiers_resolve_for_api_key_and_oauth_with_published_l
             // Existing tiers use 0.10x input for cache read; 6.1-sol publishes $0.10/1M.
             assert_eq!(m.cost.input, input, "{id} input price");
             assert_eq!(m.cost.output, output, "{id} output price");
-            assert_eq!(
-                m.cost.cache_read,
-                cache_read.unwrap_or(input * 0.10),
-                "{id} cache-read price"
+            // The table states each rate; the published ratios hold to rounding.
+            let near = |actual: f64, expected: f64| (actual - expected).abs() < 1e-9;
+            assert!(
+                near(m.cost.cache_read, cache_read.unwrap_or(input * 0.10)),
+                "{id} cache-read price {}",
+                m.cost.cache_read
             );
-            assert_eq!(m.cost.cache_write, input * 1.25, "{id} cache-write price");
+            assert!(
+                near(m.cost.cache_write, input * 1.25),
+                "{id} cache-write price {}",
+                m.cost.cache_write
+            );
         }
     }
     // Auth modes are wired per listing.
@@ -253,10 +260,10 @@ fn builtin_openai_reasoning_tiers_resolve_for_api_key_and_oauth_with_published_l
 }
 
 /// Guards the id-string coupling between `builtin_specs()` and
-/// `gpt_5_6_cost`: the enrichment in `build_builtin` is keyed by literal id
+/// `gpt_5_6_tier`: the enrichment in `build_builtin` is keyed by literal id
 /// match, so a tier added or renamed in one table but not the other would
-/// otherwise silently ship with default limits, `reasoning = false`, and
-/// zero pricing. This walks every built-in `gpt-5.6*` id rather than a
+/// otherwise silently ship with default limits and `reasoning = false`; its
+/// price is the one table's (`model_registry_prices.rs`, #1855). This walks every built-in `gpt-5.6*` id rather than a
 /// hardcoded list, failing loudly on drift.
 #[test]
 fn every_builtin_gpt_5_6_id_has_pricing_and_enriched_limits() {
@@ -270,10 +277,9 @@ fn every_builtin_gpt_5_6_id_has_pricing_and_enriched_limits() {
     for m in tiers {
         let id = &m.id;
         assert!(
-            super::gpt_5_6_cost(id).is_some(),
-            "{id} is in builtin_specs() but gpt_5_6_cost has no entry for it; \
-             add it there so the model does not ship with default limits and \
-             zero pricing"
+            super::gpt_5_6_tier(id),
+            "{id} is in builtin_specs() but gpt_5_6_tier has no entry for it; \
+             add it there so the model does not ship with default limits"
         );
         assert!(m.reasoning, "{id} enrichment not applied: reasoning");
         assert!(

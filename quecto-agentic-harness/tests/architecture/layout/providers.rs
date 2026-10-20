@@ -102,6 +102,7 @@ const FOLDERS: &[(&str, &[&str])] = &[
             "model_registry.rs",
             "model_registry_builtin_tables.rs",
             "model_registry_file.rs",
+            "model_registry_prices.rs",
         ],
     ),
 ];

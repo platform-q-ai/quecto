@@ -1943,10 +1943,31 @@ fn when_calculate_cost(world: &mut QuectoWorld) {
         context_tokens: None,
         cost: None,
     };
-    if let Some(pricing) =
-        quecto::domain::conversation::value_objects::message::model_pricing(&model)
-    {
-        let cost = pricing.cost_for(&usage);
+    // #1855: the catalogue is the one price authority. A model declared in
+    // `models.json` by id alone is priced from the published table.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("models.json");
+    let declared = serde_json::json!({"providers": {"anthropic-api": {
+        "api": "anthropic-messages",
+        "models": [{"id": model}]
+    }}});
+    std::fs::write(&path, declared.to_string()).expect("write models.json");
+    let registry =
+        quecto::infrastructure::providers::catalogue::model_registry::ModelRegistry::load_from_path(
+            &path,
+        )
+        .expect("models.json loads");
+    let record = registry.find("anthropic-api", &model).expect("declared");
+    // The catalogue hands the domain the record's cost as a model fact.
+    let cost = quecto::domain::catalogue::value_objects::model_facts::ModelCost {
+        input: record.cost.input,
+        output: record.cost.output,
+        cache_read: record.cost.cache_read,
+        cache_write: record.cost.cache_write,
+    };
+    let price = quecto::domain::inference::value_objects::model_price::ModelPrice::of(&cost);
+    if let Some(price) = price {
+        let cost = price.cost_of(&usage);
         world
             .env_overrides
             .insert("_cost_total".into(), cost.total_cost_usd().to_string());

@@ -14,6 +14,7 @@
 //! [`ModelDefaultPersistence`] port this use case owns. The record comes
 //! before the apply: a refused record leaves the session as it was.
 
+use crate::domain::inference::value_objects::model_price::ModelPrice;
 use std::sync::Arc;
 
 use crate::application::catalogue::dto::{
@@ -336,6 +337,7 @@ impl ChangeActiveModel {
                 &capabilities.input_modalities,
                 &entry.provider.transport,
             ),
+            price: ModelPrice::of(&capabilities.cost),
         }
     }
 }

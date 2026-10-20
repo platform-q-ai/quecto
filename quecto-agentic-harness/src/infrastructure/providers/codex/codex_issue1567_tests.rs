@@ -40,8 +40,6 @@ async fn test_codex_provider_success() {
     assert_eq!(usage.prompt_tokens, 3);
     assert_eq!(usage.completion_tokens, 5);
     assert_eq!(usage.cache_read_tokens, Some(7));
-    assert_eq!(
-        usage.cost.expect("gpt-5.6 pricing").total_cost_micro_usd,
-        33
-    );
+    // #1855: the provider reports usage; the turn prices it.
+    assert!(usage.cost.is_none(), "the provider prices nothing");
 }

@@ -9,7 +9,7 @@
 //!   ([`last_line`]);
 //! - usage a cut-short reply reported is still counted
 //!   ([`UnfinishedReply`]).
-use crate::domain::conversation::value_objects::message::{LlmResponse, UsageInfo};
+use crate::domain::conversation::value_objects::message::UsageInfo;
 use crate::domain::inference::events::request_observation::RequestTrace;
 use crate::domain::shared::error::DomainError;
 
@@ -71,10 +71,10 @@ impl UnfinishedReply {
         Self { error, usage: None }
     }
 
-    /// The reply's error, its usage (priced for `model`) recorded on
-    /// `trace` first so the tokens spent are still counted.
-    pub(crate) fn account(self, trace: Option<&RequestTrace>, model: &str) -> DomainError {
-        record_unfinished_usage(trace, self.usage, model);
+    /// The reply's error, its usage recorded on `trace` first so the
+    /// tokens spent are still counted (the trace costs them, #1855).
+    pub(crate) fn account(self, trace: Option<&RequestTrace>) -> DomainError {
+        record_unfinished_usage(trace, self.usage);
         self.error
     }
 
@@ -91,23 +91,10 @@ impl From<DomainError> for UnfinishedReply {
     }
 }
 
-/// Record `usage` a cut-short reply reported on `trace`, priced for
-/// `model`; nothing without both.
-pub(crate) fn record_unfinished_usage(
-    trace: Option<&RequestTrace>,
-    usage: Option<UsageInfo>,
-    model: &str,
-) {
+/// Record `usage` a cut-short reply reported on `trace`, which costs it at
+/// the request's catalogue price (#1855); nothing without both.
+pub(crate) fn record_unfinished_usage(trace: Option<&RequestTrace>, usage: Option<UsageInfo>) {
     if let (Some(trace), Some(usage)) = (trace, usage) {
-        let mut priced = LlmResponse {
-            content: None,
-            tool_calls: Vec::new(),
-            usage: Some(usage),
-            stop_reason: None,
-            thinking_blocks: Vec::new(),
-        };
-        crate::domain::inference::services::usage_accounting::attach_cost(&mut priced, model);
-        let usage = priced.usage.expect("the usage just set is kept");
         trace.record_unfinished_usage(usage);
     }
 }

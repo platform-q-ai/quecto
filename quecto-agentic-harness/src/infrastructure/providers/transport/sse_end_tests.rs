@@ -59,10 +59,10 @@ fn unfinished_usage_is_recorded_only_with_a_trace_and_usage() {
         error: DomainError::Provider("cut".into()),
         usage: Some(usage.clone()),
     };
-    assert!(matches!(reply.account(Some(&trace), "m"), DomainError::Provider(m) if m == "cut"));
+    assert!(matches!(reply.account(Some(&trace)), DomainError::Provider(m) if m == "cut"));
     assert_eq!(trace.unfinished_usage().len(), 1);
     assert_eq!(trace.unfinished_usage()[0].prompt_tokens, 7);
-    record_unfinished_usage(None, Some(usage), "m");
-    record_unfinished_usage(Some(&trace), None, "m");
+    record_unfinished_usage(None, Some(usage));
+    record_unfinished_usage(Some(&trace), None);
     assert_eq!(trace.unfinished_usage().len(), 1);
 }

@@ -1,15 +1,6 @@
-use crate::domain::conversation::value_objects::message::{LlmResponse, UsageInfo};
-use crate::domain::inference::services::usage_accounting::{attach_cost, cache_hit_ratio};
-
-fn response_with_usage(usage: UsageInfo) -> LlmResponse {
-    LlmResponse {
-        content: Some("ok".to_string()),
-        tool_calls: Vec::new(),
-        usage: Some(usage),
-        stop_reason: None,
-        thinking_blocks: Vec::new(),
-    }
-}
+use crate::domain::conversation::value_objects::message::UsageInfo;
+use crate::domain::inference::services::usage_accounting::{cache_hit_ratio, price};
+use crate::domain::inference::value_objects::model_price::ModelPrice;
 
 fn normalized_usage() -> UsageInfo {
     UsageInfo {
@@ -31,13 +22,21 @@ fn cache_hit_ratio_uses_shared_normalized_denominator() {
     assert_eq!(cache_hit_ratio(70, 30, 5), Some(30.0 / 105.0));
 }
 
+/// GPT-5.6 Luna's catalogue rates ($1 in, $6 out, $0.10 read, $1.25 write).
+fn luna() -> ModelPrice {
+    ModelPrice {
+        input: 1_000_000,
+        output: 6_000_000,
+        cache_read: 100_000,
+        cache_write: 1_250_000,
+    }
+}
+
 #[test]
-fn attach_cost_prices_normalized_openai_usage() {
-    let mut response = response_with_usage(normalized_usage());
-
-    attach_cost(&mut response, "gpt-5.6-luna");
-
-    let cost = response.usage.unwrap().cost.expect("gpt-5.6 pricing");
+fn usage_is_costed_at_the_catalogue_price() {
+    let mut usage = normalized_usage();
+    price(&mut usage, Some(luna()));
+    let cost = usage.cost.expect("priced");
     assert_eq!(cost.input_cost_micro_usd, 70);
     assert_eq!(cost.output_cost_micro_usd, 120);
     assert_eq!(cost.cache_read_cost_micro_usd, 3);
@@ -46,30 +45,13 @@ fn attach_cost_prices_normalized_openai_usage() {
 }
 
 #[test]
-fn attach_cost_leaves_unknown_model_cost_absent_but_preserves_usage() {
-    let mut response = response_with_usage(normalized_usage());
-
-    attach_cost(&mut response, "unknown-openai-model");
-
-    let usage = response.usage.unwrap();
+fn a_model_without_a_price_leaves_usage_uncosted_and_whole() {
+    let mut usage = normalized_usage();
+    usage.cost = Some(luna().cost_of(&usage));
+    price(&mut usage, None);
     assert_eq!(usage.prompt_tokens, 70);
     assert_eq!(usage.completion_tokens, 20);
     assert_eq!(usage.cache_read_tokens, Some(30));
     assert_eq!(usage.context_tokens, Some(105));
-    assert!(usage.cost.is_none());
-}
-
-#[test]
-fn attach_cost_noops_without_usage() {
-    let mut response = LlmResponse {
-        content: None,
-        tool_calls: Vec::new(),
-        usage: None,
-        stop_reason: None,
-        thinking_blocks: Vec::new(),
-    };
-
-    attach_cost(&mut response, "gpt-5.6-luna");
-
-    assert!(response.usage.is_none());
+    assert!(usage.cost.is_none(), "no price, no cost: never a stale one");
 }

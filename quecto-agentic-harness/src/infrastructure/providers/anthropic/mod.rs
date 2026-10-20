@@ -19,7 +19,6 @@ use crate::domain::conversation::services::visible_thinking::append_visible_thin
 use crate::domain::conversation::value_objects::message::{
     LlmResponse, Message, Role, StopReason, ThinkingBlock, ToolCall,
 };
-use crate::domain::inference::services::usage_accounting;
 use crate::domain::inference::value_objects::provider::{EffortLevel, StreamEvent, ToolChoice};
 use crate::domain::shared::error::DomainError;
 use claude_code::{CLAUDE_CODE_VERSION, sanitize_surrogates, to_claude_code_name};
@@ -436,9 +435,7 @@ impl AnthropicProvider {
                     let json = serde_json::from_str(text).map_err(|e| {
                         DomainError::Provider(format!("failed to parse response JSON: {e}"))
                     })?;
-                    let mut parsed = Self::parse_response(&json, is_oauth, tools_snapshot)?;
-                    usage_accounting::attach_cost(&mut parsed, &model);
-                    Ok(parsed)
+                    Self::parse_response(&json, is_oauth, tools_snapshot)
                 },
             )
             .await;
@@ -455,9 +452,7 @@ impl AnthropicProvider {
         let response_json: serde_json::Value = serde_json::from_str(&response_text)
             .map_err(|e| DomainError::Provider(format!("failed to parse response JSON: {}", e)))?;
 
-        let mut resp = Self::parse_response(&response_json, is_oauth, tools_snapshot)?;
-        usage_accounting::attach_cost(&mut resp, &model);
-        Ok(resp)
+        Self::parse_response(&response_json, is_oauth, tools_snapshot)
     }
 
     /// Send a streamed request once and assemble its reply.
@@ -484,25 +479,20 @@ impl AnthropicProvider {
                 builder,
                 Profile::new(&ANTHROPIC_WIRE, Surface::Assembled, self.stream_idle),
                 |raw| {
-                    let mut parsed = Self::parse_sse_reply(raw, tools_snapshot)
-                        .map_err(|cut| cut.account(trace.as_deref(), model))?;
-                    usage_accounting::attach_cost(&mut parsed, model);
-                    Ok(parsed)
+                    Self::parse_sse_reply(raw, tools_snapshot)
+                        .map_err(|cut| cut.account(trace.as_deref()))
                 },
             )
             .await;
         }
-        let mut resp = self
-            .stream_chat_with_body(anthropic_sse::StreamParams {
-                body,
-                url,
-                model,
-                tool_defs: tools_snapshot,
-                trace,
-            })
-            .await?;
-        usage_accounting::attach_cost(&mut resp, model);
-        Ok(resp)
+        self.stream_chat_with_body(anthropic_sse::StreamParams {
+            body,
+            url,
+            model,
+            tool_defs: tools_snapshot,
+            trace,
+        })
+        .await
     }
 }
 
