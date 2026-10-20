@@ -129,7 +129,7 @@ async fn coordinator_connection_closed_retains_environment_and_pauses_run() {
         &registry,
         "coordinator-1",
         &test_observer(&registry),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -187,7 +187,7 @@ async fn plain_container_child_connection_closed_keeps_the_final_member_kill() {
         &registry,
         "coordinator-1",
         &test_observer(&registry),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -211,7 +211,7 @@ async fn environment_without_a_store_keeps_the_final_member_kill() {
         &registry,
         "coordinator-1",
         &test_observer(&registry),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -241,7 +241,7 @@ async fn coordinator_connection_closed_after_an_orderly_end_retains_without_a_lo
         &registry,
         "coordinator-1",
         &test_observer(&registry),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -286,7 +286,7 @@ async fn unreadable_store_maps_to_unreadable_and_retains_the_environment() {
         &registry,
         "coordinator-1",
         &test_observer(&registry),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -322,7 +322,7 @@ async fn rejected_checkout_keeps_the_box(advertised: impl FnOnce(&std::path::Pat
         &registry,
         "coordinator-1",
         &test_observer(&registry),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -384,7 +384,7 @@ async fn checkout_under_the_workspace_is_opened() {
         &registry,
         "coordinator-1",
         &test_observer(&registry),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -462,7 +462,7 @@ async fn exit_and_reason(
         registry,
         "coordinator-1",
         &test_observer(registry),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
     let record = environments.get(env_ref).unwrap();

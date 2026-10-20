@@ -5,7 +5,8 @@ use std::time::Duration;
 use super::*;
 use crate::application::subagents::dto::FleetChildResult;
 use crate::application::subagents::ports::{
-    ConclusionBudget, DownstreamRejection, ProtocolAttempt, TerminationConclusion,
+    child_routing::DownstreamRejection,
+    owned_child_termination::{ConclusionBudget, ProtocolAttempt, TerminationConclusion},
 };
 use crate::application::subagents::use_cases::lifecycle_fakes::Phase;
 use crate::application::subagents::use_cases::teardown_fakes::*;

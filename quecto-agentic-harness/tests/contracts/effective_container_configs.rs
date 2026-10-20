@@ -12,8 +12,10 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use quecto::application::configuration::dto::{ConfigLayers, ConfigSelection, OverlayTrustRequest};
-use quecto::application::subagents::dto::{ContainerConfigSource, ContainerConfigsError};
-use quecto::application::subagents::ports::EffectiveContainerConfigs;
+use quecto::application::subagents::dto::container_config::{
+    ContainerConfigSource, ContainerConfigsError,
+};
+use quecto::application::subagents::ports::container_configs::EffectiveContainerConfigs;
 use quecto::composition::container_configs::build_effective_container_configs;
 
 fn entry(default: bool, marker: &str) -> serde_json::Value {

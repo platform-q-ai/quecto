@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use quecto::application::subagents::dto::PersistenceOutcome;
-use quecto::application::subagents::ports::ShutdownSessionPersistence;
+use quecto::application::subagents::ports::harness_shutdown::ShutdownSessionPersistence;
 use quecto::domain::agents::services::subagent_teardown::ShutdownReason;
 
 use super::teardown_fixture::{Harness, Persistence, root_tree};

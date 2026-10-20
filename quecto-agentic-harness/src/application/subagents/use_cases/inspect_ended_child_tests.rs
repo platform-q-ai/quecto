@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::subagents::ports::{EndedTranscript, PortFuture};
+use crate::application::subagents::ports::{PortFuture, ended_child_records::EndedTranscript};
 use crate::domain::agents::value_objects::child_end::ChildOrigin::{
     Launched, Reported, Unverified,
 };

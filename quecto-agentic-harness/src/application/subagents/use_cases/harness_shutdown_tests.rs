@@ -6,7 +6,7 @@ use crate::application::subagents::dto::{
     HarnessShutdownError, PersistenceOutcome, PrepareShutdownRequest, ReleaseOutcome,
     ShutdownTrigger,
 };
-use crate::application::subagents::ports::ExitReadiness;
+use crate::application::subagents::ports::harness_shutdown::ExitReadiness;
 use crate::domain::agents::services::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 use crate::domain::identity::ids::AgentUuid;
 
@@ -156,7 +156,7 @@ async fn execute_detaches_the_run_and_records_the_common_teardown_in_order() {
     assert_eq!(causes.len(), 2);
     assert!(
         causes.iter().all(|(_, cause)| *cause
-            == crate::application::subagents::ports::TerminationCause::FleetTeardown),
+            == crate::application::subagents::ports::delegated_agent_registry::TerminationCause::FleetTeardown),
         "{causes:?}"
     );
     assert_eq!(outcome.persistence, PersistenceOutcome::Persisted);
@@ -437,7 +437,7 @@ async fn child_and_persistence_failures_are_reported_not_fatal() {
         .push(AgentUuid::new("A"));
     rig.fleet.termination.conclude_child_with(
         "A",
-        crate::application::subagents::ports::TerminationConclusion::StillRunning(
+        crate::application::subagents::ports::owned_child_termination::TerminationConclusion::StillRunning(
             "no exit observed".into(),
         ),
     );
@@ -464,7 +464,7 @@ async fn child_and_persistence_failures_are_reported_not_fatal() {
         .unwrap();
     assert_eq!(
         a_attempt,
-        crate::application::subagents::ports::ProtocolAttempt::Negative(
+        crate::application::subagents::ports::owned_child_termination::ProtocolAttempt::Negative(
             "unreachable: socket closed".into()
         )
     );

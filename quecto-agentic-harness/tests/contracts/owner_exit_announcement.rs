@@ -5,7 +5,9 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use quecto::application::subagents::ports::{OwnerExitAnnouncement, TerminationCause};
+use quecto::application::subagents::ports::{
+    delegated_agent_registry::TerminationCause, harness_shutdown::OwnerExitAnnouncement,
+};
 use quecto::domain::agents::services::subagent_teardown::ShutdownReason;
 
 use super::teardown_fixture::{Harness, OwnerExit, root_tree};

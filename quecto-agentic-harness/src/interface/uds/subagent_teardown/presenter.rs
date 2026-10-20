@@ -5,10 +5,10 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::application::subagents::dto::{
-    HarnessShutdownError, PreparedShutdown, TerminateDelegatedAgentError, TerminationResult,
-    TerminationRouted,
+    HarnessShutdownError, PreparedShutdown, TerminateDelegatedAgentError, TerminationRouted,
 };
-use crate::application::subagents::ports::DownstreamRejection;
+use crate::application::subagents::ports::child_routing::DownstreamRejection;
+use crate::application::subagents::ports::child_routing::TerminationResult;
 use crate::domain::agents::services::subagent_teardown::TerminationRouteError;
 
 use super::wire::{

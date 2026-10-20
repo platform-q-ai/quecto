@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 use super::rig::*;
 use super::*;
 use crate::application::subagents::dto::TerminationRouted;
-use crate::application::subagents::ports::SubagentLifecycleRepository;
+use crate::application::subagents::ports::harness_shutdown::SubagentLifecycleRepository;
 use crate::application::subagents::use_cases::teardown_fakes::*;
 use crate::domain::agents::services::subagent_teardown::{
     HarnessLifecycleState, LineageSnapshot, RoutingDepth, ShutdownReason,

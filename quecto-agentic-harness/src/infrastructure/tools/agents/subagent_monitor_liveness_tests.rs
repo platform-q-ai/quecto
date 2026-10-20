@@ -92,14 +92,14 @@ async fn repeated_death_signals_trigger_one_inspect_and_one_terminal_transition(
         &registry,
         "agent-1",
         &test_observer(&registry, None),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
     notify_child_exited(
         &registry,
         "agent-1",
         &test_observer(&registry, None),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
 
@@ -141,14 +141,14 @@ async fn duplicate_signals_after_inspect_failure_still_inspect_once() {
         &registry,
         "agent-2",
         &test_observer(&registry, None),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
     notify_child_exited(
         &registry,
         "agent-2",
         &test_observer(&registry, None),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
 

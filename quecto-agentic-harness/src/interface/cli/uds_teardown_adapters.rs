@@ -13,9 +13,12 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
 use crate::application::subagents::ports::{
-    CompositionExitReadiness, ExitReadiness, PortFuture, ShutdownClock, ShutdownInstant,
-    ShutdownRun, ShutdownRunSpawner, ShutdownSessionPersistence, SubagentLifecycleRepository,
-    TurnCancellation,
+    PortFuture,
+    harness_shutdown::{
+        CompositionExitReadiness, ExitReadiness, ShutdownClock, ShutdownInstant, ShutdownRun,
+        ShutdownRunSpawner, ShutdownSessionPersistence, SubagentLifecycleRepository,
+        TurnCancellation,
+    },
 };
 use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, HarnessLifecycleState, LineageRecord, LineageSnapshot, ShutdownReason,

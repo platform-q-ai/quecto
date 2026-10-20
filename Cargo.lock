@@ -1664,7 +1664,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-agentic-harness"
-version = "0.107.386"
+version = "0.107.387"
 dependencies = [
  "base64",
  "comrak",

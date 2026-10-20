@@ -1,6 +1,8 @@
 use super::*;
 
-use quecto::application::subagents::ports::{DelegatedAgentRegistry, TerminationCause};
+use quecto::application::subagents::ports::delegated_agent_registry::{
+    DelegatedAgentRegistry, TerminationCause,
+};
 use quecto::infrastructure::tools::agents::subagent_teardown_registry::RegistryDelegatedAgents;
 
 // Slice 2 (#1369): join, list, and kill shared script-managed environments.

@@ -12,8 +12,8 @@ use crate::application::environments::dto::{ContainerConfigEntry, ContainerConfi
 use crate::application::environments::ports::{
     container::ContainerConfigRoster, container::ContainerConfigRosterReport,
 };
-use crate::application::subagents::dto::ContainerConfigSource;
-use crate::application::subagents::ports::EffectiveContainerConfigs;
+use crate::application::subagents::dto::container_config::ContainerConfigSource;
+use crate::application::subagents::ports::container_configs::EffectiveContainerConfigs;
 
 /// Composition's cheap probe of the files the roster is read from: the
 /// configuration layers and the trust record. Its value changes when any
