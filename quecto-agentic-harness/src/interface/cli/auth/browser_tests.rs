@@ -103,6 +103,20 @@ fn succeeded(answer: &Option<String>) -> bool {
         .is_some_and(|answer| answer.starts_with(SUCCESS_HEAD) && answer.contains(SUCCESS_MARK))
 }
 
+/// The listener's own refusals, as it writes them: a callback carrying
+/// another state, and one carrying a provider error.
+const STATE_MISMATCH: &str =
+    "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 14\r\n\r\nState mismatch";
+const AUTH_FAILURE: &str =
+    "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 12\r\n\r\nAuth failure";
+
+/// Whether `answer` came from the listener itself: its success page or one
+/// of its own refusals, as the callback contract's `from_the_listener`
+/// decides it.
+fn from_the_listener(answer: &Option<String>) -> bool {
+    succeeded(answer) || matches!(answer.as_deref(), Some(STATE_MISMATCH | AUTH_FAILURE))
+}
+
 /// Request `path` from whatever accepts on `port`, within bounds: up to
 /// 10 s to connect, 10 s to read, the connection closed after one answer.
 /// `None` when nothing answered in time.
@@ -135,9 +149,11 @@ fn call(port: u16, path: &str) -> Option<String> {
 }
 
 /// The login failed while its call met someone other than its listener,
-/// as the callback contract's `met_a_stranger` decides it.
+/// as the callback contract's `met_a_stranger` decides it: an answer came,
+/// and it is none of the listener's own. A listener refusing its own call
+/// is a failure to assert, never a stranger to retry past.
 fn met_a_stranger(code: i32, answer: &Option<String>) -> bool {
-    code != 0 && answer.is_some() && !succeeded(answer)
+    code != 0 && answer.is_some() && !from_the_listener(answer)
 }
 
 /// Numbers each attempt's callback path.
@@ -243,7 +259,24 @@ fn a_redirect_off_this_machine_is_refused_without_a_paste_prompt() {
         "auth login: invalid redirect URI: provider error: redirect URI host is not loopback: \
          http://example.test/callback\n"
     );
-    // No paste prompt was needed: `code == 0` with the callback answered is
-    // the guard, since the prompt's text is flushed past `stdout`.
+    // The exact `stderr` above is the guard: the refusal is the redirect
+    // URI's, before any listener or prompt.
     assert!(!base.path().join("credentials.json").exists());
+}
+
+/// The retry rule itself: only a failed login whose call met someone other
+/// than its listener is retried; the listener's own refusals are asserted.
+#[test]
+fn only_a_stranger_answering_the_call_is_retried() {
+    let answer = |text: &str| Some(text.to_string());
+    let not_found =
+        "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 9\r\n\r\nNot found";
+    assert!(met_a_stranger(1, &answer(not_found)));
+    assert!(!met_a_stranger(1, &answer(STATE_MISMATCH)));
+    assert!(!met_a_stranger(1, &answer(AUTH_FAILURE)));
+    assert!(!met_a_stranger(1, &None), "no answer is no evidence");
+    assert!(
+        !met_a_stranger(0, &answer(not_found)),
+        "a login that worked"
+    );
 }
