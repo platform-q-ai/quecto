@@ -4,22 +4,28 @@
 //! injected.
 
 pub mod advance_authority_epoch;
+pub mod bind_scope;
 pub mod checkpoint_ledger;
 pub mod complete_admission;
+pub mod disconnect_scope;
 pub mod dispatch_admissions;
 mod durable_ledger;
 pub mod inspect_authority;
 pub mod install_authority_service;
 pub mod negotiate_authority;
 pub mod reset_authority;
+pub mod settle_authority;
 pub mod uninstall_authority_service;
 
 pub use advance_authority_epoch::AdvanceAuthorityEpoch;
+pub use bind_scope::BindScope;
 pub use checkpoint_ledger::CheckpointLedger;
 pub use complete_admission::CompleteAdmission;
+pub use disconnect_scope::DisconnectScope;
 pub use dispatch_admissions::DispatchAdmissions;
 pub use inspect_authority::InspectAuthority;
 pub use install_authority_service::InstallAuthorityService;
 pub use negotiate_authority::NegotiateAuthority;
 pub use reset_authority::ResetAuthority;
+pub use settle_authority::SettleAuthority;
 pub use uninstall_authority_service::UninstallAuthorityService;

@@ -1229,7 +1229,15 @@ const AUTHORITY_SERVER_APPLICATION_PATHS: &[(&str, &str)] = &[
     ),
     (
         "src/infrastructure/admission/server.rs",
-        "crate::application::admission::use_cases::DispatchAdmissions",
+        "crate::application::admission::use_cases::SettleAuthority",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::use_cases::BindScope",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::use_cases::DisconnectScope",
     ),
 ];
 
@@ -4031,9 +4039,11 @@ fn only_the_authority_server_names_the_durability_use_cases() {
     let use_case = |name: &str| format!("crate::application::admission::use_cases::{name}");
     let durable = [
         "AdvanceAuthorityEpoch",
+        "BindScope",
         "CheckpointLedger",
         "CompleteAdmission",
-        "DispatchAdmissions",
+        "DisconnectScope",
+        "SettleAuthority",
     ]
     .map(use_case);
     let refused = |file: &str, path: &str| {
@@ -4050,7 +4060,9 @@ fn only_the_authority_server_names_the_durability_use_cases() {
         );
     }
     assert!(!refused(actor, &authority));
-    // Any other admission use case stays refused, even in the server.
+    // Dispatch is settling's own step, and any other admission use case
+    // stays refused, even in the server.
+    assert!(refused(server, &use_case("DispatchAdmissions")));
     assert!(refused(server, &use_case("ResetAuthority")));
 }
 
@@ -4059,16 +4071,16 @@ fn only_the_authority_server_names_the_durability_use_cases() {
 /// public operations below, one of the raw operations visible only inside the
 /// admission capability (which bypass durability or session policy on their
 /// own, so only the use cases sequence them), or private. A new public
-/// wrapper around a raw operation fails here.
+/// wrapper around a raw operation fails here. PR 2b moved the session
+/// operations (verify, disconnect, release, cancellation_due, next_wake and
+/// the journal-health read) behind the capability.
 #[test]
 fn the_authority_surface_is_an_exhaustive_allowlist() {
     const PUBLIC: &[&str] = &[
         "new",
         "restore",
-        "journal_healthy",
         "register_root",
         "register_child",
-        "verify",
         "observe",
         "lineage",
         "acquire",
@@ -4076,11 +4088,7 @@ fn the_authority_surface_is_an_exhaustive_allowlist() {
         "feedback",
         "status",
         "retire",
-        "release",
         "retire_child",
-        "disconnect",
-        "cancellation_due",
-        "next_wake",
         "inspect",
     ];
     const CAPABILITY: &[&str] = &[
@@ -4091,6 +4099,12 @@ fn the_authority_surface_is_an_exhaustive_allowlist() {
         "complete_unpersisted",
         "successor_ledger",
         "adopt_successor",
+        "journal_healthy",
+        "verify",
+        "release",
+        "disconnect",
+        "cancellation_due",
+        "next_wake",
     ];
     let source = production_source("src/application/admission/services/inference_authority.rs");
     let file = syn::parse_file(&source).expect("the authority parses");
@@ -4180,6 +4194,47 @@ fn the_admission_use_cases_own_the_journal_and_the_authority_does_not() {
             "{path} holds the shared journal"
         );
     }
+}
+
+/// The body of `fn <name>` in `source`, whitespace removed, up to the next
+/// item at the same indentation.
+fn method_body_compact(source: &str, signature: &str) -> String {
+    let start = source
+        .find(signature)
+        .unwrap_or_else(|| panic!("`{signature}` is declared"));
+    let rest = &source[start..];
+    let end = rest.find("\n    }\n").expect("the method closes") + "\n    }\n".len();
+    rest[..end].split_whitespace().collect()
+}
+
+/// The broker's actor keeps only transport bookkeeping (#1910): a settling
+/// turn is exactly one use case, and binding and ending a connection each go
+/// through theirs. The authority's session operations are visible only
+/// inside the admission capability, so the actor cannot reach around them.
+#[test]
+fn the_authority_actor_settles_binds_and_disconnects_through_use_cases() {
+    let actor = production_source("src/infrastructure/admission/server_actor.rs");
+    let settle = method_body_compact(&actor, "    fn settle(&mut self) -> Instant {");
+    assert_eq!(
+        settle.matches("self.use_cases.").count(),
+        1,
+        "settle() invokes exactly one use case: {settle}"
+    );
+    assert!(settle.contains("self.use_cases.settle.execute(&mutself.authority,"));
+    assert_eq!(
+        settle.matches("self.authority").count(),
+        1,
+        "settle() touches the authority only through its use case"
+    );
+    let closed = method_body_compact(&actor, "    fn closed(&mut self, session: u64) {");
+    assert!(closed.contains("self.use_cases.disconnect.execute(&mutself.authority,"));
+    assert!(!closed.contains("self.authority."), "{closed}");
+    let bind = method_body_compact(
+        &actor,
+        "    fn bind(&mut self, session: u64, credential: Credential) -> Result<Body, AuthorityError> {",
+    );
+    assert!(bind.contains("self.use_cases.bind.execute(&mutself.authority,"));
+    assert!(!bind.contains("self.authority."), "{bind}");
 }
 
 #[test]

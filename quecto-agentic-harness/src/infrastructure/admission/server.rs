@@ -18,20 +18,24 @@ use super::server_actor::Actor;
 use super::session;
 use crate::application::admission::services::inference_authority::AdmissionAuthority;
 use crate::application::admission::use_cases::{
-    AdvanceAuthorityEpoch, CheckpointLedger, CompleteAdmission, DispatchAdmissions,
+    AdvanceAuthorityEpoch, BindScope, CheckpointLedger, CompleteAdmission, DisconnectScope,
+    SettleAuthority,
 };
 use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
 pub(super) use super::server_actor::Command;
 
-/// The authority's durability use cases (#1910), built by composition over
-/// the one journal of the directory this server serves; the actor invokes
-/// them and never constructs one.
+/// The running authority's use cases (#1910), built by composition over the
+/// one journal of the directory this server serves: the durability
+/// sequences and the session policy. The actor invokes them and never
+/// constructs one.
 pub struct AuthorityUseCases {
-    pub dispatch: DispatchAdmissions,
+    pub settle: SettleAuthority,
     pub complete: CompleteAdmission,
     pub advance_epoch: AdvanceAuthorityEpoch,
     pub checkpoint: CheckpointLedger,
+    pub bind: BindScope,
+    pub disconnect: DisconnectScope,
 }
 
 /// Composition's builder of [`AuthorityUseCases`] over a directory's journal.

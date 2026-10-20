@@ -2,6 +2,15 @@
 //! the connected sessions, the scope bindings and the deferred (queued)
 //! replies, and services `Command`s from the session tasks in arrival order.
 //! Lifecycle, sockets and the accept loops are `server`.
+//!
+//! The admission decisions are the admission use cases' (#1910): settling a
+//! turn (dispatch, waiter answers, cancellations due and the next wake),
+//! binding and disconnecting a scope, completion and an epoch reset. What
+//! stays here is transport: the session table and its bindings, the hello
+//! handshake, the owner-token gate on `RegisterRoot` and the admin-role gate
+//! on `Inspect`/`Reset` (both properties of the connection, checked before any
+//! authority operation), answering a client's own cancel to the waiter it
+//! deferred, and turning the next wake into a timer.
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
@@ -55,7 +64,6 @@ pub(super) struct Actor {
     last_dispatch_failure: Option<String>,
 }
 
-const JOURNAL_PROBE_INTERVAL: Duration = Duration::from_millis(250);
 fn far_future() -> Instant {
     Instant::now() + Duration::from_secs(3600)
 }
@@ -173,16 +181,12 @@ impl Actor {
             if self.bound.get(&credential.scope) == Some(&session) {
                 self.bound.remove(&credential.scope);
                 let now = self.clock.now_ms();
-                match self.authority.disconnect(credential.scope, now) {
-                    // Nothing unverified remains: the scope is released so an
-                    // abrupt exit never consumes a scope slot until reset.
-                    Ok(report) if report.uncertain == 0 => {
-                        let _ = self.authority.release(credential.scope);
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        tracing::warn!(?error, "admission disconnect handling failed");
-                    }
+                if let Err(error) =
+                    self.use_cases
+                        .disconnect
+                        .execute(&mut self.authority, credential.scope, now)
+                {
+                    tracing::warn!(?error, "admission disconnect handling failed");
                 }
                 self.waiters.retain(|id, _| id.scope != credential.scope);
             }
@@ -263,24 +267,31 @@ impl Actor {
                 reason: "session already bound; one connection binds one capability".into(),
             });
         }
-        let high_water = self.authority.verify(&credential)?;
-        if let Some(previous) = self.bound.insert(credential.scope, session) {
-            if previous != session {
-                // Supersede: the old session's queued work can never be
-                // answered and its active work is unverified until this
-                // session completes it.
-                if let Some(old) = self.sessions.get_mut(&previous) {
-                    old.credential = None;
-                }
-                let now = self.clock.now_ms();
-                let _ = self.authority.disconnect(credential.scope, now);
-                self.waiters.retain(|id, _| id.scope != credential.scope);
+        let supersedes = self
+            .bound
+            .get(&credential.scope)
+            .is_some_and(|previous| *previous != session);
+        let now = self.clock.now_ms();
+        let next_sequence =
+            self.use_cases
+                .bind
+                .execute(&mut self.authority, &credential, supersedes, now)?;
+        let previous = self.bound.insert(credential.scope, session);
+        debug_assert_eq!(
+            previous.is_some_and(|previous| previous != session),
+            supersedes,
+            "the binding supersedes exactly the connection it was told of"
+        );
+        if let Some(previous) = previous.filter(|previous| *previous != session) {
+            // The superseded connection no longer holds the capability, and
+            // its waiters can never be answered.
+            if let Some(old) = self.sessions.get_mut(&previous) {
+                old.credential = None;
             }
+            self.waiters.retain(|id, _| id.scope != credential.scope);
         }
         self.sessions.get_mut(&session).expect("session").credential = Some(credential);
-        Ok(Body::Bound {
-            next_sequence: high_water.saturating_add(1),
-        })
+        Ok(Body::Bound { next_sequence })
     }
 
     fn reset(&mut self, now: u64) -> Result<Body, AuthorityError> {
@@ -404,16 +415,23 @@ impl Actor {
         Some(result.unwrap_or_else(|e| error_body(&e)))
     }
 
-    /// Dispatch, answer waiters, emit cancellation notices, compute the wake.
+    /// Settle the authority through its one use case, then answer the
+    /// waiters, emit cancellation notices and compute the wake from what it
+    /// decided.
     fn settle(&mut self) -> Instant {
         let now = self.clock.now_ms();
-        match self.use_cases.dispatch.execute(&mut self.authority, now) {
-            Err(AuthorityError::Admission(_)) | Ok(_) => {
+        let waiting: Vec<RequestId> = self.waiters.keys().copied().collect();
+        let mut settlement = self
+            .use_cases
+            .settle
+            .execute(&mut self.authority, &waiting, now);
+        match settlement.dispatch_failure.take() {
+            None => {
                 if self.last_dispatch_failure.take().is_some() {
                     tracing::info!("admission dispatch recovered");
                 }
             }
-            Err(other) => {
+            Some(other) => {
                 let failure = format!("{other:?}");
                 if self.last_dispatch_failure.as_ref() != Some(&failure) {
                     tracing::warn!(failure = %failure, "admission dispatch failed closed");
@@ -421,16 +439,8 @@ impl Actor {
                 }
             }
         }
-        let ids: Vec<RequestId> = self.waiters.keys().copied().collect();
-        let journal_healthy = self.authority.journal_healthy();
-        for id in ids {
-            let body = match self.authority.observe(id, now) {
-                Ok(RequestState::Queued { .. }) => continue,
-                // A waiter still present that observes Cancelled was withdrawn
-                // by the authority (client cancels answer their waiter directly).
-                Ok(RequestState::Terminal(TerminalOutcome::Cancelled)) if !journal_healthy => {
-                    error_body(&AuthorityError::JournalUnavailable)
-                }
+        for (id, answer) in std::mem::take(&mut settlement.answers) {
+            let body = match answer {
                 Ok(state) => grant_or_terminal(state, now),
                 Err(e) => error_body(&e),
             };
@@ -438,7 +448,7 @@ impl Actor {
                 let _ = waiter.send(body);
             }
         }
-        let due = self.authority.cancellation_due(now).unwrap_or_default();
+        let due = std::mem::take(&mut settlement.cancellation_due);
         for id in &due {
             if self.notified.insert(*id) {
                 if let Some(state) = self.bound.get(&id.scope).and_then(|s| self.sessions.get(s)) {
@@ -452,18 +462,11 @@ impl Actor {
             }
         }
         self.notified.retain(|id| due.contains(id));
-        let wake = match self.authority.next_wake(now) {
-            Ok(Some(ms)) => self.clock.instant_at(ms),
-            Ok(None) => far_future(),
-            Err(_) => Instant::now() + Duration::from_millis(50),
-        };
-        // During a ledger outage held work can only proceed after a successful
-        // probe write, so probe at a bounded cadence rather than waiting for
-        // queue deadlines.
-        if self.authority.journal_healthy() {
-            wake
-        } else {
-            wake.min(Instant::now() + JOURNAL_PROBE_INTERVAL)
+        // Armed now, after the turn: a slow write cannot leave the next
+        // probe already due.
+        match settlement.wake_at(self.clock.now_ms()) {
+            Some(ms) => self.clock.instant_at(ms),
+            None => far_future(),
         }
     }
 }

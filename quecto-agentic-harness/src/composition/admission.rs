@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::application::admission::ports::inference_authority_ports::SharedJournal;
 use crate::application::admission::use_cases::{
-    AdvanceAuthorityEpoch, CheckpointLedger, CompleteAdmission, DispatchAdmissions,
-    InspectAuthority, InstallAuthorityService, NegotiateAuthority, ResetAuthority,
-    UninstallAuthorityService,
+    AdvanceAuthorityEpoch, BindScope, CheckpointLedger, CompleteAdmission, DisconnectScope,
+    DispatchAdmissions, InspectAuthority, InstallAuthorityService, NegotiateAuthority,
+    ResetAuthority, SettleAuthority, UninstallAuthorityService,
 };
 use crate::infrastructure::admission::{
     AuthorityDirectory, AuthorityUseCases, FileJournal, SocketAuthorityAdmin,
@@ -43,16 +43,19 @@ pub fn build_admission_handles() -> AdmissionHandles {
     }
 }
 
-/// The running authority's durability use cases over the one journal of
-/// `dir` (#1910). The broker's run path receives this builder through the
-/// admission handles; the test start functions below pass the same one.
+/// The running authority's use cases over the one journal of `dir` (#1910):
+/// the durability sequences share it, and settling dispatches through it.
+/// The broker's run path receives this builder through the admission
+/// handles; the test start functions below pass the same one.
 pub fn build_authority_use_cases(dir: &AuthorityDirectory) -> AuthorityUseCases {
     let journal: SharedJournal = Arc::new(Mutex::new(FileJournal::new(dir)));
     AuthorityUseCases {
-        dispatch: DispatchAdmissions::new(journal.clone()),
+        settle: SettleAuthority::new(DispatchAdmissions::new(journal.clone())),
         complete: CompleteAdmission::new(journal.clone()),
         advance_epoch: AdvanceAuthorityEpoch::new(journal.clone()),
         checkpoint: CheckpointLedger::new(journal),
+        bind: BindScope::new(),
+        disconnect: DisconnectScope::new(),
     }
 }
 
