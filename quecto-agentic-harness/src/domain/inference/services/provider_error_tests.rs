@@ -96,6 +96,27 @@ fn classify_openai_insufficient_quota_is_terminal_billing_not_rate_limit() {
     assert_eq!(classify_provider_error(&err), ProviderErrorClass::Billing);
 }
 
+/// #2620 review: the quota errors the official Codex client reads as such
+/// are billing errors, terminal even as a 429.
+#[test]
+fn the_codex_clients_quota_errors_are_billing() {
+    for name in [
+        "credit_balance_exhausted",
+        "organization_spend_limit_exceeded",
+        "project_spend_limit_exceeded",
+    ] {
+        assert!(super::is_billing_error_name(name), "{name}");
+        let err = provider(&format!(
+            r#"HTTP 429 from Codex: {{"error":{{"type":"requests","code":"{name}","message":"m"}}}}"#
+        ));
+        assert_eq!(
+            classify_provider_error(&err),
+            ProviderErrorClass::Billing,
+            "{name}"
+        );
+    }
+}
+
 #[test]
 fn classify_parenthesized_status_known_code() {
     // A parenthesised status that maps to a known class is trusted.
@@ -633,4 +654,38 @@ fn admission_gate_errors_are_recognised_by_their_prefix_alone() {
     assert!(!is_admission_gate_error(&DomainError::Tool(
         "admission: x".into()
     )));
+}
+
+/// Refs #2531, #2620 review: a stream failure a wire classed reads back as
+/// its class and claims no HTTP status; a class a wire cannot name, or a
+/// message that merely mentions the words, is not read as one.
+#[test]
+fn a_classed_stream_failure_reads_back_as_its_class_with_no_status() {
+    use ProviderErrorClass::*;
+    for class in [RateLimit, Server, Billing, Auth, Client] {
+        let rendered = classed_stream_failure(&class, "Responses stream error: m");
+        assert!(
+            rendered.starts_with("provider stream failure ("),
+            "{rendered}"
+        );
+        assert!(
+            rendered.ends_with("Responses stream error: m"),
+            "{rendered}"
+        );
+        let error = provider(&rendered);
+        assert_eq!(classify_provider_error(&error), class, "{rendered}");
+        assert_eq!(provider_http_status(&error), None, "{rendered}");
+    }
+    assert_eq!(classed_stream_failure(&Network, "detail"), "detail");
+    for unread in [
+        "provider stream failure (made up): x",
+        "provider stream failure (server error) x",
+        "upstream: provider stream failure (server error): x",
+    ] {
+        assert_eq!(
+            classify_provider_error(&provider(unread)),
+            Unknown,
+            "{unread}"
+        );
+    }
 }

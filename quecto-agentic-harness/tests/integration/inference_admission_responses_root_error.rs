@@ -32,7 +32,7 @@ async fn check(leaf: Leaf, post_text: bool) {
             post: post_text,
             enabled: true,
             throttle: true,
-            error: "Responses stream error: code=rate_limit_exceeded: opaque fixture",
+            error: "provider stream failure (rate limit): Responses stream error: code=rate_limit_exceeded: opaque fixture",
         },
     ));
 }

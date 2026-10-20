@@ -1000,28 +1000,50 @@ fn given_external_valid_openai(world: &mut QuectoWorld, token: String) {
     }));
 }
 
+thread_local! {
+    /// The `auth.json` the import rig reads, for the step running on this
+    /// thread (steps run one at a time on it).
+    static IMPORT_AUTH_JSON: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Composition's auth handles importing from the step's `auth.json`.
+fn import_rig(
+    environment: &quecto::interface::cli::auth::AuthEnvironment,
+) -> quecto::interface::cli::auth::AuthHandles {
+    let auth_json = IMPORT_AUTH_JSON
+        .with(|path| path.borrow().clone())
+        .expect("the step names its auth.json");
+    quecto::composition::bootstrap::auth::build_auth_handles_importing_from(environment, &auth_json)
+}
+
 #[when("the external credentials are imported")]
 fn when_external_imported(world: &mut QuectoWorld) {
     let base = base_path(world);
-    let store = CredentialStore::new(&base);
     let auth_json = world
         .gateway_import_auth_json
         .as_ref()
         .expect("auth.json not set");
-
-    let oauth_base_url = world.gateway_oauth_mock_uri.clone();
-
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    let params = quecto::interface::cli::OpenAiImportParams {
-        store: &store,
-        rt: &rt,
-        oauth_base_url: oauth_base_url.as_deref(),
+    let path = base.join("external-auth.json");
+    std::fs::write(&path, auth_json.to_string()).unwrap();
+    // `quecto auth login --import-external`, as the CLI runs it, over the
+    // step's auth.json and mock OAuth server.
+    let ctx = cli::CliContext {
+        base_dir: Some(base.clone()),
+        oauth_base_url: world.gateway_oauth_mock_uri.clone(),
+        auth: Some(import_rig),
+        ..Default::default()
     };
-    quecto::interface::cli::auth_import_openai(auth_json, &params, &mut stdout, &mut stderr);
-    world.gateway_import_stdout = Some(stdout);
-    world.gateway_import_stderr = Some(stderr);
+    IMPORT_AUTH_JSON.with(|slot| *slot.borrow_mut() = Some(path));
+    let output = cli::run_with_output(
+        ["quecto", "auth", "login", "--import-external"]
+            .map(String::from)
+            .to_vec(),
+        &ctx,
+    );
+    IMPORT_AUTH_JSON.with(|slot| *slot.borrow_mut() = None);
+    world.gateway_import_stdout = Some(output.stdout);
+    world.gateway_import_stderr = Some(output.stderr);
 }
 
 #[then(expr = "the stored OpenAI credential should have token {string}")]

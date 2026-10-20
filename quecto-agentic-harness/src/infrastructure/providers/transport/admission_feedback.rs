@@ -93,32 +93,3 @@ fn delay_ms(value: &str, seconds: bool, received_wall: SystemTime) -> Result<Opt
 #[cfg(test)]
 #[path = "admission_feedback_tests.rs"]
 mod tests;
-
-/// Classify structured HTTP/SSE error fields independently of display text.
-/// A terminal billing marker takes precedence over a throttle marker, including
-/// when an envelope contains root, direct, and Responses-nested error objects.
-/// Root fields are error metadata only for an explicit `type: "error"` event.
-pub fn is_typed_throttle(value: &serde_json::Value) -> bool {
-    let errors = [
-        (value.get("type").and_then(serde_json::Value::as_str) == Some("error")).then_some(value),
-        value.get("error"),
-        value
-            .get("response")
-            .and_then(|response| response.get("error")),
-    ];
-    let mut throttle = false;
-    for error in errors.into_iter().flatten() {
-        for field in ["type", "code"] {
-            match error.get(field).and_then(serde_json::Value::as_str) {
-                Some(name) if crate::domain::inference::services::provider_error::is_billing_error_name(name) => {
-                    return false;
-                }
-                Some("rate_limit_error" | "overloaded_error" | "rate_limit_exceeded") => {
-                    throttle = true
-                }
-                _ => {}
-            }
-        }
-    }
-    throttle
-}

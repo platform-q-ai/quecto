@@ -220,7 +220,7 @@ pub(super) async fn error_body(
     if receipt.0.lock().unwrap().diagnostics.termination == Termination::Dropped {
         receipt.termination(Termination::HttpError);
     }
-    receipt.http_error(status, &text);
+    receipt.http_error(profile.dialect, status, &text);
     let text = profile.error_body(text);
     DomainError::Provider(format!(
         "HTTP {status} from {}: {text}{suffix}",
