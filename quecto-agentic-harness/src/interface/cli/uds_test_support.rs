@@ -4,9 +4,9 @@
 //! or the `test-support` feature.
 
 use super::{
-    uds_admission_projection, uds_cancel, uds_execution_state, uds_ext_protocol,
-    uds_reader_dispatch, uds_session_handles, uds_state_projection,
+    uds_admission_projection, uds_execution_state, uds_session_handles, uds_state_projection,
 };
+use crate::interface::uds::controllers::{uds_cancel, uds_ext_protocol, uds_reader_dispatch};
 use crate::interface::uds::wire::protocol;
 
 pub fn live_execution_state_for_events(

@@ -259,7 +259,7 @@ async fn single_client_socket_override_serves_get_state() {
             .unwrap();
         rt.block_on(async move {
             let store = crate::composition::sessions::build_session_handles(
-                crate::interface::cli::uds::dispatch_session_roster_tests::loop_inputs(
+                crate::interface::uds::controllers::uds::dispatch_session_roster_tests::loop_inputs(
                     dir.path(),
                     "cli:cov",
                 ),
@@ -578,7 +578,7 @@ fn the_single_client_loop_waits_for_a_launch_rollback_at_exit() {
             .unwrap();
         rt.block_on(async move {
             let store = crate::composition::sessions::build_session_handles(
-                crate::interface::cli::uds::dispatch_session_roster_tests::loop_inputs(
+                crate::interface::uds::controllers::uds::dispatch_session_roster_tests::loop_inputs(
                     dir.path(),
                     "cli:cov",
                 ),

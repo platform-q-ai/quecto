@@ -11,8 +11,8 @@ use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
 use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
-use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot, TurnControl};
 use crate::interface::cli::uds_teardown_handles::TeardownLoopInputs;
+use crate::interface::uds::controllers::uds_cancel::{CancelHandle, CancelSlot, TurnControl};
 use crate::interface::uds::subagent_teardown::controller::ControllerOutcome;
 
 /// A first signal that fires at once, repeats that never come, and a

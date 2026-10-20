@@ -2,7 +2,7 @@ use crate::application::sessions::dto::{SearchSessionMetadataRequest, SessionLis
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::interface::cli::uds::dispatch_session_roster_tests::composed_sessions;
+use crate::interface::uds::controllers::uds::dispatch_session_roster_tests::composed_sessions;
 
 /// Both handles of the composed bundle answer from the one store.
 #[tokio::test]

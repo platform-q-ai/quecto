@@ -16,8 +16,8 @@ use quecto::domain::agents::services::subagent_teardown::{
 };
 use quecto::domain::identity::ids::AgentUuid;
 use quecto::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
-use quecto::interface::cli::uds_cancel::{CancelSlot, TurnControl};
 use quecto::interface::cli::uds_teardown_handles::TeardownLoopInputs;
+use quecto::interface::uds::controllers::uds_cancel::{CancelSlot, TurnControl};
 use quecto::interface::uds::subagent_teardown::controller::{ControllerOutcome, DeliveryState};
 
 struct Graph {

@@ -21,9 +21,9 @@ use quecto::infrastructure::processes::owned_child_supervisor::{
 use quecto::infrastructure::processes::parent_control::{
     mint_credential, presentation_json, take_sidecar, write_sidecar,
 };
-use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
-use quecto::interface::cli::uds_parent_control::BindDeadline;
-use quecto::interface::cli::uds_parent_control::ParentControlLaunch;
+use quecto::interface::uds::controllers::uds::{UdsLoopArgs, run_uds_loop};
+use quecto::interface::uds::controllers::uds_parent_control::BindDeadline;
+use quecto::interface::uds::controllers::uds_parent_control::ParentControlLaunch;
 use quecto::interface::uds::parent_control::wire::BindParentControlWire;
 
 use crate::QuectoWorld;

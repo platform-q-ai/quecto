@@ -227,13 +227,14 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(4);
     let (guard_tx, mut disconnects) = tokio::sync::mpsc::unbounded_channel();
     let live = Arc::new(AtomicU32::new(1));
-    let registry = crate::interface::cli::uds_ext_protocol::new_client_tool_registry();
-    let turn_control: crate::interface::cli::uds_cancel::TurnControlHandle = Arc::default();
-    let cancel_handle: crate::interface::cli::uds_cancel::CancelHandle = Arc::new(
-        std::sync::Mutex::new(crate::interface::cli::uds_cancel::CancelSlot::Idle),
+    let registry = crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry();
+    let turn_control: crate::interface::uds::controllers::uds_cancel::TurnControlHandle =
+        Arc::default();
+    let cancel_handle: crate::interface::uds::controllers::uds_cancel::CancelHandle = Arc::new(
+        std::sync::Mutex::new(crate::interface::uds::controllers::uds_cancel::CancelSlot::Idle),
     );
     let session =
-        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
 
     let task = tokio::spawn(handle_client(ClientHandlerArgs {
         stream: server,
@@ -317,9 +318,9 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
     let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(2);
     let (disconnect_tx, mut disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
     let live = Arc::new(AtomicU32::new(1));
-    let registry = crate::interface::cli::uds_ext_protocol::new_client_tool_registry();
+    let registry = crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry();
     let session =
-        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
 
     let task = tokio::spawn(handle_client(ClientHandlerArgs {
         stream: server,
@@ -327,7 +328,7 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
         targeted_rx,
         cmd_tx: cmd_tx.clone(),
         cancel_handle: Arc::new(std::sync::Mutex::new(
-            crate::interface::cli::uds_cancel::CancelSlot::Idle,
+            crate::interface::uds::controllers::uds_cancel::CancelSlot::Idle,
         )),
         turn_control: Arc::default(),
         client_id: 88,
@@ -406,7 +407,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
 
     let registry = Some(new_registry());
     let roster =
-        crate::interface::cli::uds::dispatch_session_roster_tests::persisted_roster_via_save_async(
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::persisted_roster_via_save_async(
             &registry,
             SubagentRestoreReason::LegacyUnspecified,
         )
@@ -464,7 +465,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
 
     let registry = Some(new_registry());
     let roster =
-        crate::interface::cli::uds::dispatch_session_roster_tests::persisted_roster_via_save_async(
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::persisted_roster_via_save_async(
             &registry,
             SubagentRestoreReason::LegacyUnspecified,
         )

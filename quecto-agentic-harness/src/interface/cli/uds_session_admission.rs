@@ -66,7 +66,7 @@ impl AgentSession {
     /// Watch this agent's configured extensions (#2446).
     pub fn observe_extensions(
         &mut self,
-        extensions: crate::interface::cli::uds_extensions::Extensions,
+        extensions: crate::interface::uds::controllers::uds_extensions::Extensions,
     ) {
         self.extensions = extensions;
         self.bump_visible_generation();

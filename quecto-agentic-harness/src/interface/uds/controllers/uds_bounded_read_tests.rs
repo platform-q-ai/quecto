@@ -1,0 +1,220 @@
+//! Regression tests for the single-client `run_command_loop` reader (#1003).
+//!
+//! `run_command_loop` reads client command lines through the shared
+//! `quecto_line_io::read_bounded_line` helper rather than
+//! `AsyncBufReadExt::lines()`/`next_line()`, so an oversized, unterminated
+//! line from the client is capped *while being read* rather than fully
+//! buffered and only checked afterward. This exercises the real reader loop
+//! over a live socket pair and asserts on the one thing an external observer
+//! can see: which events/effects actually happen — the too-long line
+//! produces exactly one `protocol_error` event (#1059: a clean protocol
+//! rejection, not a silent drop) and does not block the valid command that
+//! follows it from being dispatched.
+//!
+//! This file is compiled as `mod bounded_read_tests` inside `uds.rs`, so
+//! `super` = `uds`.
+use super::*;
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::interface::uds::controllers::uds::dispatch_session_roster_tests::list_handle;
+use crate::interface::uds::controllers::uds_cancel::CancelSlot;
+use crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry;
+use tokio::io::AsyncWriteExt;
+
+fn make_agent() -> AgentLoopImpl {
+    AgentLoopImpl::new(AgentLoopConfig {
+        provider: crate::interface::test_support::make_stub_provider(),
+        tool_registry: Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
+        model: "stub".into(),
+        max_tokens: 100,
+        temperature: 0.0,
+        retention: None,
+        session_key: "cli:test".into(),
+        max_context_tokens: 190_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_marks: Default::default(),
+        model_context_window: None,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
+    })
+}
+
+#[tokio::test]
+async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_command() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut agent = make_agent();
+    let mut messages: Vec<Message> = Vec::new();
+    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let session_key = "cli:test".to_string();
+    let initial_stats =
+        crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
+    let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(1024);
+    // #2423 review M2: an extension call is waiting on this client; the
+    // dropped message may be its result, so it fails now, not at its timeout.
+    let client_tool_registry = new_client_tool_registry();
+    let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
+    client_tool_registry
+        .lock()
+        .unwrap()
+        .entry(0)
+        .or_default()
+        .insert_pending(
+            "uds-1".into(),
+            "shot".into(),
+            reply_tx,
+            std::time::Duration::from_secs(600),
+        );
+
+    let save_session =
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::save_handle_for(
+            &session_key,
+        );
+    let rewrite =
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::rewrite_handles_for(
+            &session_key,
+        );
+    let mut ctx = DispatchCtx {
+        execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
+        wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
+        agent: &mut agent,
+        messages: &mut messages,
+        sessions: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
+        state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+            session.state_snapshot("cli:test", 0, None, 0, None),
+        )),
+        session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+        tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        session: &mut session,
+        stdout: Some(&mut tokio::io::sink()),
+        system_prompt: "",
+        cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
+        turn_control: std::sync::Arc::default(),
+        broadcast_tx: Some(broadcast_tx),
+        _ext_registry: None,
+        client_tool_registry: client_tool_registry.clone(),
+        current_client_id: 0,
+        subagent_registry: None,
+        notification_rx: None,
+        workflow_state: None,
+        workflow_config: None,
+        save_session,
+        rewrite,
+        switch: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::switch_handles_for(
+            &session_key,
+        ),
+        catalogue: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::catalogue_handles(
+            tmp.path(),
+        ),
+        fleet_teardown: None,
+        discovery: list_handle(tmp.path()),
+    };
+
+    let (mut client, server) = tokio::net::UnixStream::pair().expect("socketpair");
+    let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(server);
+
+    // Write from a concurrent task: the oversized line is far larger than the
+    // socket buffer, so a sequential `write_all` before `run_command_loop`
+    // starts reading would deadlock (writer waits for a reader that never
+    // comes, reader is never started).
+    let writer = tokio::spawn(async move {
+        let oversized = format!(
+            "{{\"type\":\"prompt\",\"task\":\"{}\"}}\n",
+            "x".repeat(MAX_FRAME_PAYLOAD_BYTES + 65_536)
+        );
+        client
+            .write_all(oversized.as_bytes())
+            .await
+            .expect("write oversized line");
+        client
+            .write_all(b"{\"type\":\"get_state\"}\n")
+            .await
+            .expect("write valid line");
+        drop(client);
+    });
+
+    run_command_loop(reader, &mut ctx).await;
+    writer.await.expect("writer task");
+
+    let mut saw_parse_error = false;
+    let mut saw_state = false;
+    while let Ok(line) = broadcast_rx.try_recv() {
+        let v: serde_json::Value = serde_json::from_str(&line).expect("valid JSON event");
+        match (v["type"].as_str(), v["command"].as_str()) {
+            (Some("response"), Some("protocol_error")) => {
+                saw_parse_error = true;
+                let error = v["error"].as_str().unwrap_or_default();
+                assert!(
+                    error.contains("frame cap")
+                        && error.contains(&MAX_FRAME_PAYLOAD_BYTES.to_string()),
+                    "the over-cap event must be a diagnosable protocol error naming \
+                     the cap (#1059); got: {error}"
+                );
+            }
+            (Some("response"), Some("get_state")) => saw_state = true,
+            _ => {}
+        }
+    }
+
+    assert!(
+        saw_parse_error,
+        "an oversized line must still produce exactly one protocol_error event"
+    );
+    assert!(
+        saw_state,
+        "the valid command sent after the oversized line must still be dispatched"
+    );
+    let failed = reply_rx
+        .try_recv()
+        .expect("the pending call is failed at once");
+    assert!(failed.is_error);
+    assert!(
+        failed
+            .content
+            .starts_with("Error: extension result exceeded the 8 MiB frame limit"),
+        "{}",
+        failed.content
+    );
+}
+
+#[tokio::test]
+async fn read_bounded_line_never_buffers_an_oversized_command_past_the_cap() {
+    // Directly exercises the read primitive `run_command_loop` now uses,
+    // proving the accumulated buffer for one absurdly large unterminated
+    // line never grows past MAX_FRAME_PAYLOAD_BYTES — the defect this change fixes
+    // (previously `.lines()`/`next_line()` buffered the entire line before
+    // any length check could run).
+    let mut payload = vec![b'x'; 8 * MAX_FRAME_PAYLOAD_BYTES];
+    payload.push(b'\n');
+    let mut reader = tokio::io::BufReader::with_capacity(4096, &payload[..]);
+    let bounded = quecto_line_io::read_bounded_line(&mut reader, MAX_FRAME_PAYLOAD_BYTES)
+        .await
+        .unwrap()
+        .expect("line present");
+    assert!(bounded.truncated);
+    assert_eq!(bounded.content.len(), MAX_FRAME_PAYLOAD_BYTES);
+    // Duplicate of the quecto-line-io crate test, kept here to pin the
+    // helper's invariant at this call site: the valid-UTF-8 path reuses the
+    // accumulation buffer's allocation, so capacity() observes the internal
+    // buffer — it must never grow past the cap.
+    assert!(
+        bounded.content.capacity() <= MAX_FRAME_PAYLOAD_BYTES,
+        "buffer capacity {} exceeded MAX_FRAME_PAYLOAD_BYTES",
+        bounded.content.capacity()
+    );
+}
+
+#[test]
+fn command_reader_frame_payload_cap_matches_shared_line_io_cap() {
+    assert_eq!(
+        MAX_FRAME_PAYLOAD_BYTES,
+        quecto_line_io::PROTOCOL_LINE_CAP_BYTES
+    );
+}

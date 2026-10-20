@@ -8,11 +8,11 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use super::accept_loop_tests::make_args;
 use super::*;
-use crate::interface::cli::uds::MAX_FRAME_PAYLOAD_BYTES;
+use crate::interface::uds::controllers::uds::MAX_FRAME_PAYLOAD_BYTES;
 
 /// The id the accept loop gave the one connected client.
 async fn connected_client_id(
-    registry: &crate::interface::cli::uds_ext_protocol::ClientToolRegistry,
+    registry: &crate::interface::uds::controllers::uds_ext_protocol::ClientToolRegistry,
 ) -> u64 {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {

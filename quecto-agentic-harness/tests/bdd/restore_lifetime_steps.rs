@@ -23,7 +23,7 @@ use quecto::infrastructure::persistence::file::sessions::session_store::FileSess
 use quecto::infrastructure::tools::agents::agent_cmd::{AgentCmdTool, SubagentRegistry};
 use quecto::infrastructure::tools::agents::spawn::SpawnTool;
 use quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry;
-use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
+use quecto::interface::uds::controllers::uds::{UdsLoopArgs, run_uds_loop};
 
 use crate::QuectoWorld;
 

@@ -20,9 +20,9 @@ use crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecy
 use crate::infrastructure::tools::agents::subagent_registry::{NotificationTx, SubagentRegistry};
 use crate::interface::uds::subagent_teardown::controller::SubagentTeardownController;
 
-use super::uds_cancel::{CancelHandle, TurnControlHandle};
-use super::uds_parent_control::ConnectionTeardown;
 use super::uds_teardown_adapters::{DeferredLoopPersistence, LoopExitReadiness};
+use crate::interface::uds::controllers::uds_cancel::{CancelHandle, TurnControlHandle};
+use crate::interface::uds::controllers::uds_parent_control::ConnectionTeardown;
 use crate::interface::uds::framing::uds_multi::BusyFlag;
 
 /// The runtime inputs of one dispatch loop that the teardown handles are

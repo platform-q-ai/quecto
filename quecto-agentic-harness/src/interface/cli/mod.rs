@@ -9,22 +9,15 @@ use controllers::{
     configuration_handles, container_config_handles, retention_handles, run_end_fleet,
     swarm_board_handles,
 };
-pub mod uds;
 pub(in crate::interface) mod uds_admission_projection;
 #[cfg(test)]
 #[path = "uds_admission_projection_tests.rs"]
 mod uds_admission_projection_tests;
-mod uds_busy_get_message;
-mod uds_busy_subagents;
+pub(in crate::interface) mod uds_busy_get_message;
+pub(in crate::interface) mod uds_busy_subagents;
 #[cfg(test)]
 mod uds_busy_subagents_tests;
-pub mod uds_cancel;
-mod uds_cancel_history;
-pub(in crate::interface) mod uds_control_forward;
-mod uds_delete_all_subagents;
-mod uds_dispatch_reload;
 pub mod uds_execution_state;
-mod uds_progress_forward;
 
 #[cfg(any(test, feature = "test-support"))]
 mod uds_test_support;
@@ -47,14 +40,8 @@ pub(in crate::interface) mod uds_admission_warnings;
 pub mod uds_discovery_handles;
 #[cfg(test)]
 mod uds_execution_state_tests;
-pub(in crate::interface) mod uds_ext_protocol;
-pub(in crate::interface) mod uds_extensions;
-mod uds_latest_report;
+pub(in crate::interface) mod uds_latest_report;
 pub(in crate::interface) mod uds_lifecycle;
-pub mod uds_models;
-pub mod uds_parent_control;
-mod uds_query;
-pub(in crate::interface) mod uds_reader_dispatch;
 pub mod uds_session;
 #[cfg(test)]
 mod uds_session_admission_tests;
@@ -65,17 +52,15 @@ pub(in crate::interface) mod uds_state_projection;
 #[cfg(test)]
 mod uds_state_projection_tests;
 pub(in crate::interface) mod uds_swarm_board;
-pub(in crate::interface) mod uds_swarm_control;
-mod uds_sync;
+pub(in crate::interface) mod uds_sync;
 #[cfg(test)]
 mod uds_sync_tests;
 pub(crate) mod uds_teardown_adapters;
 pub mod uds_teardown_handles;
 #[cfg(test)]
 mod uds_thinking_1231_tests;
-mod uds_tool_intercept;
+pub(in crate::interface) mod uds_tool_intercept;
 pub mod uds_turn_accounting;
-mod uds_workflow_nudge;
 
 use crate::application::configuration::dto::{ConfigSelection, ConfigSelectionRequest};
 use controllers::config_flag::{extract_config_flag, strip_global_config_flag};

@@ -453,7 +453,7 @@ fn each_lifecycle_transaction_has_exactly_one_owner() {
     }
     // The handlers admit, request and present; the sequencing verbs of the
     // transactions never appear in them.
-    let handlers = "src/interface/cli/uds_dispatch_session.rs";
+    let handlers = "src/interface/uds/controllers/uds_dispatch_session.rs";
     for needle in HANDLER_FORBIDDEN {
         let hits: Vec<String> = production_code(handlers)
             .into_iter()
@@ -489,9 +489,9 @@ fn each_lifecycle_transaction_has_exactly_one_owner() {
     assert_eq!(
         handler_fns,
         set(&[
-            "src/interface/cli/uds_dispatch_session.rs::handle_list_sessions",
-            "src/interface/cli/uds_dispatch_session.rs::handle_new_session",
-            "src/interface/cli/uds_dispatch_session.rs::handle_resume_session",
+            "src/interface/uds/controllers/uds_dispatch_session.rs::handle_list_sessions",
+            "src/interface/uds/controllers/uds_dispatch_session.rs::handle_new_session",
+            "src/interface/uds/controllers/uds_dispatch_session.rs::handle_resume_session",
         ]),
         "the session handlers are exactly the discovery and two transition edges"
     );

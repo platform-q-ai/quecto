@@ -659,33 +659,35 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         return 1;
     }
     let retention = build.retention;
-    let code = crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
-        agent,
-        retention: Some(retention.clone()),
-        base_dir: &base_dir,
-        workspace: &build.workspace,
-        identity: session_identity,
-        model,
-        ephemeral,
-        system_prompt,
-        socket_path,
-        socket_override: None,
-        sessions,
-        catalogue: build.catalogue,
-        ext_registry: Some(build.ext_registry),
-        lifetime,
-        notification_rx: build.notification_rx,
-        subagent_registry: build.subagent_registry,
-        harness_lifecycle: build.harness_lifecycle,
-        workflow_state: build.workflow_state,
-        workflow_config: build.workflow_config,
-        broadcast_tx,
-        parent_control,
-        teardown_graph: ctx.teardown_graph,
-        automatic_turns,
-        environment_control: build.environment_control,
-        extensions: build.extensions,
-    });
+    let code = crate::interface::uds::controllers::uds::run_uds_loop(
+        crate::interface::uds::controllers::uds::UdsLoopArgs {
+            agent,
+            retention: Some(retention.clone()),
+            base_dir: &base_dir,
+            workspace: &build.workspace,
+            identity: session_identity,
+            model,
+            ephemeral,
+            system_prompt,
+            socket_path,
+            socket_override: None,
+            sessions,
+            catalogue: build.catalogue,
+            ext_registry: Some(build.ext_registry),
+            lifetime,
+            notification_rx: build.notification_rx,
+            subagent_registry: build.subagent_registry,
+            harness_lifecycle: build.harness_lifecycle,
+            workflow_state: build.workflow_state,
+            workflow_config: build.workflow_config,
+            broadcast_tx,
+            parent_control,
+            teardown_graph: ctx.teardown_graph,
+            automatic_turns,
+            environment_control: build.environment_control,
+            extensions: build.extensions,
+        },
+    );
     admission_startup::shutdown();
     // An ephemeral UDS server persisted spill content only for in-run recall.
     retention.recall.scrub_ephemeral(ephemeral);

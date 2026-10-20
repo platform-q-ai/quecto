@@ -518,11 +518,11 @@ fn teardown_interface_only_parses_maps_and_presents() {
     files.extend(
         [
             "src/interface/tools/agent_cmd_kill.rs",
-            "src/interface/cli/uds_delete_all_subagents.rs",
+            "src/interface/uds/controllers/uds_delete_all_subagents.rs",
             "src/interface/cli/uds_busy_subagents.rs",
             "src/interface/uds/framing/uds_shutdown.rs",
-            "src/interface/cli/uds_dispatch_session.rs",
-            "src/interface/cli/uds_parent_control.rs",
+            "src/interface/uds/controllers/uds_dispatch_session.rs",
+            "src/interface/uds/controllers/uds_parent_control.rs",
             "src/interface/cli/uds_teardown_handles.rs",
         ]
         .into_iter()

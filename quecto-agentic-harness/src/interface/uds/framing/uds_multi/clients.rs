@@ -13,7 +13,9 @@ use super::{
     AgentEvent, ClientMessage, DispatchCtx, DispatchLoopArgs, emit_event_to_broadcast_or_writer,
 };
 use crate::domain::agents::entities::configured_extensions::REGISTRATION_WAIT;
-use crate::interface::cli::uds_extensions::{Extensions, extension_clients, extension_of};
+use crate::interface::uds::controllers::uds_extensions::{
+    Extensions, extension_clients, extension_of,
+};
 
 /// The start-up wait for the configured extensions: until they have
 /// registered their tools (or [`REGISTRATION_WAIT`] passed), only reads and
@@ -213,7 +215,7 @@ async fn handle_disconnect(ctx: &mut DispatchCtx<'_>, client_id: u64) {
         .into_iter()
         .map(|entry| serde_json::to_value(entry).unwrap_or_default())
         .collect();
-    let removed = crate::interface::cli::uds_ext_protocol::handle_client_disconnect(
+    let removed = crate::interface::uds::controllers::uds_ext_protocol::handle_client_disconnect(
         client_id,
         &ctx.client_tool_registry,
     );

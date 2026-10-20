@@ -1,0 +1,295 @@
+//! Unit tests for the runtime reasoning-effort protocol surface (#1067):
+//! `set_effort` command parsing and the `effort` field of `get_state`.
+
+use super::*;
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::domain::inference::value_objects::provider::EffortLevel;
+use crate::interface::uds::controllers::uds::dispatch_session_roster_tests::list_handle;
+use crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry;
+use crate::interface::uds::wire::protocol::AgentCommand;
+
+// ── protocol parsing ─────────────────────────────────────────────────────
+
+#[test]
+fn protocol_parses_set_effort_command() {
+    let parsed: Result<AgentCommand, _> =
+        serde_json::from_str(r#"{"type":"set_effort","id":"se-1","effort":"xhigh"}"#);
+    let cmd = parsed.expect("set_effort must be a recognised agent-protocol command");
+    assert_eq!(cmd.type_name(), "set_effort");
+    assert_eq!(cmd.id(), Some("se-1"));
+    // The payload must actually bind: a variant that drops or defaults the
+    // `effort` field would satisfy the type/tag assertions alone.
+    let AgentCommand::SetEffort { effort, .. } = cmd else {
+        panic!("parsed command is not SetEffort");
+    };
+    assert_eq!(effort, "xhigh", "effort payload must be bound verbatim");
+}
+
+// ── get_state effort exposure ────────────────────────────────────────────
+
+fn make_effort_test_agent(effort: Option<EffortLevel>) -> AgentLoopImpl {
+    AgentLoopImpl::new(AgentLoopConfig {
+        provider: crate::interface::test_support::make_stub_provider(),
+        tool_registry: Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
+        model: "stub".into(),
+        max_tokens: 100,
+        temperature: 0.0,
+        retention: None,
+        session_key: "cli:test".into(),
+        max_context_tokens: 190_000,
+        progress_callback: None,
+        streaming: false,
+        effort,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_marks: Default::default(),
+        model_context_window: None,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
+    })
+}
+
+struct EffortFx {
+    agent: AgentLoopImpl,
+    messages: Vec<crate::domain::conversation::value_objects::message::Message>,
+    session: AgentSession,
+    execution_state: crate::interface::cli::uds_execution_state::ExecutionStateHandle,
+    session_key: String,
+    _tmp: tempfile::TempDir,
+    writer: tokio::io::Sink,
+}
+
+impl EffortFx {
+    fn new(effort: Option<EffortLevel>) -> Self {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // The vocabulary comes from the published catalogue (#1848).
+        let _ = crate::composition::catalogue::list_models_wire_for(tmp.path());
+        Self {
+            agent: make_effort_test_agent(effort),
+            messages: Vec::new(),
+            session: AgentSession::new(super::uds_dispatch::fixture_tests::RIG_MODEL.into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new()),
+            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
+            session_key: "cli:test".into(),
+            _tmp: tmp,
+            writer: tokio::io::sink(),
+        }
+    }
+
+    fn ctx(&mut self) -> DispatchCtx<'_> {
+        let initial_stats = crate::interface::cli::uds_session::compute_session_stats(
+            &self.session_key,
+            &self.messages,
+        );
+        let save_session =
+            crate::interface::uds::controllers::uds::dispatch_session_roster_tests::save_handle_for(
+                &self.session_key,
+            );
+        let rewrite =
+            crate::interface::uds::controllers::uds::dispatch_session_roster_tests::rewrite_handles_for(
+                &self.session_key,
+            );
+        DispatchCtx {
+            execution_state: self.execution_state.clone(),
+            agent: &mut self.agent,
+            messages: &mut self.messages,
+            sessions: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::read_handles_for(
+                &self.session_key,
+                None,
+                &[],
+            ),
+            state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+                self.session.state_snapshot("cli:test", 0, None, 0, None),
+            )),
+            session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+            tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            session: &mut self.session,
+            stdout: Some(&mut self.writer),
+            system_prompt: "",
+            cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::interface::uds::controllers::uds_cancel::CancelSlot::Idle,
+            )),
+            turn_control: std::sync::Arc::default(),
+            broadcast_tx: None,
+            _ext_registry: None,
+            client_tool_registry: new_client_tool_registry(),
+            current_client_id: 0,
+            wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
+            subagent_registry: None,
+            notification_rx: None,
+            workflow_state: None,
+            workflow_config: None,
+            save_session,
+            rewrite,
+            switch: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::switch_handles_for(
+                &self.session_key,
+            ),
+            catalogue: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::catalogue_handles(
+                self._tmp.path(),
+            ),
+            fleet_teardown: None,
+            discovery: list_handle(self._tmp.path()),
+        }
+    }
+}
+
+#[test]
+fn get_state_exposes_configured_effort() {
+    let mut fx = EffortFx::new(Some(EffortLevel::High));
+    let ctx = fx.ctx();
+    let state = crate::interface::uds::controllers::uds_query::query_response_data(
+        &AgentCommand::GetState {
+            id: None,
+            since: None,
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .expect("get_state must return data");
+    assert_eq!(
+        state["effort"], "high",
+        "get_state must expose the effective effort level, got: {state}"
+    );
+}
+
+#[test]
+fn get_state_exposes_null_effort_when_unset() {
+    let mut fx = EffortFx::new(None);
+    let ctx = fx.ctx();
+    let state = crate::interface::uds::controllers::uds_query::query_response_data(
+        &AgentCommand::GetState {
+            id: None,
+            since: None,
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .expect("get_state must return data");
+    assert!(
+        state.as_object().map(|o| o.contains_key("effort")) == Some(true),
+        "get_state must include an effort field (null when unset) so clients \
+         can distinguish 'default' from 'missing capability', got: {state}"
+    );
+    assert!(
+        state["effort"].is_null(),
+        "unset effort must surface as null (provider default), got: {state}"
+    );
+}
+
+#[test]
+fn get_state_includes_provider_effort_vocabulary_in_slim_projection() {
+    let mut fx = EffortFx::new(None);
+    let ctx = fx.ctx();
+    let state = crate::interface::uds::controllers::uds_query::query_response_data(
+        &AgentCommand::GetState {
+            id: None,
+            since: None,
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .expect("get_state must return data");
+    assert_eq!(
+        state["effortLevels"],
+        serde_json::json!(["none", "low", "medium", "high", "xhigh"]),
+        "get_state must carry the vocabulary consumed by /effort, got: {state}"
+    );
+}
+
+#[tokio::test]
+async fn busy_snapshot_get_state_carries_effort_and_vocabulary() {
+    // A TUI connecting mid-turn is served the frozen snapshot instead of the
+    // live query; it must carry effort while preserving the slim #1512 shape.
+    let mut fx = EffortFx::new(Some(EffortLevel::XHigh));
+    let ctx = fx.ctx();
+    crate::interface::cli::uds_snapshots::refresh_state_snapshot(&ctx).await;
+    let snap = ctx.state_snapshot.read().await;
+    let line = crate::interface::cli::uds_snapshots::build_get_state_line_live(&snap, &None, true);
+    let value: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(
+        value["data"]["effort"], "xhigh",
+        "busy-connect snapshot get_state must carry the active effort, got: {value}"
+    );
+    assert_eq!(
+        value["data"]["effortLevels"],
+        serde_json::json!(["none", "low", "medium", "high", "xhigh"]),
+        "busy-connect state must carry the vocabulary consumed by /effort, got: {value}"
+    );
+}
+
+// ── model switch resets effort ───────────────────────────────────────────
+
+/// Switching models resets the session effort to `low`: a level chosen for
+/// one provider (e.g. OpenAI `xhigh`) must not silently carry into another
+/// provider's vocabulary, where it would be clamped while the UI still shows
+/// the stale level. Explicit `low` on every switch is predictable and
+/// cost-safe; the user re-raises effort deliberately via set_effort.
+#[tokio::test]
+async fn set_model_resets_the_session_effort_to_low() {
+    let mut fx = EffortFx::new(Some(EffortLevel::XHigh));
+    {
+        let mut ctx = fx.ctx();
+        let cmd: AgentCommand =
+            serde_json::from_str(r#"{"type":"set_model","model":"anthropic-api/claude-sonnet-5"}"#)
+                .expect("set_model parses");
+        crate::interface::uds::controllers::uds::uds_dispatch::dispatch_command(cmd, &mut ctx)
+            .await;
+    }
+    assert_eq!(
+        fx.agent.effort(),
+        Some(EffortLevel::Low),
+        "a model switch must reset the session effort to low"
+    );
+}
+
+#[tokio::test]
+async fn set_model_same_model_effort_reset_advances_get_state_since_cursor() {
+    let mut fx = EffortFx::new(Some(EffortLevel::High));
+    let before = {
+        let ctx = fx.ctx();
+        crate::interface::uds::controllers::uds_query::query_response_data(
+            &AgentCommand::GetState {
+                id: None,
+                since: None,
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("initial get_state must return data")
+    };
+    assert_eq!(before["effort"], "high");
+    let before_generation = before["generation"]
+        .as_u64()
+        .expect("initial get_state includes generation");
+
+    {
+        let mut ctx = fx.ctx();
+        let cmd: AgentCommand =
+            serde_json::from_str(r#"{"type":"set_model","model":"openai-api/gpt-5.6-sol"}"#)
+                .expect("set_model parses");
+        crate::interface::uds::controllers::uds::uds_dispatch::dispatch_command(cmd, &mut ctx)
+            .await;
+    }
+
+    let after = {
+        let ctx = fx.ctx();
+        crate::interface::uds::controllers::uds_query::query_response_data(
+            &AgentCommand::GetState {
+                id: None,
+                since: Some(before_generation),
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("follow-up get_state must return data")
+    };
+    assert_eq!(after["effort"], "low");
+    assert!(
+        after["generation"].as_u64().unwrap() > before_generation,
+        "same-model set_model must advance generation when it visibly resets effort: before={before}, after={after}"
+    );
+    assert!(
+        after.get("unchanged").is_none(),
+        "changed effort must not be hidden behind unchanged since response: {after}"
+    );
+}

@@ -54,7 +54,7 @@ Important invariants before Phase 1:
 
 ## UDS dispatch
 
-**Primary code:** `src/interface/cli/uds.rs`, `uds_dispatch.rs`,
+**Primary code:** `src/interface/uds/controllers/uds.rs`, `uds_dispatch.rs`,
 `src/interface/uds/framing/uds_reader.rs`, `src/interface/uds/wire/protocol.rs`,
 and UDS regression tests.
 
@@ -278,7 +278,7 @@ actions, their capability set and its composition were removed (#2045). The
 command that opens quecto in the session's folder is the pure
 `src/domain/sessions/value_objects/session_open_command.rs`; the wire edge is
 `interface/uds/sessions/resume_session_controller.rs` and
-`interface/cli/uds_dispatch_resume.rs`.
+`interface/uds/controllers/uds_dispatch_resume.rs`.
 
 Session persistence stores conversation messages, tool-call identity, durable
 context bookkeeping, workflow state, and enough metadata to resume or inspect a
@@ -321,7 +321,7 @@ reload-runtime-configuration use case
 in `src/infrastructure/config/reload.rs`, one `Config` read, the injected builder)
 and the `ReloadRuntime` port the agent loop implements. The use case is two
 scheduler-free phases — `rebuild`/`rebuild_if_changed` yielding a
-`ReloadStep`, then `apply` — and `src/interface/cli/uds_dispatch_reload.rs`
+`ReloadStep`, then `apply` — and `src/interface/uds/controllers/uds_dispatch_reload.rs`
 runs the rebuild under `tokio::task::spawn_blocking` so the current-thread
 UDS runtime keeps serving while it is in flight; composition builds the use
 case into `CatalogueHandles.reload` and the presenter in
@@ -519,7 +519,7 @@ cap.
 | 763 | `tests/bdd/audit_log_steps.rs` |
 
 Current largest production/library files are at the 750-line cap, including
-`src/interface/cli/uds_snapshots.rs`, `src/interface/cli/uds_dispatch.rs`,
-`src/interface/cli/uds.rs`, `src/interface/uds/wire/protocol.rs`,
+`src/interface/cli/uds_snapshots.rs`, `src/interface/uds/controllers/uds_dispatch.rs`,
+`src/interface/uds/controllers/uds.rs`, `src/interface/uds/wire/protocol.rs`,
 `src/infrastructure/tools/agents/subagent_monitor.rs`, and
 `src/application/agent_turn/agent_loop/mod.rs`.

@@ -28,9 +28,6 @@ use crate::interface::cli::uds_teardown_adapters::{
 };
 use crate::interface::uds::subagent_teardown::controller::SubagentTeardownController;
 
-pub use crate::interface::cli::uds_parent_control::{
-    ConnectionRole, ConnectionTeardown, ParentControlLaunch,
-};
 #[cfg(any(test, feature = "test-support"))]
 pub use crate::interface::cli::uds_teardown_adapters::HOLD_EXIT_AFTER_ACK_ENV;
 pub use crate::interface::cli::uds_teardown_adapters::{
@@ -38,6 +35,9 @@ pub use crate::interface::cli::uds_teardown_adapters::{
     RegistryLifecycleRepository as LifecycleAdapter,
 };
 pub use crate::interface::cli::uds_teardown_handles::{TeardownHandles, TeardownLoopInputs};
+pub use crate::interface::uds::controllers::uds_parent_control::{
+    ConnectionRole, ConnectionTeardown, ParentControlLaunch,
+};
 
 /// What the fleet teardown of one harness is built over.
 pub struct FleetTeardownWiring {

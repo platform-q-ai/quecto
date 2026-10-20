@@ -29,7 +29,9 @@ use crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry;
 use crate::interface::uds::subagent_teardown::presenter::{AckWriteError, AckWriter};
 use crate::interface::uds::subagent_teardown::wire::TeardownResponse;
 
-use super::uds_cancel::{CancelHandle, TurnControlHandle, fire_cancel};
+use crate::interface::uds::controllers::uds_cancel::{
+    CancelHandle, TurnControlHandle, fire_cancel,
+};
 use crate::interface::uds::framing::uds_multi::BusyFlag;
 use crate::interface::uds::framing::uds_wire::ConnectionWireMode;
 

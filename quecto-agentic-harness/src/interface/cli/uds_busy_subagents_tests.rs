@@ -8,7 +8,7 @@
 //! goes idle (the child-progress-freeze bug, fixed 2026-07-29).
 
 use super::uds_busy_subagents::{BusySubagentCtx, intercept};
-use super::uds_ext_protocol::{
+use crate::interface::uds::controllers::uds_ext_protocol::{
     ClientToolRegistry, new_client_tool_registry, register_client_writer,
 };
 
@@ -192,7 +192,7 @@ async fn direct_feed_sync_is_served_inline_by_the_child_local_fast_path() {
     // uds_sync — never queued behind the dispatch loop (PR #1307 review).
     let (served_inline, response) = crate::interface::cli::busy_reader_dispatch(
         r#"{"type":"sync","id":"feed-9","epoch":1,"sinceRev":0}"#,
-        &crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]),
+        &crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]),
     )
     .await;
 

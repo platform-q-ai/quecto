@@ -233,7 +233,7 @@ the architecture tests refuse a use case the docs do not name.
 | `ListRetainedContext` | #1866 | the context-pruning policy | the retention index and presence, never content |
 
 Each transaction has exactly one owner: the handlers in
-`src/interface/cli/uds_dispatch_session.rs` admit (the streaming refusal),
+`src/interface/uds/controllers/uds_dispatch_session.rs` admit (the streaming refusal),
 request the injected use case and present the response; they sequence nothing.
 
 ### Ports
@@ -558,7 +558,7 @@ for every home state, cold and index-seeded, and that a well-formed lying
 index yields only `StaleHomeVersion`; `resume_refusal.rs` pins every kind, the
 no-effect invariants and the single ownership over the real adapters. The UDS edge is `interface/uds/sessions/
 resume_session_controller.rs` (wire fields → request) and
-`interface/cli/uds_dispatch_resume.rs` (typed answers, untrusted text made
+`interface/uds/controllers/uds_dispatch_resume.rs` (typed answers, untrusted text made
 safe); the TUI shows the refusal as a plain notice
 (`sessions/resume_decision.rs`) that sends nothing, and a selection sends
 identity + the listed version — never an action.

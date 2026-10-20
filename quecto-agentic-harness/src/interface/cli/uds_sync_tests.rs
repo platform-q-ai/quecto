@@ -1,9 +1,9 @@
 use super::uds_sync::{SYNC_OVERSIZED_ERROR, bounded_response_line, intercept, sync_data};
 use crate::application::sessions::conversation_ledger::LedgerAdvance;
 use crate::domain::conversation::value_objects::message::{Message, ToolCall};
-use crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles;
 use crate::interface::cli::uds_session::HISTORY_PAGE_JSON_BUDGET;
 use crate::interface::cli::uds_session_handles::SessionReadHandles;
+use crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles;
 use crate::interface::uds::wire::protocol::AgentEvent;
 
 fn publish(handles: &SessionReadHandles, messages: &[Message]) -> LedgerAdvance {
@@ -158,12 +158,12 @@ async fn a_resync_carries_the_history_page_cursors() {
 }
 
 fn client_writer() -> (
-    super::uds_ext_protocol::ClientToolRegistry,
+    crate::interface::uds::controllers::uds_ext_protocol::ClientToolRegistry,
     tokio::sync::mpsc::Receiver<String>,
 ) {
-    let clients = super::uds_ext_protocol::new_client_tool_registry();
+    let clients = crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry();
     let (tx, rx) = tokio::sync::mpsc::channel::<String>(8);
-    super::uds_ext_protocol::register_client_writer(&clients, 1, tx);
+    crate::interface::uds::controllers::uds_ext_protocol::register_client_writer(&clients, 1, tx);
     (clients, rx)
 }
 
@@ -245,7 +245,7 @@ fn the_oversized_guard_replaces_the_frame_with_the_structured_refusal() {
 #[tokio::test]
 async fn the_reader_fast_path_still_reconciles_without_a_registered_writer() {
     let handles = ephemeral_read_handles(&[Message::user("committed")]);
-    let clients = super::uds_ext_protocol::new_client_tool_registry();
+    let clients = crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry();
     assert!(
         intercept(
             r#"{"type":"sync","epoch":0,"sinceRev":0}"#,

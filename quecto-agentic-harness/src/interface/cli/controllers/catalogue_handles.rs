@@ -83,7 +83,7 @@ impl std::fmt::Debug for RuntimeConfigurationInputs {
 
 /// The effort fields of a dispatch loop's state snapshot (#1848).
 pub(crate) fn effort_view(
-    ctx: &crate::interface::cli::uds::DispatchCtx<'_>,
+    ctx: &crate::interface::uds::controllers::uds::DispatchCtx<'_>,
 ) -> crate::interface::uds::catalogue::effort_presenter::EffortStateView {
     ctx.catalogue
         .effort_view(ctx.agent.effort(), ctx.session.model())

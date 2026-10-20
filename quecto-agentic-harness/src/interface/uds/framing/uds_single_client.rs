@@ -5,11 +5,11 @@
 use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::interface::cli::uds::{DispatchCtx, run_command_loop};
-use crate::interface::cli::uds_cancel::{CancelSlot, TurnControl};
+use crate::interface::cli::uds_lifecycle;
 use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
 use crate::interface::cli::uds_session_handles::SessionHandles;
-use crate::interface::cli::{uds_ext_protocol, uds_extensions::ExtRegistry, uds_lifecycle};
+use crate::interface::uds::controllers::uds::{DispatchCtx, run_command_loop};
+use crate::interface::uds::controllers::{uds_cancel, uds_ext_protocol, uds_extensions};
 
 pub(in crate::interface) struct SingleClientArgs<'a> {
     pub(in crate::interface) agent: AgentLoopImpl,
@@ -20,7 +20,7 @@ pub(in crate::interface) struct SingleClientArgs<'a> {
     pub(in crate::interface) admission_slots: Vec<String>,
     pub(in crate::interface) session_key: String,
     pub(in crate::interface) system_prompt: String,
-    pub(in crate::interface) ext_registry: Option<ExtRegistry>,
+    pub(in crate::interface) ext_registry: Option<uds_extensions::ExtRegistry>,
     pub(in crate::interface) subagent_registry:
         Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     pub(in crate::interface) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
@@ -92,8 +92,8 @@ pub(in crate::interface) async fn single_client_loop(
             session: &mut agent_session,
             stdout: Some(&mut *writer),
             system_prompt: &system_prompt,
-            cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
-            turn_control: std::sync::Arc::<TurnControl>::default(),
+            cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(uds_cancel::CancelSlot::Idle)),
+            turn_control: std::sync::Arc::<uds_cancel::TurnControl>::default(),
             broadcast_tx: None,
             _ext_registry: ext_registry,
             client_tool_registry: uds_ext_protocol::new_client_tool_registry(),

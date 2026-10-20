@@ -23,7 +23,7 @@ use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSes
 use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
+use quecto::interface::uds::controllers::uds::{UdsLoopArgs, run_uds_loop};
 use wiremock::Request;
 
 fn bdd_workflow_config_with_feature(
@@ -2623,7 +2623,7 @@ fn mc_spawn_agent(
     let base_for_thread = base.to_path_buf();
     let sp = socket_path.clone();
     let handle = std::thread::spawn(move || {
-        quecto::interface::cli::uds::run_uds_loop(UdsLoopArgs {
+        quecto::interface::uds::controllers::uds::run_uds_loop(UdsLoopArgs {
             extensions: Default::default(),
             agent,
             retention: None,

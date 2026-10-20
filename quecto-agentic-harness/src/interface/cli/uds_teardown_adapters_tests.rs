@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::*;
 use crate::domain::agents::services::subagent_teardown::LaunchGeneration;
 use crate::infrastructure::tools::agents::subagent_registry::SubagentEntry;
-use crate::interface::cli::uds_cancel::{CancelSlot, TurnControl};
+use crate::interface::uds::controllers::uds_cancel::{CancelSlot, TurnControl};
 
 #[tokio::test]
 async fn turn_cancellation_marks_abort_fires_the_slot_and_reports_busy() {
@@ -32,12 +32,15 @@ async fn shutdown_closes_turn_admission_for_every_later_turn() {
     let cancel_handle: CancelHandle = Arc::new(Mutex::new(CancelSlot::Idle));
     let turn_control: TurnControlHandle = Arc::new(TurnControl::default());
     assert!(
-        crate::interface::cli::uds_cancel::arm_swarm_cancel(&cancel_handle, &turn_control)
-            .await
-            .is_some(),
+        crate::interface::uds::controllers::uds_cancel::arm_swarm_cancel(
+            &cancel_handle,
+            &turn_control
+        )
+        .await
+        .is_some(),
         "before the shutdown a turn is admitted"
     );
-    crate::interface::cli::uds_cancel::disarm_cancel(&cancel_handle);
+    crate::interface::uds::controllers::uds_cancel::disarm_cancel(&cancel_handle);
     let adapter = LoopTurnCancellation {
         cancel_handle: cancel_handle.clone(),
         turn_control: turn_control.clone(),
@@ -49,9 +52,12 @@ async fn shutdown_closes_turn_admission_for_every_later_turn() {
     assert!(turn_control.take_abort());
     for _ in 0..2 {
         assert!(
-            crate::interface::cli::uds_cancel::arm_swarm_cancel(&cancel_handle, &turn_control)
-                .await
-                .is_none(),
+            crate::interface::uds::controllers::uds_cancel::arm_swarm_cancel(
+                &cancel_handle,
+                &turn_control
+            )
+            .await
+            .is_none(),
             "no turn starts once the shutdown executes"
         );
     }

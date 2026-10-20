@@ -316,7 +316,7 @@ fn spawn_launched_child(
         .args(extra_args)
         .env("QUECTO_BASE_DIR", base)
         .env(
-            quecto::interface::cli::uds_parent_control::BIND_DEADLINE_ENV,
+            quecto::interface::uds::controllers::uds_parent_control::BIND_DEADLINE_ENV,
             "1000",
         )
         .stdin(std::process::Stdio::null())

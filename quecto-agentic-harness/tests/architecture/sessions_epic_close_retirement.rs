@@ -20,7 +20,7 @@ const INTERFACE_SESSION_MODULES: &[&str] = &[
     "src/interface/uds/sessions/export_report_controller.rs",
     "src/interface/uds/sessions/synchronize_transcript_controller.rs",
     "src/interface/uds/sessions/rewind_conversation_controller.rs",
-    "src/interface/cli/uds_dispatch_session.rs",
+    "src/interface/uds/controllers/uds_dispatch_session.rs",
     "src/interface/cli/uds_session_history.rs",
     "src/interface/cli/uds_session_message_range.rs",
     "src/interface/cli/uds_latest_report.rs",
@@ -73,7 +73,10 @@ const STARTUP_KEY_SITES: &[&str] = &["src/interface/cli/controllers/agent/agent_
 /// Disposition inventory (D10): the interface modules that stayed, each in
 /// its allowlisted owner role, with no sessions persistence call.
 const DISPOSITION: &[(&str, &str)] = &[
-    ("src/interface/cli/uds_cancel_history.rs", "cancellation"),
+    (
+        "src/interface/uds/controllers/uds_cancel_history.rs",
+        "cancellation",
+    ),
     ("src/interface/cli/uds_session_controls.rs", "control"),
     ("src/interface/cli/uds_session_notify.rs", "notification"),
     ("src/interface/cli/uds_session_usage.rs", "stats"),
@@ -87,6 +90,7 @@ const TEARDOWN_CONTROLLER: &str = "src/interface/uds/subagent_teardown/controlle
 const RETIRED_PATHS: &[&str] = &[
     "src/interface/cli/agent_session_identity.rs",
     "src/interface/cli/uds/uds_session_load.rs",
+    "src/interface/uds/controllers/uds/uds_session_load.rs",
     "src/interface/cli/uds_busy_sync.rs",
     "src/interface/cli/uds_snapshot_export.rs",
 ];

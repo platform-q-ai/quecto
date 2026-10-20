@@ -16,9 +16,11 @@
 //!   ([`Violation::ProtocolError`] then EOF — never a hang).
 
 use super::uds_wire::ConnectionWireMode;
-use crate::interface::cli::uds::MAX_FRAME_PAYLOAD_BYTES;
-use crate::interface::cli::uds::{is_abort_command, steer_images};
-use crate::interface::cli::uds_cancel::{CancelHandle, TurnControlHandle, fire_cancel};
+use crate::interface::uds::controllers::uds::MAX_FRAME_PAYLOAD_BYTES;
+use crate::interface::uds::controllers::uds::{is_abort_command, steer_images};
+use crate::interface::uds::controllers::uds_cancel::{
+    CancelHandle, TurnControlHandle, fire_cancel,
+};
 use quecto_line_io::{FrameError, Incoming, WireMode};
 use tokio::io::BufReader;
 use tokio::sync::mpsc;
@@ -27,7 +29,10 @@ use tokio::sync::mpsc;
 pub(in crate::interface) enum ReaderMessage {
     /// A complete message within the byte cap, with the images the reader
     /// admitted for a steer (#2422), run by dispatch without decoding again.
-    Message(String, Option<crate::interface::cli::uds::AdmittedImages>),
+    Message(
+        String,
+        Option<crate::interface::uds::controllers::uds::AdmittedImages>,
+    ),
     /// A protocol violation to surface to the client as an error event.
     Violation(Violation),
 }
@@ -46,13 +51,13 @@ pub(in crate::interface) enum Violation {
 /// extension's result (#2423 review M2), so the client's oldest pending
 /// call fails now, not at its timeout.
 pub(in crate::interface) async fn report_protocol_error(
-    ctx: &mut crate::interface::cli::uds::DispatchCtx<'_>,
+    ctx: &mut crate::interface::uds::controllers::uds::DispatchCtx<'_>,
     violation: Violation,
 ) {
     let message = match violation {
         Violation::ProtocolError(message) => message,
         Violation::Oversized(over_cap) => {
-            crate::interface::cli::uds_ext_protocol::reject_oversized(
+            crate::interface::uds::controllers::uds_ext_protocol::reject_oversized(
                 &ctx.client_tool_registry,
                 ctx.current_client_id,
                 over_cap,
@@ -61,7 +66,7 @@ pub(in crate::interface) async fn report_protocol_error(
     };
     tracing::warn!("UDS protocol error: {message}");
     let event = super::super::wire::protocol::AgentEvent::err(None, "protocol_error", message);
-    crate::interface::cli::uds::emit_event_to_broadcast_or_writer(ctx, &event).await;
+    crate::interface::uds::controllers::uds::emit_event_to_broadcast_or_writer(ctx, &event).await;
 }
 
 /// Spawn the bounded reader task. Returns its [`JoinHandle`] (for abort on
