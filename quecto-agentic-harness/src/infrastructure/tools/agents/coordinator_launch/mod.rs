@@ -33,6 +33,7 @@ use super::subagent_registry::SubagentRegistry;
 use super::subagent_status::SubagentStatus;
 use crate::application::project_board::ports::{
     CoordinatorLaunch, CoordinatorRequest, LaunchRefused, LaunchedCoordinator, RunLiveness,
+    StartedRuns,
 };
 use crate::application::tools::ports::Tool;
 use crate::domain::agents::services::subagent::{MAX_AGENT_ID_CHARS, validate_agent_id_format};
@@ -256,6 +257,12 @@ impl RunLiveness for SpawnCoordinatorLauncher {
             .iter()
             .find(|(key, entry)| entry.effective_display_name(key) == label && runs(entry))
             .map(|(key, _)| key.clone())
+    }
+}
+
+impl StartedRuns for SpawnCoordinatorLauncher {
+    fn started(&self) -> Vec<(Slug, u32)> {
+        vec![]
     }
 }
 

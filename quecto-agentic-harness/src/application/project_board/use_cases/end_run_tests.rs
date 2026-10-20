@@ -480,3 +480,6 @@ fn a_front_end_that_sees_no_swarm_ends_the_run_unchecked() {
 
 #[path = "end_run_pushed_tests.rs"]
 mod pushed;
+
+#[path = "end_run_lost_tests.rs"]
+mod lost;

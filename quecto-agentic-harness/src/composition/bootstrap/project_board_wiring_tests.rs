@@ -140,3 +140,9 @@ fn a_front_end_naming_no_session_reads_no_kept_board() {
         "{refused}"
     );
 }
+
+impl crate::application::project_board::ports::StartedRuns for Launches {
+    fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
+        vec![]
+    }
+}

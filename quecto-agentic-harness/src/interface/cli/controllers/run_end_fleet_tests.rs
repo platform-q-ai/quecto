@@ -218,3 +218,63 @@ fn the_run_end_names_the_children_it_is_waiting_for() {
     let (registry, _environments, _env_ref) = launched_container_child(temp.path(), &log);
     assert_eq!(waiting_for(&registry), ["child".to_string()]);
 }
+
+/// #2655: the board runs a session's starts left open, as told; it notes
+/// whether the run's children had all settled when it was asked.
+struct LeftOpen {
+    registry: SubagentRegistry,
+    asked: Mutex<Vec<bool>>,
+}
+
+impl super::LeftRunsEnder for LeftOpen {
+    fn end_left_runs(&self) -> Vec<String> {
+        let settled = self.registry.lock().unwrap().is_empty();
+        self.asked.lock().unwrap().push(settled);
+        vec![
+            "board: run 1 of task a was still open as this session ended: ended it as stopped"
+                .into(),
+        ]
+    }
+}
+
+/// #2655: a one-shot parent's reply ended with its board run open, and
+/// the run stayed `running` with no swarm. Its orderly end now ends the
+/// runs its session left open, once its children have settled (so no
+/// coordinator still runs), and says so on stderr.
+#[test]
+fn an_orderly_run_end_ends_the_board_runs_left_open_once_its_children_settle() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("scripts.log");
+    let (registry, _environments, _env_ref) = launched_container_child(temp.path(), &log);
+    let rt = runtime();
+    let left = Arc::new(LeftOpen {
+        registry: registry.clone(),
+        asked: Mutex::default(),
+    });
+    let (mut stdout, mut stderr) = ("the answer\n".to_string(), String::new());
+    let code = RunEnd::compose(
+        Some(BUILD),
+        Some(registry),
+        Some(new_shared_harness_lifecycle()),
+        false,
+    )
+    .ending_left_runs(Some(left.clone()))
+    .after(
+        &rt,
+        &mut AgentOutput {
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+        },
+        0,
+    );
+    assert_eq!(code, 0);
+    assert_eq!(
+        *left.asked.lock().unwrap(),
+        [true],
+        "once, after the children settled"
+    );
+    assert_eq!(
+        stderr,
+        "board: run 1 of task a was still open as this session ended: ended it as stopped\n"
+    );
+}

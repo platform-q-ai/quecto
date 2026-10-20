@@ -13,7 +13,7 @@ use super::recording::BoardCall;
 use super::request::{op_of, parse};
 use super::{read, run_recorded_with, summaries_refusal};
 use crate::application::project_board::operations::ListSummaries;
-use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness};
+use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness, StartedRuns};
 use crate::application::project_board::use_cases::RunBoardOperation;
 
 /// What a request does with the board.
@@ -49,10 +49,11 @@ pub struct ProjectBoardEnvironment {
 }
 
 /// A session's swarms as a front end reaches them (S4c): it launches a
-/// started task's coordinator, and sees whether a run's still runs.
-pub trait SessionSwarms: CoordinatorLaunch + RunLiveness {}
+/// started task's coordinator, sees whether a run's still runs, and names
+/// the runs it started (#2655).
+pub trait SessionSwarms: CoordinatorLaunch + RunLiveness + StartedRuns {}
 
-impl<T: CoordinatorLaunch + RunLiveness> SessionSwarms for T {}
+impl<T: CoordinatorLaunch + RunLiveness + StartedRuns> SessionSwarms for T {}
 
 /// A front end's coordinator launcher (S4c).
 pub type Launcher = std::sync::Arc<dyn SessionSwarms>;

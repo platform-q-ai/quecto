@@ -626,6 +626,15 @@ pub trait RemoteRevisions: Send + Sync {
     fn not_on_remote(&self, revisions: &[String]) -> Result<Vec<String>, BoardStoreError>;
 }
 
+/// Port: the runs this front end's own starts launched (#2655), oldest
+/// first: each run of a task whose coordinator a start of this session
+/// launched, as `(task, run)`, whether or not it has ended since. A front
+/// end that launches none (the CLI) has none. Kept in memory: a process
+/// that restarted has forgotten them.
+pub trait StartedRuns: Send + Sync {
+    fn started(&self) -> Vec<(Slug, u32)>;
+}
+
 /// Port: launches a started task's swarm coordinator in a new container
 /// (S4c). Its adapter goes through the session's own spawn path, so it
 /// launches only what the session itself could spawn, and only while its

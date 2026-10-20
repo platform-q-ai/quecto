@@ -136,10 +136,13 @@ pub fn fold_back(
 /// has ended; a stamp the board cannot spell.
 pub fn end_lost(
     task: &Task,
-    run: &Run,
+    ran: (&Run, &Plan),
+    reported: Reported,
     actor: &Identity,
     now: &Timestamp,
 ) -> Result<Run, BoardRuleError> {
+    let (run, _plan) = ran;
+    let _ = reported;
     // A claimed task's run is its holder's (one whose claim expired takes
     // the task over first); only a task nobody claims leaves it to anyone.
     if task.fields().claim.is_some() {

@@ -20,13 +20,13 @@ use std::time::SystemTime;
 use crate::application::project_board::operations::{BoardOperationParts, NoPullRequestHost};
 use crate::application::project_board::ports::{
     BoardClock, BoardStoreError, CoordinatorLaunch, ProjectBoardStore, PullRequestStates,
-    PullRequestStatesError, RemoteRevisions, RunLiveness, SwarmRunReports,
+    PullRequestStatesError, RemoteRevisions, RunLiveness, StartedRuns, SwarmRunReports,
 };
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
-    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ProposePlan, QueryBoard, RunBoardOperation,
-    StartBoardTask, UpdateDraftTask,
+    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ListLeftRuns, ProposePlan, QueryBoard,
+    RunBoardOperation, StartBoardTask, UpdateDraftTask,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
@@ -171,6 +171,11 @@ fn build_with_warnings(
                 .clone()
                 .map(|swarms| swarms as Arc<dyn RunLiveness>),
         ),
+        // A session's end ends the runs its starts left open (#2655).
+        left_runs: environment
+            .launcher
+            .clone()
+            .map(|swarms| ListLeftRuns::new(Arc::clone(&store), swarms as Arc<dyn StartedRuns>)),
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         complete,
         clock,

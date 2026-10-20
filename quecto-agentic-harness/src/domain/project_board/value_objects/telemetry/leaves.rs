@@ -95,6 +95,8 @@ const KNOWN_KINDS: &[&str] = &[
     "cli",
     "agent",
     "pocket_relay",
+    // The harness ending the runs a session left open (#2655).
+    "session_end",
     "read",
     "write",
     "missing",

@@ -237,5 +237,29 @@ async fn spawns_refusal_or_an_answer_naming_no_container_is_a_refusal() {
     );
 }
 
+/// #2655: the launcher names the runs its launches started, so a
+/// session's end can end those it leaves open; a launch refused started
+/// nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_runs_a_launcher_started_are_the_ones_it_launched() {
+    use quecto::application::project_board::ports::StartedRuns;
+    let spawned = spawned_with(RUNNING, false, Some(&launched_child(Some("C4"))));
+    let (launching, _registry) = launcher(spawned, true);
+    let launching = Arc::new(launching);
+    assert!(launching.started().is_empty(), "nothing launched yet");
+    assert!(launched(Arc::clone(&launching)).await.is_ok());
+    assert_eq!(
+        launching.started(),
+        [(Slug::parse("demo-hello").unwrap(), 1)]
+    );
+    let (refusing, _registry) = launcher(spawn("no container runtime", true), true);
+    let refusing = Arc::new(refusing);
+    assert!(launched(Arc::clone(&refusing)).await.is_err());
+    assert!(
+        refusing.started().is_empty(),
+        "a refused launch started none"
+    );
+}
+
 #[path = "coordinator_launch_cancel.rs"]
 mod cancel;

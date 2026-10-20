@@ -298,7 +298,15 @@ impl EndRun {
                     RunEndOutcome::Succeeded => held(HeldEnd::Succeeded, SwarmEnd::Succeeded)?,
                     RunEndOutcome::Stopped => held(HeldEnd::Stopped, SwarmEnd::Cancelled)?,
                     RunEndOutcome::Failed => held(HeldEnd::Failed, SwarmEnd::Failed)?,
-                    RunEndOutcome::Lost => end_lost(task, run, actor, &when.now)?,
+                    RunEndOutcome::Lost => {
+                        let nothing = Reported {
+                            items: vec![],
+                            cost: None,
+                            report: SwarmReport::NoneKept,
+                            unpushed: 0,
+                        };
+                        end_lost(task, (run, plan), nothing, actor, &when.now)?
+                    }
                 };
                 Ok(vec![BoardArtifact::Run(ended)])
             },

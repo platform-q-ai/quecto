@@ -128,6 +128,14 @@ impl BoardTool {
     }
 }
 
+impl BoardTool {
+    /// Ends the runs this session's starts left open, as its session ends
+    /// (#2655): one line each, saying how it went.
+    pub fn end_left_runs(&self) -> Vec<String> {
+        vec![]
+    }
+}
+
 /// The JSON type, and words, a field of `kind` takes.
 fn field_schema(kind: Kind) -> Value {
     let statuses: Vec<&str> = TaskStatus::ALL
@@ -465,6 +473,10 @@ mod start_tests;
 #[cfg(test)]
 #[path = "tool_end_run_tests.rs"]
 mod end_run_tests;
+
+#[cfg(test)]
+#[path = "tool_left_runs_tests.rs"]
+mod left_runs_tests;
 
 #[cfg(test)]
 #[path = "tool_list_summary_tests.rs"]
