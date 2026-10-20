@@ -4,6 +4,7 @@
 pub(in crate::interface::cli) mod admission_broker;
 pub mod admission_handles;
 pub(super) mod agent;
+pub mod auth;
 pub mod catalogue_handles;
 pub mod claude_member;
 pub(super) mod commands;
