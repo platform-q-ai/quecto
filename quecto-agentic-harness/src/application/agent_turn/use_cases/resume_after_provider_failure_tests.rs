@@ -3,7 +3,8 @@
 //! a resume since then re-arms them, a wake alone never does; an explicit
 //! instruction re-arms any suspension.
 use super::*;
-use crate::application::swarm::ports::{CoordinatorBoardFuture, PortFuture};
+use crate::application::swarm::ports::{PortFuture, lifecycle::CoordinatorBoardFuture};
+use crate::domain::inference::services::turn_suspension::WakeOutcome;
 use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 use crate::domain::swarm::value_objects::run_control::RunControlReceipt;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -64,7 +65,9 @@ async fn a_failure_is_dated_after_it_and_only_a_later_resume_re_arms() {
     let run = Run::at(4);
     let mut turns = ResumeAfterProviderFailure::new();
     turns.observe_control_generation(Some(3));
-    turns.suspend_after_failure();
+    turns.suspend_after_failure(&DomainError::Provider(
+        "provider error (401): invalid credentials".into(),
+    ));
     assert!(!turns.allowed());
     assert_eq!(turns.date_suspension(Some(&run)).await, Some(4));
     let dated = turns.turns.suspension().expect("suspended");
@@ -75,24 +78,36 @@ async fn a_failure_is_dated_after_it_and_only_a_later_resume_re_arms() {
     assert_eq!(turns.date_suspension(Some(&run)).await, None, "dated once");
     assert_eq!(
         turns.probe_while_suspended(&run).await.unwrap(),
-        SuspendedProbe::StillSuspended { generation: 4 },
+        SuspendedProbe {
+            outcome: WakeOutcome::StillSuspended,
+            generation: 4
+        },
         "a wake alone never clears a suspension"
     );
     run.moves_to(6);
     assert_eq!(
         turns.probe_while_suspended(&run).await.unwrap(),
-        SuspendedProbe::Rearmed { generation: 6 }
+        SuspendedProbe {
+            outcome: WakeOutcome::RearmedByResume,
+            generation: 6
+        }
     );
     assert!(turns.allowed());
-    assert!(turns.take_owed_turn(), "the resume owes the run a turn");
-    assert!(!turns.take_owed_turn(), "once");
+    assert_eq!(
+        turns.take_owed_turn(),
+        Some(OwedTurn::AfterResume),
+        "the resume owes the run a turn"
+    );
+    assert_eq!(turns.take_owed_turn(), None, "once");
 }
 
 #[tokio::test]
 async fn without_a_swarm_or_an_answer_the_pre_turn_generation_stands() {
     let mut turns = ResumeAfterProviderFailure::new();
     turns.observe_control_generation(Some(2));
-    turns.suspend_after_failure();
+    turns.suspend_after_failure(&DomainError::Provider(
+        "provider error (401): invalid credentials".into(),
+    ));
     assert_eq!(turns.date_suspension(None).await, None);
     let locked = Run::at(u64::MAX);
     assert_eq!(turns.date_suspension(Some(&locked)).await, None);
@@ -110,7 +125,10 @@ async fn a_store_rejection_waits_for_an_instruction() {
     run.moves_to(9);
     assert_eq!(
         turns.probe_while_suspended(&run).await.unwrap(),
-        SuspendedProbe::StillSuspended { generation: 9 }
+        SuspendedProbe {
+            outcome: WakeOutcome::StillSuspended,
+            generation: 9
+        }
     );
     turns.start_turn(
         Work::Instruction(
@@ -119,8 +137,9 @@ async fn a_store_rejection_waits_for_an_instruction() {
         None,
     );
     assert!(turns.allowed());
-    assert!(
-        !turns.take_owed_turn(),
+    assert_eq!(
+        turns.take_owed_turn(),
+        None,
         "an instruction owes no resume turn"
     );
 }
@@ -150,6 +169,37 @@ fn a_turn_starts_as_its_work() {
     turns.start_turn(Work::Instruction(Instruction::Prompt), Some(5));
     assert!(turns.allowed());
     assert!(turns.admits(Work::Automatic));
-    turns.suspend_after_failure();
+    turns.suspend_after_failure(&DomainError::Provider(
+        "provider error (401): invalid credentials".into(),
+    ));
     assert_eq!(turns.turns.suspension().and_then(|s| s.generation), Some(5));
+}
+
+/// #2531: a recoverable failure (an Envoy 507 whose retries ran out) is
+/// re-armed by the next wake, without a resume, and owes the run a turn to
+/// continue the interrupted work; until then it asks to wake itself.
+#[tokio::test]
+async fn the_next_wake_re_arms_a_recoverable_failure() {
+    let run = Run::at(4);
+    let mut turns = ResumeAfterProviderFailure::new();
+    turns.suspend_after_failure(&DomainError::Provider(
+        "HTTP 507 from Codex: exceeded request buffer limit while retrying upstream".into(),
+    ));
+    assert_eq!(turns.date_suspension(Some(&run)).await, Some(4));
+    assert!(turns.needs_self_wake(), "no one else may wake it");
+    assert_eq!(
+        turns.probe_while_suspended(&run).await.unwrap(),
+        SuspendedProbe {
+            outcome: WakeOutcome::RearmedAfterRecoverableFailure,
+            generation: 4
+        }
+    );
+    assert!(turns.allowed());
+    assert!(!turns.needs_self_wake());
+    assert_eq!(
+        turns.take_owed_turn(),
+        Some(OwedTurn::AfterRecoverableFailure),
+        "the run is owed a turn to continue"
+    );
+    assert_eq!(turns.take_owed_turn(), None, "once");
 }

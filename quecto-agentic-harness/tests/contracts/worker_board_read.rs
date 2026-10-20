@@ -1,4 +1,4 @@
-use quecto::application::swarm::ports::WorkerBoardRead;
+use quecto::application::swarm::ports::lifecycle::WorkerBoardRead;
 use quecto::application::tools::ports::Tool;
 use quecto::domain::swarm::value_objects::lifecycle::RunStatus;
 

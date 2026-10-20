@@ -52,12 +52,12 @@ pub(super) const MESSAGE_REFUSALS: &[(&str, &str, &str)] = &[
         "NotFound",
     ),
     (
-        "src/application/swarm/board_read_models.rs:summary",
+        "src/application/swarm/services/board_read_models.rs:summary",
         "coordination run missing",
         "RunMissing",
     ),
     (
-        "src/application/swarm/board_read_models.rs:summary",
+        "src/application/swarm/services/board_read_models.rs:summary",
         "the gate admitted a member that is nobody",
         "Internal",
     ),
@@ -102,22 +102,22 @@ pub(super) const MESSAGE_REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
-        "src/application/swarm/board_messages.rs:message_id",
+        "src/application/swarm/services/board_messages.rs:message_id",
         "message id must be a positive integer",
         "Invalid",
     ),
     (
-        "src/application/swarm/board_messages.rs:retire",
+        "src/application/swarm/services/board_messages.rs:retire",
         "message {id} is already {}",
         "WrongState",
     ),
     (
-        "src/application/swarm/board_messages.rs:retire",
+        "src/application/swarm/services/board_messages.rs:retire",
         "only a message to the same recipient can be {status}",
         "WrongState",
     ),
     (
-        "src/application/swarm/board_messages.rs:retire",
+        "src/application/swarm/services/board_messages.rs:retire",
         "only your own message can be {status}",
         "NotOwner",
     ),

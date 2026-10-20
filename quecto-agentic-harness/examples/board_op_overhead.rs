@@ -22,7 +22,7 @@ use std::time::Instant;
 use std::sync::Arc;
 
 use quecto::application::swarm::dto::BoardLocation;
-use quecto::application::swarm::ports::BoardOpLog;
+use quecto::application::swarm::ports::board_telemetry::BoardOpLog;
 use quecto::composition::swarm::{
     SwarmBoardHandles, board_op_log, build_swarm_board_handles, with_event_log,
 };
@@ -74,8 +74,9 @@ fn handles(dir: &Path, arm: &Arm<'_>) -> SwarmBoardHandles {
         ),
         Arm::On(log) => build_swarm_board_handles(
             location,
-            board_op_log(true, log)
-                .map(|log| log as Arc<dyn quecto::application::swarm::ports::BoardOpLog>),
+            board_op_log(true, log).map(|log| {
+                log as Arc<dyn quecto::application::swarm::ports::board_telemetry::BoardOpLog>
+            }),
         ),
     };
     assert_eq!(handles.telemetry.is_some(), !matches!(arm, Arm::Off));

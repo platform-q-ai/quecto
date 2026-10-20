@@ -20,7 +20,7 @@ use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::auth::device_code_flow::OAuthDeviceCodeFlow;
 use crate::infrastructure::auth::oauth::OAuthEndpoints;
 use crate::infrastructure::time::auth_clock::SystemAuthClock;
-use crate::interface::cli::auth::{AuthEnvironment, AuthHandles};
+use crate::interface::cli::controllers::auth::{AuthEnvironment, AuthHandles};
 
 /// `auth status` over `base_dir`'s credentials and the system clock: the
 /// one wiring of the status use case, shared with `quecto status`'s

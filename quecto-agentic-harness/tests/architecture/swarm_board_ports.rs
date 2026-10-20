@@ -134,7 +134,7 @@ fn the_scan_finds_crate_paths_anywhere_in_the_code() {
     let here = module("infrastructure::tools::swarm::swarm_board_dispatch");
     let found = crate_paths(
         r#"
-        use crate::application::swarm::ports::BoardOpLog;
+        use crate::application::swarm::ports::board_telemetry::BoardOpLog;
         use crate::{domain::swarm::events::telemetry::RefusalKind, infrastructure::persistence::A};
         use super::swarm_board_telemetry::trace;
         fn f(meter: crate::infrastructure::persistence::sqlite::swarm_board::meter::Meter) {
@@ -149,7 +149,7 @@ fn the_scan_finds_crate_paths_anywhere_in_the_code() {
         &here,
     );
     for expected in [
-        "crate::application::swarm::ports::BoardOpLog",
+        "crate::application::swarm::ports::board_telemetry::BoardOpLog",
         "crate::domain::swarm::events::telemetry::RefusalKind",
         "crate::infrastructure::persistence::A",
         "crate::infrastructure::tools::swarm::swarm_board_telemetry::trace",

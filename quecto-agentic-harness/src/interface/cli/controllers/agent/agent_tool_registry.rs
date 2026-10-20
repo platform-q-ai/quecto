@@ -1,0 +1,220 @@
+use super::*;
+use crate::infrastructure::security::sandbox::Sandbox;
+use crate::infrastructure::tools::registry::ToolRegistryImpl;
+
+pub(super) struct ToolRegistryBuild {
+    pub(super) registry: ToolRegistryImpl,
+    pub(super) retention: crate::interface::cli::controllers::retention_handles::RetentionHandles,
+    pub(super) session_key: String,
+    pub(super) model: String,
+    pub(super) ext_registry: ExtensionRegistry,
+    pub(super) extension_prompt_snippets: String,
+    pub(super) notification_rx:
+        Option<crate::infrastructure::tools::agents::subagent_registry::NotificationRx>,
+    pub(super) subagent_registry:
+        Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
+    pub(super) harness_lifecycle:
+        Option<crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle>,
+    /// The environment control slot (#2070) the loop hands its teardown.
+    pub(super) environment_control:
+        Option<crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot>,
+    pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
+    pub(super) workspace: std::path::PathBuf,
+}
+
+pub(super) struct ToolRegistryArgs<'a> {
+    pub(super) base_dir: &'a std::path::Path,
+    /// The path `config` was loaded from — the parent's own config path,
+    /// plumbed into SpawnTool as the container-config fallback (#1369
+    /// follow-up).
+    pub(super) config_path: &'a std::path::Path,
+    pub(super) config: &'a Config,
+    pub(super) http_client: &'a reqwest::Client,
+    /// The run's change-reasoning-effort use case (#1848), handed to the
+    /// spawn tool.
+    pub(super) effort_control:
+        std::sync::Arc<crate::application::catalogue::use_cases::ChangeReasoningEffort>,
+    /// The run's container-config handles (#2024 S4a, S4c): the selection
+    /// the spawn tool launches through and the discovery query the spawn
+    /// description and agent_cmd list through.
+    pub(super) container_configs:
+        crate::interface::cli::controllers::container_config_handles::ContainerConfigHandles,
+    pub(super) web_fetch_tool: Option<Arc<dyn crate::application::tools::ports::Tool>>,
+    pub(super) flags: &'a AgentFlags,
+    pub(super) stderr: &'a mut String,
+    /// Broadcast channel sender for workflow_state events (#598).
+    pub(super) broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    /// Working directory workflow template discovery resolves against
+    /// (slice 2): `workflow.dir` and `./.quecto/workflows` are relative to it.
+    pub(super) cwd: &'a std::path::Path,
+    /// Home directory for the `~/.quecto/workflows` discovery fallback.
+    pub(super) home_dir: Option<&'a std::path::Path>,
+}
+
+/// Resolve the model a CLI agent (or spawned child) runs on, honouring the
+/// documented precedence: an explicit `--model` (which a spawned child receives
+/// via spawn's forwarded `--model`, #881) wins over the `--config`-supplied
+/// default. Centralised here so the precedence is unit-testable rather than
+/// asserted only by a comment.
+pub(crate) fn resolve_agent_model(model_override: Option<&str>, config_default: &str) -> String {
+    match model_override {
+        Some(m) => m.to_string(),
+        None => config_default.to_string(),
+    }
+}
+
+/// Build the tool registry for an agent session. Fails fast (per slice-1
+/// conventions) when workflow template directory discovery hits a load error,
+/// returning an error message naming the offending file — the caller aborts
+/// startup rather than running with a partial template library.
+pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegistryBuild, String> {
+    let ToolRegistryArgs {
+        base_dir,
+        config_path,
+        config,
+        http_client,
+        web_fetch_tool,
+        effort_control,
+        container_configs,
+        flags,
+        stderr,
+        broadcast_tx,
+        cwd,
+        home_dir,
+    } = args;
+    let workspace = if let Some(cwd) = flags.cwd_override.as_ref() {
+        cwd.clone()
+    } else {
+        crate::interface::shared::resolve_agent_workspace(&config.workspace_path())
+    };
+    let model = resolve_agent_model(
+        flags.model_override.as_deref(),
+        &config.agents.defaults.model,
+    );
+    let sandbox = Sandbox::for_agent_workspace(config, workspace.clone());
+    let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(config);
+    let exec_options = crate::infrastructure::tools::native::bash::ExecOptions {
+        max_capture_bytes: exec_settings,
+        ..crate::infrastructure::tools::native::bash::ExecOptions::default()
+    };
+    let parent_session_name = if flags.no_session || flags.session_name.as_deref() == Some("-") {
+        None
+    } else {
+        flags
+            .parent_identity_override
+            .clone()
+            .or_else(|| flags.session_name.clone())
+            .or_else(|| flags.session_key_override.clone())
+            .or_else(|| Some("default".to_string()))
+    };
+    let session_key = flags.session_key_override.clone().unwrap_or_else(|| {
+        if flags.no_session || flags.session_name.as_deref() == Some("-") {
+            String::new()
+        } else {
+            let name = flags.session_name.as_deref().unwrap_or("default");
+            crate::domain::sessions::entities::session::Session::build_key("cli", name)
+        }
+    });
+    let entrypoint = if flags.uds_mode {
+        crate::interface::shared::ToolEntrypoint::UdsAgent
+    } else {
+        crate::interface::shared::ToolEntrypoint::CliAgent
+    };
+    // The interface never constructs the retention store or the recall
+    // graph (D9 #1978): the run is composed over the builder `main` handed
+    // in, once, before the tools and the loop that consume it.
+    let Some(build_retention) = flags.retention else {
+        return Err("agent: retained-context capability not composed".to_string());
+    };
+    let retention = build_retention(base_dir);
+    // The durable environment registry (#2024 S4d): restored from the base
+    // directory for a top-level session; a spawned child journals its own
+    // creates without inheriting the fleet.
+    let environment_registry = flags
+        .environment_registry
+        .map(|build| build(base_dir, &session_key, !flags.spawned));
+    let runtime = crate::interface::shared::build_tool_runtime(
+        crate::interface::shared::ToolRuntimeBuildArgs {
+            swarm_context: crate::interface::tool_runtime::swarm_context(),
+            swarm_participation: flags.swarm_participation.clone(),
+            entrypoint,
+            profile_context:
+                crate::interface::tool_runtime::ToolRuntimeProfileContext::from_spawned(
+                    flags.spawned,
+                ),
+            base_dir,
+            config,
+            http_client,
+            web_fetch_tool,
+            workspace: workspace.clone(),
+            sandbox,
+            exec_options,
+            session_key,
+            recall: retention.recall.clone(),
+            spawned: flags.spawned,
+            parent_session_name: parent_session_name.clone(),
+            parent_config_path: Some(config_path.to_path_buf()),
+            child_extensions: super::build_result::child_extensions(config, flags),
+            effort_control: Some(effort_control),
+            container_configs: Some(container_configs),
+            environment_registry,
+            kill_tool: flags.kill_tool,
+            project_board: flags.project_board,
+            disabled_tools: &flags.disabled_tools,
+            inherited_tool_policy: flags.inherited_tool_policy.clone(),
+            workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy {
+                workflow_disabled: flags.workflow_disabled,
+                workflow_requested: flags.workflow,
+                workflow_guards: flags.workflow_guards,
+                workflow_spec_path: flags.workflow_spec_path.as_deref(),
+                broadcast_tx,
+                emitter_agent_id: parent_session_name,
+                emitter_parent_id: flags.parent_id.clone(),
+                cwd,
+                home_dir,
+            },
+            stderr,
+        },
+    )?;
+
+    let _policy_state = runtime.policy_state;
+    let _catalogue_entries = runtime.catalogue_entries;
+
+    // #926: the parent is always spawn-capable — `SpawnTool` (with `notify_tx`)
+    // and `AgentCmdTool` (with the protocol registry) are constructed by the
+    // shared runtime builder for CLI/UDS. A live `notify_tx` paired with a
+    // dropped `notify_rx` means a child's completion is emitted into a channel
+    // with no receiver and the idle parent is NEVER woken, so keep the returned
+    // receiver/registry wired into the protocol runtime.
+    Ok(ToolRegistryBuild {
+        registry: runtime.registry,
+        retention,
+        session_key: runtime.session_key,
+        model,
+        ext_registry: runtime.ext_registry,
+        extension_prompt_snippets: runtime.extension_prompt_snippets,
+        notification_rx: runtime.notification_rx,
+        subagent_registry: runtime.subagent_registry,
+        harness_lifecycle: runtime.harness_lifecycle,
+        environment_control: runtime.environment_control,
+        workflow_state: runtime.workflow_state,
+        workspace,
+    })
+}
+
+/// Load and parse a by-value workflow spec file (`--workflow-spec <path>`).
+///
+/// Bounds the file size before reading (defense-in-depth against a hostile or
+/// corrupt spec) and removes the single-use file once read so it does not
+/// linger beside the socket.
+#[cfg(test)]
+#[path = "agent_tool_registry_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
+#[path = "agent_tool_registry_policy_tests.rs"]
+mod policy_tests;
+
+#[cfg(test)]
+#[path = "agent_tool_registry_policy_config_tests.rs"]
+mod policy_config_tests;

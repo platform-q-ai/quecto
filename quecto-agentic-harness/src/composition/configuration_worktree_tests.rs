@@ -8,7 +8,7 @@ use crate::application::configuration::dto::{
     OverlayOrigin, OverlayState, OverlayTrustRequest,
 };
 use crate::infrastructure::config::main_worktree::tests::{Layout, layout};
-use crate::interface::cli::configuration_handles::ConfigurationHandles;
+use crate::interface::cli::controllers::configuration_handles::ConfigurationHandles;
 use std::path::PathBuf;
 use tempfile::TempDir;
 

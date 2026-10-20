@@ -740,7 +740,7 @@ pub(crate) fn list_handle(
 /// build a `DispatchCtx` by hand.
 pub(crate) fn catalogue_handles(
     base: &std::path::Path,
-) -> crate::interface::cli::catalogue_handles::CatalogueHandles {
+) -> crate::interface::cli::controllers::catalogue_handles::CatalogueHandles {
     crate::composition::catalogue::build_catalogue_handles(base, None)
 }
 

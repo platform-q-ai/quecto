@@ -4,12 +4,12 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::OverRepository;
-use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_tasks::{changed, read_task};
 use crate::application::swarm::dto::{
     TaskChange, TaskRow, TaskTransition, TaskUpdate, VerifyTaskRequest,
 };
-use crate::application::swarm::ports::{BoardRepository, Clock};
+use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
+use crate::application::swarm::services::board_operation::{detail, operation};
+use crate::application::swarm::services::board_tasks::{changed, read_task};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, services::policy::Access,
     value_objects::board_error::BoardError, value_objects::python_value::python_equal,

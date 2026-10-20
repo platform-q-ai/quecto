@@ -3,7 +3,7 @@
 //! revalidation writes with plain `json.dumps`, and the criterion evidence
 //! an amendment deletes and `evidence` records.
 use quecto::application::swarm::dto::{BoardLocation, EvidenceEntry, NewEvidence, PriorEvidence};
-use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
+use quecto::application::swarm::ports::board_repository::{BoardRepository, BoardTransaction};
 use quecto::domain::swarm::value_objects::board_error::BoardError;
 use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;

@@ -21,7 +21,7 @@ use super::repository_tasks::{loaded, task_row};
 use crate::application::swarm::dto::{
     AmendedContract, CompletionState, EvidenceEntry, NewEvidence, PriorEvidence, StoredContract,
 };
-use crate::application::swarm::ports::BoardEvidence;
+use crate::application::swarm::ports::board_evidence::BoardEvidence;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

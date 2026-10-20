@@ -1,5 +1,5 @@
 //! What one board call's transactions measured (#2303): the value the
-//! [`BoardCallMeter`](crate::application::swarm::ports::BoardCallMeter)
+//! [`BoardCallMeter`](crate::application::swarm::ports::board_telemetry::BoardCallMeter)
 //! port hands back and the dispatcher's records are built from.
 use std::time::Duration;
 

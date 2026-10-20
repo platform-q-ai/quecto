@@ -52,7 +52,7 @@ pub(super) fn query_response_data_result(
                 user_visible_messages(ctx.messages, ctx.system_prompt).len(),
                 workflow,
                 ctx.agent.max_context_tokens(),
-                super::catalogue_handles::effort_view(ctx),
+                super::controllers::catalogue_handles::effort_view(ctx),
             );
             {
                 // ExecutionState is the sole owner of the public cursor. Recover

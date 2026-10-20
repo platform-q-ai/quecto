@@ -168,7 +168,9 @@ fn the_scan_reads_texts_templates_and_kinds() {
     );
     assert!(production("src/domain/swarm/services/policy.rs"));
     assert!(!production("src/domain/swarm/events/telemetry_tests.rs"));
-    assert!(!production("src/application/swarm/board_test_support.rs"));
+    assert!(crate::dependency_scan::test_only_file(
+        "src/application/swarm/test_support/mod.rs"
+    ));
     // An allowlist (#2303 round-3 review L5): a file the production module
     // tree does not mount is not production, whatever its name.
     assert!(!production("src/nowhere.rs"));

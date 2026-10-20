@@ -3,7 +3,7 @@
 //! crash target and event log (#2192; the [`AgentSession`] tracker keeps no copy, D10 #1979), and
 //! the effort/workflow reset or restore, each bumping the tracker's visible generation only when
 //! something changed. The transactions order these; this adapter decides nothing.
-use super::agent::event_log;
+use super::controllers::agent::event_log;
 use super::uds_execution_state::ExecutionStateHandle;
 use super::uds_session::AgentSession;
 use super::uds_turn_accounting::LoopTurnAccounting;

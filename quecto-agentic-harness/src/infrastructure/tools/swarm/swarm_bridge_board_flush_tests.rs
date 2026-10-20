@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::super::log::SessionLog;
-use crate::application::swarm::ports::BoardOpLog;
+use crate::application::swarm::ports::board_telemetry::BoardOpLog;
 use crate::domain::shared::redaction::Redacted;
 use crate::domain::swarm::{
     events::run_summary::SwarmRunSummary,
@@ -60,7 +60,7 @@ impl BoardOpLog for Slow {
     fn summarize(&self, _summary: SwarmRunSummary) {}
 }
 
-impl crate::application::swarm::ports::SessionOpLog for Slow {
+impl crate::application::swarm::ports::board_telemetry::SessionOpLog for Slow {
     fn dropped(&self, _drops: crate::application::swarm::dto::DroppedRecords) {}
 
     fn take_unnoted(&self) -> crate::application::swarm::dto::DroppedRecords {

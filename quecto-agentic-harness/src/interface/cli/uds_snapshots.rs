@@ -71,7 +71,7 @@ pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
         visible_message_count,
         workflow,
         ctx.agent.max_context_tokens(),
-        super::catalogue_handles::effort_view(ctx),
+        super::controllers::catalogue_handles::effort_view(ctx),
     );
     *ctx.state_snapshot.write().await = state;
 }

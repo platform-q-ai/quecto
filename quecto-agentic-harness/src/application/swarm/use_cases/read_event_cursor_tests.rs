@@ -1,5 +1,5 @@
 use super::ReadEventCursor;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::test_support::{
     BoardState, MemoryBoard, RecordedEvent, running_board,
 };
 use crate::application::swarm::use_cases::OverRepository;

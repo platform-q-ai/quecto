@@ -2,7 +2,7 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use super::ResolvedCheckout;
-use crate::application::swarm::ports::CheckoutPaths;
+use crate::application::swarm::ports::board_files::CheckoutPaths;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

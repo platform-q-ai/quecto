@@ -2,7 +2,7 @@
 //! `atomic`, committed when the work succeeds and rolled back, with every
 //! role's writes, when it fails; the work's refusal comes back unchanged.
 use quecto::application::swarm::dto::BoardLocation;
-use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
+use quecto::application::swarm::ports::board_repository::{BoardRepository, BoardTransaction};
 use quecto::domain::swarm::{
     entities::records::RunState, events::telemetry::RefusalKind,
     value_objects::board_error::BoardError,

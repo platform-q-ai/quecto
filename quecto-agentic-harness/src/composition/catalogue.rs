@@ -19,10 +19,12 @@ use crate::infrastructure::providers::catalogue::catalogue_refresh_inputs::FileR
 use crate::infrastructure::providers::catalogue::catalogue_registry::{
     PublishedEffortVocabulary, runtime_store_for, snapshot_store_for,
 };
-use crate::interface::cli::configuration_handles::ConfigurationEnvironment;
+use crate::interface::cli::controllers::configuration_handles::ConfigurationEnvironment;
 use crate::interface::uds::catalogue::list_models_controller::ListModelsController;
 
-use crate::interface::cli::catalogue_handles::{CatalogueHandles, RuntimeConfigurationInputs};
+use crate::interface::cli::controllers::catalogue_handles::{
+    CatalogueHandles, RuntimeConfigurationInputs,
+};
 
 /// The catalogue handles one loop holds, over the shared snapshot store of
 /// `base_dir`. With `runtime`, the reload use case watches the run's config

@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use super::SqliteBoardRepository;
 use crate::application::swarm::dto::{BoardLocation, MemberClaimCounts, NewMember, RunOwnerRow};
-use crate::application::swarm::ports::{BoardRepository, BoardTransaction};
+use crate::application::swarm::ports::board_repository::{BoardRepository, BoardTransaction};
 use crate::domain::swarm::{
     entities::records::MemberState, value_objects::board_error::BoardError,
 };

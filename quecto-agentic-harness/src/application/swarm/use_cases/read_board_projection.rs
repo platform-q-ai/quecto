@@ -15,15 +15,15 @@ use serde_json::Value;
 
 use super::OverRepository;
 use super::create_task::TASK_BOARD_CAPACITY;
-use crate::application::swarm::board_control::edited;
-use crate::application::swarm::board_operation::read;
 use crate::application::swarm::dto::{
     BoardProjection, BoardRevision, BudgetProjection, EvidenceProjection, ItemProjection,
     MemberClaimCounts, MemberProjection, MemberRole, ProjectionLimits, ProjectionRows,
     ProjectionTotals, RunProjection, StoredEvidenceColumns, StoredItemColumns, StoredMemberColumns,
     StoredRunColumns, StoredStateColumns,
 };
-use crate::application::swarm::ports::BoardRepository;
+use crate::application::swarm::ports::board_repository::BoardRepository;
+use crate::application::swarm::services::board_control::edited;
+use crate::application::swarm::services::board_operation::read;
 use crate::domain::swarm::events::telemetry::run_role;
 use crate::domain::swarm::{
     entities::records::{MemberState, RunState, TaskState},

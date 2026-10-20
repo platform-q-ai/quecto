@@ -1,5 +1,5 @@
 //! `IdSource` on `Uuid4Ids` (#2270): Python's `uuid.uuid4().hex`.
-use quecto::application::swarm::ports::IdSource;
+use quecto::application::swarm::ports::board_repository::IdSource;
 use quecto::infrastructure::persistence::sqlite::swarm_board::ids::Uuid4Ids;
 
 #[test]

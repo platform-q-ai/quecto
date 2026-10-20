@@ -12,7 +12,8 @@ use serde_json::json;
 use super::{Tick, WatchObserver, announce_late, watch_tick, watch_until_terminal};
 use crate::application::swarm::dto::DroppedRecords;
 use crate::application::swarm::ports::{
-    BoardOpLog, CoordinationPort, SessionOpLog, SwarmRunControl,
+    board_telemetry::{BoardOpLog, SessionOpLog},
+    lifecycle::{CoordinationPort, SwarmRunControl},
 };
 use crate::composition::swarm::{board_wire, build_swarm_board_handles};
 use crate::domain::swarm::services::watch::{Nudge, REFRESH_MAX, REFRESH_MIN, WatchSchedule};

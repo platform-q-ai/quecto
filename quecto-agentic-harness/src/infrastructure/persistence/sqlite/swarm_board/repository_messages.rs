@@ -12,7 +12,7 @@ use serde_json::Value;
 use super::binding;
 use super::repository::{SqliteBoard, cell_at, failed, fetched, loose};
 use crate::application::swarm::dto::{MessageRow, MessageTally, NewMessage};
-use crate::application::swarm::ports::BoardMessages;
+use crate::application::swarm::ports::board_messages::BoardMessages;
 use crate::domain::swarm::value_objects::board_error::BoardError;
 
 impl BoardMessages for SqliteBoard<'_> {

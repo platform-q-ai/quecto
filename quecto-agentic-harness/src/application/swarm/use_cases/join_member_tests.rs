@@ -1,10 +1,10 @@
 use serde_json::{Value, json};
 
 use super::JoinMember;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::{JoinRunRequest, Joined, LaunchIdentity, RunSummary};
+use crate::application::swarm::test_support::{
     BoardState, CounterIds, MemoryBoard, SteppingClock, running_board, stored_member,
 };
-use crate::application::swarm::dto::{JoinRunRequest, Joined, LaunchIdentity, RunSummary};
 use crate::application::swarm::use_cases::OverRepository;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,

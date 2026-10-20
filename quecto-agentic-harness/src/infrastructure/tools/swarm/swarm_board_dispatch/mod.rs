@@ -66,7 +66,10 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardRepository};
+use crate::application::swarm::ports::{
+    board_repository::BoardRepository,
+    board_telemetry::{BoardCallMeter, BoardOpLog},
+};
 use crate::application::swarm::use_cases::{
     AcceptWake, AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask,
     BootstrapMember, BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun,

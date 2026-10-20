@@ -3,11 +3,11 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use super::SendMessage;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::SendMessageRequest;
+use crate::application::swarm::test_support::{
     BoardState, CompactEncoding, MemoryBoard, SteppingClock, StoredMessage, member_row,
     running_board,
 };
-use crate::application::swarm::dto::SendMessageRequest;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

@@ -2,10 +2,10 @@
 use std::sync::Arc;
 
 use super::OverRepository;
-use crate::application::swarm::board_control::receipt;
-use crate::application::swarm::board_operation::{detail, operation, seconds, text};
 use crate::application::swarm::dto::{ControlAnswer, PauseRunRequest, RunTransition};
-use crate::application::swarm::ports::{BoardRepository, Clock};
+use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
+use crate::application::swarm::services::board_control::receipt;
+use crate::application::swarm::services::board_operation::{detail, operation, seconds, text};
 use crate::domain::swarm::services::validation::TEXT_MAX_BYTES;
 use crate::domain::swarm::{
     entities::records::RunState,

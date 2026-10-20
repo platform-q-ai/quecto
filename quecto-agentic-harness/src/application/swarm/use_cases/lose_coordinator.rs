@@ -3,12 +3,12 @@
 use std::sync::Arc;
 
 use super::OverRepository;
-use crate::application::swarm::board_loss::{
+use crate::application::swarm::dto::{CoordinatorLoss, LoseCoordinatorRequest};
+use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
+use crate::application::swarm::services::board_loss::{
     LOST_HARNESS, SCOPE_UNKNOWN, end_by_loss, holds_outcome,
 };
-use crate::application::swarm::board_operation::{detail, operation, text};
-use crate::application::swarm::dto::{CoordinatorLoss, LoseCoordinatorRequest};
-use crate::application::swarm::ports::{BoardRepository, Clock};
+use crate::application::swarm::services::board_operation::{detail, operation, text};
 use crate::domain::swarm::{
     entities::records::RunState, events::telemetry::RefusalKind, services::policy::Access,
     value_objects::board_error::BoardError,

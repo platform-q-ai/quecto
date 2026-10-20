@@ -1,10 +1,10 @@
 use serde_json::{Value, json};
 
 use super::AcknowledgeMessage;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::{MessageIdRequest, Settled};
+use crate::application::swarm::test_support::{
     BoardState, MemoryBoard, SteppingClock, StoredMessage, member_row, running_board,
 };
-use crate::application::swarm::dto::{MessageIdRequest, Settled};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

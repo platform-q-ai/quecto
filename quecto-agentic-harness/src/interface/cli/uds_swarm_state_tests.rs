@@ -2,7 +2,7 @@
 //! boundary; nobody else does.
 use super::super::super::uds_swarm_control::at_idle_boundary;
 use super::super::dispatch_test_env::DispatchTestEnv as Env;
-use crate::application::swarm::ports::SwarmRunControl;
+use crate::application::swarm::ports::lifecycle::SwarmRunControl;
 use crate::domain::swarm::services::parent_wake::CoordinatorBoard;
 use crate::domain::swarm::{
     value_objects::lifecycle::RunStatus,
@@ -27,7 +27,9 @@ impl SwarmRunControl for Board {
             ))
         })
     }
-    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+    fn coordinator_board(
+        &self,
+    ) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
         let next = self.0.lock().unwrap().remove(0);
         Box::pin(async move { next.map_err(crate::domain::shared::error::DomainError::Tool) })
     }

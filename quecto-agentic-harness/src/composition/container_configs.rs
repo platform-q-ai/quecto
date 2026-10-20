@@ -22,10 +22,10 @@ use crate::infrastructure::config::container_configs::{
     ContainerConfigsFromEffectiveConfig, ExplicitConfigLoader, LaunchingAgentConfigLoader,
     ResolvedConfig,
 };
-use crate::interface::cli::configuration_handles::{
+use crate::interface::cli::controllers::configuration_handles::{
     ConfigurationEnvironment, ConfigurationHandles,
 };
-use crate::interface::cli::container_config_handles::ContainerConfigHandles;
+use crate::interface::cli::controllers::container_config_handles::ContainerConfigHandles;
 
 /// The selection use case a launcher holds, over `launching_agent` (the
 /// launching agent's own configuration selection; `None` for a launcher

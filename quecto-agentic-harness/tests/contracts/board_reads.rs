@@ -5,7 +5,7 @@
 //! states and held-claim owners, each by Python's SQL (`swarm.py`,
 //! `swarm_tasks.py`).
 use quecto::application::swarm::dto::{BoardLocation, CountedTask, DictRow, LatestActivity};
-use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
+use quecto::application::swarm::ports::board_repository::{BoardRepository, BoardTransaction};
 use quecto::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 
 use quecto::application::swarm::dto::{BoardLocation, NotificationCursor};
-use quecto::application::swarm::ports::BoardRepository;
+use quecto::application::swarm::ports::board_repository::BoardRepository;
 use quecto::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

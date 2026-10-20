@@ -25,7 +25,7 @@ use super::usage_sums::{self, UsageSums};
 use crate::application::swarm::dto::{
     NewRequestUsage, RecentRequest, StoredRequestUsage, UsageReport, UsageRow, UsageStanding,
 };
-use crate::application::swarm::ports::BoardUsage;
+use crate::application::swarm::ports::board_usage::BoardUsage;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

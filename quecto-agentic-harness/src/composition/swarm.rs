@@ -16,7 +16,10 @@ use std::sync::Arc;
 
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{
-    BoardOpLog, BoardRepository, CheckoutPaths, Clock, IdSource, SessionOpLog,
+    board_files::CheckoutPaths,
+    board_repository::{BoardRepository, IdSource},
+    board_telemetry::{BoardOpLog, SessionOpLog},
+    lifecycle::Clock,
 };
 use crate::application::swarm::use_cases::{
     AcceptWake, AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask,

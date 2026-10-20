@@ -25,7 +25,9 @@ use crate::application::swarm::dto::{
     ProjectionLimits, ProjectionRows, StoredEvidenceColumns, StoredItemColumns,
     StoredMemberColumns, StoredRevision, StoredRunColumns, StoredStateColumns,
 };
-use crate::application::swarm::ports::{BoardEvents, BoardProjectionReads};
+use crate::application::swarm::ports::{
+    board_events::BoardEvents, board_projection::BoardProjectionReads,
+};
 use crate::domain::swarm::services::validation::MEMBER_ID_MAX_BYTES;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, services::dependencies::DEPENDENCIES_MAX,

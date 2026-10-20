@@ -11,7 +11,9 @@ use serde_json::{Value, json};
 use super::{ActorRefs, BOARD_OPS, BoardTelemetry, SwarmBoardHandles, call};
 use crate::application::swarm::dto::{BoardLocation, CallMeasure};
 use crate::application::swarm::ports::{
-    BoardCallMeter, BoardOpLog, BoardRepository, Clock, IdSource, MeteredCall,
+    board_repository::{BoardRepository, IdSource},
+    board_telemetry::{BoardCallMeter, BoardOpLog, MeteredCall},
+    lifecycle::Clock,
 };
 use crate::composition::swarm::{board_op_log, build_swarm_board_handles_with, with_event_log};
 use crate::domain::swarm::{
@@ -95,14 +97,14 @@ impl BoardRepository for NothingMeasured {
     fn atomic(
         &self,
         create: bool,
-        work: &mut crate::application::swarm::ports::BoardWork<'_>,
+        work: &mut crate::application::swarm::ports::board_repository::BoardWork<'_>,
     ) -> Result<(), BoardError> {
         self.0.atomic(create, work)
     }
 
     fn read(
         &self,
-        work: &mut crate::application::swarm::ports::BoardWork<'_>,
+        work: &mut crate::application::swarm::ports::board_repository::BoardWork<'_>,
     ) -> Result<(), BoardError> {
         self.0.read(work)
     }
