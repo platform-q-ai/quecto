@@ -11,15 +11,37 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::directory::{AuthorityDirectory, SingletonLock};
-use super::journal::FileJournal;
 use super::protocol::*;
 use super::secret::RandomSecretSource;
 use super::server_actor::Actor;
 use super::session;
-use crate::application::admission::services::inference_authority::AdmissionAuthority;
+use crate::application::admission::dto::broker::{AuthorityStart, RestoreError};
+use crate::application::admission::use_cases::{
+    AdvanceAuthorityEpoch, BindScope, CompleteAdmission, DisconnectScope, RestoreAuthority,
+    SettleAuthority,
+};
 use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
 pub(super) use super::server_actor::Command;
+
+/// The running authority's use cases (#1910), built by composition over the
+/// one journal of the directory this server serves: the durability
+/// sequences and the session policy. The actor invokes them and never
+/// constructs one.
+pub struct AuthorityUseCases {
+    pub restore: RestoreAuthority,
+    pub settle: SettleAuthority,
+    pub complete: CompleteAdmission,
+    pub advance_epoch: AdvanceAuthorityEpoch,
+    pub bind: BindScope,
+    pub disconnect: DisconnectScope,
+}
+
+/// Composition's builder of [`AuthorityUseCases`] over a directory's journal.
+/// The server calls it for the directory it serves, once it holds that
+/// directory's singleton lock, so the use cases can never write another
+/// broker's journal.
+pub type AuthorityUseCaseBuilder = fn(&AuthorityDirectory) -> AuthorityUseCases;
 
 #[derive(Debug)]
 pub enum ServerError {
@@ -43,6 +65,14 @@ pub(super) struct Clock {
 }
 
 impl Clock {
+    /// A clock that starts now, for the actor's own tests.
+    #[cfg(test)]
+    pub(super) fn starting_now() -> Self {
+        Self {
+            start: Instant::now(),
+        }
+    }
+
     pub(super) fn now_ms(&self) -> u64 {
         u64::try_from(self.start.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
@@ -98,37 +128,45 @@ pub struct AuthorityServer {
     _lock: SingletonLock,
 }
 
+// The start functions are crate-private (#1910): a broker is started only
+// through composition (its test-support start functions) or the
+// `admission-broker run` path, never directly from outside the crate.
 impl AuthorityServer {
-    pub async fn start(
+    pub(crate) async fn start(
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
+        build_use_cases: AuthorityUseCaseBuilder,
     ) -> Result<Self, ServerError> {
-        Self::start_with(dir, proposal, false, FRAME_DEADLINE).await
+        Self::start_with(dir, proposal, build_use_cases, false, FRAME_DEADLINE).await
     }
 
     /// Start with a framing deadline other than [`FRAME_DEADLINE`]: the
     /// stalled-frame tests' entry point, so they need not wait out 15 s.
-    pub async fn start_with_frame_deadline(
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) async fn start_with_frame_deadline(
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
+        build_use_cases: AuthorityUseCaseBuilder,
         frame_deadline: Duration,
     ) -> Result<Self, ServerError> {
-        Self::start_with(dir, proposal, false, frame_deadline).await
+        Self::start_with(dir, proposal, build_use_cases, false, frame_deadline).await
     }
 
     /// Operator acknowledgement that a ledger missing after prior operation
     /// may be replaced by an empty one (outstanding remote work is no longer
     /// claimed bounded).
-    pub async fn start_accepting_missing_ledger(
+    pub(crate) async fn start_accepting_missing_ledger(
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
+        build_use_cases: AuthorityUseCaseBuilder,
     ) -> Result<Self, ServerError> {
-        Self::start_with(dir, proposal, true, FRAME_DEADLINE).await
+        Self::start_with(dir, proposal, build_use_cases, true, FRAME_DEADLINE).await
     }
 
     async fn start_with(
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
+        build_use_cases: AuthorityUseCaseBuilder,
         accept_missing_ledger: bool,
         frame_deadline: Duration,
     ) -> Result<Self, ServerError> {
@@ -163,38 +201,22 @@ impl AuthorityServer {
         let clock = Clock {
             start: Instant::now(),
         };
-        let journal = FileJournal::new(&dir);
-        let ledger = FileJournal::load(&dir).map_err(|e| ServerError::Journal(format!("{e:?}")))?;
-        if ledger.is_none() && previously_operated && !accept_missing_ledger {
-            return Err(ServerError::Journal(format!(
-                "ledger {} is missing after prior operation; outstanding remote work cannot be accounted. Restore it or run with --accept-missing-ledger to start an empty ledger",
-                dir.journal_path().display()
-            )));
-        }
-        let mut authority = match ledger {
-            Some(ledger) => AdmissionAuthority::restore(
-                proposal.policy.clone(),
-                &ledger,
-                journal,
-                RandomSecretSource,
-                clock.now_ms(),
-            ),
-            None => {
-                AdmissionAuthority::new(1, proposal.policy.clone(), journal, RandomSecretSource)
-            }
-        }
-        .map_err(|e| ServerError::Journal(format!("ledger incompatible with policy: {e:?}")))?;
-        // A ledger exists from the first start onward, so "missing" is never
-        // ambiguous again.
-        authority
-            .checkpoint(clock.now_ms())
-            .map_err(|e| ServerError::Journal(format!("initial ledger not durable: {e:?}")))?;
+        let use_cases = build_use_cases(&dir);
+        let start = AuthorityStart {
+            policy: proposal.policy.clone(),
+            previously_operated,
+            accept_missing_ledger,
+        };
+        let authority = use_cases
+            .restore
+            .execute(start, RandomSecretSource, clock.now_ms())
+            .map_err(|error| restore_refusal(&dir, error))?;
         let owner_token = write_owner_token(&dir)?;
         let client_listener = bind_private(&dir.client_socket())?;
         let admin_listener = bind_private(&dir.admin_socket())?;
         let (tx, rx) = mpsc::unbounded_channel();
         let (shutdown, shutdown_rx) = watch::channel(false);
-        let actor = Actor::new(authority, clock, proposal_wire, owner_token);
+        let actor = Actor::new(authority, use_cases, clock, proposal_wire, owner_token);
         let tasks = vec![
             tokio::spawn(actor.run(rx, shutdown_rx.clone())),
             tokio::spawn(accept_loop(
@@ -287,4 +309,18 @@ async fn accept_loop(
             }
         }
     }
+}
+
+/// The operator-facing refusal for an authority that could not start from
+/// its journal; the directory names the ledger the operator must restore.
+fn restore_refusal(dir: &AuthorityDirectory, error: RestoreError) -> ServerError {
+    ServerError::Journal(match error {
+        RestoreError::Unreadable(reason) => reason,
+        RestoreError::MissingLedger => format!(
+            "ledger {} is missing after prior operation; outstanding remote work cannot be accounted. Restore it or run with --accept-missing-ledger to start an empty ledger",
+            dir.journal_path().display()
+        ),
+        RestoreError::Incompatible(error) => format!("ledger incompatible with policy: {error:?}"),
+        RestoreError::NotDurable(error) => format!("initial ledger not durable: {error:?}"),
+    })
 }

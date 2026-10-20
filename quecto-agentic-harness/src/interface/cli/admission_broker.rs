@@ -16,7 +16,9 @@ use crate::application::admission::dto::{
     authority::AuthorityAdminError, service::InstallServiceRequest, service::ServiceAction,
     service::ServiceReport,
 };
-use crate::infrastructure::admission::{AuthorityDirectory, AuthorityServer, ServerError};
+use crate::infrastructure::admission::{
+    AuthorityDirectory, AuthorityServer, AuthorityUseCaseBuilder, ServerError,
+};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
@@ -460,6 +462,15 @@ fn cmd_run(ctx: &CliContext, opts: &BrokerArgs, stdout: &mut String, stderr: &mu
             return 1;
         }
     };
+    // The composed handles come first: a broker that cannot build its
+    // authority never announces that it is serving.
+    let handles = match ctx.admission_handles() {
+        Ok(handles) => handles,
+        Err(error) => {
+            stderr.push_str(&format!("admission-broker: {error}\n"));
+            return 1;
+        }
+    };
     stderr.push_str(&format!(
         "admission-broker: serving authority directory {}\n",
         directory.display()
@@ -485,22 +496,26 @@ fn cmd_run(ctx: &CliContext, opts: &BrokerArgs, stdout: &mut String, stderr: &mu
             return 1;
         }
     };
-    runtime.block_on(run(
+    let start = BrokerStart {
+        build_use_cases: handles.authority,
         dir,
         proposal,
-        opts.accept_missing_ledger,
-        stdout,
-        stderr,
-    ))
+        accept_missing_ledger: opts.accept_missing_ledger,
+    };
+    runtime.block_on(run(start, stdout, stderr))
 }
 
-async fn run(
-    dir: AuthorityDirectory,
-    proposal: AdmissionRuntimeProposal,
-    accept_missing_ledger: bool,
-    stdout: &mut String,
-    stderr: &mut String,
-) -> i32 {
+/// What a broker starts from: its directory, the runtime's admission
+/// proposal, the authority's composed durability use cases (#1910) and
+/// whether the operator accepted a missing ledger.
+pub(crate) struct BrokerStart {
+    pub(crate) dir: AuthorityDirectory,
+    pub(crate) proposal: AdmissionRuntimeProposal,
+    pub(crate) build_use_cases: AuthorityUseCaseBuilder,
+    pub(crate) accept_missing_ledger: bool,
+}
+
+async fn run(start: BrokerStart, stdout: &mut String, stderr: &mut String) -> i32 {
     let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
     {
         Ok(signal) => signal,
@@ -515,23 +530,27 @@ async fn run(
             _ = sigterm.recv() => {}
         }
     };
-    run_until(dir, proposal, accept_missing_ledger, stop, stdout, stderr).await
+    run_until(start, stop, stdout, stderr).await
 }
 
 /// Serve until `stop` resolves. Separated from the signal wiring so the
 /// lifecycle is testable in-process.
 pub(crate) async fn run_until(
-    dir: AuthorityDirectory,
-    proposal: AdmissionRuntimeProposal,
-    accept_missing_ledger: bool,
+    start: BrokerStart,
     stop: impl std::future::Future<Output = ()>,
     stdout: &mut String,
     stderr: &mut String,
 ) -> i32 {
+    let BrokerStart {
+        dir,
+        proposal,
+        build_use_cases,
+        accept_missing_ledger,
+    } = start;
     let started = if accept_missing_ledger {
-        AuthorityServer::start_accepting_missing_ledger(dir, proposal).await
+        AuthorityServer::start_accepting_missing_ledger(dir, proposal, build_use_cases).await
     } else {
-        AuthorityServer::start(dir, proposal).await
+        AuthorityServer::start(dir, proposal, build_use_cases).await
     };
     let server = match started {
         Ok(server) => server,

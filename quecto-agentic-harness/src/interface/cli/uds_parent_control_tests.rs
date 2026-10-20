@@ -3,7 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::application::subagents::dto::ShutdownTrigger;
-use crate::application::subagents::ports::{ExitReadiness, SubagentLifecycleRepository};
+use crate::application::subagents::ports::harness_shutdown::{
+    ExitReadiness, SubagentLifecycleRepository,
+};
 use crate::application::subagents::use_cases::teardown_fakes::*;
 use crate::application::subagents::use_cases::{
     ExecuteHarnessShutdown, ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,

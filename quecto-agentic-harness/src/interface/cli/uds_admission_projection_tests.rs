@@ -4,6 +4,7 @@ use super::uds_admission_projection::{
 use super::uds_execution_state::ExecutionState;
 use super::uds_state_projection::{slim_state_projection, slim_state_response_data};
 use crate::application::admission::ports::inference_observation::AdmissionObservation;
+use crate::composition::admission::start_authority;
 use crate::domain::admission::value_objects::inference_admission::{
     AdmissionActivity, AdmissionPhase, AttemptObservation, CooldownState, GroupActivity, GroupId,
 };
@@ -356,9 +357,7 @@ fn attaching_a_process_binding_projects_and_pushes_its_transitions() {
     use crate::domain::admission::value_objects::inference_admission::{
         AdmissionConfig, Feedback, GroupPolicy,
     };
-    use crate::infrastructure::admission::{
-        AuthorityDirectory, AuthorityServer, Negotiation, negotiate,
-    };
+    use crate::infrastructure::admission::{AuthorityDirectory, Negotiation, negotiate};
     use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -389,7 +388,7 @@ fn attaching_a_process_binding_projects_and_pushes_its_transitions() {
         bindings: std::collections::BTreeMap::from([("openai".into(), "acct".into())]),
     };
     let server = rt
-        .block_on(AuthorityServer::start(
+        .block_on(start_authority(
             AuthorityDirectory::open(&directory).unwrap(),
             proposal,
         ))
@@ -439,7 +438,7 @@ fn the_snapshot_and_pushed_events_follow_the_live_authority_link() {
         AdmissionConfig, Feedback, GroupPolicy,
     };
     use crate::infrastructure::admission::{
-        AdminConnection, AuthorityDirectory, AuthorityServer, Negotiation, negotiate,
+        AdminConnection, AuthorityDirectory, Negotiation, negotiate,
     };
     use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -471,7 +470,7 @@ fn the_snapshot_and_pushed_events_follow_the_live_authority_link() {
         bindings: std::collections::BTreeMap::from([("openai".into(), "acct".into())]),
     };
     let start = |rt: &tokio::runtime::Runtime| {
-        rt.block_on(AuthorityServer::start(
+        rt.block_on(start_authority(
             AuthorityDirectory::open(&directory).unwrap(),
             proposal.clone(),
         ))

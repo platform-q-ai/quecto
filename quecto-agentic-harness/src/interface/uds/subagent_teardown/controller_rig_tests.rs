@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use super::*;
-use crate::application::subagents::ports::SubagentLifecycleRepository;
+use crate::application::subagents::ports::harness_shutdown::SubagentLifecycleRepository;
 use crate::application::subagents::use_cases::teardown_fakes::*;
 use crate::application::subagents::use_cases::{
     ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,

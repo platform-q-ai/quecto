@@ -6,9 +6,15 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use crate::application::subagents::ports::{
-    Compensated, CompensationObservation, ConclusionBudget, DelegatedAgentRegistry,
-    OwnedChildTermination, PortFuture, ProtocolAttempt, ResolutionError, StoppingClaimError,
-    TeardownCompensation, TerminalClaim, TerminationCause, TerminationConclusion,
+    PortFuture,
+    delegated_agent_registry::{
+        CompensationObservation, DelegatedAgentRegistry, ResolutionError, StoppingClaimError,
+        TerminalClaim, TerminationCause,
+    },
+    owned_child_termination::{
+        ConclusionBudget, OwnedChildTermination, ProtocolAttempt, TerminationConclusion,
+    },
+    teardown_compensation::{Compensated, TeardownCompensation},
 };
 use crate::domain::agents::services::subagent_teardown::DelegatedAgentIdentity;
 use crate::domain::identity::ids::AgentUuid;

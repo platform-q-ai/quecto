@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use super::super::standard_script::StandardScriptVerdict;
+use super::standard_script::StandardScriptVerdict;
 
 /// Where the container configs a launch selects from are read: the
 /// launching agent's own effective configuration (its base file with its

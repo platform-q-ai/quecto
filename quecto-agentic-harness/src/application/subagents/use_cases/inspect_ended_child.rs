@@ -4,7 +4,7 @@
 //! its panic hook wrote, and the transcript it persisted up to its end.
 use std::sync::Arc;
 
-use crate::application::subagents::ports::EndedChildRecords;
+use crate::application::subagents::ports::ended_child_records::EndedChildRecords;
 use crate::domain::agents::value_objects::child_end::ChildOrigin;
 use crate::domain::agents::value_objects::crash_record::CrashRecord;
 use crate::domain::conversation::value_objects::message::Message;

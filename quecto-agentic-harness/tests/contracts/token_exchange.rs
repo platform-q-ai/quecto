@@ -1,7 +1,8 @@
-//! Contract for the auth capability's `TokenExchange` (#1839): a code and
-//! its PKCE verifier are exchanged in each provider's wire shape; OpenAI's
-//! token names its account, no other provider's does; a refusal names the
-//! status, never the body. Every request goes to a local mock.
+//! Contract for the auth capability's `TokenExchange` (#1839, #1840): a
+//! code and its PKCE verifier, or a refresh token, are exchanged in each
+//! provider's wire shape; OpenAI's token names its account, no other
+//! provider's does; a refusal names the status, never the body. Every
+//! request goes to a local mock.
 use base64::Engine;
 use wiremock::matchers::{body_string_contains, method, path};
 
@@ -140,6 +141,55 @@ fn a_refusal_names_the_status_and_never_the_body() {
         {
             Err(TokenExchangeError::Rejected(reason)) => {
                 assert!(reason.contains("400"), "{provider:?}: {reason}");
+                assert!(!reason.contains("fake-leaky-internals"), "{reason}");
+            }
+            other => panic!("{provider:?}: expected a refusal, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_refresh_uses_each_providers_wire_shape() {
+    let jwt = jwt_naming("acct-fake");
+    for (provider, expects) in [
+        (
+            LoginProvider::OpenAi,
+            vec!["grant_type=refresh_token", "refresh_token=fake-refresh"],
+        ),
+        (
+            LoginProvider::Xai,
+            vec!["grant_type=refresh_token", "refresh_token=fake-refresh"],
+        ),
+        (
+            LoginProvider::Anthropic,
+            vec![
+                r#""grant_type":"refresh_token""#,
+                r#""refresh_token":"fake-refresh""#,
+            ],
+        ),
+    ] {
+        let server = TokenServer::answering(&expects, 200, issued(&jwt, None));
+        let token = server
+            .exchange()
+            .refresh(provider, "fake-refresh")
+            .unwrap_or_else(|error| panic!("{provider:?}: {error:?}"));
+        assert_eq!(token.access_token, jwt);
+        assert_eq!(token.refresh_token, None, "absent means keep the old one");
+        assert_eq!(
+            token.account_id.is_some(),
+            provider == LoginProvider::OpenAi,
+            "{provider:?}"
+        );
+    }
+}
+
+#[test]
+fn a_refused_refresh_names_the_status_and_never_the_body() {
+    for provider in LoginProvider::ALL {
+        let server = TokenServer::answering(&[], 401, serde_json::json!("fake-leaky-internals"));
+        match server.exchange().refresh(provider, "fake-refresh") {
+            Err(TokenExchangeError::Rejected(reason)) => {
+                assert!(reason.contains("401"), "{provider:?}: {reason}");
                 assert!(!reason.contains("fake-leaky-internals"), "{reason}");
             }
             other => panic!("{provider:?}: expected a refusal, got {other:?}"),

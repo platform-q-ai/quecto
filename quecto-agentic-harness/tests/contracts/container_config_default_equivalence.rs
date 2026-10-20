@@ -11,11 +11,11 @@
 use std::sync::Arc;
 
 use quecto::application::environments::use_cases::ListContainerConfigs;
-use quecto::application::subagents::dto::{
+use quecto::application::subagents::dto::container_config::{
     ContainerConfigSource, ContainerConfigsError, ContainerLaunchConfig,
     EffectiveContainerConfigSet, SelectContainerConfigRequest,
 };
-use quecto::application::subagents::ports::EffectiveContainerConfigs;
+use quecto::application::subagents::ports::container_configs::EffectiveContainerConfigs;
 use quecto::application::subagents::use_cases::SelectContainerConfig;
 use quecto::composition::container_configs::build_container_script_integrity;
 use quecto::infrastructure::config::container_config_roster::EffectiveConfigRoster;
@@ -170,7 +170,7 @@ fn repo_standard(default: bool) -> ContainerLaunchConfig {
 #[test]
 fn the_two_capabilities_spell_the_standard_name_the_same() {
     assert_eq!(
-        quecto::application::subagents::dto::REPO_STANDARD_CONTAINER,
+        quecto::application::subagents::dto::container_config::REPO_STANDARD_CONTAINER,
         quecto::application::environments::dto::STANDARD_CONTAINER_CONFIG
     );
 }

@@ -4,6 +4,8 @@
 
 use std::sync::Arc;
 
+use crate::infrastructure::admission::AuthorityUseCaseBuilder;
+
 use crate::application::admission::use_cases::{
     InspectAuthority, InstallAuthorityService, NegotiateAuthority, ResetAuthority,
     UninstallAuthorityService,
@@ -21,6 +23,9 @@ pub struct AdmissionHandles {
     pub uninstall: Arc<UninstallAuthorityService>,
     /// Startup negotiation: how a process joins the authority (#2023).
     pub negotiate: Arc<NegotiateAuthority>,
+    /// `admission-broker run`: builds the running authority's durability use
+    /// cases over the journal of the directory the broker serves (#1910).
+    pub authority: AuthorityUseCaseBuilder,
 }
 
 impl std::fmt::Debug for AdmissionHandles {

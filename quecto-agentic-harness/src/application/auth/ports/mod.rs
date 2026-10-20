@@ -6,6 +6,7 @@ pub mod browser_authorization;
 pub mod clock;
 pub mod credential_store;
 pub mod device_code_flow;
+pub mod external_credentials;
 pub mod token_exchange;
 
 pub use authorization_callback::{AuthorizationCallback, AuthorizationCallbackError};
@@ -15,4 +16,7 @@ pub use browser_authorization::{
 pub use clock::AuthClock;
 pub use credential_store::{CredentialStoreError, CredentialStorePort};
 pub use device_code_flow::{DeviceCodeError, DeviceCodeFlow, DeviceCodeGrant};
+pub use external_credentials::{
+    ExternalCredential, ExternalCredentialSource, ExternalCredentialsError,
+};
 pub use token_exchange::{IssuedToken, TokenExchange, TokenExchangeError};

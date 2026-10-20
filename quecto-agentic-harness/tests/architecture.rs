@@ -19,6 +19,8 @@ mod auth_credential_authority;
 mod auth_infrastructure_edges;
 #[path = "architecture/auth_runtime_builder.rs"]
 mod auth_runtime_builder;
+#[path = "architecture/authority_starts.rs"]
+mod authority_starts;
 #[path = "architecture/bdd_lanes.rs"]
 mod bdd_lanes;
 /// Production-token and relative-path scanning shared by the layer rules
@@ -603,16 +605,6 @@ fn ports_modules_expose_only_contracts() {
 /// module, keyed by module path under `application`.
 const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
     ("sessions::conversation_ledger", &["LedgerAdvance"]),
-    ("subagents::standard_script", &["StandardScriptVerdict"]),
-    (
-        "admission::services::inference_authority",
-        &[
-            "AdmissionAuthority",
-            "AuthorityError",
-            "AuthorityStatus",
-            "Credential",
-        ],
-    ),
     (
         "catalogue::services::snapshot_store",
         &["CatalogueSnapshotStore"],
@@ -1020,7 +1012,7 @@ fn ports_guard_is_an_allowlist() {
     }
     // A `dto` module is surface too: it cannot launder a use case.
     let (_, refused) = port_exposures(
-        "src/application/subagents/dto.rs",
+        "src/application/subagents/dto/mod.rs",
         "pub use super::use_cases::KillDelegatedAgent;",
     );
     assert_eq!(
@@ -1209,6 +1201,63 @@ const TEST_SUPPORT_APPLICATION_PATHS: &[(&str, &str)] = &[(
     "crate::application::swarm::LifecycleService",
 )];
 
+/// Per-file exceptions for the admission authority server (#1910): it runs
+/// the authority the admission capability owns, holds the use cases
+/// composition builds and passes in (`AuthorityUseCases`), starts through the
+/// restore use case's own start and refusal values, and its actor compares
+/// capability tokens with the authority's own constant-time check. No other
+/// infrastructure file may name them.
+const AUTHORITY_SERVER_APPLICATION_PATHS: &[(&str, &str)] = &[
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::services::inference_authority::AdmissionAuthority",
+    ),
+    (
+        "src/infrastructure/admission/server_actor.rs",
+        "crate::application::admission::services::inference_authority::AdmissionAuthority",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::use_cases::AdvanceAuthorityEpoch",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::use_cases::RestoreAuthority",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::dto::broker::AuthorityStart",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::dto::broker::RestoreError",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::use_cases::CompleteAdmission",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::use_cases::SettleAuthority",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::use_cases::BindScope",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::use_cases::DisconnectScope",
+    ),
+];
+
+/// `file` may name `path` through one of the per-file exceptions.
+fn application_path_allowed_in(file: &str, path: &str) -> bool {
+    TEST_SUPPORT_APPLICATION_PATHS
+        .iter()
+        .chain(AUTHORITY_SERVER_APPLICATION_PATHS)
+        .any(|&(owner, allowed)| owner == file && allowed == path)
+}
+
 /// The crate paths `file` names that the infrastructure → application rule
 /// refuses, relative paths resolved; a file that does not parse is refused.
 fn refused_application_paths(file: &str, content: &str) -> Vec<String> {
@@ -1216,7 +1265,7 @@ fn refused_application_paths(file: &str, content: &str) -> Vec<String> {
         Some(paths) => paths
             .into_iter()
             .filter(|path| !application_path_allowed(path))
-            .filter(|path| !TEST_SUPPORT_APPLICATION_PATHS.contains(&(file, path.as_str())))
+            .filter(|path| !application_path_allowed_in(file, path))
             .collect(),
         None => vec!["<does not parse>".to_string()],
     }
@@ -1447,9 +1496,11 @@ const SWARM_BOARD_DTOS: &[&str] = &[
 /// The contracts the deleted `application::ports` facade re-exported
 /// (#2367), named at their owners: exactly the ones infrastructure
 /// implements or holds, keyed by module path under `application`, until
-/// their capabilities give them a home under `ports/` (admission #1910,
-/// launch #1880). The catalogue's snapshot store is the capability's shared
-/// state (`services/`, #2578), held by the provider adapters' refusal sink.
+/// their capabilities give them a home under `ports/` (launch #1880;
+/// admission's left in #1910, its authority now named only by the server
+/// files, `AUTHORITY_SERVER_APPLICATION_PATHS`). The catalogue's snapshot
+/// store is the capability's shared state (`services/`, #2578), held by the
+/// provider adapters' refusal sink.
 /// Every entry is declared in its module, and every non-`dto` entry is also
 /// a `CONTRACTS_OUTSIDE_PORTS` contract
 /// (`facade_contract_paths_are_listed_contracts`).
@@ -1465,15 +1516,6 @@ const FACADE_CONTRACT_PATHS: &[(&str, &[&str])] = &[
     (
         "provider_runtime::dto",
         &["AdmissionBindingDiagnostic", "ProviderRuntimeOutcome"],
-    ),
-    (
-        "admission::services::inference_authority",
-        &[
-            "AdmissionAuthority",
-            "AuthorityError",
-            "AuthorityStatus",
-            "Credential",
-        ],
     ),
     ("subagent_launch", &["LaunchFuture", "SubagentLaunchPorts"]),
 ];
@@ -1649,8 +1691,16 @@ fn application_path_allowed(path: &str) -> bool {
             | "CompensateFailedLaunchRequest"
             | "FleetChildResult"
             | "KillDelegatedAgentError"
-            | "KillDelegatedAgentRequest"
-            | "ContainerConfigSource"
+            | "KillDelegatedAgentRequest",
+            ..,
+        ]
+        | [
+            "crate",
+            "application",
+            "subagents",
+            "dto",
+            "container_config",
+            "ContainerConfigSource"
             | "ContainerConfigsError"
             | "ContainerLaunchConfig"
             | "EffectiveContainerConfigSet"
@@ -1658,10 +1708,18 @@ fn application_path_allowed(path: &str) -> bool {
             // The doctor's lookup rewords the withheld-overlay
             // refusal for its own command (#2024 S4b review).
             | "SelectContainerConfigError"
-            | "SelectedContainerConfig"
-            // The embedded bundle's integrity adapter (#2024 S4e)
-            // answers the launch policy's port with its verdict.
-            | "StandardScriptVerdict",
+            | "SelectedContainerConfig",
+            ..,
+        ]
+        // The embedded bundle's integrity adapter (#2024 S4e) answers the
+        // launch policy's port with its verdict.
+        | [
+            "crate",
+            "application",
+            "subagents",
+            "dto",
+            "standard_script",
+            "StandardScriptVerdict",
             ..,
         ]
         // The container-script preflight and the doctor's config
@@ -1784,6 +1842,17 @@ fn application_path_allowed(path: &str) -> bool {
             "AuthorityReport" | "AuthorityGroupReport" | "ResetReport"
             | "AuthorityAdminError",
             ..,
+        ] => true,
+        // The running authority's own values (#1910): the capability a
+        // client presents, the authority's refusal and its operator status,
+        // carried over the broker's socket and links.
+        [
+            "crate",
+            "application",
+            "admission",
+            "dto",
+            "broker",
+            "Credential" | "AuthorityError" | "AuthorityStatus",
         ] => true,
         // The claude process adapter (#2286) implements the external-agent
         // capability's process ports in their own launch and exit
@@ -3980,6 +4049,335 @@ fn only_swarm_test_support_names_the_lifecycle_service() {
     );
 }
 
+/// The authority and its durability use cases are named only by the two
+/// server files (#1910): the same paths anywhere else in
+/// infrastructure are refused, and each file has only its own allowance.
+#[test]
+fn only_the_authority_server_names_the_durability_use_cases() {
+    let (server, actor) = (
+        "src/infrastructure/admission/server.rs",
+        "src/infrastructure/admission/server_actor.rs",
+    );
+    let elsewhere = "src/infrastructure/admission/link.rs";
+    let service = "crate::application::admission::services::inference_authority::";
+    let authority = format!("{service}AdmissionAuthority");
+    let use_case = |name: &str| format!("crate::application::admission::use_cases::{name}");
+    let durable = [
+        "AdvanceAuthorityEpoch",
+        "BindScope",
+        "CompleteAdmission",
+        "DisconnectScope",
+        "RestoreAuthority",
+        "SettleAuthority",
+    ]
+    .map(use_case);
+    let refused = |file: &str, path: &str| {
+        refused_application_paths(file, &format!("use {path};")) == [path.to_string()]
+    };
+    for path in durable.iter().chain([&authority]) {
+        assert!(!refused(server, path), "the server may name {path}");
+        assert!(refused(elsewhere, path), "no other file may name {path}");
+    }
+    for path in &durable {
+        assert!(
+            refused(actor, path),
+            "the actor holds no use case of its own: {path}"
+        );
+    }
+    for start in ["AuthorityStart", "RestoreError"] {
+        let path = format!("crate::application::admission::dto::broker::{start}");
+        assert!(
+            !refused(server, &path) && refused(elsewhere, &path),
+            "{path}"
+        );
+    }
+    assert!(!refused(actor, &authority));
+    // Dispatch is settling's own step, and any other admission use case
+    // stays refused, even in the server.
+    assert!(refused(server, &use_case("DispatchAdmissions")));
+    assert!(refused(server, &use_case("ResetAuthority")));
+}
+
+/// The authority's surface is an exhaustive allowlist (#1910 review): every
+/// `fn` of `inference_authority.rs` outside a trait impl is either one of the
+/// public operations below, one of the raw operations visible only inside the
+/// admission capability (which bypass durability or session policy on their
+/// own, so only the use cases sequence them), or private. A new public
+/// wrapper around a raw operation fails here. PR 2b moved the session
+/// operations (verify, disconnect, release, cancellation_due, next_wake and
+/// the journal-health read) behind the capability.
+#[test]
+fn the_authority_surface_is_an_exhaustive_allowlist() {
+    const PUBLIC: &[&str] = &[
+        "new",
+        "restore",
+        "register_root",
+        "register_child",
+        "observe",
+        "lineage",
+        "acquire",
+        "cancel",
+        "feedback",
+        "status",
+        "retire",
+        "retire_child",
+        "inspect",
+    ];
+    const CAPABILITY: &[&str] = &[
+        "record_journal",
+        "ledger",
+        "select_grants",
+        "withdraw_grants",
+        "complete_unpersisted",
+        "successor_ledger",
+        "adopt_successor",
+        "journal_healthy",
+        "verify",
+        "release",
+        "disconnect",
+        "cancellation_due",
+        "next_wake",
+    ];
+    let source = production_source("src/application/admission/services/inference_authority.rs");
+    let file = syn::parse_file(&source).expect("the authority parses");
+    let mut functions: Vec<(String, &syn::Visibility)> = Vec::new();
+    for item in &file.items {
+        match item {
+            syn::Item::Fn(function) => {
+                functions.push((function.sig.ident.to_string(), &function.vis))
+            }
+            syn::Item::Impl(block) if block.trait_.is_none() => {
+                for inner in &block.items {
+                    if let syn::ImplItem::Fn(function) = inner {
+                        functions.push((function.sig.ident.to_string(), &function.vis));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let (mut public, mut capability, mut other) = (BTreeSet::new(), BTreeSet::new(), Vec::new());
+    for (name, visibility) in functions {
+        match visibility {
+            syn::Visibility::Public(_) => {
+                public.insert(name);
+            }
+            syn::Visibility::Inherited => {}
+            syn::Visibility::Restricted(restricted)
+                if restricted.in_token.is_some()
+                    && restricted
+                        .path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.to_string())
+                        .collect::<Vec<_>>()
+                        == ["crate", "application", "admission"] =>
+            {
+                capability.insert(name);
+            }
+            restricted => other.push(format!("{name}: {}", restricted.to_token_stream())),
+        }
+    }
+    assert!(other.is_empty(), "no other visibility: {other:?}");
+    let expected =
+        |names: &[&str]| -> BTreeSet<String> { names.iter().map(|n| n.to_string()).collect() };
+    assert_eq!(
+        public,
+        expected(PUBLIC),
+        "the authority's public operations"
+    );
+    assert_eq!(
+        capability,
+        expected(CAPABILITY),
+        "the operations only the admission use cases call"
+    );
+}
+
+/// Durability belongs to the admission use cases (#1910): the authority
+/// names only the secret source and the journal's error from its ports
+/// (never the journal itself), and each durability use case holds the one
+/// shared journal composition builds.
+#[test]
+fn the_admission_use_cases_own_the_journal_and_the_authority_does_not() {
+    let authority = "src/application/admission/services/inference_authority.rs";
+    let ports = "crate::application::admission::ports::inference_authority_ports::";
+    let named: BTreeSet<String> = dependency_paths_at(authority, &production_source(authority))
+        .expect("the authority parses")
+        .into_iter()
+        .filter_map(|path| path.strip_prefix(ports).map(str::to_string))
+        .collect();
+    assert_eq!(
+        named,
+        BTreeSet::from([
+            "AdmissionSecretSource".to_string(),
+            "JournalError".to_string()
+        ]),
+        "the authority names only these authority ports"
+    );
+    for use_case in [
+        "dispatch_admissions",
+        "complete_admission",
+        "advance_authority_epoch",
+        "restore_authority",
+    ] {
+        let path = format!("src/application/admission/use_cases/{use_case}.rs");
+        assert!(
+            production_source(&path).contains("    journal: SharedJournal,\n"),
+            "{path} holds the shared journal"
+        );
+    }
+}
+
+/// The body of `fn <name>` in `source`, whitespace removed, up to the next
+/// item at the same indentation.
+fn method_body_compact(source: &str, signature: &str) -> String {
+    let start = source
+        .find(signature)
+        .unwrap_or_else(|| panic!("`{signature}` is declared"));
+    let rest = &source[start..];
+    let end = rest.find("\n    }\n").expect("the method closes") + "\n    }\n".len();
+    rest[..end].split_whitespace().collect()
+}
+
+/// The broker's actor keeps only transport bookkeeping (#1910): a settling
+/// turn is exactly one use case, and binding and ending a connection each go
+/// through theirs. The authority's session operations are visible only
+/// inside the admission capability, so the actor cannot reach around them.
+#[test]
+fn the_authority_actor_settles_binds_and_disconnects_through_use_cases() {
+    let actor = production_source("src/infrastructure/admission/server_actor.rs");
+    let settle = method_body_compact(&actor, "    fn settle(&mut self) -> Instant {");
+    assert_eq!(
+        settle.matches("self.use_cases.").count(),
+        1,
+        "settle() invokes exactly one use case: {settle}"
+    );
+    assert!(settle.contains("self.use_cases.settle.execute(&mutself.authority,"));
+    assert_eq!(
+        settle.matches("self.authority").count(),
+        1,
+        "settle() touches the authority only through its use case"
+    );
+    let closed = method_body_compact(&actor, "    fn closed(&mut self, session: u64) {");
+    assert!(closed.contains("self.use_cases.disconnect.execute(&mutself.authority,"));
+    assert!(!closed.contains("self.authority."), "{closed}");
+    let bind = method_body_compact(
+        &actor,
+        "    fn bind(&mut self, session: u64, credential: Credential) -> Result<Body, AuthorityError> {",
+    );
+    assert!(bind.contains("self.use_cases.bind.execute(&mutself.authority,"));
+    assert!(!bind.contains("self.authority."), "{bind}");
+}
+
+/// Whether `source` holds a constant-time comparison: one named so, or the
+/// shape of one on the syntax tree, an OR (`|` or `|=`) with an XOR in an
+/// operand, however the loop, the fold or the names are spelled (#2627
+/// review).
+fn constant_time_comparison_in(source: &str) -> bool {
+    use syn::visit::Visit;
+    #[derive(Default)]
+    struct XorIn(bool);
+    impl<'ast> Visit<'ast> for XorIn {
+        fn visit_expr_binary(&mut self, expr: &'ast syn::ExprBinary) {
+            if matches!(expr.op, syn::BinOp::BitXor(_) | syn::BinOp::BitXorAssign(_)) {
+                self.0 = true;
+            }
+            syn::visit::visit_expr_binary(self, expr);
+        }
+    }
+    fn holds_xor(expr: &syn::Expr) -> bool {
+        let mut found = XorIn::default();
+        found.visit_expr(expr);
+        found.0
+    }
+    #[derive(Default)]
+    struct Folded(bool);
+    impl<'ast> Visit<'ast> for Folded {
+        fn visit_expr_binary(&mut self, expr: &'ast syn::ExprBinary) {
+            if matches!(expr.op, syn::BinOp::BitOr(_) | syn::BinOp::BitOrAssign(_))
+                && (holds_xor(&expr.left) || holds_xor(&expr.right))
+            {
+                self.0 = true;
+            }
+            syn::visit::visit_expr_binary(self, expr);
+        }
+    }
+    if source.contains("fn constant_time_eq(") {
+        return true;
+    }
+    let Ok(file) = syn::parse_file(source) else {
+        // Fail closed: a file the scan cannot read is judged by its text.
+        return source.contains('^');
+    };
+    let mut folded = Folded::default();
+    folded.visit_file(&file);
+    folded.0
+}
+
+#[test]
+fn a_constant_time_comparison_is_recognised_by_its_shape() {
+    for source in [
+        "fn constant_time_eq(a: &str, b: &str) -> bool { true }",
+        "fn matches(a: &[u8], b: &[u8]) -> bool { let mut d = 0u8; for (x, y) in a.iter().zip(b) { d |= x ^ y; } d == 0 }",
+        "fn same(a: &[u8], b: &[u8]) -> bool { let mut d = 0; for (x, y) in a.iter().zip(b) { d |= usize::from(x ^ y); } d == 0 }",
+        // Review (#2627 round 3): a fold, renamed loop variables, an index
+        // loop and `std::iter::zip`.
+        "fn f(a: &[u8], b: &[u8]) -> bool { a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0 }",
+        "fn f(a: &[u8], b: &[u8]) -> bool { let mut acc = 0; for (left, right) in a.iter().zip(b) { acc |= left ^ right; } acc == 0 }",
+        "fn f(a: &[u8], b: &[u8]) -> bool { let mut acc = 0; for i in 0..a.len() { acc |= a[i] ^ b[i]; } acc == 0 }",
+        "fn f(a: &[u8], b: &[u8]) -> bool { let mut acc = 0; for (x, y) in std::iter::zip(a, b) { acc = acc | (x ^ y); } acc == 0 }",
+    ] {
+        assert!(constant_time_comparison_in(source), "{source}");
+    }
+    for source in [
+        "fn f(a: u8) -> u8 { a ^ 1 }",
+        "fn f(a: u8, b: u8) -> u8 { a | b }",
+    ] {
+        assert!(!constant_time_comparison_in(source), "{source}");
+    }
+}
+
+/// The journal has one owner (#1910 review): the restore use case reads the
+/// ledger through the journal port and decides whether a missing one is
+/// refused, and the server neither reads the journal nor builds the
+/// authority itself. The actor checks tokens with the authority's own
+/// constant-time comparison rather than a copy.
+#[test]
+fn the_authority_server_neither_reads_the_journal_nor_builds_the_authority() {
+    let server = production_source("src/infrastructure/admission/server.rs");
+    for file in [
+        "src/infrastructure/admission/server.rs",
+        "src/infrastructure/admission/server_actor.rs",
+    ] {
+        let source = production_source(file);
+        for needle in ["FileJournal", "AdmissionAuthority::", ".checkpoint"] {
+            assert!(!source.contains(needle), "{file} names `{needle}`");
+        }
+    }
+    let compact: String = server.split_whitespace().collect();
+    assert!(
+        compact.contains("use_cases.restore.execute("),
+        "the server restores through its use case"
+    );
+    // One constant-time comparison, in the domain's shared primitives, used
+    // by every secret check.
+    let mut files = Vec::new();
+    teardown_authority::walk(Path::new("src"), &mut files);
+    // A comparison is recognised by its name or by its shape: an XOR folded
+    // into an accumulator over zipped bytes.
+    let owners: Vec<String> = files
+        .into_iter()
+        .filter(|file| constant_time_comparison_in(&fs::read_to_string(file).unwrap()))
+        .collect();
+    assert_eq!(owners, ["src/domain/shared/secret_compare.rs"], "one owner");
+    let journal = production_source("src/application/admission/ports/inference_authority_ports.rs");
+    assert!(
+        journal
+            .contains("    fn load(&mut self) -> Result<Option<AdmissionLedger>, JournalError>;"),
+        "the journal port reads the ledger"
+    );
+}
+
 #[test]
 fn application_guard_resolves_relative_paths() {
     let file = "src/infrastructure/tools/agents/spawn.rs";
@@ -5031,11 +5429,94 @@ fn application_has_no_shared_ports_facade() {
     );
 }
 
+/// Every `use` of `source` that is not private, in the file or in any module
+/// nested in it: `pub`, `pub(crate)`, `pub(super)`, `pub(in …)` (#2629
+/// review).
+fn reexports_in(source: &str) -> Vec<String> {
+    fn walk(items: &[syn::Item], found: &mut Vec<String>) {
+        for item in items {
+            match item {
+                syn::Item::Use(item) if !matches!(item.vis, syn::Visibility::Inherited) => {
+                    found.push(item.to_token_stream().to_string());
+                }
+                syn::Item::Mod(module) => {
+                    if let Some((_, nested)) = &module.content {
+                        walk(nested, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let file = syn::parse_file(source).expect("a ports file parses");
+    let mut found = Vec::new();
+    walk(&file.items, &mut found);
+    found
+}
+
+#[test]
+fn a_ports_reexport_of_any_visibility_is_found() {
+    for source in [
+        "pub use child_routing::DirectChildRouting;",
+        "pub(crate) use child_routing::DirectChildRouting;",
+        "pub(super) use child_routing::DirectChildRouting;",
+        "mod inner { pub(in crate::application) use super::child_routing::DirectChildRouting; }",
+    ] {
+        assert_eq!(reexports_in(source).len(), 1, "{source}");
+    }
+    for source in [
+        "use super::PortFuture;",
+        "pub mod child_routing;",
+        "mod inner { use super::PortFuture; }",
+    ] {
+        assert!(reexports_in(source).is_empty(), "{source}");
+    }
+}
+
+/// The files of `application/subagents/ports/` (#2367): one per concern.
+const SUBAGENT_PORT_FILES: &[&str] = &[
+    "child_routing.rs",
+    "container_configs.rs",
+    "delegated_agent_registry.rs",
+    "ended_child_records.rs",
+    "harness_shutdown.rs",
+    "mod.rs",
+    "owned_child_termination.rs",
+    "teardown_compensation.rs",
+];
+
 #[test]
 fn subagent_teardown_ports_are_capability_local() {
     // The capability declares exactly this port set: an unlisted addition
-    // fails here so every new port is a deliberate contract change.
-    let declared = declared_pub_traits("src/application/subagents/ports.rs");
+    // fails here so every new port is a deliberate contract change. Every
+    // file under `ports/` is read, and the folder holds exactly
+    // `SUBAGENT_PORT_FILES`, so a new port file cannot escape the check.
+    let mut ports_files = Vec::new();
+    teardown_authority::walk(
+        Path::new("src/application/subagents/ports"),
+        &mut ports_files,
+    );
+    let listed: Vec<String> = SUBAGENT_PORT_FILES
+        .iter()
+        .map(|file| format!("src/application/subagents/ports/{file}"))
+        .collect();
+    assert_eq!(
+        ports_files, listed,
+        "application/subagents/ports/ must hold exactly SUBAGENT_PORT_FILES"
+    );
+    // The ports surface names each port at its owning file: no re-export of
+    // any visibility, in the file or a module nested in it.
+    for file in &ports_files {
+        let reexports = reexports_in(&fs::read_to_string(file).unwrap());
+        assert!(
+            reexports.is_empty(),
+            "{file} re-exports {reexports:?}; importers name each port at its owning file"
+        );
+    }
+    let declared: Vec<String> = ports_files
+        .iter()
+        .flat_map(|file| declared_pub_traits(file))
+        .collect();
     let mut expected: Vec<String> = TEARDOWN_PORTS
         .iter()
         .chain(SUBAGENT_INSPECTION_PORTS)
@@ -5046,7 +5527,7 @@ fn subagent_teardown_ports_are_capability_local() {
     actual.sort();
     assert_eq!(
         actual, expected,
-        "application/subagents/ports.rs must declare exactly TEARDOWN_PORTS and \
+        "application/subagents/ports/ must declare exactly TEARDOWN_PORTS and \
          SUBAGENT_INSPECTION_PORTS"
     );
     // Only this capability declares them: no duplicate port definitions.
@@ -5054,7 +5535,7 @@ fn subagent_teardown_ports_are_capability_local() {
     collect_rs_files(Path::new("src"), &mut files);
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        if path == "src/application/subagents/ports.rs" {
+        if path.starts_with("src/application/subagents/ports/") {
             continue;
         }
         for port in TEARDOWN_PORTS.iter().chain(SUBAGENT_INSPECTION_PORTS) {
@@ -5506,7 +5987,14 @@ fn processes_dependency_allowed(file: &str, path: &str) -> bool {
         }
         // The embedded bundle's integrity adapter (#2024 S4e) answers the
         // launch policy's port in its own verdict vocabulary.
-        ["crate", "application", "subagents", "dto", "StandardScriptVerdict"] => {
+        [
+            "crate",
+            "application",
+            "subagents",
+            "dto",
+            "standard_script",
+            "StandardScriptVerdict",
+        ] => {
             file == "integrity.rs"
         }
         ["crate", ..] => false,
@@ -5530,7 +6018,7 @@ fn process_adapters_depend_only_inward() {
     }
     for dep in [
         "crate::domain::agents::entities::parent_control::ParentControlCredential",
-        "crate::application::subagents::ports::DirectChildRouting",
+        "crate::application::subagents::ports::child_routing::DirectChildRouting",
         "super::owned_child_supervisor::ProtocolOutcome",
         "tokio::sync::watch",
         "crate",
@@ -5543,11 +6031,11 @@ fn process_adapters_depend_only_inward() {
     // The verdict vocabulary is the integrity adapter's alone.
     assert!(processes_dependency_allowed(
         "integrity.rs",
-        "crate::application::subagents::dto::StandardScriptVerdict"
+        "crate::application::subagents::dto::standard_script::StandardScriptVerdict"
     ));
     assert!(!processes_dependency_allowed(
         "owned_child_supervisor.rs",
-        "crate::application::subagents::dto::StandardScriptVerdict"
+        "crate::application::subagents::dto::standard_script::StandardScriptVerdict"
     ));
     // The service manager's extra allowances are scoped to it alone.
     for dep in [
@@ -5921,7 +6409,7 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
 /// graceful / fallback / already-exited / failed.
 #[test]
 fn kill_result_vocabulary_is_graceful_fallback_already_exited_failed() {
-    let ports = fs::read_to_string("src/application/subagents/ports.rs").unwrap();
+    let ports = fs::read_to_string("src/application/subagents/ports/child_routing.rs").unwrap();
     for word in ["\"graceful\"", "\"fallback\"", "\"already-exited\""] {
         assert!(ports.contains(word), "ports lack {word}");
     }
@@ -6212,7 +6700,7 @@ fn environments_application_depends_only_inward() {
     for dep in [
         "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
         "crate::interface::cli::uds_query::respond",
-        "crate::application::subagents::ports::DirectChildRouting",
+        "crate::application::subagents::ports::child_routing::DirectChildRouting",
         "tokio::process::Command",
         "std::process::Command",
         "libc::kill",
@@ -6388,7 +6876,7 @@ fn external_agent_application_depends_only_inward() {
     for dep in [
         "crate::infrastructure::external_agents::claude_code::stream_json::StreamJsonDecoder",
         "crate::interface::cli::protocol::SessionStats",
-        "crate::application::subagents::ports::DirectChildRouting",
+        "crate::application::subagents::ports::child_routing::DirectChildRouting",
         "tokio::process::Command",
         "std::process::Command",
         "std::fs::read",

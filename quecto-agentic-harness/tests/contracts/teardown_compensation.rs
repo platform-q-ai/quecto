@@ -9,8 +9,11 @@ use std::time::Duration;
 
 use quecto::application::subagents::dto::{ObserveOwnedChildExitRequest, ObservedExit};
 use quecto::application::subagents::ports::{
-    CompensationObservation, DelegatedAgentRegistry, ExitObservation, TeardownCompensation,
-    TerminalClaim, TerminationCause,
+    delegated_agent_registry::{
+        CompensationObservation, DelegatedAgentRegistry, ExitObservation, TerminalClaim,
+        TerminationCause,
+    },
+    teardown_compensation::TeardownCompensation,
 };
 use quecto::application::subagents::use_cases::ObserveOwnedChildExit;
 use quecto::domain::agents::services::subagent_teardown::{
