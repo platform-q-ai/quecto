@@ -21,6 +21,7 @@ enum Violation {
     EmptyRole(String),
     StalePlacement(String),
     UnlistedPlacement(String),
+    StaleRole(String),
 }
 impl std::fmt::Display for Violation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -54,6 +55,12 @@ impl std::fmt::Display for Violation {
             Self::StalePlacement(path) => format!(
                 "{path}: stale transitional placement; remove {path} from PLACEMENTS when its directory has been retired. {WIKI}"
             ),
+            Self::StaleRole(path) => {
+                let (capability, name) = path.rsplit_once('/').expect("role has capability parent");
+                format!(
+                    "{path}: stale MIGRATED role; remove {name} from {capability} allowed_roles in MIGRATED when its directory has been retired. {WIKI}"
+                )
+            }
             Self::UnlistedPlacement(path) => format!(
                 "{path}: unlisted immediate capability directory; add a placement row with this capability's wiki section and classify it as target, transitional, or testing, or move the directory into a listed placement. {WIKI}"
             ),
@@ -80,7 +87,7 @@ const BUDGETS: &[FlatBudget<'_>] = &[
     FlatBudget { path: "interface", expected: 6 },
     FlatBudget { path: "infrastructure", expected: 1 },
     FlatBudget { path: "composition", expected: 24 },
-    FlatBudget { path: "interface/cli", expected: 81 },
+    FlatBudget { path: "interface/cli", expected: 63 },
     FlatBudget { path: "infrastructure/tools", expected: 1 },
     FlatBudget { path: "infrastructure/persistence", expected: 1 },
     FlatBudget { path: "application/swarm", expected: 1 },
@@ -112,6 +119,12 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability(
         "application/swarm",
         &["use_cases", "ports", "dto", "services", "test_support"],
+    ),
+    // #2368 (L10): the transport-level UDS files in `framing` and `wire`; the
+    // capability-split folders stay until L11/L12 fold them into the roles.
+    Capability(
+        "interface/uds",
+        &["framing", "wire", "catalogue", "parent_control", "sessions", "subagent_teardown"],
     ),
 ];
 // Wiki target-source-tree anchors define allowed future names; Transitional rows must exist.
@@ -330,6 +343,35 @@ fn validate_with(
     });
     inspector.failures
 }
+// The checked-in rows name only roles that exist, so a role folded away by a
+// layout slice cannot linger in its row; fixtures may still declare sparse
+// allowlists, which `validate` accepts.
+fn stale_roles(root: &Path, migrated: &[Capability<'_>]) -> Vec<Violation> {
+    migrated
+        .iter()
+        .flat_map(|Capability(capability, roles)| {
+            roles.iter().map(move |role| format!("{capability}/{role}"))
+        })
+        .filter(|path| {
+            let present =
+                std::fs::symlink_metadata(root.join(path)).is_ok_and(|meta| meta.is_dir());
+            !present
+        })
+        .map(Violation::StaleRole)
+        .collect()
+}
+/// Every violation of a checked-in policy: the shape and placement checks,
+/// plus the stale-role refusal that only checked-in rows get.
+fn checked_in_violations(
+    root: &Path,
+    budgets: &[FlatBudget<'_>],
+    migrated: &[Capability<'_>],
+    rows: Option<&[Placement<'_>]>,
+) -> Vec<Violation> {
+    let mut failures = validate_all(root, budgets, migrated, rows, &scan);
+    failures.extend(stale_roles(root, migrated));
+    failures
+}
 fn placements(root: &Path, rows: &[Placement<'_>]) -> Vec<Violation> {
     validate_all(root, &[], &[], Some(rows), &scan)
 }
@@ -351,7 +393,7 @@ fn source_tree_layout_obeys_checked_in_policy() {
         BUDGETS.len() + MIGRATED.len() + rows.iter().map(|(_, names)| names.len()).sum::<usize>(),
         "duplicate source-policy row"
     );
-    let failures = validate_all(&root, BUDGETS, MIGRATED, Some(rows), &scan);
+    let failures = checked_in_violations(&root, BUDGETS, MIGRATED, Some(rows));
     assert!(
         failures.is_empty(),
         "layout policy violations: {failures:#?}"
