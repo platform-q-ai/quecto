@@ -16,7 +16,7 @@ pub(super) fn session_stats_text(stats: &session_payloads::SessionStats) -> Stri
     }
     // #1855: usage the harness could not price is unknown, never $0; a
     // known $0 (a declared-free model) beside unpriced usage is shown.
-    match (stats.known_cost_micro_usd, stats.unpriced_attempts > 0) {
+    match (stats.cost_micro_usd, stats.unpriced_attempts > 0) {
         (Some(micro), true) => text.push_str(&format!(" | Cost: ${} + unpriced", usd(micro))),
         (Some(micro), false) if micro > 0 => text.push_str(&format!(" | Cost: ${}", usd(micro))),
         (None, true) => text.push_str(" | Cost: unpriced"),

@@ -64,11 +64,15 @@ fn format_tokens_edge_cases() {
     assert_eq!(format_tokens(1_000_000), "1.0M");
 }
 
+fn session_stats(data: serde_json::Value) -> crate::protocol::session_payloads::SessionStats {
+    crate::protocol::session_payloads::parse_session_stats(&data)
+}
+
 #[test]
 fn footer_shows_monetary_cost_after_context() {
     let mut f = Footer::new();
     f.update_context_usage(120_000, 200_000);
-    f.set_cost(Some(0.0421));
+    f.apply_session_stats(&session_stats(serde_json::json!({"costMicroUsd": 42_100})));
     let lines = f.render(120);
     let joined = lines.join("\n");
     assert!(joined.contains("120k/200k"), "context first: {joined}");
@@ -78,11 +82,14 @@ fn footer_shows_monetary_cost_after_context() {
     );
 }
 
+/// A known $0 with nothing unpriced (a fresh session) shows no cost.
 #[test]
 fn footer_hides_zero_cost() {
     let mut f = Footer::new();
     f.update_context_usage(120_000, 200_000);
-    f.set_cost(Some(0.0));
+    f.apply_session_stats(&session_stats(
+        serde_json::json!({"costMicroUsd": 0, "unpricedAttempts": 0}),
+    ));
     let joined = f.render(120).join("\n");
     assert!(!joined.contains('$'), "zero cost hidden: {joined}");
     assert!(!joined.contains("cost"), "zero cost label hidden: {joined}");

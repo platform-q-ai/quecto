@@ -172,11 +172,6 @@ impl Footer {
         self.is_streaming
     }
 
-    /// Record cumulative session cost (USD). `None` hides the indicator.
-    pub fn set_cost(&mut self, cost: Option<f64>) {
-        self.session_cost = cost.filter(|c| c.is_finite() && *c > 0.0);
-    }
-
     /// Apply typed `get_state` footer fields (model + context-window + effort).
     /// Returns the sanitized model id when present so callers can track it.
     /// Single source of truth for the get_state→footer mapping shared by the
@@ -214,7 +209,8 @@ impl Footer {
     /// Apply a parsed session-stats snapshot to the context + cost gauges.
     /// Single source of truth for the stats→footer mapping shared by the master
     /// footer path and per-session sub-agent footers (#805) — keeps the cost
-    /// gate (`cost > 0`) from drifting between the two.
+    /// rule from drifting between the two: a known cost shows when above $0
+    /// or beside unpriced usage, an unknown one only as unpriced (#1855).
     pub fn apply_session_stats(&mut self, stats: &crate::protocol::session_payloads::SessionStats) {
         if let Some((used, window)) = stats.context_usage {
             self.update_context_usage(used, window);
@@ -223,7 +219,7 @@ impl Footer {
         // unpriced usage (a declared-free model's $0 + unpriced); an
         // unknown one is only "unpriced".
         let unpriced = stats.unpriced_attempts > 0;
-        self.session_cost = match (stats.known_cost_micro_usd, unpriced) {
+        self.session_cost = match (stats.cost_micro_usd, unpriced) {
             (Some(micro), true) => Some(micro as f64 / 1_000_000.0),
             (Some(micro), false) if micro > 0 => Some(micro as f64 / 1_000_000.0),
             (Some(_), false) | (None, _) => None,
