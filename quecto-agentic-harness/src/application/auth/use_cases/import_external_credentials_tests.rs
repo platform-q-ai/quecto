@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::*;
-use crate::application::auth::ports::{CredentialStoreError, IssuedToken};
+use crate::application::auth::ports::{CredentialStoreError, CredentialStoreFailure, IssuedToken};
 use crate::domain::auth::provider::LoginProvider;
 
 const NOW: i64 = 1_000_000;
@@ -82,7 +82,10 @@ impl TokenExchange for Fakes {
 impl CredentialStorePort for Fakes {
     fn store(&self, credential: Credential) -> Result<(), CredentialStoreError> {
         if self.refuse_store_for == Some(credential.provider.as_str()) {
-            return Err(CredentialStoreError("config error: read-only".to_string()));
+            return Err(CredentialStoreError::new(
+                CredentialStoreFailure::Unavailable,
+                "config error: read-only",
+            ));
         }
         self.stored.lock().unwrap().push(credential);
         Ok(())

@@ -14,7 +14,7 @@ pub use browser_authorization::{
     AuthorizationReturn, BrowserAuthorization, BrowserAuthorizationError, PendingAuthorization,
 };
 pub use clock::AuthClock;
-pub use credential_store::{CredentialStoreError, CredentialStorePort};
+pub use credential_store::{CredentialStoreError, CredentialStoreFailure, CredentialStorePort};
 pub use device_code_flow::{DeviceCodeError, DeviceCodeFlow, DeviceCodeGrant};
 pub use external_credentials::{
     ExternalCredential, ExternalCredentialSource, ExternalCredentialsError,

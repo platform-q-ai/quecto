@@ -4,13 +4,39 @@
 
 use crate::domain::auth::credential::Credential;
 
-/// Why the store could not complete an operation, in the store's words.
+/// What kind of failure the store met, typed where it happened (#2619
+/// review), so a caller decides by kind and never by the store's words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CredentialStoreFailure {
+    /// The store is there but is not a credential store: it does not parse.
+    Malformed,
+    /// The store, its lock or its directory refused this user.
+    PermissionDenied,
+    /// Any other failure to read or write it.
+    Unavailable,
+}
+
+/// Why the store could not complete an operation: its kind, and the
+/// store's words for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CredentialStoreError(pub String);
+pub struct CredentialStoreError {
+    pub failure: CredentialStoreFailure,
+    pub reason: String,
+}
+
+impl CredentialStoreError {
+    /// A failure of `failure`'s kind, in `reason`'s words.
+    pub fn new(failure: CredentialStoreFailure, reason: impl Into<String>) -> Self {
+        Self {
+            failure,
+            reason: reason.into(),
+        }
+    }
+}
 
 impl std::fmt::Display for CredentialStoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.reason)
     }
 }
 

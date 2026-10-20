@@ -26,7 +26,7 @@ pub(super) fn cmd_auth_status(ctx: &CliContext, stdout: &mut String, stderr: &mu
             0
         }
         // Reported on stdout, as `auth status` always has.
-        Err(AuthStatusError::Unreadable(why)) => {
+        Err(AuthStatusError::Unreadable { reason: why, .. }) => {
             stdout.push_str(&format!("failed to read credentials: {}\n", why));
             1
         }

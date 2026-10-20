@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.107.388"
+version = "0.107.389"
 edition = "2024"
 default-run = "quecto"
 description = "Ultra-lightweight personal AI assistant"
@@ -44,6 +44,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+serde_path_to_error = "0.1"
 
 # Shortest round-trip float digits for the swarm board's Python-compatible
 # JSON codec (#2268). Already in the tree (serde_urlencoded, via reqwest);

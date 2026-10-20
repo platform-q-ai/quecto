@@ -196,7 +196,7 @@ fn read_parse_and_write_failures_are_reported() {
         use_case(store, Arc::new(FakeTrust::default()))
             .execute(patch(ConfigLayer::Global, GLOBAL, "a", json!(1)))
             .unwrap_err(),
-        ConfigPatchError::Parse { .. }
+        ConfigPatchError::Parse { reason, .. } if reason == "malformed JSON at line 1 column 3"
     ));
     let store = MemoryStore {
         fail_writes: true,

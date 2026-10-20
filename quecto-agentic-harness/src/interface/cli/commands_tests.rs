@@ -394,3 +394,29 @@ fn status_reports_only_published_runtime_admission_warnings() {
     let after = run_with_output(args("status"), &ctx);
     assert!(!after.stderr.contains("admission-broker gating"));
 }
+
+/// #2617: `quecto status` on a config.json whose `api_key` has the wrong
+/// type names the field and never prints its value.
+#[test]
+fn status_never_prints_a_wrong_typed_api_key() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers": {"openai": {"api_key": 98765432123}}}"#,
+    )
+    .unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        ..Default::default()
+    };
+    let out = run_with_output(args("status"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    let all = format!("{}{}", out.stdout, out.stderr);
+    assert!(!all.contains("98765432123"), "{all}");
+    assert!(
+        out.stderr.contains("providers.openai.api_key"),
+        "{}",
+        out.stderr
+    );
+}

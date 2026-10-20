@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use super::*;
-use crate::application::auth::ports::{CredentialStoreError, CredentialStorePort};
+use crate::application::auth::ports::{
+    CredentialStoreError, CredentialStoreFailure, CredentialStorePort,
+};
 use crate::domain::auth::credential::{AuthMethod, Credential};
 
 /// Records every credential it is asked to store; refuses when told to.
@@ -14,7 +16,10 @@ struct FakeStore {
 impl CredentialStorePort for FakeStore {
     fn store(&self, credential: Credential) -> Result<(), CredentialStoreError> {
         if let Some(reason) = &self.refusal {
-            return Err(CredentialStoreError(reason.clone()));
+            return Err(CredentialStoreError::new(
+                CredentialStoreFailure::Unavailable,
+                reason.clone(),
+            ));
         }
         self.stored.lock().unwrap().push(credential);
         Ok(())
