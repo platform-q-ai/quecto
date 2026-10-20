@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use super::{definition, evidence_rows, task_record};
-use crate::application::swarm::board_test_support::stored_task;
 use crate::application::swarm::dto::EvidenceEntry;
+use crate::application::swarm::test_support::stored_task;
 use crate::domain::swarm::{
     entities::records::{CriterionKind, TaskState},
     services::validation::{edited_criteria, stored_criteria},

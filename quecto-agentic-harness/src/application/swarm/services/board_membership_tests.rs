@@ -1,8 +1,8 @@
 use serde_json::{Value, json};
 
 use super::{alive, holds_reservation, launched_elsewhere, live, same_process, unlaunched};
-use crate::application::swarm::board_test_support::stored_member;
 use crate::application::swarm::dto::{LaunchIdentity, MemberRow};
+use crate::application::swarm::test_support::stored_member;
 
 fn row(reservation: Value, status: &str, pid: Value, started: Value) -> MemberRow {
     stored_member(

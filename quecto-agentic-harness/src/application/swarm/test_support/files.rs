@@ -1,7 +1,7 @@
 //! Test support (compiled only under `cfg(test)`): the in-memory board's
 //! file reservations (#2272, #2275), and a lexical
 //! stand-in for the checkout. A task id matches by the rough INTEGER
-//! affinity of `board_test_support_tasks`; the SQLite adapter's contract
+//! affinity of `test_support::tasks`; the SQLite adapter's contract
 //! tests pin the real binding.
 use std::collections::BTreeMap;
 

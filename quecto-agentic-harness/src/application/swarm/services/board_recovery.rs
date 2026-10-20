@@ -3,14 +3,14 @@
 //! and not a port.
 use serde_json::Value;
 
-use super::board_messages::INBOX_CAPACITY;
-use super::board_operation::detail;
-use super::dto::TaskUpdate;
-use super::ports::{
+use super::super::dto::TaskUpdate;
+use super::super::ports::{
     board_events::BoardEvents, board_files::BoardFiles, board_members::BoardMembers,
     board_messages::BoardMessages, board_repository::BoardEncoding, board_tasks::BoardTasks,
     lifecycle::Clock,
 };
+use super::board_messages::INBOX_CAPACITY;
+use super::board_operation::detail;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, services::policy::status_is_alive,
     value_objects::board_error::BoardError,

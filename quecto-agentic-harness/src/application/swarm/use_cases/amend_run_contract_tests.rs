@@ -3,10 +3,10 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use super::AmendRunContract;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::AmendRunContractRequest;
+use crate::application::swarm::test_support::{
     BoardState, CompactEncoding, MemoryBoard, SteppingClock, accepted, member_row, running_board,
 };
-use crate::application::swarm::dto::AmendRunContractRequest;
 use crate::domain::swarm::{
     entities::records::RunState, events::telemetry::RefusalKind,
     value_objects::board_error::BoardError,

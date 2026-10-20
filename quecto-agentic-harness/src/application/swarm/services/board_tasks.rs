@@ -4,8 +4,8 @@
 //! port.
 use serde_json::Value;
 
-use super::dto::{TaskChange, TaskRow, TaskTransition};
-use super::ports::board_tasks::BoardTasks;
+use super::super::dto::{TaskChange, TaskRow, TaskTransition};
+use super::super::ports::board_tasks::BoardTasks;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, services::policy::require_unsubmitted,
     value_objects::board_error::BoardError, value_objects::python_value::python_equal,

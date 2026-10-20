@@ -1,10 +1,10 @@
 use serde_json::json;
 
 use super::LoseCoordinator;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::LoseCoordinatorRequest;
+use crate::application::swarm::test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, paused, running_board,
 };
-use crate::application::swarm::dto::LoseCoordinatorRequest;
 use crate::application::swarm::use_cases::OverRepository;
 use crate::domain::swarm::entities::records::RunState;
 

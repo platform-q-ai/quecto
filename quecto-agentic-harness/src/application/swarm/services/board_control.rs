@@ -19,8 +19,8 @@
 //! part of the same divergence.
 use serde_json::{Map, Value};
 
-use super::dto::{ControlReceipt, UsageStanding};
-use super::ports::{
+use super::super::dto::{ControlReceipt, UsageStanding};
+use super::super::ports::{
     board_events::BoardEvents, board_members::BoardMembers, board_runs::BoardRuns,
     board_usage::BoardUsage, lifecycle::Clock,
 };

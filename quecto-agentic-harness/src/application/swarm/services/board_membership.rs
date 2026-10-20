@@ -4,7 +4,7 @@
 //! helpers, not a use case and not a port.
 use serde_json::Value;
 
-use super::dto::{LaunchIdentity, MemberRow};
+use super::super::dto::{LaunchIdentity, MemberRow};
 use crate::domain::swarm::{
     services::policy::status_is_alive, value_objects::python_value::python_equal,
 };
