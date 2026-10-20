@@ -1,5 +1,6 @@
 //! `admission-broker` administration paths over a real in-process authority.
 use super::*;
+use crate::composition::admission::start_authority;
 use crate::interface::cli::CliContext;
 
 fn ctx(dir: &std::path::Path) -> CliContext {
@@ -87,7 +88,7 @@ fn status_and_reset_talk_to_the_running_authority() {
         .build()
         .unwrap();
     let server = rt
-        .block_on(AuthorityServer::start(
+        .block_on(start_authority(
             AuthorityDirectory::open(&authority).unwrap(),
             proposal,
         ))

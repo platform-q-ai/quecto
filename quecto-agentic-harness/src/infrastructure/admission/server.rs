@@ -98,8 +98,11 @@ pub struct AuthorityServer {
     _lock: SingletonLock,
 }
 
+// The start functions are crate-private (#1910): a broker is started only
+// through composition (its test-support start functions) or the
+// `admission-broker run` path, never directly from outside the crate.
 impl AuthorityServer {
-    pub async fn start(
+    pub(crate) async fn start(
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
     ) -> Result<Self, ServerError> {
@@ -108,7 +111,8 @@ impl AuthorityServer {
 
     /// Start with a framing deadline other than [`FRAME_DEADLINE`]: the
     /// stalled-frame tests' entry point, so they need not wait out 15 s.
-    pub async fn start_with_frame_deadline(
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) async fn start_with_frame_deadline(
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
         frame_deadline: Duration,
@@ -119,7 +123,7 @@ impl AuthorityServer {
     /// Operator acknowledgement that a ledger missing after prior operation
     /// may be replaced by an empty one (outstanding remote work is no longer
     /// claimed bounded).
-    pub async fn start_accepting_missing_ledger(
+    pub(crate) async fn start_accepting_missing_ledger(
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
     ) -> Result<Self, ServerError> {

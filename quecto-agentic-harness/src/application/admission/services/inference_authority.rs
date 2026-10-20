@@ -5,6 +5,7 @@
 //! after the release is durable. Failure of either path fails closed.
 use std::collections::BTreeMap;
 
+use crate::application::admission::dto::broker::{AuthorityError, AuthorityStatus, Credential};
 use crate::application::admission::ports::inference_admission::{
     AdmissionClient, AdmissionDispatcher, AdmissionRecovery, AdmissionRegistry,
 };
@@ -14,40 +15,12 @@ use crate::application::admission::ports::inference_authority_ports::{
 use crate::application::admission::services::inference_admission::AdmissionService;
 use crate::domain::admission::value_objects::inference_admission::*;
 
-/// Scope identity plus the opaque secret proving the caller was issued it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Credential {
-    pub scope: ScopeId,
-    pub token: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AuthorityError {
-    Unauthorized,
-    Admission(AdmissionError),
-    JournalUnavailable,
-}
-
-impl From<AdmissionError> for AuthorityError {
-    fn from(error: AdmissionError) -> Self {
-        Self::Admission(error)
-    }
-}
-
+/// The journal failing is the authority's `JournalUnavailable`: grants and
+/// acknowledgements fail closed.
 impl From<JournalError> for AuthorityError {
     fn from(_: JournalError) -> Self {
         Self::JournalUnavailable
     }
-}
-
-/// Operator-facing state; contains no capability material.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthorityStatus {
-    pub epoch: u64,
-    pub journal_healthy: bool,
-    /// Scopes holding a live capability (roots and descendants).
-    pub live_scopes: usize,
-    pub groups: BTreeMap<GroupId, GroupSnapshot>,
 }
 
 #[derive(Debug)]

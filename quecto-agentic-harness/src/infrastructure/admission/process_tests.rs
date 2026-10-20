@@ -1,10 +1,11 @@
 //! Process binding over a real in-process authority: root install, gates,
 //! child negotiation with sidecar consumption, failure paths and shutdown.
 use super::*;
+use crate::composition::admission::start_authority;
 use crate::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, Feedback, GroupId, GroupPolicy,
 };
-use crate::infrastructure::admission::{AdminConnection, AuthorityDirectory, AuthorityServer};
+use crate::infrastructure::admission::{AdminConnection, AuthorityDirectory};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -89,7 +90,7 @@ fn root_install_binds_gates_and_shutdown_retires_the_scope() {
     let temp = tempfile::tempdir().unwrap();
     let directory = temp.path().join("authority");
     let server = rt
-        .block_on(AuthorityServer::start(
+        .block_on(start_authority(
             AuthorityDirectory::open(&directory).unwrap(),
             proposal(),
         ))
@@ -189,7 +190,7 @@ fn child_negotiation_consumes_its_sidecar_and_rejects_forgeries() {
     let temp = tempfile::tempdir().unwrap();
     let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
     let server = rt
-        .block_on(AuthorityServer::start(dir.clone(), proposal()))
+        .block_on(start_authority(dir.clone(), proposal()))
         .unwrap();
     let (child, parent) = rt.block_on(async {
         let parent = super::super::client::AuthorityConnection::connect(&dir.client_socket())
@@ -255,7 +256,7 @@ fn a_root_never_inherits_and_a_child_always_does() {
     let temp = tempfile::tempdir().unwrap();
     let directory = temp.path().join("authority");
     let server = rt
-        .block_on(AuthorityServer::start(
+        .block_on(start_authority(
             AuthorityDirectory::open(&directory).unwrap(),
             proposal(),
         ))
@@ -290,7 +291,7 @@ fn a_root_registers_children_through_the_reconnecting_link() {
     let temp = tempfile::tempdir().unwrap();
     let directory = temp.path().join("authority");
     let server = rt
-        .block_on(AuthorityServer::start(
+        .block_on(start_authority(
             AuthorityDirectory::open(&directory).unwrap(),
             proposal(),
         ))

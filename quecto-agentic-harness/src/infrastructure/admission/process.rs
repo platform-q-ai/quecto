@@ -11,8 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::client::{AuthorityConnection, ClientError};
 use super::directory::AuthorityDirectory;
 use crate::application::{
-    admission::ports::inference_attempt::AttemptAdmission,
-    admission::services::inference_authority::Credential,
+    admission::dto::broker::Credential, admission::ports::inference_attempt::AttemptAdmission,
 };
 use crate::domain::admission::value_objects::inference_admission::WorkloadClass;
 use crate::infrastructure::providers::routing::provider_runtime_admission::{

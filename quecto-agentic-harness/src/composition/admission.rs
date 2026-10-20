@@ -11,7 +11,11 @@ use crate::application::admission::use_cases::{
     UninstallAuthorityService,
 };
 use crate::infrastructure::admission::SocketAuthorityAdmin;
+#[cfg(any(test, feature = "test-support"))]
+use crate::infrastructure::admission::{AuthorityDirectory, AuthorityServer, ServerError};
 use crate::infrastructure::processes::local::SystemdUserServiceManager;
+#[cfg(any(test, feature = "test-support"))]
+use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 use crate::interface::cli::admission_handles::AdmissionHandles;
 
 pub fn build_admission_handles() -> AdmissionHandles {
@@ -32,4 +36,39 @@ pub fn build_admission_handles() -> AdmissionHandles {
         uninstall: Arc::new(UninstallAuthorityService::new(manager)),
         negotiate: Arc::new(NegotiateAuthority::new()),
     }
+}
+
+// The authority server under test, started as composition composes it
+// (#1910): every test that runs a broker starts it through one of these, so
+// what the authority is built from is decided in one place. The production
+// broker starts through the `admission-broker run` handles.
+
+/// Start an authority over `dir`.
+#[cfg(any(test, feature = "test-support"))]
+pub async fn start_authority(
+    dir: AuthorityDirectory,
+    proposal: AdmissionRuntimeProposal,
+) -> Result<AuthorityServer, ServerError> {
+    AuthorityServer::start(dir, proposal).await
+}
+
+/// Start an authority over `dir`, accepting a ledger missing after prior
+/// operation (`--accept-missing-ledger`).
+#[cfg(any(test, feature = "test-support"))]
+pub async fn start_authority_accepting_missing_ledger(
+    dir: AuthorityDirectory,
+    proposal: AdmissionRuntimeProposal,
+) -> Result<AuthorityServer, ServerError> {
+    AuthorityServer::start_accepting_missing_ledger(dir, proposal).await
+}
+
+/// Start an authority over `dir` with a framing deadline other than the
+/// production one, so stalled-frame tests need not wait it out.
+#[cfg(any(test, feature = "test-support"))]
+pub async fn start_authority_with_frame_deadline(
+    dir: AuthorityDirectory,
+    proposal: AdmissionRuntimeProposal,
+    frame_deadline: std::time::Duration,
+) -> Result<AuthorityServer, ServerError> {
+    AuthorityServer::start_with_frame_deadline(dir, proposal, frame_deadline).await
 }

@@ -8,7 +8,7 @@ use super::inference_admission_authority_steps::{
 use super::*;
 use quecto::application::admission::ports::inference_attempt::AttemptPermit;
 use quecto::domain::admission::value_objects::inference_admission::{Feedback, WorkloadClass};
-use quecto::infrastructure::admission::{AuthorityConnection, AuthorityDirectory, AuthorityServer};
+use quecto::infrastructure::admission::{AuthorityConnection, AuthorityDirectory};
 use std::time::{Duration, Instant};
 
 type Pending = tokio::task::JoinHandle<Result<Box<dyn AttemptPermit>, String>>;
@@ -44,7 +44,9 @@ fn start_with(
     let mut proposal = proposal(2, 60_000);
     mutate(proposal.policy.groups.get_mut(&group()).unwrap());
     let server = runtime
-        .block_on(AuthorityServer::start(dir, proposal))
+        .block_on(quecto::composition::admission::start_authority(
+            dir, proposal,
+        ))
         .unwrap();
     s.runtime = Some(runtime);
     s.temp = Some(temp);

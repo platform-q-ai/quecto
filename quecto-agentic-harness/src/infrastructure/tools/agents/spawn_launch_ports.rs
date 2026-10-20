@@ -45,7 +45,7 @@ pub(super) struct SpawnLaunchPorts<'a> {
     /// that hands it over, until the launch is registered.
     admission_registration: Option<(
         PathBuf,
-        crate::application::admission::services::inference_authority::Credential,
+        crate::application::admission::dto::broker::Credential,
     )>,
     /// How far the launch got; what dropping these ports must undo.
     stage: LaunchStage,

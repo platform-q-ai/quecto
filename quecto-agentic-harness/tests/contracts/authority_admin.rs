@@ -10,9 +10,7 @@ use quecto::application::admission::ports::AuthorityAdmin;
 use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, GroupId, GroupPolicy,
 };
-use quecto::infrastructure::admission::{
-    AuthorityDirectory, AuthorityServer, SocketAuthorityAdmin,
-};
+use quecto::infrastructure::admission::{AuthorityDirectory, SocketAuthorityAdmin};
 use quecto::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
 fn proposal() -> AdmissionRuntimeProposal {
@@ -61,7 +59,7 @@ fn inspect_and_reset_address_the_running_authority_by_directory() {
         .build()
         .unwrap();
     let server = rt
-        .block_on(AuthorityServer::start(
+        .block_on(quecto::composition::admission::start_authority(
             AuthorityDirectory::open(&directory).unwrap(),
             proposal(),
         ))
