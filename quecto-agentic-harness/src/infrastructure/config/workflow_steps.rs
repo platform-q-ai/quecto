@@ -4,7 +4,8 @@
 use std::path::{Component, Path, PathBuf};
 
 use super::ConfigError;
-use crate::infrastructure::persistence::file::json_failure::{self as json, escaped, printable};
+use crate::domain::shared::text::printable::{printable, printable_name};
+use crate::infrastructure::persistence::file::json_failure as json;
 
 pub(super) const MAX_WORKFLOW_STEP_FILE_BYTES: u64 = 64 * 1024;
 
@@ -43,7 +44,7 @@ pub(super) fn resolve_workflow_step_entries(
         let id = template
             .get("id")
             .and_then(serde_json::Value::as_str)
-            .map(escaped)
+            .map(printable_name)
             .unwrap_or_default();
         let Some(steps) = template
             .get_mut("steps")
@@ -188,7 +189,7 @@ fn reject_unknown_keys(
     if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
         return Err(ConfigError::WorkflowStep(format!(
             "{context}: unknown field `{}`",
-            escaped(key)
+            printable_name(key)
         )));
     }
     Ok(())

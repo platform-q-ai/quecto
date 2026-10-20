@@ -9,10 +9,8 @@
 //! duplicate field, and the values a variant may take; never a value or a
 //! key the file holds.
 
-use crate::application::configuration::dto::DocumentTextFailure;
-
-/// The longest a field-path segment is printed; longer keys are cut.
-const SEGMENT_CHARS: usize = 64;
+use crate::domain::shared::document_failure::DocumentTextFailure;
+use crate::domain::shared::text::printable::printable_name;
 
 /// What kind of failure `error` is, in fixed words (plus, for a missing
 /// or duplicate field, the schema's name for it, and for an unknown
@@ -21,11 +19,10 @@ pub fn category(error: &serde_json::Error) -> String {
     use serde_json::error::Category;
     match error.classify() {
         Category::Data => data_category(&error.to_string()),
-        // A failure of the text itself: worded once, as the configuration
-        // readers word it, so every reader says the same.
-        Category::Syntax | Category::Eof | Category::Io => {
-            DocumentTextFailure::of(error).words().to_string()
-        }
+        // A failure of the text itself, in the domain's one wording.
+        Category::Eof => DocumentTextFailure::EndsEarly.words().to_string(),
+        // Text in memory is never read, so an I/O failure is malformed text.
+        Category::Syntax | Category::Io => DocumentTextFailure::Malformed.words().to_string(),
     }
 }
 
@@ -38,7 +35,7 @@ fn data_category(message: &str) -> String {
             && let Some((name, _)) = rest.split_once('`')
         {
             let kind = prefix.trim_end_matches(" `").trim_end_matches('`');
-            return format!("{kind} `{}`", escaped(name));
+            return format!("{kind} `{}`", printable_name(name));
         }
     }
     if message.starts_with("unknown field `") {
@@ -67,34 +64,6 @@ fn strip_position(text: &str) -> &str {
     }
 }
 
-/// `text` printable whole: control characters (a newline, an ANSI escape)
-/// escaped, so a name read from a file can neither forge a line nor reach
-/// the terminal as a sequence.
-pub(crate) fn printable(text: &str) -> String {
-    let shown = text.escape_debug().to_string();
-    debug_assert!(!shown.contains(char::is_control), "escaped: {shown:?}");
-    shown
-}
-
-/// `text` printable, as [`printable`], and cut to [`SEGMENT_CHARS`]: a key
-/// or a name read from a file, as a diagnostic names it.
-pub(crate) fn escaped(text: &str) -> String {
-    let mut out: String = text
-        .chars()
-        .flat_map(char::escape_debug)
-        .take(SEGMENT_CHARS)
-        .collect();
-    if text
-        .chars()
-        .flat_map(char::escape_debug)
-        .nth(SEGMENT_CHARS)
-        .is_some()
-    {
-        out.push('…');
-    }
-    out
-}
-
 /// The field `path` names, dotted with `[n]` for an index and each key
 /// escaped; `None` at the root, or when a segment is unknown (the
 /// position says where then).
@@ -108,13 +77,13 @@ fn field(path: &serde_path_to_error::Path) -> Option<String> {
                 if !out.is_empty() {
                     out.push('.');
                 }
-                out.push_str(&escaped(key));
+                out.push_str(&printable_name(key));
             }
             Segment::Enum { variant } => {
                 if !out.is_empty() {
                     out.push('.');
                 }
-                out.push_str(&escaped(variant));
+                out.push_str(&printable_name(variant));
             }
             Segment::Unknown => return None,
         }

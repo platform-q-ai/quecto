@@ -8,7 +8,8 @@
 use std::path::{Path, PathBuf};
 
 use super::{Config, ConfigError, resolve_workflow_step_entry};
-use crate::infrastructure::persistence::file::json_failure::{self as json, escaped, printable};
+use crate::domain::shared::text::printable::{printable, printable_name};
+use crate::infrastructure::persistence::file::json_failure as json;
 
 /// Outcome of workflow template discovery (PRD workflow-composable-templates
 /// §3.2, slice 2).
@@ -129,7 +130,7 @@ fn reject_unknown_template_keys(
     if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
         return Err(ConfigError::WorkflowTemplate(format!(
             "{context}: unknown field `{}`",
-            escaped(key)
+            printable_name(key)
         )));
     }
     Ok(())
@@ -260,7 +261,7 @@ fn load_workflow_template_file(
     if let Some(step) = template.steps.iter().find(|step| !seen.insert(&step.key)) {
         return Err(ConfigError::WorkflowTemplate(format!(
             "{context}: duplicate step key `{}`",
-            escaped(&step.key)
+            printable_name(&step.key)
         )));
     }
     Ok(template)

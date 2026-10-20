@@ -122,7 +122,7 @@ impl std::fmt::Display for ModelRegistryError {
             Self::UnknownApi(api) => write!(
                 f,
                 "unknown api '{}' in models registry",
-                json_failure::escaped(api)
+                crate::domain::shared::text::printable::printable_name(api)
             ),
         }
     }
@@ -320,7 +320,7 @@ impl ModelRegistry {
                                 provider: provider_key.clone(),
                                 error: format!(
                                     "provider '{}' declares an unknown auth mode (supported: apiKey, oauth); its models were skipped",
-                                    json_failure::escaped(&provider_key)
+                                    crate::domain::shared::text::printable::printable_name(&provider_key)
                                 ),
                             });
                             continue;

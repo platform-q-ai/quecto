@@ -3,7 +3,6 @@
 pub mod config_patch;
 pub mod config_read;
 pub mod config_selection;
-pub mod document_failure;
 pub mod effective_config;
 pub mod inspection;
 pub mod overlay_trust;
@@ -14,7 +13,6 @@ pub use config_patch::{
 };
 pub use config_read::{ConfigReadError, ConfigReadRequest, ConfigReadScope, ConfigReadout};
 pub use config_selection::{ConfigLayers, ConfigSelection, ConfigSelectionRequest, OverlayOrigin};
-pub use document_failure::DocumentTextFailure;
 pub use effective_config::{
     ConfigSources, EffectiveConfig, EffectiveConfigError, OverlayReport, OverlayState,
 };

@@ -1591,10 +1591,6 @@ fn application_path_allowed(path: &str) -> bool {
         // capability's own listing DTO; the index builds it to implement
         // the port.
         ["crate", "application", "project_board", "dto", "BoardListing"] => true,
-        // A JSON text failure in fixed words (#2617 review 2): the one
-        // wording the configuration readers and the infrastructure's parse
-        // helper (`persistence::file::json_failure`) both give.
-        ["crate", "application", "configuration", "dto", "DocumentTextFailure"] => true,
         // The run reports port (#2481 S4c follow-up) answers an ended
         // swarm's board as the capability's own DTO; the kept boards read a
         // board's projection into it, for the board launcher's port.
