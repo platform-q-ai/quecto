@@ -1,6 +1,7 @@
 //! #2597: what the attempt observer makes of the Messages (Anthropic) wire, pinned
 //! before attempt observation moved out of `transport/` into per-vendor
-//! strategies: every case must read exactly as it did.
+//! strategies: every case must read exactly as it did, but for the one row
+//! marked a declared change (#2609 review: each wire reads its own error names).
 use crate::domain::inference::value_objects::attempt_diagnostics::{TerminalEvent, Termination};
 use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface};
 use crate::infrastructure::providers::transport::attempt_transport::{observation, observed};
@@ -89,8 +90,10 @@ const CASES: &[(&str, &[&str], &str)] = &[
             r#"data: {"type":"content_block_delta","delta":{"text":"x"}}"#,
             r#"data: {"error":{"type":"server_error"}}"#,
         ],
+        // Declared change (#2609 review): `server_error` is no Messages
+        // error name, so it records no error code here.
         r#"terminal=[false, false] failure=false hinted=false first_token=true
-{"attempt_number":0,"started_unix_ms":0,"finished_unix_ms":0,"elapsed_ms":0,"wire_status":null,"headers":[],"stop_reason":null,"terminal_event":null,"error_code":"ServerError","incomplete_reason":null,"event_count":2,"generated_text":true,"generated_tool_call":false,"generated_thinking":false,"output_bytes":1,"oversized_lines":0,"parse_errors":0,"unknown_events":2,"event_types":{"(unknown)":2},"termination":"Dropped"}"#,
+{"attempt_number":0,"started_unix_ms":0,"finished_unix_ms":0,"elapsed_ms":0,"wire_status":null,"headers":[],"stop_reason":null,"terminal_event":null,"error_code":null,"incomplete_reason":null,"event_count":2,"generated_text":true,"generated_tool_call":false,"generated_thinking":false,"output_bytes":1,"oversized_lines":0,"parse_errors":0,"unknown_events":2,"event_types":{"(unknown)":2},"termination":"Dropped"}"#,
     ),
     (
         "done_marker_is_not_terminal",
@@ -166,4 +169,30 @@ fn malformed_anthropic_terminal_retains_event_without_payload_content() {
         assert_eq!(d.parse_errors, 1);
         assert!(!serde_json::to_string(d).unwrap().contains("SECRET"));
     }
+}
+
+/// #2609 review: the Messages wire reads only its `error` object's own
+/// error names. A Responses-shaped root code, or a Responses-nested error,
+/// fails an attempt without throttling it.
+#[test]
+fn a_messages_attempt_reads_only_its_own_error_vocabulary() {
+    for data in [
+        r#"data: {"type":"error","code":"rate_limit_exceeded"}"#,
+        r#"data: {"type":"error","response":{"error":{"type":"overloaded_error"}}}"#,
+        r#"data: {"type":"error","error":{"code":"rate_limit_exceeded"}}"#,
+    ] {
+        let seen = observed(profile(), &["event: error", data], None);
+        assert!(seen.failure, "{data}");
+        assert!(!seen.hinted, "{data}");
+        assert_eq!(seen.diagnostics.error_code, None, "{data}");
+    }
+    let own = observed(
+        profile(),
+        &[
+            "event: error",
+            r#"data: {"type":"error","error":{"type":"overloaded_error"}}"#,
+        ],
+        None,
+    );
+    assert!(own.hinted);
 }
