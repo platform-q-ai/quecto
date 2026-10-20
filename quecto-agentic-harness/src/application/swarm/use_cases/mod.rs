@@ -9,7 +9,7 @@
 //! graph is composed once, not per call (round-3 review M1).
 use std::sync::Arc;
 
-use crate::application::swarm::ports::BoardRepository;
+use crate::application::swarm::ports::board_repository::BoardRepository;
 
 mod accept_wake;
 mod acknowledge_message;

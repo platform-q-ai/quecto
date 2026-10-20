@@ -8,7 +8,7 @@ use serde_json::Value;
 use super::tasks::affinity;
 use super::{MemoryTransaction, text_affinity};
 use crate::application::swarm::dto::{MessageRow, MessageTally, NewMessage};
-use crate::application::swarm::ports::BoardMessages;
+use crate::application::swarm::ports::board_messages::BoardMessages;
 use crate::domain::swarm::{
     value_objects::board_error::BoardError, value_objects::python_value::python_truthy,
 };

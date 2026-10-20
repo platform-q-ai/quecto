@@ -19,7 +19,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::application::swarm::dto::BoardLocation;
-use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
+use crate::application::swarm::ports::board_telemetry::{BoardOpLog, SessionOpLog};
 use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::events::telemetry::{NameForm, RefusalKind};
 use crate::domain::swarm::services::watch::Nudge;

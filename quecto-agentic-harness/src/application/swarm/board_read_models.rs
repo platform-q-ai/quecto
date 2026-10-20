@@ -18,7 +18,11 @@ use super::board_operation::{atomic, operation};
 use super::board_tasks::{HELD_CLAIM, read_task};
 use super::dto::{CountedTask, FullSummary, RunSummary, SummaryCounts, SummaryScan, TaskRow};
 use super::ports::{
-    BoardEvents, BoardMembers, BoardRepository, BoardTasks, BoardTransaction, Clock,
+    board_events::BoardEvents,
+    board_members::BoardMembers,
+    board_repository::{BoardRepository, BoardTransaction},
+    board_tasks::BoardTasks,
+    lifecycle::Clock,
 };
 use crate::domain::swarm::{
     events::telemetry::RefusalKind,

@@ -8,7 +8,7 @@ use super::OverRepository;
 use crate::application::swarm::board_messages::{ACCEPTED, CONSUMED, message_id};
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::dto::{MessageIdRequest, Settled};
-use crate::application::swarm::ports::{BoardRepository, Clock};
+use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, services::policy::Access,
     value_objects::board_error::BoardError,

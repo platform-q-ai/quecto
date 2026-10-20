@@ -4,7 +4,7 @@
 use serde_json::Value;
 
 use super::py_json::{self, PyJson};
-use crate::application::swarm::ports::BoardEncoding;
+use crate::application::swarm::ports::board_repository::BoardEncoding;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

@@ -3,7 +3,7 @@
 //! not a port.
 use serde_json::Value;
 
-use super::ports::{BoardEncoding, BoardMessages};
+use super::ports::{board_messages::BoardMessages, board_repository::BoardEncoding};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
     value_objects::python_value::python_equal,

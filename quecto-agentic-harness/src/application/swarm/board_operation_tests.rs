@@ -4,7 +4,7 @@ use super::{atomic, end, operation, read};
 use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, running_board,
 };
-use crate::application::swarm::ports::BoardRepository;
+use crate::application::swarm::ports::board_repository::BoardRepository;
 use crate::domain::swarm::{
     entities::records::RunState, events::telemetry::RefusalKind, services::policy::Access,
     value_objects::board_error::BoardError,
@@ -231,14 +231,14 @@ fn atomic_refuses_a_store_that_skipped_the_work() {
         fn atomic(
             &self,
             _create: bool,
-            _work: &mut crate::application::swarm::ports::BoardWork<'_>,
+            _work: &mut crate::application::swarm::ports::board_repository::BoardWork<'_>,
         ) -> Result<(), BoardError> {
             Ok(())
         }
 
         fn read(
             &self,
-            _work: &mut crate::application::swarm::ports::BoardWork<'_>,
+            _work: &mut crate::application::swarm::ports::board_repository::BoardWork<'_>,
         ) -> Result<(), BoardError> {
             Ok(())
         }
@@ -270,7 +270,7 @@ fn atomic_runs_the_work_at_most_once() {
         fn atomic(
             &self,
             create: bool,
-            work: &mut crate::application::swarm::ports::BoardWork<'_>,
+            work: &mut crate::application::swarm::ports::board_repository::BoardWork<'_>,
         ) -> Result<(), BoardError> {
             self.0.atomic(create, work)?;
             self.0.atomic(create, work)
@@ -278,7 +278,7 @@ fn atomic_runs_the_work_at_most_once() {
 
         fn read(
             &self,
-            work: &mut crate::application::swarm::ports::BoardWork<'_>,
+            work: &mut crate::application::swarm::ports::board_repository::BoardWork<'_>,
         ) -> Result<(), BoardError> {
             self.0.read(work)?;
             self.0.read(work)

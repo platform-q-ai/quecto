@@ -95,7 +95,7 @@ fn a_sessions_own_kill_in_flight_is_warned_about() {
 #[derive(Default)]
 struct RecordedOps(Mutex<Vec<String>>);
 
-impl crate::application::swarm::ports::BoardOpLog for RecordedOps {
+impl crate::application::swarm::ports::board_telemetry::BoardOpLog for RecordedOps {
     fn record(&self, observation: crate::domain::swarm::events::telemetry::BoardOpObservation) {
         self.0.lock().unwrap().push(observation.op);
     }
@@ -104,7 +104,7 @@ impl crate::application::swarm::ports::BoardOpLog for RecordedOps {
     fn summarize(&self, _summary: crate::domain::swarm::events::run_summary::SwarmRunSummary) {}
 }
 
-impl crate::application::swarm::ports::SessionOpLog for RecordedOps {
+impl crate::application::swarm::ports::board_telemetry::SessionOpLog for RecordedOps {
     fn dropped(&self, _drops: crate::application::swarm::dto::DroppedRecords) {}
 
     fn take_unnoted(&self) -> crate::application::swarm::dto::DroppedRecords {

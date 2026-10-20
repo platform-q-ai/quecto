@@ -10,7 +10,11 @@ use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_tasks::{owned, stored_id};
 use crate::application::swarm::dto::{NewReservation, Reservation, ReserveFilesRequest};
-use crate::application::swarm::ports::{BoardRepository, CheckoutPaths, Clock, IdSource};
+use crate::application::swarm::ports::{
+    board_files::CheckoutPaths,
+    board_repository::{BoardRepository, IdSource},
+    lifecycle::Clock,
+};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, services::policy::Access, services::validation::bounded,
     value_objects::board_error::BoardError,

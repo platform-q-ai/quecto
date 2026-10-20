@@ -6,7 +6,7 @@ use serde_json::json;
 
 use super::WatchTicksOnExit;
 use crate::application::swarm::dto::DroppedRecords;
-use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
+use crate::application::swarm::ports::board_telemetry::{BoardOpLog, SessionOpLog};
 use crate::composition::swarm::{board_wire, build_swarm_board_handles};
 use crate::domain::swarm::{
     events::run_summary::SwarmRunSummary, events::telemetry::BoardOpObservation,

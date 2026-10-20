@@ -7,7 +7,9 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, RecordedEvent, SteppingClock, member_row, paused, recorded, running_board,
 };
 use crate::application::swarm::dto::{DictRow, LatestActivity, ScopeObservation};
-use crate::application::swarm::ports::{BoardEvents, BoardRepository};
+use crate::application::swarm::ports::{
+    board_events::BoardEvents, board_repository::BoardRepository,
+};
 use crate::domain::swarm::{
     entities::records::{RunRecord, RunState},
     events::telemetry::RefusalKind,

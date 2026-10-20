@@ -104,8 +104,10 @@ async fn malformed_steer_admission_does_not_cancel_or_gate_later_work() {
 }
 
 struct TestSwarmControl;
-impl crate::application::swarm::ports::SwarmRunControl for TestSwarmControl {
-    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+impl crate::application::swarm::ports::lifecycle::SwarmRunControl for TestSwarmControl {
+    fn coordinator_board(
+        &self,
+    ) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
         Box::pin(async { Ok(None) })
     }
     fn nudge_watch(&self) {}
@@ -292,8 +294,10 @@ async fn supervisor_extend_requires_seconds_and_close_returns_a_receipt() {
 
 /// A control port whose receipt carries resume blockers (#1924).
 struct BlockedSwarmControl;
-impl crate::application::swarm::ports::SwarmRunControl for BlockedSwarmControl {
-    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+impl crate::application::swarm::ports::lifecycle::SwarmRunControl for BlockedSwarmControl {
+    fn coordinator_board(
+        &self,
+    ) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
         Box::pin(async { Ok(None) })
     }
     fn nudge_watch(&self) {}
@@ -395,8 +399,10 @@ struct WatchedControl {
     nudges: std::sync::atomic::AtomicUsize,
     applied: std::sync::atomic::AtomicUsize,
 }
-impl crate::application::swarm::ports::SwarmRunControl for WatchedControl {
-    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+impl crate::application::swarm::ports::lifecycle::SwarmRunControl for WatchedControl {
+    fn coordinator_board(
+        &self,
+    ) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
         Box::pin(async { Ok(None) })
     }
     fn nudge_watch(&self) {

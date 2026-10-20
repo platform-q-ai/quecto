@@ -8,7 +8,10 @@ use super::OverRepository;
 use crate::application::swarm::board_control::receipt;
 use crate::application::swarm::board_operation::{detail, end, operation, text};
 use crate::application::swarm::dto::{ControlAnswer, RunTransition, StopRunRequest};
-use crate::application::swarm::ports::{BoardRepository, BoardTransaction, Clock};
+use crate::application::swarm::ports::{
+    board_repository::{BoardRepository, BoardTransaction},
+    lifecycle::Clock,
+};
 use crate::domain::swarm::services::validation::TEXT_MAX_BYTES;
 use crate::domain::swarm::{
     entities::records::{RunRecord, RunState},

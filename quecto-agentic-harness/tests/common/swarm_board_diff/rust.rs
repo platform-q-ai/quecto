@@ -11,7 +11,9 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use quecto::application::swarm::dto::BoardLocation;
-use quecto::application::swarm::ports::{BoardOpLog, Clock, IdSource};
+use quecto::application::swarm::ports::{
+    board_repository::IdSource, board_telemetry::BoardOpLog, lifecycle::Clock,
+};
 use quecto::composition::swarm::{
     SwarmBoardHandles, board_wire, build_swarm_board_handles_with, with_event_log,
 };

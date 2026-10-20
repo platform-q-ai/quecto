@@ -28,7 +28,7 @@ fn structured_task(world: &mut QuectoWorld) {
 
 #[when("a worker claims, reserves and submits it through structured ops")]
 fn structured_worker(world: &mut QuectoWorld) {
-    use quecto::application::swarm::ports::CoordinationPort;
+    use quecto::application::swarm::ports::lifecycle::CoordinationPort;
     use quecto::application::tools::ports::Tool;
     let workspace = world.swarm_workspace.clone().unwrap();
     let coordinator = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {

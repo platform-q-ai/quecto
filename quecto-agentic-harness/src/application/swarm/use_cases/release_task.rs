@@ -7,7 +7,7 @@ use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_tasks::{owned, read_task};
 use crate::application::swarm::dto::{ReleaseTaskRequest, TaskRow, TaskUpdate};
-use crate::application::swarm::ports::{BoardRepository, Clock};
+use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
 use crate::domain::swarm::{services::policy::Access, value_objects::board_error::BoardError};
 
 /// Through the operation gate (a running run): only the claim's owner,

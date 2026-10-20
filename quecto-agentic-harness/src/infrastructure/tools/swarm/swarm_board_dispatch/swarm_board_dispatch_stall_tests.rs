@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use super::call;
 use crate::application::swarm::dto::BoardLocation;
-use crate::application::swarm::ports::{Clock, IdSource};
+use crate::application::swarm::ports::{board_repository::IdSource, lifecycle::Clock};
 use crate::composition::swarm::{board_op_log, with_event_log};
 use crate::infrastructure::observability::audit_log::AuditLog;
 use crate::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;

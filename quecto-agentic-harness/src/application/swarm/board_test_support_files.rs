@@ -10,7 +10,7 @@ use serde_json::Value;
 use super::MemoryTransaction;
 use super::tasks::{StoredFile, affinity};
 use crate::application::swarm::dto::{FileRow, NewReservation};
-use crate::application::swarm::ports::{BoardFiles, CheckoutPaths};
+use crate::application::swarm::ports::board_files::{BoardFiles, CheckoutPaths};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

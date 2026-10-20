@@ -7,7 +7,7 @@ use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_tasks::{changed, owned, unsubmitted};
 use crate::application::swarm::dto::{BlockTaskRequest, TaskChange, TaskTransition, TaskUpdate};
-use crate::application::swarm::ports::{BoardRepository, Clock};
+use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
 use crate::domain::swarm::services::validation::TEXT_MAX_BYTES;
 use crate::domain::swarm::{
     services::policy::Access, services::validation::bounded,

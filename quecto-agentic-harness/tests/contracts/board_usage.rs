@@ -4,7 +4,7 @@
 //! default budget row; the aggregates are keyed by their SQL aliases. The
 //! budget and request-ledger writes (#2274) store Python's bytes.
 use quecto::application::swarm::dto::BoardLocation;
-use quecto::application::swarm::ports::BoardRepository;
+use quecto::application::swarm::ports::board_repository::BoardRepository;
 use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::{Value, json};
 

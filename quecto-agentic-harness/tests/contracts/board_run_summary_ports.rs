@@ -5,7 +5,9 @@
 //! `caller_authorized` and `role_fixed`. The event log's side is
 //! `session_op_log.rs`.
 use quecto::application::swarm::dto::{BoardLocation, MessageTally};
-use quecto::application::swarm::ports::{BoardCallMeter, BoardRepository};
+use quecto::application::swarm::ports::{
+    board_repository::BoardRepository, board_telemetry::BoardCallMeter,
+};
 use quecto::infrastructure::persistence::sqlite::swarm_board::meter::SqliteBoardCallMeter;
 use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
@@ -178,7 +180,7 @@ fn a_call_whose_role_is_fixed_reads_no_roles_once_it_has_the_run_id() {
     let (_dir, database, repository) = board();
     with_run(&database);
     let meter = SqliteBoardCallMeter::new(repository);
-    let status = |call: &dyn quecto::application::swarm::ports::MeteredCall| {
+    let status = |call: &dyn quecto::application::swarm::ports::board_telemetry::MeteredCall| {
         call.atomic(false, &mut |transaction| {
             transaction.run_status().map(|_| ())
         })

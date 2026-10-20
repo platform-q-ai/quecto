@@ -432,7 +432,7 @@ pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'
 pub(super) fn process_turn_control(coordinator: bool) -> super::uds_cancel::TurnControlHandle {
     let swarm_control = crate::interface::tool_runtime::swarm_context().map(|context| {
         std::sync::Arc::new(context)
-            as std::sync::Arc<dyn crate::application::swarm::ports::SwarmRunControl>
+            as std::sync::Arc<dyn crate::application::swarm::ports::lifecycle::SwarmRunControl>
     });
     let turn_control = std::sync::Arc::new(
         super::uds_cancel::TurnControl::with_swarm_control(swarm_control)

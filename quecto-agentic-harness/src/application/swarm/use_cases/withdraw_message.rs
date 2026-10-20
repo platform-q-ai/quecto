@@ -6,7 +6,10 @@ use super::OverRepository;
 use crate::application::swarm::board_messages::{Retirement, message_id, retire};
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::dto::{MessageIdRequest, Settled};
-use crate::application::swarm::ports::{BoardEncoding, BoardRepository, Clock};
+use crate::application::swarm::ports::{
+    board_repository::{BoardEncoding, BoardRepository},
+    lifecycle::Clock,
+};
 use crate::domain::swarm::{services::policy::Access, value_objects::board_error::BoardError};
 
 /// The id (an integer of at least 1) is checked before the operation gate,

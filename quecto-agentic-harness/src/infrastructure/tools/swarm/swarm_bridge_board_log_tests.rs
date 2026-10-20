@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 
 use super::log::PENDING_RECORDS;
-use crate::application::swarm::ports::{BoardOpLog, CoordinationPort};
+use crate::application::swarm::ports::{board_telemetry::BoardOpLog, lifecycle::CoordinationPort};
 use crate::domain::swarm::{
     events::run_summary::SwarmRunSummary, events::telemetry::BoardOpObservation,
 };
@@ -36,7 +36,7 @@ impl BoardOpLog for Recorded {
     }
 }
 
-impl crate::application::swarm::ports::SessionOpLog for Recorded {
+impl crate::application::swarm::ports::board_telemetry::SessionOpLog for Recorded {
     fn dropped(&self, drops: crate::application::swarm::dto::DroppedRecords) {
         self.drops.lock().unwrap().push(drops.ops);
     }

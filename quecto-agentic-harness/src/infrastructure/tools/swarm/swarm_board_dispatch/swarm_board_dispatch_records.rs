@@ -16,7 +16,7 @@ use super::BindingFaults;
 use super::method::Method;
 use super::{Level, SwarmBoardHandles};
 use crate::application::swarm::dto::CallMeasure;
-use crate::application::swarm::ports::BoardOpLog;
+use crate::application::swarm::ports::board_telemetry::BoardOpLog;
 use crate::domain::shared::redaction::Redacted;
 use crate::domain::swarm::events::watch_polls::{PollTally, WATCH_POLL_OP};
 use crate::domain::swarm::{

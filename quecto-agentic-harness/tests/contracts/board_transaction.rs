@@ -4,7 +4,10 @@
 //! every role together.
 use quecto::application::swarm::dto::{BoardLocation, NewMember, NewRun, RunContract};
 use quecto::application::swarm::ports::{
-    BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardTransaction,
+    board_events::BoardEvents,
+    board_members::BoardMembers,
+    board_repository::{BoardRepository, BoardTransaction},
+    board_runs::BoardRuns,
 };
 use quecto::domain::swarm::{
     entities::records::{MemberState, RunState},

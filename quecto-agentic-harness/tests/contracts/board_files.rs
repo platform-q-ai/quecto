@@ -4,7 +4,7 @@
 //! a reservation set is inserted, counted, paged and deleted by Python's
 //! SQL.
 use quecto::application::swarm::dto::{BoardLocation, FileRow, NewReservation};
-use quecto::application::swarm::ports::BoardRepository;
+use quecto::application::swarm::ports::board_repository::BoardRepository;
 use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 

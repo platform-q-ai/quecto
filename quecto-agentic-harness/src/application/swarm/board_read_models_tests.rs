@@ -5,7 +5,7 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, RecordedEvent, SteppingClock, member_row, running_board, stored_task,
 };
 use crate::application::swarm::dto::{RunSummary, SummaryScan, TaskRow};
-use crate::application::swarm::ports::BoardRepository;
+use crate::application::swarm::ports::board_repository::BoardRepository;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

@@ -7,7 +7,9 @@ use super::board_messages::INBOX_CAPACITY;
 use super::board_operation::detail;
 use super::dto::TaskUpdate;
 use super::ports::{
-    BoardEncoding, BoardEvents, BoardFiles, BoardMembers, BoardMessages, BoardTasks, Clock,
+    board_events::BoardEvents, board_files::BoardFiles, board_members::BoardMembers,
+    board_messages::BoardMessages, board_repository::BoardEncoding, board_tasks::BoardTasks,
+    lifecycle::Clock,
 };
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, services::policy::status_is_alive,

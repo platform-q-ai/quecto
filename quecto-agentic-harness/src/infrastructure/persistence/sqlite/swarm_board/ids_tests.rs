@@ -1,5 +1,5 @@
 use super::Uuid4Ids;
-use crate::application::swarm::ports::IdSource;
+use crate::application::swarm::ports::board_repository::IdSource;
 
 #[test]
 fn ids_are_32_lowercase_hex_digits_of_a_version_4_uuid() {

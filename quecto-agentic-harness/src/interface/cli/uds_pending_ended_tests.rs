@@ -5,7 +5,9 @@ use super::*;
 /// A control port for a run the coordinator ended: paused holding `outcome`.
 struct Ended(RunStatus);
 impl SwarmRunControl for Ended {
-    fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
+    fn coordinator_board(
+        &self,
+    ) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
         Box::pin(async { Ok(None) })
     }
     fn nudge_watch(&self) {}

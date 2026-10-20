@@ -16,7 +16,10 @@ use rusqlite::Connection;
 
 use super::{MeteredConnection, SqliteBoardCallMeter, Tally, busy_delay, unwait_metered};
 use crate::application::swarm::dto::{BoardLocation, CallMeasure, RunRoles};
-use crate::application::swarm::ports::{BoardCallMeter, BoardRepository, MeteredCall};
+use crate::application::swarm::ports::{
+    board_repository::BoardRepository,
+    board_telemetry::{BoardCallMeter, MeteredCall},
+};
 use crate::domain::swarm::value_objects::board_error::BoardError;
 use crate::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use crate::infrastructure::persistence::sqlite::swarm_board::store::{BUSY_TIMEOUT, BoardStore};

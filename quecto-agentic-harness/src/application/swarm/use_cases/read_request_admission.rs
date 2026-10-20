@@ -8,7 +8,7 @@ use super::OverRepository;
 use crate::application::swarm::board_control::current;
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::{RequestAdmission, RunSnapshotView};
-use crate::application::swarm::ports::{BoardRepository, Clock};
+use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
 use crate::domain::swarm::{services::policy::Access, value_objects::board_error::BoardError};
 
 /// Through the operation gate for reading (any member, a dead one

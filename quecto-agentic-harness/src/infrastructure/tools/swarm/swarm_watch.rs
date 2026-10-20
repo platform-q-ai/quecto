@@ -2,7 +2,7 @@
 //! domain's [`WatchSchedule`] names, which answers the run's snapshot only
 //! when the board changed or the schedule asked for it.
 use super::super::swarm_bridge::{Participation, RunWatch, SwarmContext};
-use crate::application::swarm::ports::Clock;
+use crate::application::swarm::ports::lifecycle::Clock;
 use std::time::{Duration, Instant};
 
 use crate::domain::swarm::services::watch::{Announcement, Nudge, REMOTE_FLOOR, WatchSchedule};

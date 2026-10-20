@@ -5,7 +5,7 @@
 //! by Python's SQL (`swarm.py`, `swarm_repository.py`), the caller's
 //! member bound as Python's `sqlite3` binds it.
 use quecto::application::swarm::dto::{BoardLocation, ScopeObservation};
-use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
+use quecto::application::swarm::ports::board_repository::{BoardRepository, BoardTransaction};
 use quecto::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

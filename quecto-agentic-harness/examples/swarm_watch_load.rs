@@ -27,7 +27,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use quecto::application::swarm::dto::{BoardLocation, DroppedRecords};
-use quecto::application::swarm::ports::{BoardOpLog, CoordinationPort, SessionOpLog};
+use quecto::application::swarm::ports::{
+    board_telemetry::{BoardOpLog, SessionOpLog},
+    lifecycle::CoordinationPort,
+};
 use quecto::composition::swarm::{SwarmBoard, board_wire, build_swarm_board_handles};
 use quecto::domain::swarm::services::watch::WatchSchedule;
 use quecto::domain::swarm::{

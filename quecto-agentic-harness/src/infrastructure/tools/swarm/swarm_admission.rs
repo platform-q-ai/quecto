@@ -1,7 +1,7 @@
 //! Release unlaunched reservations; confirm the death of a launched member
 //! whose rollback observed its exit through the owned handle (#1961).
 use super::swarm_bridge::SwarmContext;
-use crate::application::swarm::ports::CoordinationPort;
+use crate::application::swarm::ports::lifecycle::CoordinationPort;
 use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::value_objects::lifecycle::{MemberExit, ProcessIdentity};
 
