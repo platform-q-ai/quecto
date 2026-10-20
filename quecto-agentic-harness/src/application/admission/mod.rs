@@ -12,8 +12,9 @@
 //!
 //! It also holds the runtime authority and attempt lifecycle (#1910): the
 //! admission service's registry/client/dispatcher/recovery ports and the
-//! attempt, journal/secret and observation ports in [`ports`], and the
-//! admission service and durable authority in [`services`].
+//! attempt, journal/secret and observation ports in [`ports`], the
+//! admission service and credential-gated authority in [`services`], and the
+//! use cases that make the authority durable in [`use_cases`].
 
 pub mod dto;
 pub mod ports;

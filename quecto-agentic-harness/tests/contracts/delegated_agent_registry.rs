@@ -16,8 +16,11 @@ use quecto::application::subagents::dto::{
     TerminationRouted,
 };
 use quecto::application::subagents::ports::{
-    CompensationObservation, DelegatedAgentRegistry, ResolutionError, StoppingClaimError,
-    SubagentLifecycleRepository, TerminalClaim, TerminationCause,
+    delegated_agent_registry::{
+        CompensationObservation, DelegatedAgentRegistry, ResolutionError, StoppingClaimError,
+        TerminalClaim, TerminationCause,
+    },
+    harness_shutdown::SubagentLifecycleRepository,
 };
 use quecto::application::subagents::use_cases::{
     KillDelegatedAgent, KillDelegatedAgentPorts, OwnerConclusionPorts, TerminateDelegatedAgent,

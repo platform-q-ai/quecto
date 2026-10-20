@@ -13,7 +13,7 @@ use quecto::application::subagents::dto::{
     HarnessShutdownError, PrepareShutdownRequest, PreparedShutdown, ReleaseOutcome,
     ShutdownOutcome, ShutdownTrigger, TerminateDelegatedAgentRequest,
 };
-use quecto::application::subagents::ports::SubagentLifecycleRepository;
+use quecto::application::subagents::ports::harness_shutdown::SubagentLifecycleRepository;
 use quecto::application::subagents::use_cases::{
     ExecuteHarnessShutdown, ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
     PrepareHarnessShutdown, TerminateDelegatedAgent,
@@ -412,7 +412,7 @@ fn given_unreachable(world: &mut QuectoWorld, child: String) {
         .push(AgentUuid::new(&child));
     rig(world).rows.conclusion_for.lock().unwrap().insert(
         child,
-        quecto::application::subagents::ports::TerminationConclusion::StillRunning(
+        quecto::application::subagents::ports::owned_child_termination::TerminationConclusion::StillRunning(
             "unreachable and the fallback did not end it".into(),
         ),
     );

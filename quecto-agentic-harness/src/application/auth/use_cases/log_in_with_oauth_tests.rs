@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::application::auth::ports::{
-    AuthorizationCallbackError, BrowserAuthorizationError, CredentialStoreError, IssuedToken,
-    PendingAuthorization, TokenExchangeError,
+    AuthorizationCallbackError, BrowserAuthorizationError, CredentialStoreError,
+    CredentialStoreFailure, IssuedToken, PendingAuthorization, TokenExchangeError,
 };
 use crate::domain::auth::credential::{AuthMethod, Credential};
 use crate::domain::auth::pasted_code::PasteRefusal;
@@ -101,12 +101,23 @@ impl TokenExchange for Fakes {
             .push((provider, code.to_string(), verifier.to_string()));
         self.exchange.clone()
     }
+
+    fn refresh(
+        &self,
+        _provider: LoginProvider,
+        _refresh_token: &str,
+    ) -> Result<IssuedToken, TokenExchangeError> {
+        unreachable!("a browser login refreshes nothing")
+    }
 }
 
 impl CredentialStorePort for Fakes {
     fn store(&self, credential: Credential) -> Result<(), CredentialStoreError> {
         if let Some(reason) = &self.store_refusal {
-            return Err(CredentialStoreError(reason.clone()));
+            return Err(CredentialStoreError::new(
+                CredentialStoreFailure::Unavailable,
+                reason.clone(),
+            ));
         }
         self.stored.lock().unwrap().push(credential);
         Ok(())

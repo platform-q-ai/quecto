@@ -90,15 +90,9 @@ impl ParentControlCapability {
     /// Constant-time equality over the fixed-length material, so a
     /// mismatching presentation cannot be narrowed byte by byte.
     fn matches(&self, other: &Self) -> bool {
-        let a = self.0.as_bytes();
-        let b = other.0.as_bytes();
-        debug_assert_eq!(a.len(), CAPABILITY_HEX_LEN);
-        debug_assert_eq!(b.len(), CAPABILITY_HEX_LEN);
-        let mut diff = 0u8;
-        for (x, y) in a.iter().zip(b.iter()) {
-            diff |= x ^ y;
-        }
-        diff == 0 && a.len() == b.len()
+        debug_assert_eq!(self.0.len(), CAPABILITY_HEX_LEN);
+        debug_assert_eq!(other.0.len(), CAPABILITY_HEX_LEN);
+        crate::domain::shared::secret_compare::constant_time_eq(&self.0, &other.0)
     }
 }
 

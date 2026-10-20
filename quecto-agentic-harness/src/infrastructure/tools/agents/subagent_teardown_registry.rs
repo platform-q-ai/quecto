@@ -13,8 +13,12 @@
 use std::time::Duration;
 
 use crate::application::subagents::ports::{
-    Compensated, CompensationObservation, DelegatedAgentRegistry, ExitObservation, PortFuture,
-    ResolutionError, StoppingClaimError, TeardownCompensation, TerminalClaim, TerminationCause,
+    PortFuture,
+    delegated_agent_registry::{
+        CompensationObservation, DelegatedAgentRegistry, ExitObservation, ResolutionError,
+        StoppingClaimError, TerminalClaim, TerminationCause,
+    },
+    teardown_compensation::{Compensated, TeardownCompensation},
 };
 use crate::domain::agents::services::subagent::DisplayNameResolveError;
 use crate::domain::agents::services::subagent_teardown::DelegatedAgentIdentity;

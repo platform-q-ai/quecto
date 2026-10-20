@@ -7,13 +7,12 @@ use std::borrow::Cow;
 
 use serde_json::Value;
 
-use crate::domain::inference::value_objects::attempt_diagnostics::TerminalEvent;
-use crate::infrastructure::providers::transport::admission_feedback::is_typed_throttle;
+use crate::domain::inference::value_objects::attempt_diagnostics::{ErrorCode, TerminalEvent};
 use crate::infrastructure::providers::transport::attempt_events::Vocabulary;
 use crate::infrastructure::providers::transport::attempt_profile::Surface;
 use crate::infrastructure::providers::transport::sse_progress::{filled, first_type};
 use crate::infrastructure::providers::transport::wire_dialect::{
-    Ending, Generated, WireDialect, text_len,
+    Ending, ErrorName, Generated, WireDialect, text_len,
 };
 
 /// The Messages (Anthropic) wire.
@@ -39,6 +38,15 @@ static MESSAGES: Vocabulary = Vocabulary {
         ("message_stop", TerminalEvent::MessageStop),
     ],
 };
+
+/// The error types the Messages wire names (#2609 review).
+static MESSAGES_ERRORS: [ErrorName; 5] = [
+    ErrorName::throttle("rate_limit_error", ErrorCode::RateLimitExceeded),
+    ErrorName::throttle("overloaded_error", ErrorCode::Overloaded),
+    ErrorName::terminal("authentication_error", ErrorCode::AuthenticationError),
+    ErrorName::terminal("permission_error", ErrorCode::PermissionError),
+    ErrorName::terminal("invalid_request_error", ErrorCode::InvalidRequestError),
+];
 
 /// Anthropic `content_block_delta` fields that hold generated output:
 /// `text_delta`, `thinking_delta` and `input_json_delta`.
@@ -71,6 +79,14 @@ impl WireDialect for AnthropicWire {
     }
     fn vocabulary(&self) -> &'static Vocabulary {
         &MESSAGES
+    }
+    fn error_names(&self) -> &'static [ErrorName] {
+        &MESSAGES_ERRORS
+    }
+    /// The `error` object of an `error` event or an error body
+    /// (`{"type":"error","error":{"type":…}}`).
+    fn error_objects<'a>(&self, value: &'a Value) -> Vec<&'a Value> {
+        value.get("error").into_iter().collect()
     }
     fn generated(&self, value: &Value) -> Generated {
         let delta = |field: &str| {
@@ -123,7 +139,7 @@ impl WireDialect for AnthropicWire {
             "error" => {
                 let feedback = parsed.map_or(Cow::Owned(Value::Null), Cow::Borrowed);
                 Ending::Failed {
-                    throttle: is_typed_throttle(&feedback),
+                    throttle: self.is_throttle(&feedback),
                     feedback,
                     record: Some(TerminalEvent::Error),
                 }

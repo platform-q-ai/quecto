@@ -61,5 +61,9 @@ fn a_document_the_schema_refuses_yields_its_words() {
     let refused = source
         .settings(json!({"agents": {"defaults": {"model": 42}}}))
         .expect_err("a number is no model");
-    assert!(refused.contains("invalid type"), "{refused}");
+    assert!(
+        refused.contains("a field has the wrong type or value at agents.defaults.model"),
+        "the field is named, never the value (#2617): {refused}"
+    );
+    assert!(!refused.contains("42"), "{refused}");
 }

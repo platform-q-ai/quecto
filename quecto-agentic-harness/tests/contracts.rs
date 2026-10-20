@@ -21,10 +21,6 @@ mod admission_recovery;
 mod admission_registry;
 #[path = "contracts/admission_secret_source.rs"]
 mod admission_secret_source;
-#[path = "contracts/admission_typed_feedback.rs"]
-mod admission_typed_feedback;
-#[path = "contracts/admission_typed_feedback_cases.rs"]
-mod admission_typed_feedback_cases;
 #[path = "contracts/agent_loop.rs"]
 mod agent_loop;
 #[path = "contracts/attempt_admission.rs"]
@@ -161,6 +157,8 @@ mod external_agent_launcher;
 mod external_agent_process;
 #[path = "contracts/external_agent_telemetry.rs"]
 mod external_agent_telemetry;
+#[path = "contracts/external_credential_source.rs"]
+mod external_credential_source;
 #[path = "contracts/fleet_settlement.rs"]
 mod fleet_settlement;
 #[path = "contracts/fold_back_recorder.rs"]

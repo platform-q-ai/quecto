@@ -1,6 +1,7 @@
 //! Exercise the real owner, not a replica of permit accounting. Transport drop
 //! is a synchronous destruction barrier; finish must occur strictly afterward.
 use super::*;
+use crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Event {
@@ -194,13 +195,24 @@ fn a_billing_http_error_never_throttles_admission() {
         for field in ["type", "code"] {
             let receipt = diagnostic_receipt();
             let body = serde_json::json!({"error": { field: name }}).to_string();
-            receipt.http_error(429, &body);
+            receipt.http_error(&TEST_WIRE, 429, &body);
             let state = receipt.0.lock().unwrap();
             assert!(!state.hinted, "{body}");
             assert!(state.failure, "{body}");
         }
     }
     let receipt = diagnostic_receipt();
-    receipt.http_error(429, r#"{"error":{"type":"rate_limit_error"}}"#);
+    receipt.http_error(&TEST_WIRE, 429, r#"{"error":{"type":"throttled"}}"#);
+    assert!(receipt.0.lock().unwrap().hinted);
+    // #2609 review: a wire's terminal name never throttles, even as a 429.
+    let receipt = diagnostic_receipt();
+    receipt.http_error(&TEST_WIRE, 429, r#"{"error":{"type":"refused"}}"#);
+    assert!(!receipt.0.lock().unwrap().hinted);
+    // A name the wire does not know is no throttle beyond its status.
+    let receipt = diagnostic_receipt();
+    receipt.http_error(&TEST_WIRE, 500, r#"{"error":{"type":"made_up"}}"#);
+    assert!(!receipt.0.lock().unwrap().hinted);
+    let receipt = diagnostic_receipt();
+    receipt.http_error(&TEST_WIRE, 500, r#"{"error":{"type":"busy"}}"#);
     assert!(receipt.0.lock().unwrap().hinted);
 }

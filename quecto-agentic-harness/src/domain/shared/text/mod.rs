@@ -9,6 +9,7 @@
 use std::borrow::Cow;
 
 pub mod html_text;
+pub mod printable;
 
 /// Truncate `s` to at most `max_chars` characters, appending `suffix` when
 /// truncated. On truncation, the first `keep` characters are retained (callers

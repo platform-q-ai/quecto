@@ -7,7 +7,7 @@ use std::sync::Arc;
 use quecto::application::subagents::dto::{
     TerminateDelegatedAgentError, TerminateDelegatedAgentRequest, TerminationRouted,
 };
-use quecto::application::subagents::ports::{ChildRoutingError, DirectChildRouting};
+use quecto::application::subagents::ports::child_routing::{ChildRoutingError, DirectChildRouting};
 use quecto::application::subagents::use_cases::TerminateDelegatedAgent;
 use quecto::domain::agents::services::subagent_teardown::{
     LaunchGeneration, LineageSnapshot, RoutingDepth, ShutdownReason, TerminationRouteError,

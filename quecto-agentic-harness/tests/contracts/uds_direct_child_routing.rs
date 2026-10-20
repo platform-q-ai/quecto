@@ -10,7 +10,7 @@ use std::time::Duration;
 use quecto::application::subagents::dto::{
     TerminateDelegatedAgentError, TerminateDelegatedAgentRequest, TerminationRouted,
 };
-use quecto::application::subagents::ports::{ChildRoutingError, DirectChildRouting};
+use quecto::application::subagents::ports::child_routing::{ChildRoutingError, DirectChildRouting};
 use quecto::application::subagents::use_cases::TerminateDelegatedAgent;
 use quecto::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, LineageSnapshot, RoutingDepth, ShutdownReason,
@@ -287,7 +287,9 @@ fn fake_child_answering(body: serde_json::Value) -> std::path::PathBuf {
 /// success, the refusal's kind on failure (#1936 review).
 #[tokio::test]
 async fn a_forward_relays_the_owners_result_and_the_refusals_kind() {
-    use quecto::application::subagents::ports::{DownstreamRejection, TerminationResult};
+    use quecto::application::subagents::ports::{
+        child_routing::DownstreamRejection, child_routing::TerminationResult,
+    };
     for (body, expected) in [
         (
             serde_json::json!({"success": true, "data": {"status": "shutdown_requested", "child_uuid": "B", "result": "fallback"}}),

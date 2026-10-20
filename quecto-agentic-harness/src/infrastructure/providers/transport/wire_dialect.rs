@@ -10,7 +10,63 @@ use serde_json::Value;
 
 use super::attempt_events::Vocabulary;
 use super::attempt_profile::Surface;
-use crate::domain::inference::value_objects::attempt_diagnostics::TerminalEvent;
+use crate::domain::inference::services::provider_error::is_billing_error_name;
+use crate::domain::inference::value_objects::attempt_diagnostics::{
+    ErrorCode, IncompleteReason, TerminalEvent,
+};
+
+/// One error type or code a wire names (#2609 review): what an attempt's
+/// diagnostics record it as, and what it tells admission and retry.
+#[derive(Debug, Clone, Copy)]
+/// Its fields are private (#2620 review): the `const` constructors below
+/// are the only way to declare one, which the architecture test reads.
+pub(in crate::infrastructure::providers) struct ErrorName {
+    name: &'static str,
+    code: ErrorCode,
+    /// A throttle admission should hear of.
+    throttle: bool,
+    /// A failure no retry fixes: an HTTP error naming it never throttles.
+    terminal: bool,
+}
+
+impl ErrorName {
+    /// What an attempt's diagnostics record it as.
+    pub(in crate::infrastructure::providers) fn code(&self) -> ErrorCode {
+        self.code
+    }
+    /// An error that is neither a throttle nor terminal.
+    pub(in crate::infrastructure::providers) const fn plain(
+        name: &'static str,
+        code: ErrorCode,
+    ) -> Self {
+        Self {
+            name,
+            code,
+            throttle: false,
+            terminal: false,
+        }
+    }
+    /// A throttle.
+    pub(in crate::infrastructure::providers) const fn throttle(
+        name: &'static str,
+        code: ErrorCode,
+    ) -> Self {
+        Self {
+            throttle: true,
+            ..Self::plain(name, code)
+        }
+    }
+    /// A failure no retry fixes.
+    pub(in crate::infrastructure::providers) const fn terminal(
+        name: &'static str,
+        code: ErrorCode,
+    ) -> Self {
+        Self {
+            terminal: true,
+            ..Self::plain(name, code)
+        }
+    }
+}
 
 /// What one stream event shows the model generated, as the attempt's
 /// diagnostics record it: once any event shows one, it stays shown.
@@ -31,7 +87,7 @@ pub(in crate::infrastructure::providers) enum Ending<'a> {
     /// The attempt failed. `feedback` is the typed error body admission
     /// hears; `throttle` is whether the failure is a throttle (at least
     /// whenever the body's typed fields say so,
-    /// `admission_feedback::is_typed_throttle`); `record` is the terminal
+    /// [`WireDialect::is_throttle`]); `record` is the terminal
     /// event recorded however the data parsed.
     Failed {
         feedback: Cow<'a, Value>,
@@ -93,6 +149,47 @@ pub(in crate::infrastructure::providers) trait WireDialect:
     fn is_error_chunk(&self, _value: &Value) -> bool {
         false
     }
+    /// The error types and codes this wire names (#2609 review).
+    fn error_names(&self) -> &'static [ErrorName];
+    /// Where a payload of this wire keeps its typed error fields (`type`
+    /// and `code`): its error objects, in the order they are read.
+    fn error_objects<'a>(&self, value: &'a Value) -> Vec<&'a Value>;
+    /// Why a reply of this wire stopped short, as `value` says, if it does.
+    fn incomplete_reason(&self, _value: &Value) -> Option<IncompleteReason> {
+        None
+    }
+    /// The typed error names of `value`, each field of each error object
+    /// in order; a billing name (the domain's list) is read as `None`.
+    fn error_fields<'a>(&self, value: &'a Value) -> Vec<Option<&'a str>> {
+        self.error_objects(value)
+            .into_iter()
+            .flat_map(|error| ["type", "code"].map(|field| error[field].as_str()))
+            .flatten()
+            .map(|name| (!is_billing_error_name(name)).then_some(name))
+            .collect()
+    }
+    /// The [`ErrorName`] this wire knows `name` by.
+    fn error_name(&self, name: &str) -> Option<&'static ErrorName> {
+        self.error_names().iter().find(|known| known.name == name)
+    }
+    /// Whether `value`'s typed fields make it a throttle: a throttle name
+    /// in its error objects, and no billing name, which takes precedence.
+    fn is_throttle(&self, value: &Value) -> bool {
+        let fields = self.error_fields(value);
+        fields.iter().all(Option::is_some)
+            && fields
+                .iter()
+                .flatten()
+                .any(|name| self.error_name(name).is_some_and(|known| known.throttle))
+    }
+    /// Whether an HTTP error body `value` names a failure no retry fixes: a
+    /// billing name, or a terminal name of this wire.
+    fn is_terminal_error(&self, value: &Value) -> bool {
+        self.error_fields(value).iter().any(|name| match name {
+            None => true,
+            Some(name) => self.error_name(name).is_some_and(|known| known.terminal),
+        })
+    }
     /// The terminal event the event `name` (`value`) records, if it is
     /// one: an error chunk of this wire, or a terminal name it knows.
     fn terminal_event(&self, name: &str, value: &Value) -> Option<TerminalEvent> {
@@ -153,6 +250,15 @@ pub(in crate::infrastructure::providers) async fn refused_send() -> reqwest::Err
 #[cfg(test)]
 pub(in crate::infrastructure::providers) struct TestWire;
 
+/// The test wire's error names: one of each kind.
+#[cfg(test)]
+static TEST_ERRORS: [ErrorName; 4] = [
+    ErrorName::throttle("throttled", ErrorCode::RateLimitExceeded),
+    ErrorName::throttle("busy", ErrorCode::Overloaded),
+    ErrorName::terminal("refused", ErrorCode::InvalidRequestError),
+    ErrorName::plain("broken", ErrorCode::ServerError),
+];
+
 #[cfg(test)]
 static TEST_VOCABULARY: Vocabulary = Vocabulary {
     known: &["output", "working"],
@@ -172,6 +278,15 @@ impl WireDialect for TestWire {
     }
     fn vocabulary(&self) -> &'static Vocabulary {
         &TEST_VOCABULARY
+    }
+    fn error_names(&self) -> &'static [ErrorName] {
+        &TEST_ERRORS
+    }
+    fn error_objects<'a>(&self, value: &'a Value) -> Vec<&'a Value> {
+        value.get("error").into_iter().collect()
+    }
+    fn incomplete_reason(&self, value: &Value) -> Option<IncompleteReason> {
+        (value["stopped"] == "max_output_tokens").then_some(IncompleteReason::MaxOutputTokens)
     }
     fn generated(&self, value: &Value) -> Generated {
         Generated {

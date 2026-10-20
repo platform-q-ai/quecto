@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use super::CodexProvider;
+use super::codex_input_prefix::{measured as measured_input, remeasured};
 use super::codex_sse_handler::CodexSseHandler;
-use super::input_prefix::PendingInput;
 use crate::application::providers::ports::ChatRequest;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ThinkingBlock};
 use crate::domain::inference::events::request_observation::RequestTrace;
@@ -17,6 +17,8 @@ use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
 use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface};
 use crate::infrastructure::providers::transport::attempt_transport::PassiveAttempt;
+use crate::infrastructure::providers::transport::input_prefix::PendingInput;
+use crate::infrastructure::providers::transport::sse_common::next_event;
 use crate::infrastructure::providers::transport::stream_idle::BodyError;
 
 /// Everything one request's sends share.
@@ -60,7 +62,9 @@ impl CodexProvider {
         // the session's baseline is compared, and it becomes the baseline
         // only once a send of it is accepted.
         let measured = match (&request.trace, request.session_id) {
-            (Some(trace), Some(session)) => PendingInput::begin(trace, session, &url, &replaying),
+            (Some(trace), Some(session)) => {
+                PendingInput::begin(trace, measured_input(session, &url, &replaying))
+            }
             (None, _) | (_, None) => None,
         };
         let call = Call {
@@ -109,7 +113,8 @@ impl CodexProvider {
         let (result, accepted) = match (first, plain) {
             (Err(error), Some(plain)) if Self::is_replay_refusal(&error.to_string()) => {
                 self.note_replay_refused(&error.to_string());
-                let measured = measured.map(|replaying| replaying.for_body(&plain));
+                let measured =
+                    measured.map(|replaying| replaying.resent(|m| remeasured(m, &plain)));
                 (self.assemble_once(call, &plain).await, measured)
             }
             (result, _) => (result, measured),
@@ -255,7 +260,8 @@ impl CodexProvider {
             {
                 let _ = attempt.await;
                 self.note_replay_refused(&message);
-                let measured = measured.map(|replaying| replaying.for_body(&plain));
+                let measured =
+                    measured.map(|replaying| replaying.resent(|m| remeasured(m, &plain)));
                 let (plain_tx, mut plain_rx) = tokio::sync::mpsc::channel(64);
                 let (this, tx) = (&self, &tx);
                 // Owns its receiver: returning drops it, which cancels the
@@ -295,19 +301,6 @@ impl CodexProvider {
             }
             None => self.pump_codex_sse(call, body, tx, handler).await,
         }
-    }
-}
-
-/// The next event of a send, or `None` once the caller has gone: a send's
-/// transport stops when its receiver is dropped, so a caller that drops its
-/// own must not leave the send blocked behind this relay.
-async fn next_event(
-    events: &mut tokio::sync::mpsc::Receiver<StreamEvent>,
-    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-) -> Option<StreamEvent> {
-    tokio::select! {
-        event = events.recv() => event,
-        () = tx.closed() => None,
     }
 }
 

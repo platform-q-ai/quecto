@@ -140,7 +140,7 @@ impl LogInWithOAuth {
         };
         self.store
             .store(credential)
-            .map_err(|error| LoginError::Store(error.0))?;
+            .map_err(|error| LoginError::Store(error.reason))?;
         Ok(OAuthLogin {
             provider,
             account_id_missing,

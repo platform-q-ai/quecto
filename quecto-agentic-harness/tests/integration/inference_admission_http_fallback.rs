@@ -112,7 +112,7 @@ async fn assembled_responses_reports_sse_throttle_before_body_eof() {
             })
             .unwrap();
         socket.read_exact(&mut vec![0; length]).await.unwrap();
-        let body = "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"type\":\"rate_limit_error\",\"message\":\"opaque\"}}}\n\n";
+        let body = "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"rate_limit_exceeded\",\"message\":\"opaque\"}}}\n\n";
         socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{body}", body.len()+16).as_bytes()).await.unwrap();
         sent.send(()).unwrap();
         std::future::pending::<()>().await;

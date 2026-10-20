@@ -281,11 +281,11 @@ fn a_config_flag_after_board_is_the_requests() {
         "quecto", "--config", "c.json", "board", "x", "--config", "y",
     ]);
     assert_eq!(
-        super::super::config_flag::extract_config_flag(&global),
+        crate::interface::cli::controllers::config_flag::extract_config_flag(&global),
         Ok(Some(PathBuf::from("c.json")))
     );
     assert_eq!(
-        super::super::config_flag::strip_global_config_flag(&global),
+        crate::interface::cli::controllers::config_flag::strip_global_config_flag(&global),
         args(&["quecto", "board", "x", "--config", "y"])
     );
 }

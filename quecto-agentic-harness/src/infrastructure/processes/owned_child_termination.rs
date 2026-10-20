@@ -13,7 +13,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::application::subagents::ports::{
-    ConclusionBudget, OwnedChildTermination, PortFuture, ProtocolAttempt, TerminationConclusion,
+    PortFuture,
+    owned_child_termination::{
+        ConclusionBudget, OwnedChildTermination, ProtocolAttempt, TerminationConclusion,
+    },
 };
 use crate::domain::agents::services::subagent_teardown::DelegatedAgentIdentity;
 use crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry;

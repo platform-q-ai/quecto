@@ -128,7 +128,7 @@ that owns the command.
 - `src/domain/inference/value_objects/provider.rs` only for provider-agnostic vocabulary that the
   application genuinely needs; `src/application/providers/ports.rs` for the
   `LlmProvider` contract itself.
-- `src/interface/cli/models.rs` or the UDS runtime/model dispatch modules for
+- `src/interface/cli/controllers/models.rs` or the UDS runtime/model dispatch modules for
   user-facing selection/reload behaviour; `src/composition/runtime.rs` for
   how the provider runtime is composed at startup and reload.
 

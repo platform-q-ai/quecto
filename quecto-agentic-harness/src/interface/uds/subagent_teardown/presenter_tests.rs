@@ -68,7 +68,9 @@ fn termination_responses_distinguish_shutdown_from_forward() {
         Some("t"),
         &TerminationRouted::ShutdownRequested {
             child: child.clone(),
-            result: Some(crate::application::subagents::dto::TerminationResult::Fallback),
+            result: Some(
+                crate::application::subagents::ports::child_routing::TerminationResult::Fallback,
+            ),
         },
     );
     assert_eq!(

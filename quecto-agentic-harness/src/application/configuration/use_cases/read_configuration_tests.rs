@@ -153,10 +153,11 @@ fn an_explicit_selection_has_no_overlay_to_read() {
 fn failures_are_reported_per_scope() {
     let store = MemoryStore::with(&[(GLOBAL, "{ nope")]);
     let read = use_case(store, Arc::new(FakeTrust::default()));
+    // One wording for a malformed document everywhere (#2617).
     assert!(matches!(
         read.execute(request(layered(), ConfigReadScope::Global, None))
             .unwrap_err(),
-        ConfigReadError::Parse { .. }
+        ConfigReadError::Parse { reason, .. } if reason == "malformed JSON at line 1 column 3"
     ));
     let error = read
         .execute(request(layered(), ConfigReadScope::Effective, None))

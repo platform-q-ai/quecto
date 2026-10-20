@@ -159,7 +159,9 @@ fn a_failed_response_keeps_its_rendering() {
     .unwrap();
     assert_eq!(
         failed,
-        "Responses stream response.failed: status=failed: type=rate_limit_error: m"
+        // A billing code names the billing class (Refs #2531); the rest is
+        // as it was.
+        "provider stream failure (billing): Responses stream response.failed: status=failed: type=rate_limit_error: m"
     );
 }
 
@@ -177,7 +179,7 @@ fn a_failed_response_never_reads_top_level_fields() {
     .unwrap();
     assert_eq!(
         failed,
-        "Responses stream response.failed: status=failed: type=server_error"
+        "provider stream failure (server error): Responses stream response.failed: status=failed: type=server_error"
     );
 }
 
@@ -233,4 +235,121 @@ async fn a_streamed_reply_with_nothing_in_it_ends_whole_at_end_turn() {
         }
         other => panic!("expected a whole reply: {other:?}"),
     }
+}
+
+/// Refs #2531: a typed stream failure renders with the class its code (or,
+/// with no code, its type) names on this wire, a billing name first, so the
+/// domain classifies it — an overloaded or failing server is retried, never
+/// terminal as an unknown failure. A code the wire does not know names
+/// nothing, whatever the type says (#2620 review), and no HTTP status is
+/// claimed for a stream that arrived as HTTP 200.
+#[test]
+fn a_typed_stream_failure_renders_the_status_its_name_stands_for() {
+    use crate::domain::inference::services::provider_error::{
+        ProviderErrorClass, classify_provider_error,
+    };
+    use crate::domain::shared::error::DomainError;
+    use serde_json::json;
+    let class = |event: serde_json::Value| {
+        let rendered = CodexProvider::format_stream_failure(&event).expect("a failure");
+        (
+            classify_provider_error(&DomainError::Provider(rendered.clone())),
+            rendered,
+        )
+    };
+    for (event, expected) in [
+        (
+            json!({"type": "error", "error": {"type": "service_unavailable_error", "code": "server_is_overloaded", "message": "m"}}),
+            ProviderErrorClass::Server,
+        ),
+        (
+            json!({"type": "response.failed", "response": {"status": "failed", "error": {"type": "server_error", "message": "m"}}}),
+            ProviderErrorClass::Server,
+        ),
+        (
+            json!({"type": "error", "code": "server_error", "message": "m"}),
+            ProviderErrorClass::Server,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "service_unavailable_error", "message": "m"}}),
+            ProviderErrorClass::Server,
+        ),
+        (
+            json!({"type": "error", "code": "rate_limit_exceeded", "message": "m"}),
+            ProviderErrorClass::RateLimit,
+        ),
+        (
+            json!({"type": "error", "code": "slow_down"}),
+            ProviderErrorClass::RateLimit,
+        ),
+        (
+            json!({"type": "response.failed", "response": {"error": {"type": "requests", "code": "rate_limit_exceeded"}}}),
+            ProviderErrorClass::RateLimit,
+        ),
+        (
+            json!({"type": "error", "code": "invalid_api_key", "message": "m"}),
+            ProviderErrorClass::Auth,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "invalid_request_error", "message": "m"}}),
+            ProviderErrorClass::Client,
+        ),
+        (
+            json!({"type": "error", "code": "insufficient_quota", "message": "m"}),
+            ProviderErrorClass::Billing,
+        ),
+        (
+            json!({"type": "error", "code": "usage_limit_reached"}),
+            ProviderErrorClass::Billing,
+        ),
+        (
+            json!({"type": "response.failed", "response": {"error": {"type": "server_error", "code": "credit_balance_exhausted"}}}),
+            ProviderErrorClass::Billing,
+        ),
+        (
+            json!({"type": "error", "code": "made_up", "message": "m"}),
+            ProviderErrorClass::Unknown,
+        ),
+        // An overloaded backend by its code alone (#2620 review B1).
+        (
+            json!({"type": "error", "code": "server_is_overloaded", "message": "m"}),
+            ProviderErrorClass::Server,
+        ),
+        (
+            json!({"type": "response.failed", "response": {"error": {"code": "server_is_overloaded"}}}),
+            ProviderErrorClass::Server,
+        ),
+        // A billing name in any field is billing, whatever the other says
+        // (#2620 review round 4: quecto's conservative choice).
+        (
+            json!({"type": "error", "error": {"type": "insufficient_quota", "code": "rate_limit_exceeded"}}),
+            ProviderErrorClass::Billing,
+        ),
+        (
+            json!({"type": "response.failed", "response": {"error": {"type": "billing_error", "code": "server_error"}}}),
+            ProviderErrorClass::Billing,
+        ),
+        // The code wins; an unknown code names nothing (#2620 review B2).
+        (
+            json!({"type": "error", "error": {"type": "server_error", "code": "context_length_exceeded"}}),
+            ProviderErrorClass::Unknown,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "server_error", "code": "invalid_api_key"}}),
+            ProviderErrorClass::Auth,
+        ),
+    ] {
+        let (class, rendered) = class(event.clone());
+        assert_eq!(class, expected, "{event} rendered {rendered}");
+    }
+    let (_, unnamed) = class(json!({"type": "error", "code": "made_up", "message": "m"}));
+    assert!(unnamed.starts_with("Responses stream error"), "{unnamed}");
+    // No HTTP status is claimed for a classed stream failure (#2620 review B4).
+    use crate::domain::inference::services::provider_error::provider_http_status;
+    let (_, classed) = class(json!({"type": "error", "code": "server_is_overloaded"}));
+    assert_eq!(
+        provider_http_status(&DomainError::Provider(classed.clone())),
+        None,
+        "{classed}"
+    );
 }

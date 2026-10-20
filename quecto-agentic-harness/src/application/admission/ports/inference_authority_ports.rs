@@ -7,11 +7,19 @@ pub enum JournalError {
     Unavailable(String),
 }
 
-/// Durable ledger sink. `persist` must return only after the ledger is durable
+/// The durable ledger. `persist` must return only after the ledger is durable
 /// against process and power loss; a warning-only sync is not sufficient.
+/// `load` answers `None` only when no ledger was ever written: an unreadable
+/// or corrupt one is an error, so an authority never restarts empty by
+/// accident.
 pub trait AdmissionJournal {
     fn persist(&mut self, ledger: &AdmissionLedger) -> Result<(), JournalError>;
+    fn load(&mut self) -> Result<Option<AdmissionLedger>, JournalError>;
 }
+
+/// The one journal the authority's durability use cases share, fixed for the
+/// broker's life (#1910): composition builds it and hands it to each.
+pub type SharedJournal = std::sync::Arc<std::sync::Mutex<dyn AdmissionJournal + Send>>;
 
 /// Source of opaque capability material for issued scopes.
 pub trait AdmissionSecretSource {

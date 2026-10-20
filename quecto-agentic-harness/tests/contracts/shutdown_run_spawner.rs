@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use quecto::application::subagents::dto::{HarnessShutdownError, PersistenceOutcome};
-use quecto::application::subagents::ports::{ShutdownRunSpawner, SubagentLifecycleRepository};
+use quecto::application::subagents::ports::harness_shutdown::{
+    ShutdownRunSpawner, SubagentLifecycleRepository,
+};
 use quecto::domain::agents::services::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 
 use super::teardown_fixture::{Harness, Spawner, root_tree};

@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::*;
-use crate::application::subagents::ports::ConclusionBudget;
+use crate::application::subagents::ports::owned_child_termination::ConclusionBudget;
 use crate::domain::agents::services::subagent_teardown::LaunchGeneration;
 use crate::domain::identity::ids::AgentUuid;
 use crate::infrastructure::processes::owned_child_supervisor::{ProcessGroup, SentSignal};

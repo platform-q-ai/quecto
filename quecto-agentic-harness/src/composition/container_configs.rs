@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use crate::application::configuration::dto::{ConfigSelection, EffectiveConfigError, OverlayState};
 use crate::application::environments::use_cases::ListContainerConfigs;
-use crate::application::subagents::ports::EffectiveContainerConfigs;
+use crate::application::subagents::ports::container_configs::EffectiveContainerConfigs;
 use crate::application::subagents::use_cases::SelectContainerConfig;
 use crate::infrastructure::config::container_config_roster::EffectiveConfigRoster;
 use crate::infrastructure::config::container_configs::{
@@ -124,7 +124,7 @@ pub fn build_container_config_roster(
 /// `container status`, `container doctor` or `container init --refresh`
 /// rewrite (#2206 round 3).
 pub fn build_container_script_integrity()
--> Arc<dyn crate::application::subagents::ports::ContainerScriptIntegrity> {
+-> Arc<dyn crate::application::subagents::ports::container_configs::ContainerScriptIntegrity> {
     Arc::new(
         crate::infrastructure::processes::containers::standard::integrity::EmbeddedScriptIntegrity,
     )

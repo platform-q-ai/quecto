@@ -21,9 +21,15 @@ use crate::domain::identity::ids::AgentUuid;
 
 use super::super::dto::{FleetChildResult, SettledChild};
 use super::super::ports::{
-    CompensationObservation, ConclusionBudget, DelegatedAgentRegistry, DirectChildRouting,
-    OwnedChildTermination, ProtocolAttempt, StoppingClaimError, TeardownCompensation,
-    TerminalClaim, TerminationCause, TerminationConclusion,
+    child_routing::DirectChildRouting,
+    delegated_agent_registry::{
+        CompensationObservation, DelegatedAgentRegistry, StoppingClaimError, TerminalClaim,
+        TerminationCause,
+    },
+    owned_child_termination::{
+        ConclusionBudget, OwnedChildTermination, ProtocolAttempt, TerminationConclusion,
+    },
+    teardown_compensation::TeardownCompensation,
 };
 
 /// What settling one child established.
