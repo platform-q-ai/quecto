@@ -140,7 +140,9 @@ fn then_credential_file_should_be_unchanged(world: &mut QuectoWorld) {
 
 /// Composition's auth handles over the world's credential store's base
 /// directory.
-fn composed_auth_handles(world: &QuectoWorld) -> quecto::interface::cli::auth::AuthHandles {
+fn composed_auth_handles(
+    world: &QuectoWorld,
+) -> quecto::interface::cli::controllers::auth::AuthHandles {
     let store = world
         .credential_store
         .as_ref()
@@ -151,7 +153,7 @@ fn composed_auth_handles(world: &QuectoWorld) -> quecto::interface::cli::auth::A
         .expect("credentials path has a parent")
         .to_path_buf();
     quecto::composition::bootstrap::auth::build_auth_handles(
-        &quecto::interface::cli::auth::AuthEnvironment {
+        &quecto::interface::cli::controllers::auth::AuthEnvironment {
             base_dir: base,
             oauth_base_url: None,
         },
@@ -1009,8 +1011,8 @@ thread_local! {
 
 /// Composition's auth handles importing from the step's `auth.json`.
 fn import_rig(
-    environment: &quecto::interface::cli::auth::AuthEnvironment,
-) -> quecto::interface::cli::auth::AuthHandles {
+    environment: &quecto::interface::cli::controllers::auth::AuthEnvironment,
+) -> quecto::interface::cli::controllers::auth::AuthHandles {
     let auth_json = IMPORT_AUTH_JSON
         .with(|path| path.borrow().clone())
         .expect("the step names its auth.json");

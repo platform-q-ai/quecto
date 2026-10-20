@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use crate::domain::auth::credential::AuthMethod;
 use crate::infrastructure::auth::credential_store::CredentialStore;
-use crate::interface::cli::auth::{AuthEnvironment, AuthHandles};
+use crate::interface::cli::controllers::auth::{AuthEnvironment, AuthHandles};
 use crate::interface::cli::{CliContext, CliOutput, run_with_output};
 
 thread_local! {

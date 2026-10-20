@@ -1,4 +1,3 @@
-pub mod auth;
 pub mod board;
 pub mod controllers;
 pub use controllers::container::{
@@ -6,8 +5,9 @@ pub use controllers::container::{
     ContainerStatusBuilder, EnvironmentRegistryBuilder,
 };
 use controllers::{
-    admission_broker, admission_handles, catalogue_handles, claude_member, configuration_handles,
-    container_config_handles, retention_handles, run_end_fleet, swarm_board_handles,
+    admission_broker, admission_handles, auth, catalogue_handles, claude_member,
+    configuration_handles, container_config_handles, retention_handles, run_end_fleet,
+    swarm_board_handles,
 };
 pub mod protocol;
 pub mod uds;

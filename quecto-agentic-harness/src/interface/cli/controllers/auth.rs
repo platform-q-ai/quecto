@@ -5,9 +5,9 @@ mod status;
 pub use handles::{AuthEnvironment, AuthHandles, AuthHandlesBuilder};
 pub(super) use status::{credential_entry, shown_name, shown_text};
 
-use super::CliContext;
 use crate::application::auth::dto::{LoginError, Removal, RemoveError};
 use crate::domain::auth::provider::LoginProvider;
+use crate::interface::cli::CliContext;
 
 /// How `auth` output names a provider: "OpenAI", "Anthropic", "xAI".
 pub(super) fn brand(provider: LoginProvider) -> &'static str {
