@@ -31,7 +31,7 @@ use super::super::value_objects::code_ref::{BranchName, CommitId, RepoName};
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::timestamp::Timestamp;
-use super::claims::{after_last, held_live_by, within_slack};
+use super::claims::{after_last, held_live_by, not_before, within_slack};
 use super::plans::Moment;
 use super::transitions::{Completed, completable, finish};
 
@@ -156,8 +156,8 @@ pub fn link(
         merged: None,
         linked_by: actor.clone(),
         unlinked: None,
-        created: when.now.clone(),
-        updated: when.now.clone(),
+        created: not_before(task, &when.now),
+        updated: not_before(task, &when.now),
     })
     .map_err(BoardRuleError::Invalid)
 }
@@ -231,7 +231,7 @@ pub fn unlink(
         None | Some(PrState::Open | PrState::Closed) => {}
         Some(PrState::Merged(_)) => return Err(BoardRuleError::ChangeMerged(number)),
     }
-    let at = after(change, &when.now)?;
+    let at = after(change, &not_before(task, &when.now))?;
     let mut next = fields.clone();
     next.unlinked = Some((actor.clone(), at.clone()));
     next.updated = at;

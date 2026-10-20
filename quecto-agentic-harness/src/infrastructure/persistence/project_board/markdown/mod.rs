@@ -30,6 +30,10 @@
 //! refused when it is written, never escaped into something else. Files,
 //! lines and line counts are capped by the caller's [`Limits`].
 //!
+//! A backslash is no hostile text: in a text cell every one is itself, so
+//! one a reader would take for an escape (before ASCII punctuation, or at
+//! the end, outside code) is written doubled and read back as one (#2668).
+//!
 //! Accepted, as visible text a reader may misread but which hides nothing:
 //! - GitHub draws an emoji shortcode (`:smile:`) as its emoji; refusing it
 //!   would refuse times such as `12:00:00`.
@@ -457,19 +461,23 @@ fn cell(value: &str, kind: CellKind, at: usize) -> Result<String, MarkdownError>
         }
         (CellKind::Code, _) => refused("code of printable ASCII but a backtick"),
         (CellKind::Text, value) => {
-            inline::check_inline(value, at).map(|()| value.replace('|', "\\|"))
+            inline::check_inline(&inline::with_literal_backslashes(value, at)?, at)?;
+            Ok(inline::cell_escaped(value, at)?.replace('|', "\\|"))
         }
     }
 }
 
 /// The value a cell of `kind` holds, from the cell as a row reads it: a
-/// code cell's backticks taken off.
+/// code cell's backticks taken off, a text cell's doubled backslashes read
+/// as one (#2668).
 ///
 /// # Errors
-/// A code cell not in one pair of backticks.
+/// A code cell not in one pair of backticks; a text cell with a code span
+/// left open.
 fn cell_value(read: String, kind: CellKind, at: usize) -> Result<String, MarkdownError> {
     match kind {
-        CellKind::Text | CellKind::Ascii => Ok(read),
+        CellKind::Text => inline::cell_unescaped(&read, at),
+        CellKind::Ascii => Ok(read),
         CellKind::Code => read
             .strip_prefix('`')
             .and_then(|inner| inner.strip_suffix('`'))

@@ -284,3 +284,100 @@ pub fn check_inline(text: &str, at: usize) -> Result<(), MarkdownError> {
         () => Ok(()),
     }
 }
+
+/// What stands, in the text the inline rules check, for a backslash a
+/// text cell writes doubled ([`cell_escaped`]): a character a reader sees
+/// that is neither punctuation markdown reads nor one an address holds,
+/// as the literal backslash a reader shows there is.
+const LITERAL_BACKSLASH: char = '¦';
+
+/// `text` split at its closed code spans, read left to right as
+/// [`outside_code`] reads them: each piece, and whether it is a code span
+/// (with its backticks). A code span left open is refused.
+fn code_pieces(text: &str, at: usize) -> Result<Vec<(bool, &str)>, MarkdownError> {
+    let mut pieces = vec![];
+    let mut rest = text;
+    while let Some(next) = rest.find('`') {
+        let (before, from) = rest.split_at(next);
+        pieces.push((false, before));
+        let (_, after) = code_span(from, at)?;
+        pieces.push((true, &from[..from.len() - after.len()]));
+        rest = after;
+    }
+    pieces.push((false, rest));
+    assert_eq!(
+        pieces.iter().map(|(_, piece)| piece.len()).sum::<usize>(),
+        text.len(),
+        "the pieces are the text"
+    );
+    Ok(pieces)
+}
+
+/// Whether the backslash at `index` of the text outside code `piece` is
+/// one a reader takes for an escape: before ASCII punctuation, or at the
+/// piece's end (the text's end, or a code span's backtick).
+fn escapes(piece: &str, index: usize) -> bool {
+    piece[index + 1..]
+        .chars()
+        .next()
+        .is_none_or(|next| next.is_ascii_punctuation())
+}
+
+/// `value` with each backslash outside code a reader would take for an
+/// escape replaced as `with` says.
+fn each_escaping_backslash(value: &str, at: usize, with: &str) -> Result<String, MarkdownError> {
+    let mut out = String::with_capacity(value.len());
+    for (code, piece) in code_pieces(value, at)? {
+        match code {
+            true => out.push_str(piece),
+            false => {
+                for (index, c) in piece.char_indices() {
+                    match c == '\\' && escapes(piece, index) {
+                        true => out.push_str(with),
+                        false => out.push(c),
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// A text cell's value as the inline rules check it (#2668): every
+/// backslash in a value is itself, so each one the cell writes doubled is
+/// checked as the literal character a reader shows.
+///
+/// # Errors
+/// A code span left open.
+pub fn with_literal_backslashes(value: &str, at: usize) -> Result<String, MarkdownError> {
+    each_escaping_backslash(value, at, LITERAL_BACKSLASH.encode_utf8(&mut [0; 4]))
+}
+
+/// A text cell's value as it is written (#2668): outside code spans, each
+/// backslash a reader would take for an escape (before ASCII punctuation,
+/// or at the end) doubled, so a reader shows it as itself; any other
+/// backslash, and code, as it is.
+///
+/// # Errors
+/// A code span left open.
+pub fn cell_escaped(value: &str, at: usize) -> Result<String, MarkdownError> {
+    each_escaping_backslash(value, at, "\\\\")
+}
+
+/// A text cell's value from the cell as written: [`cell_escaped`] undone,
+/// each doubled backslash outside code read as one. A cell [`cell_escaped`]
+/// would not write (a lone backslash before punctuation, say) is read as
+/// it is, and the writer's check that the file is canonical refuses it.
+///
+/// # Errors
+/// A code span left open.
+pub fn cell_unescaped(written: &str, at: usize) -> Result<String, MarkdownError> {
+    let mut out = String::with_capacity(written.len());
+    for (code, piece) in code_pieces(written, at)? {
+        match code {
+            true => out.push_str(piece),
+            false => out.push_str(&piece.replace("\\\\", "\\")),
+        }
+    }
+    Ok(out)
+}

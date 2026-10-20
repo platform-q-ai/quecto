@@ -1483,8 +1483,8 @@
           "email": "ada@example.com"
         },
         "edited_by": null,
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "created": "2026-10-10T10:00:01Z",
+        "updated": "2026-10-10T10:00:01Z"
       }
     }
   },
@@ -1503,7 +1503,7 @@
           ]
         }
       ],
-      "expected_updated": "2026-10-10T10:00:00Z"
+      "expected_updated": "2026-10-10T10:00:01Z"
     },
     "answer": {
       "ok": true,
@@ -1520,8 +1520,8 @@
           "name": "Bob",
           "email": "bob@example.com"
         },
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z"
+        "created": "2026-10-10T10:00:01Z",
+        "updated": "2026-10-10T10:00:02Z"
       }
     }
   },
@@ -1538,11 +1538,11 @@
       "op": "edit_plan",
       "error": {
         "code": "rule",
-        "message": "plan version 1 changed since it was read (updated 2026-10-10T10:00:01Z); read it again",
+        "message": "plan version 1 changed since it was read (updated 2026-10-10T10:00:02Z); read it again",
         "rule": {
           "code": "plan_changed",
           "version": 1,
-          "updated": "2026-10-10T10:00:01Z"
+          "updated": "2026-10-10T10:00:02Z"
         }
       }
     }
@@ -1662,7 +1662,7 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "updated": "2026-10-10T10:00:01Z"
+          "updated": "2026-10-10T10:00:02Z"
         }
       ],
       "runs": [],
@@ -1683,11 +1683,11 @@
       "op": "accept_plan",
       "error": {
         "code": "rule",
-        "message": "plan version 1 changed since it was read (updated 2026-10-10T10:00:01Z); read it again",
+        "message": "plan version 1 changed since it was read (updated 2026-10-10T10:00:02Z); read it again",
         "rule": {
           "code": "plan_changed",
           "version": 1,
-          "updated": "2026-10-10T10:00:01Z"
+          "updated": "2026-10-10T10:00:02Z"
         }
       }
     }
@@ -1697,7 +1697,7 @@
       "op": "accept_plan",
       "task": "epic",
       "version": 1,
-      "expected_updated": "2026-10-10T10:00:01Z",
+      "expected_updated": "2026-10-10T10:00:02Z",
       "expected_accepted": null
     },
     "answer": {
@@ -1715,7 +1715,7 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:02Z"
+        "updated": "2026-10-10T10:00:03Z"
       },
       "plan": {
         "task": "epic",
@@ -1729,8 +1729,8 @@
           "name": "Bob",
           "email": "bob@example.com"
         },
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:02Z"
+        "created": "2026-10-10T10:00:01Z",
+        "updated": "2026-10-10T10:00:03Z"
       },
       "superseded": null
     }
@@ -1754,8 +1754,8 @@
           "email": "ada@example.com"
         },
         "edited_by": null,
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "created": "2026-10-10T10:00:03Z",
+        "updated": "2026-10-10T10:00:03Z"
       }
     }
   },
@@ -1765,7 +1765,7 @@
       "op": "accept_plan",
       "task": "epic",
       "version": 2,
-      "expected_updated": "2026-10-10T10:00:00Z",
+      "expected_updated": "2026-10-10T10:00:03Z",
       "expected_accepted": 1
     },
     "answer": {
@@ -1783,7 +1783,7 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:03Z"
+        "updated": "2026-10-10T10:00:04Z"
       },
       "plan": {
         "task": "epic",
@@ -1794,8 +1794,8 @@
           "email": "ada@example.com"
         },
         "edited_by": null,
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:03Z"
+        "created": "2026-10-10T10:00:03Z",
+        "updated": "2026-10-10T10:00:04Z"
       },
       "superseded": 1
     }
@@ -1838,8 +1838,8 @@
           "email": "ada@example.com"
         },
         "edited_by": null,
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "created": "2026-10-10T10:00:04Z",
+        "updated": "2026-10-10T10:00:04Z"
       }
     }
   },
@@ -1848,7 +1848,7 @@
       "op": "discard_plan",
       "task": "epic",
       "version": 3,
-      "expected_updated": "2026-10-10T10:00:00Z"
+      "expected_updated": "2026-10-10T10:00:04Z"
     },
     "answer": {
       "ok": true,
@@ -1862,8 +1862,8 @@
           "email": "ada@example.com"
         },
         "edited_by": null,
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z"
+        "created": "2026-10-10T10:00:04Z",
+        "updated": "2026-10-10T10:00:05Z"
       }
     }
   },
@@ -1906,7 +1906,7 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:03Z"
+        "updated": "2026-10-10T10:00:04Z"
       },
       "plan": {
         "task": "epic",
@@ -1924,9 +1924,9 @@
           "name": "Bob",
           "email": "bob@example.com"
         },
-        "accepted_at": "2026-10-10T10:00:03Z",
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:03Z"
+        "accepted_at": "2026-10-10T10:00:04Z",
+        "created": "2026-10-10T10:00:03Z",
+        "updated": "2026-10-10T10:00:04Z"
       },
       "plans": [
         {
@@ -1936,7 +1936,7 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "updated": "2026-10-10T10:00:03Z"
+          "updated": "2026-10-10T10:00:04Z"
         },
         {
           "version": 2,
@@ -1945,7 +1945,7 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "updated": "2026-10-10T10:00:03Z"
+          "updated": "2026-10-10T10:00:04Z"
         },
         {
           "version": 3,
@@ -1954,7 +1954,7 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "updated": "2026-10-10T10:00:01Z"
+          "updated": "2026-10-10T10:00:05Z"
         }
       ],
       "runs": [],
@@ -1981,8 +1981,8 @@
           "email": "ada@example.com"
         },
         "edited_by": null,
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "created": "2026-10-10T10:00:04Z",
+        "updated": "2026-10-10T10:00:04Z"
       }
     }
   },
@@ -1991,7 +1991,7 @@
       "op": "accept_plan",
       "task": "epic",
       "version": 4,
-      "expected_updated": "2026-10-10T10:00:00Z",
+      "expected_updated": "2026-10-10T10:00:04Z",
       "expected_accepted": 1
     },
     "answer": {

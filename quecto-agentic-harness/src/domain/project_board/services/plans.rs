@@ -20,7 +20,7 @@ use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{PlanState, TaskStatus};
-use super::claims::{after_last, held_live_by, settle, stamp, within_slack};
+use super::claims::{after_last, held_live_by, not_before, settle, stamp, within_slack};
 use super::runs::open_of;
 
 /// What a plan says: its approach, task items and team.
@@ -102,6 +102,7 @@ pub fn propose(
 ) -> Result<Plan, BoardRuleError> {
     open_to_plans(task)?;
     consistent(task, versions)?;
+    let now = &not_before(task, now);
     let last = versions
         .iter()
         .map(|plan| plan.fields().version)
@@ -171,7 +172,7 @@ pub fn edit_draft(
     next.team = content.team;
     // Drafts are anyone's: the last editor is recorded, the proposer kept.
     next.edited_by = Some(actor.clone());
-    restamped(next, plan, now)
+    restamped(next, plan, &not_before(task, now))
 }
 
 /// `content`'s text is as it enters the board, normalised: its approach
@@ -308,7 +309,7 @@ pub fn discard(
     as_read(plan, expected)?;
     when.may_build_on(plan)?;
     decides(task, actor, now)?;
-    moved(plan, PlanState::Discarded, now)
+    moved(plan, PlanState::Discarded, &not_before(task, now))
 }
 
 /// The task's plans as the board holds them agree with each other and

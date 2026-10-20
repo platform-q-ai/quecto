@@ -195,7 +195,8 @@ fn only_a_draft_is_edited_and_only_by_an_edit_that_changes_something() {
     )
     .unwrap();
     assert_eq!(edited.fields().team, None);
-    assert_eq!(edited.fields().updated, at("08:30:01"), "always moves on");
+    // Never before the task's last change, at 09:00 (#2662).
+    assert_eq!(edited.fields().updated, at("09:00:00"), "always moves on");
     assert_eq!(
         edit_draft(
             &held,

@@ -88,6 +88,22 @@ makes a board a read refuses, except that it leaves at most 2,048 entries in
 were markdown (a JSON file and a summary per task). A file larger than its kind's
 cap is set aside, not read.
 
+Writers in one clone share its tracking ref, `refs/remotes/<remote>/quecto/board`,
+and git locks it while one of them fetches. A fetch that finds it locked by
+another writer, or moved by one while it held it, is a race this clone lost, never
+`store_unavailable`: it fetches again after a short pause, for about 1.5 s in all.
+The write's own push is then judged as any other, and a race it lost is counted
+in `attempts` and `lost`.
+
+Every change stamps what it writes with the writer's clock, or a second past the
+artifact's own `updated` if that clock reads no later, and never before its task's
+`updated`, so stamps never run backwards on one task. A quick run of changes may
+stamp a second or so ahead of the wall clock.
+
+A text cell (a task item's title or criterion, say) holds every backslash as
+itself: one a reader would take for an escape (before ASCII punctuation, or at the
+end, outside code) is written doubled, and read back as one.
+
 ## List
 
 `list`, `list_ready` and `list_takeable` answer the board's `head`, the
@@ -572,7 +588,7 @@ an older quecto ignores it.
 | `plan_state_from`, `plan_state_to` | For `accept_plan` and `discard_plan`: the state of the version it named as the change last read it (`draft`, `accepted`, `superseded` or `discarded`; none when the task has no such version, or the read was refused first), and the state it wrote (`accepted` or `discarded`; none for a refused change) |
 | `run`, `run_outcome` | For `end_run`, once the request was read: the run it named and the outcome it ends it with (`succeeded`, `stopped`, `failed` or `lost`), also when the board refused the change |
 | `status_from`, `status_to` | For a write of a task (`create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`): the task's status as the write last read it (none for `create`), and the status it moved to: a `move`'s target, made or refused, otherwise the status of the task it wrote (`create`'s `draft` or `ready`, `complete`'s `done`), so a refused write other than `move` writes no `status_to`. A `link_pr` or move to `review` that completes its task records its own write's status here; what came of completing it is in `completion`. An `end_run` records only `status_from`, the status of the task whose run it ends: it writes no task |
-| `claim` | For a `move`, `renew`, `take_over`, `link_pr`, `unlink_pr` or `end_run` of a task that holds a claim, the claim as the change found it, never its holder: `held_s` (seconds since it began, below zero when the writer's clock reads before that), `left_s` (seconds until it expires, below zero once it has lapsed) and `holder_is_writer` |
+| `claim` | For a `move`, `renew`, `take_over`, `link_pr`, `unlink_pr` or `end_run` of a task that holds a claim, the claim as the change found it, never its holder: `held_s` (seconds since it began, never below zero: 0 when the writer's clock reads before that), `left_s` (seconds until it expires, below zero once it has lapsed) and `holder_is_writer` |
 | `attempts`, `lost`, `pause_ms` | For a write (every op that writes but `bootstrap`): the attempts it began (at most 3), how many of them lost the race to another writer, and, when it paused between attempts, the time it paused in milliseconds. A `link_pr` or `move` that completes its task counts only its own write's attempts here; the completion's write is counted in `completion_attempts` |
 | `completion`, `completion_code`, `completion_rule`, `prs_linked`, `prs_pending` | After a `link_pr` or a move to `review` of a task that links pull requests: `done` (every one merged), `pending` (some not merged yet, counted in `prs_pending`) or `failed` (the host, the store or a rule failed it, with its error code in `completion_code` and, for a rule, the rule's code in `completion_rule`); `prs_linked` counts the pull requests the task links. `complete` records only `done` or `pending`: a `complete` refused for any other reason records no completion, and its `code` says why |
 | `completion_attempts`, `completion_lost`, `completion_pause_ms` | For a completion run after a `link_pr` or a move to `review`, its own write's attempts, lost races and pause, as `attempts`, `lost` and `pause_ms` count the change's |

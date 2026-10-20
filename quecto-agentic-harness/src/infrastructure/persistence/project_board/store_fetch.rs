@@ -186,8 +186,21 @@ impl GitBoardStore {
         options.extend(tip.as_deref());
         options.extend([self.remote.as_str(), spec.as_str()]);
         let config = ["fetch.negotiationAlgorithm=consecutive"];
-        self.fetching(&config, &options, filter, None)
-            .map_err(BoardStoreError::Unavailable)?;
+        let tracking = self.tracking();
+        let mut pauses = LOCK_PAUSES_MS.iter();
+        // Another writer in this clone fetching at once holds the tracking
+        // ref's lock (#2654): a race this clone lost, fetched again once it
+        // is done, never a store that cannot be reached.
+        loop {
+            match self.fetching(&config, &options, filter, None) {
+                Ok(_) => break,
+                Err(why) if locked_by_another_writer(&why, &tracking) => match pauses.next() {
+                    Some(ms) => std::thread::sleep(std::time::Duration::from_millis(*ms)),
+                    None => return Err(BoardStoreError::Unavailable(why)),
+                },
+                Err(why) => return Err(BoardStoreError::Unavailable(why)),
+            }
+        }
         let commit = format!("{}^{{commit}}", self.tracking());
         object_id(
             &self
@@ -297,6 +310,23 @@ fn oid_of(wanted: &Wanted) -> &str {
     match wanted {
         Wanted::Alone(oid) | Wanted::Filtered(oid) => oid,
     }
+}
+
+/// The pauses before each fetch again of a tracking ref another writer
+/// in this clone holds locked: about 1.5 s in all, past which the lock is
+/// taken for one left behind (a writer that died holding it), not a race.
+const LOCK_PAUSES_MS: [u64; 5] = [50, 100, 200, 400, 800];
+
+/// Whether git said another writer in this clone holds `tracking`, the
+/// board's tracking ref, locked (its lock file exists) or moved it while
+/// this fetch held it (`is at <a> but expected <b>`): the two ways a fetch
+/// loses a race on it (an allowlist).
+fn locked_by_another_writer(why: &str, tracking: &str) -> bool {
+    let ours = format!("cannot lock ref '{tracking}': ");
+    why.split(&ours).skip(1).any(|reason| {
+        reason.contains("but expected")
+            || (reason.starts_with("Unable to create") && reason.contains(".lock': File exists"))
+    })
 }
 
 /// Whether git said the server refuses a filter: `filter '<kind>' not
