@@ -126,7 +126,11 @@ fn directory_is_private_and_the_lock_is_a_singleton() {
 fn file_journal_is_durable_round_trip_and_fails_closed_on_corruption() {
     let temp = tempfile::tempdir().unwrap();
     let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
-    assert_eq!(FileJournal::load(&dir).unwrap(), None, "fresh authority");
+    assert_eq!(
+        FileJournal::new(&dir).load().unwrap(),
+        None,
+        "fresh authority"
+    );
     let mut journal = FileJournal::new(&dir);
     let ledger = AdmissionLedger {
         epoch: 9,
@@ -145,7 +149,7 @@ fn file_journal_is_durable_round_trip_and_fails_closed_on_corruption() {
         )]),
     };
     journal.persist(&ledger).unwrap();
-    assert_eq!(FileJournal::load(&dir).unwrap(), Some(ledger));
+    assert_eq!(FileJournal::new(&dir).load().unwrap(), Some(ledger));
     let mode = std::fs::metadata(dir.journal_path())
         .unwrap()
         .permissions()
@@ -154,7 +158,7 @@ fn file_journal_is_durable_round_trip_and_fails_closed_on_corruption() {
     assert_eq!(mode, 0o600);
     std::fs::write(dir.journal_path(), b"{not json").unwrap();
     assert!(
-        FileJournal::load(&dir).is_err(),
+        FileJournal::new(&dir).load().is_err(),
         "corrupt ledger never restarts empty"
     );
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
@@ -854,11 +858,11 @@ async fn start_refusals_are_explicit() {
         br#"{"format":9,"epoch":1,"outstanding":[],"groups":{}}"#,
     )
     .unwrap();
-    let unsupported = FileJournal::load(&dir).unwrap_err();
+    let unsupported = FileJournal::new(&dir).load().unwrap_err();
     assert!(format!("{unsupported:?}").contains("format"));
     std::fs::remove_file(dir.journal_path()).unwrap();
     std::fs::create_dir(dir.journal_path()).unwrap();
-    let unreadable = FileJournal::load(&dir).unwrap_err();
+    let unreadable = FileJournal::new(&dir).load().unwrap_err();
     assert!(format!("{unreadable:?}").contains("read ledger"));
     std::fs::remove_dir(dir.journal_path()).unwrap();
     match start_authority(dir.clone(), proposal(1, 300)).await {
@@ -917,7 +921,7 @@ async fn client_refusals_name_their_cause() {
         br#"{"format":1,"epoch":1,"outstanding":[],"groups":{"":{"cooldown_remaining_ms":0,"pacing_remaining_ms":0,"unavailable":false}}}"#,
     )
     .unwrap();
-    let corrupt = FileJournal::load(&dir).unwrap_err();
+    let corrupt = FileJournal::new(&dir).load().unwrap_err();
     assert!(format!("{corrupt:?}").contains("ledger group"));
 }
 

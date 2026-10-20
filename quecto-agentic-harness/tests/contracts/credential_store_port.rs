@@ -293,10 +293,17 @@ fn a_removal_waits_for_the_credentials_lock() {
         .unwrap();
     held.lock().unwrap();
     let (done, removed) = std::sync::mpsc::channel();
+    // The remover says it has started before the window opens, so the
+    // window measures waiting for the lock, not thread start-up.
+    let (started, has_started) = std::sync::mpsc::channel();
     let remover = {
         let store = Arc::clone(&store);
-        std::thread::spawn(move || done.send(store.remove("openai")).unwrap())
+        std::thread::spawn(move || {
+            started.send(()).unwrap();
+            done.send(store.remove("openai")).unwrap()
+        })
     };
+    has_started.recv().unwrap();
     assert!(
         removed
             .recv_timeout(std::time::Duration::from_millis(300))

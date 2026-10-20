@@ -53,7 +53,8 @@ pub struct TeardownLoopInputs {
     /// The owner's exit announcement (#2070) each connection's reader task
     /// raises on the owning TUI's exit persist and withdraws on its close;
     /// the shutdown reads it.
-    pub owner_exit: Arc<dyn crate::application::subagents::ports::OwnerExitAnnouncement>,
+    pub owner_exit:
+        Arc<dyn crate::application::subagents::ports::harness_shutdown::OwnerExitAnnouncement>,
     /// The environment control slot (#2070), for the emptied `retained`
     /// environments an owner exit ends; `None` builds a teardown that ends
     /// none (unit rigs).

@@ -17,7 +17,10 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::application::subagents::ports::{EndedChildRecords, EndedTranscript, PortFuture};
+use crate::application::subagents::ports::{
+    PortFuture,
+    ended_child_records::{EndedChildRecords, EndedTranscript},
+};
 use crate::domain::agents::value_objects::crash_record::CrashRecord;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::shared::error::DomainError;

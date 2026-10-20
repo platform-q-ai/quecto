@@ -3,7 +3,7 @@
 //! store and a real (logging) retained kill script.
 
 use super::*;
-use crate::application::subagents::ports::TerminationCause;
+use crate::application::subagents::ports::delegated_agent_registry::TerminationCause;
 
 const OWNER: TerminationCause = TerminationCause::OwnerTeardown;
 const HARNESS: TerminationCause = TerminationCause::FleetTeardown;
@@ -16,7 +16,10 @@ async fn fleet_end(
     cause: TerminationCause,
     compensated_as: TerminationCause,
 ) -> (EnvironmentRecord, bool) {
-    use crate::application::subagents::ports::{DelegatedAgentRegistry, TeardownCompensation};
+    use crate::application::subagents::ports::{
+        delegated_agent_registry::DelegatedAgentRegistry,
+        teardown_compensation::TeardownCompensation,
+    };
     use crate::domain::agents::services::subagent_teardown::{
         DelegatedAgentIdentity, LaunchGeneration,
     };
@@ -62,7 +65,7 @@ async fn a_child_that_exits_by_itself_during_the_teardown_follows_the_claimed_in
     // exits gracefully, and the reaper compensates it as an `Exit`. The
     // intent the claim stored decides, not the exit (#2070).
     let exited = TerminationCause::Exit(
-        crate::application::subagents::ports::ExitObservation::ProcessExited,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ProcessExited,
     );
     let (record, killed) = fleet_end(create_running_swarm, OWNER, exited).await;
     assert!(killed, "claimed by the owner's teardown: the box goes");

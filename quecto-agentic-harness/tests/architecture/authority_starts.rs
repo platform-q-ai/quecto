@@ -26,6 +26,21 @@ const SERVER: &str = "AuthorityServer";
 /// variant is caught without being listed).
 const NON_STARTING: &[&str] = &["directory", "shutdown"];
 
+/// The only files that may name the server at all (#2627 review): its module
+/// and re-export, composition, the broker's run path, and the tests that
+/// hold or inspect a running one. A new file naming it must be listed, so a
+/// spelling the parse cannot follow still has to pass review.
+const SERVER_NAMERS: &[&str] = &[
+    "src/composition/admission.rs",
+    "src/infrastructure/admission/mod.rs",
+    "src/infrastructure/admission/server.rs",
+    "src/interface/cli/admission_broker.rs",
+    "tests/bdd/inference_admission_authority_steps.rs",
+    "tests/contracts/admission_observation.rs",
+    "tests/contracts/authority_admin.rs",
+    "tests/integration/inference_admission_broker.rs",
+];
+
 /// The scan's own fixtures spell starts in string literals; the parse never
 /// reads a literal as a path, but the substring backstop would.
 const BACKSTOP_EXEMPT: &[&str] = &["tests/architecture/authority_starts.rs"];
@@ -73,6 +88,14 @@ impl Starts<'_> {
     fn type_names_server(&self, ty: &syn::Type) -> bool {
         match ty {
             syn::Type::Paren(ty) => self.type_names_server(&ty.elem),
+            // A type a macro produces: any token of it naming the server.
+            syn::Type::Macro(ty) => {
+                let mut tokens = Vec::new();
+                flatten(ty.mac.tokens.clone(), &mut tokens);
+                tokens.iter().any(|token| {
+                    matches!(token, TokenTree::Ident(ident) if self.names_server(&ident_name(ident)))
+                })
+            }
             syn::Type::Group(ty) => self.type_names_server(&ty.elem),
             syn::Type::Path(ty) => match &ty.qself {
                 Some(qself) => self.type_names_server(&qself.ty),
@@ -127,23 +150,28 @@ impl<'ast> syn::visit::Visit<'ast> for Starts<'_> {
     }
 
     /// A macro's arguments (and a `macro_rules!` body) are tokens the syntax
-    /// visitor does not walk: read them for `<server> :: <item>`.
+    /// visitor does not walk, and a macro can assemble a path from pieces, so
+    /// inside one every token that names the server counts as a start unless
+    /// it is followed by `:: directory` or `:: shutdown` (#2627 review).
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         let mut tokens = Vec::new();
         flatten(mac.tokens.clone(), &mut tokens);
-        for window in tokens.windows(4) {
-            if let [
-                TokenTree::Ident(owner),
-                TokenTree::Punct(first),
-                TokenTree::Punct(second),
-                TokenTree::Ident(item),
-            ] = window
-                && first.as_char() == ':'
-                && second.as_char() == ':'
-                && self.names_server(&ident_name(owner))
-                && !NON_STARTING.contains(&ident_name(item).as_str())
-            {
-                self.found.push(format!("{owner}::{item} (in a macro)"));
+        for (at, token) in tokens.iter().enumerate() {
+            let TokenTree::Ident(owner) = token else {
+                continue;
+            };
+            if !self.names_server(&ident_name(owner)) {
+                continue;
+            }
+            let non_starting = matches!(
+                tokens.get(at + 1..at + 4),
+                Some([TokenTree::Punct(first), TokenTree::Punct(second), TokenTree::Ident(item)])
+                    if first.as_char() == ':'
+                        && second.as_char() == ':'
+                        && NON_STARTING.contains(&ident_name(item).as_str())
+            );
+            if !non_starting {
+                self.found.push(format!("{owner} (in a macro)"));
             }
         }
         syn::visit::visit_macro(self, mac);
@@ -305,6 +333,12 @@ fn the_start_scan_resolves_aliases_and_qualified_self() {
         "fn f() { AuthorityServer::begin(d, p); }",
         // A name aliased twice: either target may be the server.
         "use crate::infrastructure::admission::AuthorityServer as S;\nuse crate::other::Thing as S;\nfn f() { S::start(d, p); }",
+        // Review (#2627 round 3): pieces a macro assembles.
+        "async fn f() { assert!(<AuthorityServer>::start(d, p).await.is_ok()); }",
+        "async fn f() { assert!(AuthorityServer::<>::start(d, p).await.is_ok()); }",
+        "macro_rules! go { ($s:ident) => { $s::start(d, p) }; }\nfn f() { go!(AuthorityServer); }",
+        "fn f() { let _ = <srv!()>::start(d, p); }\nmacro_rules! srv { () => { AuthorityServer }; }",
+        "type Zz = AuthorityServer;\nasync fn f() { assert!(<Zz>::start(d, p).await.is_ok()); }",
         "use crate::other::Thing as S;\nuse crate::infrastructure::admission::AuthorityServer as S;\nfn f() { S::start(d, p); }",
     ];
     for source in caught {
@@ -317,6 +351,7 @@ fn the_start_scan_resolves_aliases_and_qualified_self() {
         "fn f() { AuthorityServer::shutdown(s); }",
         "fn f() { assert!(Other::start(d, p).is_ok()); }",
         "fn f() { assert_eq!(AuthorityServer::directory(s), d); }",
+        "fn f() { assert!(AuthorityServer::shutdown(s).is_ok()); }",
         "impl Other { fn again() { Self::start(d, p); } }",
         "fn f() { start_authority(d, p); }",
     ];
@@ -340,6 +375,25 @@ fn the_start_backstop_is_fail_closed() {
     assert_eq!(
         outside_starts("tests/architecture/authority_starts.rs", hidden),
         Vec::<String>::new()
+    );
+}
+
+/// Exactly `SERVER_NAMERS` (and this scan) name the server anywhere in `src`
+/// or `tests`, in code, comments or strings.
+#[test]
+fn only_the_listed_files_name_the_authority_server() {
+    let mut files = Vec::new();
+    walk(Path::new("src"), &mut files);
+    walk(Path::new("tests"), &mut files);
+    let namers: BTreeSet<String> = files
+        .into_iter()
+        .filter(|file| !BACKSTOP_EXEMPT.contains(&file.as_str()))
+        .filter(|file| std::fs::read_to_string(file).unwrap().contains(SERVER))
+        .collect();
+    let listed: BTreeSet<String> = SERVER_NAMERS.iter().map(|file| file.to_string()).collect();
+    assert_eq!(
+        namers, listed,
+        "the files naming AuthorityServer are SERVER_NAMERS"
     );
 }
 

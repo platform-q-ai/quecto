@@ -4,7 +4,7 @@ use tempfile::TempDir;
 
 use super::{build_container_config_selection, build_effective_container_configs};
 use crate::application::configuration::dto::{ConfigLayers, ConfigSelection};
-use crate::application::subagents::dto::{
+use crate::application::subagents::dto::container_config::{
     ContainerConfigSource, ContainerConfigsError, SelectContainerConfigRequest,
 };
 

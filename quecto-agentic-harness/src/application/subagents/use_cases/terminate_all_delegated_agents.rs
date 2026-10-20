@@ -35,8 +35,11 @@ use super::super::dto::{
     TerminateAllDelegatedAgentsRequest,
 };
 use super::super::ports::{
-    DelegatedAgentRegistry, DirectChildRouting, OwnedChildTermination, ShutdownRunSpawner,
-    SubagentLifecycleRepository, TeardownCompensation, TerminationCause,
+    child_routing::DirectChildRouting,
+    delegated_agent_registry::{DelegatedAgentRegistry, TerminationCause},
+    harness_shutdown::{ShutdownRunSpawner, SubagentLifecycleRepository},
+    owned_child_termination::OwnedChildTermination,
+    teardown_compensation::TeardownCompensation,
 };
 use super::bounded_settlement::{BoundedSettlement, Settlement};
 use super::settle_delegated_child::{

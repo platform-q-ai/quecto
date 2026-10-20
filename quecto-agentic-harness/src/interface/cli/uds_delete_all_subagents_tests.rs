@@ -59,7 +59,7 @@ async fn an_unsettled_child_is_presented_with_its_detail() {
     let fleet = fake_fleet(lifecycle, routing, FakeSpawner::new());
     fleet.termination.conclude_child_with(
         "A",
-        crate::application::subagents::ports::TerminationConclusion::StillRunning(
+        crate::application::subagents::ports::owned_child_termination::TerminationConclusion::StillRunning(
             "would not die".into(),
         ),
     );

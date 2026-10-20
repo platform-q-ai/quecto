@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::application::environments::dto::{ContainerRuntimeTarget, DiagnosableContainerConfig};
 use crate::application::environments::ports::container::ContainerConfigLookup;
-use crate::application::subagents::dto::{
+use crate::application::subagents::dto::container_config::{
     ContainerConfigSource, SelectContainerConfigError, SelectContainerConfigRequest,
 };
 use crate::application::subagents::use_cases::SelectContainerConfig;

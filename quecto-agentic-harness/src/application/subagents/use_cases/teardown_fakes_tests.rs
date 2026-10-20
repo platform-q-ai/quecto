@@ -8,12 +8,16 @@ use crate::domain::agents::services::subagent_teardown::{
 };
 use crate::domain::identity::ids::AgentUuid;
 
-use crate::application::subagents::dto::TerminationResult;
+use crate::application::subagents::ports::child_routing::TerminationResult;
 use crate::application::subagents::ports::{
-    ChildRoutingError, CompositionExitReadiness, DirectChildRouting, DownstreamRejection,
-    ExitReadiness, OwnerExitAnnouncement, PortFuture, RetainedEnvironmentTeardown, ShutdownClock,
-    ShutdownInstant, ShutdownRun, ShutdownRunSpawner, ShutdownSessionPersistence,
-    SubagentLifecycleRepository, TurnCancellation,
+    PortFuture,
+    child_routing::{ChildRoutingError, DirectChildRouting, DownstreamRejection},
+    harness_shutdown::{
+        CompositionExitReadiness, ExitReadiness, OwnerExitAnnouncement,
+        RetainedEnvironmentTeardown, ShutdownClock, ShutdownInstant, ShutdownRun,
+        ShutdownRunSpawner, ShutdownSessionPersistence, SubagentLifecycleRepository,
+        TurnCancellation,
+    },
 };
 
 pub fn identity(uuid: &str, generation: u64) -> DelegatedAgentIdentity {
@@ -415,7 +419,7 @@ pub fn fake_fleet(
     }
     let termination = FakeTermination::new(
         registry.clone(),
-        crate::application::subagents::ports::TerminationConclusion::ExitedAfterProtocol,
+        crate::application::subagents::ports::owned_child_termination::TerminationConclusion::ExitedAfterProtocol,
     );
     let compensation = FakeCompensation::new(registry.clone());
     let fleet = Arc::new(super::TerminateAllDelegatedAgents::new(

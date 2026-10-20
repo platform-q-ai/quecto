@@ -253,7 +253,7 @@ async fn monitor_loop(spec: MonitorSpec) {
                 registry,
                 agent_id,
                 &observer,
-                crate::application::subagents::ports::ExitObservation::NeverReachable,
+                crate::application::subagents::ports::delegated_agent_registry::ExitObservation::NeverReachable,
             )
             .await;
             return;
@@ -312,7 +312,7 @@ async fn monitor_loop(spec: MonitorSpec) {
                     registry,
                     agent_id,
                     &observer,
-                    crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+                    crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
                 )
                 .await;
                 return;

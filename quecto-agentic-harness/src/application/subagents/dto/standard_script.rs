@@ -1,5 +1,5 @@
 //! The standard bundle's verdict on a host-side script (#2024 S4e): the
-//! type the [`ContainerScriptIntegrity`](super::ports::ContainerScriptIntegrity)
+//! type the [`ContainerScriptIntegrity`](crate::application::subagents::ports::container_configs::ContainerScriptIntegrity)
 //! port answers with, and the one refusal text every path that judges a
 //! script prints.
 

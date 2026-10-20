@@ -14,7 +14,9 @@ use std::time::Duration;
 use quecto::application::environments::ports::{
     process::EnvironmentMemberShutdown, process::MemberShutdownResult,
 };
-use quecto::application::subagents::ports::{DelegatedAgentRegistry, TerminationCause};
+use quecto::application::subagents::ports::delegated_agent_registry::{
+    DelegatedAgentRegistry, TerminationCause,
+};
 use quecto::application::subagents::use_cases::{SettleDelegatedChild, SettleDelegatedChildPorts};
 use quecto::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration,

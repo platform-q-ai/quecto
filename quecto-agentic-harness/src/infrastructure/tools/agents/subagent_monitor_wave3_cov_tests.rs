@@ -86,7 +86,7 @@ async fn wave3_agent_error_notification_and_exit_sequence_paths() {
         &registry,
         "bot",
         &test_observer(&registry, Some(tx.clone())),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
     assert!(rx.try_recv().unwrap().to_message().contains(" ended"));
@@ -136,7 +136,7 @@ async fn notify_child_exited_missing_agent_has_no_effect() {
         &registry,
         "ghost",
         &test_observer(&registry, Some(tx)),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
     assert!(rx.try_recv().is_err());
@@ -177,7 +177,7 @@ async fn notify_child_exited_claims_script_cleanup_once() {
         &registry,
         "bot",
         &test_observer(&registry, None),
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
     assert_eq!(

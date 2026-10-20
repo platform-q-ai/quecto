@@ -8,7 +8,7 @@ use tokio::io::AsyncWriteExt;
 
 use super::super::spawn_accept_loop;
 use super::{make_args, read_available};
-use crate::application::subagents::ports::OwnerExitAnnouncement;
+use crate::application::subagents::ports::harness_shutdown::OwnerExitAnnouncement;
 
 async fn until(mut condition: impl FnMut() -> bool, what: &str) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);

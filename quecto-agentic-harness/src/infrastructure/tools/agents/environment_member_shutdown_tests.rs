@@ -8,10 +8,16 @@ use crate::application::environments::ports::{
     process::EnvironmentMemberShutdown, process::MemberShutdownResult,
 };
 use crate::application::subagents::ports::{
-    ChildRoutingError, Compensated, CompensationObservation, ConclusionBudget,
-    DelegatedAgentRegistry, DirectChildRouting, OwnedChildTermination, PortFuture, ProtocolAttempt,
-    ResolutionError, StoppingClaimError, TeardownCompensation, TerminalClaim, TerminationCause,
-    TerminationConclusion, TerminationResult,
+    PortFuture,
+    child_routing::{ChildRoutingError, DirectChildRouting, TerminationResult},
+    delegated_agent_registry::{
+        CompensationObservation, DelegatedAgentRegistry, ResolutionError, StoppingClaimError,
+        TerminalClaim, TerminationCause,
+    },
+    owned_child_termination::{
+        ConclusionBudget, OwnedChildTermination, ProtocolAttempt, TerminationConclusion,
+    },
+    teardown_compensation::{Compensated, TeardownCompensation},
 };
 use crate::application::subagents::use_cases::{SettleDelegatedChild, SettleDelegatedChildPorts};
 use crate::domain::agents::services::subagent_teardown::{

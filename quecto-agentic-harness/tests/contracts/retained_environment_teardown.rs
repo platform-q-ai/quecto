@@ -4,7 +4,9 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use quecto::application::subagents::ports::{OwnerExitAnnouncement, RetainedEnvironmentTeardown};
+use quecto::application::subagents::ports::harness_shutdown::{
+    OwnerExitAnnouncement, RetainedEnvironmentTeardown,
+};
 use quecto::domain::agents::services::subagent_teardown::ShutdownReason;
 
 use super::teardown_fixture::{Harness, RetainedEnvironments, root_tree};

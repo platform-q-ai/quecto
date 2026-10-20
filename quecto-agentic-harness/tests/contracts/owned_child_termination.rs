@@ -6,7 +6,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use quecto::application::subagents::ports::{
+use quecto::application::subagents::ports::owned_child_termination::{
     ConclusionBudget, OwnedChildTermination, ProtocolAttempt, TerminationConclusion,
 };
 use quecto::domain::agents::services::subagent_teardown::{

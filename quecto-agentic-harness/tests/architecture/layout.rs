@@ -107,6 +107,7 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("application/catalogue", &["use_cases", "ports", "dto", "services"]),
     Capability("application/configuration", &["use_cases", "ports", "dto", "services"]),
     Capability("application/admission", &["use_cases", "ports", "dto", "services"]),
+    Capability("application/subagents", &["use_cases", "ports", "dto"]),
 ];
 // Wiki target-source-tree anchors define allowed future names; Transitional rows must exist.
 // https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#target-source-tree

@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use quecto::application::environments::dto::STANDARD_CONTAINER_DIR;
-use quecto::application::subagents::dto::StandardScriptVerdict;
+use quecto::application::subagents::dto::standard_script::StandardScriptVerdict;
 use quecto::composition::container_configs::build_container_script_integrity;
 use quecto::composition::standard_container::build_container_asset_store;
 

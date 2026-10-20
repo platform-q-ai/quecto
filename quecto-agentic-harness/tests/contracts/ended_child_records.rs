@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use quecto::application::sessions::ports::SessionStore;
-use quecto::application::subagents::ports::EndedChildRecords;
+use quecto::application::subagents::ports::ended_child_records::EndedChildRecords;
 use quecto::domain::agents::value_objects::crash_record::CrashRecord;
 use quecto::domain::agents::value_objects::crash_record::PanicReport;
 use quecto::domain::conversation::value_objects::message::Message;

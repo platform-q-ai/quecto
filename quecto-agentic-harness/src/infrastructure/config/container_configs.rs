@@ -13,11 +13,11 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::application::subagents::dto::{
+use crate::application::subagents::dto::container_config::{
     ContainerConfigSource, ContainerConfigsError, ContainerLaunchConfig,
     EffectiveContainerConfigSet,
 };
-use crate::application::subagents::ports::EffectiveContainerConfigs;
+use crate::application::subagents::ports::container_configs::EffectiveContainerConfigs;
 use crate::infrastructure::config::Config;
 
 /// A configuration resolved for a container launch: the realized `Config`,

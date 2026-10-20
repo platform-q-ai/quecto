@@ -3,7 +3,8 @@ use std::sync::Arc;
 use super::*;
 use crate::application::subagents::dto::{KillDelegatedAgentError, KillDelegatedAgentRequest};
 use crate::application::subagents::ports::{
-    ConclusionBudget, ProtocolAttempt, ResolutionError, TerminationConclusion,
+    delegated_agent_registry::ResolutionError,
+    owned_child_termination::{ConclusionBudget, ProtocolAttempt, TerminationConclusion},
 };
 use crate::application::subagents::use_cases::OwnerConclusionPorts;
 use crate::domain::agents::services::subagent_teardown::{

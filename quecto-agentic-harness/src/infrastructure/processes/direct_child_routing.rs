@@ -10,7 +10,9 @@
 use std::time::Duration;
 
 use crate::application::subagents::ports::{
-    ChildRoutingError, DirectChildRouting, DownstreamRejection, PortFuture, TerminationResult,
+    PortFuture,
+    child_routing::TerminationResult,
+    child_routing::{ChildRoutingError, DirectChildRouting, DownstreamRejection},
 };
 use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, RoutingDepth, ShutdownReason,

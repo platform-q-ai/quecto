@@ -10,12 +10,22 @@ use quecto::application::subagents::dto::{
     PrepareShutdownRequest, PreparedShutdown, ShutdownTrigger,
 };
 use quecto::application::subagents::ports::{
-    ChildRoutingError, Compensated, CompensationObservation, CompositionExitReadiness,
-    ConclusionBudget, DelegatedAgentRegistry, DirectChildRouting, ExitReadiness,
-    OwnedChildTermination, OwnerExitAnnouncement, PortFuture, ProtocolAttempt, ResolutionError,
-    RetainedEnvironmentTeardown, ShutdownClock, ShutdownInstant, ShutdownRun, ShutdownRunSpawner,
-    ShutdownSessionPersistence, StoppingClaimError, SubagentLifecycleRepository,
-    TeardownCompensation, TerminalClaim, TerminationCause, TerminationConclusion, TurnCancellation,
+    PortFuture,
+    child_routing::{ChildRoutingError, DirectChildRouting},
+    delegated_agent_registry::{
+        CompensationObservation, DelegatedAgentRegistry, ResolutionError, StoppingClaimError,
+        TerminalClaim, TerminationCause,
+    },
+    harness_shutdown::{
+        CompositionExitReadiness, ExitReadiness, OwnerExitAnnouncement,
+        RetainedEnvironmentTeardown, ShutdownClock, ShutdownInstant, ShutdownRun,
+        ShutdownRunSpawner, ShutdownSessionPersistence, SubagentLifecycleRepository,
+        TurnCancellation,
+    },
+    owned_child_termination::{
+        ConclusionBudget, OwnedChildTermination, ProtocolAttempt, TerminationConclusion,
+    },
+    teardown_compensation::{Compensated, TeardownCompensation},
 };
 use quecto::application::subagents::use_cases::{
     ExecuteHarnessShutdown, ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
@@ -153,7 +163,10 @@ impl DirectChildRouting for Routing {
         remaining_depth: RoutingDepth,
     ) -> PortFuture<
         'a,
-        Result<Option<quecto::application::subagents::dto::TerminationResult>, ChildRoutingError>,
+        Result<
+            Option<quecto::application::subagents::ports::child_routing::TerminationResult>,
+            ChildRoutingError,
+        >,
     > {
         self.calls.lock().unwrap().push(Call::Forward {
             via: via.clone(),
