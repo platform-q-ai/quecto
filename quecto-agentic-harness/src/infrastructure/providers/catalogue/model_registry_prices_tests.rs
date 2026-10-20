@@ -137,3 +137,48 @@ fn every_builtin_gpt_5_6_id_has_pricing_and_enriched_limits() {
         assert!(m.cost.output > 0.0, "{id} output price missing");
     }
 }
+
+/// #2630 review round 4: a declared rate out of range (negative, or not
+/// finite) is reported and the declaration ignored: the published rate for
+/// a known id applies, and an unknown id stays unpriced, never silently.
+#[test]
+fn an_out_of_range_declared_rate_is_reported_and_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("models.json");
+    std::fs::write(
+        &path,
+        r#"{"providers":{"local":{"api":"openai-completions","baseUrl":"http://127.0.0.1:8080/v1","models":[
+            {"id":"claude-sonnet-4-6","cost":{"input":-1.0,"output":2.0}},
+            {"id":"my-model","cost":{"input":1.0,"output":-2.0}},
+            {"id":"good-model","cost":{"input":1.0,"output":2.0}}
+        ]}}}"#,
+    )
+    .unwrap();
+    let config = ModelRegistry::load_registry_config(&path).unwrap();
+    let reasons: Vec<&str> = config
+        .skipped
+        .iter()
+        .map(|block| block.error.as_str())
+        .collect();
+    assert_eq!(reasons.len(), 2, "{reasons:?}");
+    assert!(
+        reasons[0].contains("'claude-sonnet-4-6' declares a cost rate out of range"),
+        "{reasons:?}"
+    );
+    let record = |id: &str| {
+        config
+            .records
+            .iter()
+            .find(|r| r.id == id)
+            .expect(id)
+            .cost
+            .clone()
+    };
+    assert_eq!(
+        rates(&record("claude-sonnet-4-6")),
+        (3.0, 15.0, 0.3, 3.75),
+        "published"
+    );
+    assert!(!record("my-model").declared, "unpriced");
+    assert_eq!(rates(&record("good-model")), (1.0, 2.0, 1.0, 1.0));
+}

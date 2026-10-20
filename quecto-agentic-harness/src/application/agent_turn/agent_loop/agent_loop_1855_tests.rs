@@ -2,7 +2,7 @@
 //! price, the one price authority, whatever the provider reported; a model
 //! the catalogue prices nothing for is uncosted.
 use crate::application::agent_turn::agent_loop::tests::{
-    MockProvider, MockRegistry, test_config, text_response,
+    MockProvider, MockRegistry, MockStreamingProvider, test_config, text_response,
 };
 use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::catalogue::dto::ModelLimits;
@@ -63,4 +63,34 @@ async fn a_model_the_catalogue_prices_nothing_for_is_uncosted() {
     let result = agent.run_loop(&mut messages).await.unwrap();
     assert_eq!(result.cost_micro_usd, 0, "the provider's figure is dropped");
     assert_eq!(agent.take_unreported_usage().cost_micro_usd, 0);
+}
+
+/// #2630 review round 4: a streamed reply is costed at the catalogue price
+/// too, the provider's own figure replaced.
+#[tokio::test]
+async fn streamed_usage_is_costed_at_the_active_models_catalogue_price() {
+    let mut reply = text_response("done");
+    reply.usage.as_mut().unwrap().cost = Some(CostInfo {
+        input_cost_micro_usd: 999,
+        output_cost_micro_usd: 999,
+        cache_read_cost_micro_usd: 0,
+        cache_write_cost_micro_usd: 0,
+        total_cost_micro_usd: 1998,
+    });
+    let provider = Arc::new(MockStreamingProvider::new(vec![vec![
+        crate::domain::inference::value_objects::provider::StreamEvent::Done(reply),
+    ]]));
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        streaming: true,
+        ..test_config(provider, Box::new(MockRegistry::new()))
+    })
+    .with_model_limits(ModelLimits {
+        price: Some(PRICE),
+        ..ModelLimits::default()
+    });
+    let mut messages = vec![Message::user("hi")];
+    let result = agent.run_loop(&mut messages).await.unwrap();
+    // 10 * $2/M + 20 * $10/M = 20 + 200 micro-USD.
+    assert_eq!(result.cost_micro_usd, 220);
+    assert_eq!(agent.take_unreported_usage().cost_micro_usd, 220);
 }

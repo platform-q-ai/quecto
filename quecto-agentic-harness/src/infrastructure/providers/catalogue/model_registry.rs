@@ -350,15 +350,32 @@ impl ModelRegistry {
                 }
                 // #1855: a declared cost drives billing; a rate it leaves
                 // out is the published one for the id, never a free one.
+                // A rate out of range (negative or not finite) is reported
+                // and the declaration ignored, like any invalid value: the
+                // published rate for the id applies, else the model is
+                // unpriced (#2630 review round 4).
                 if let Some(cost) = model.cost {
-                    record.cost = declared_cost(
-                        &record.id,
+                    let rates = [
                         cost.input,
                         cost.output,
                         cost.cache_read.or(cost.cache_read_camel),
                         cost.cache_write.or(cost.cache_write_camel),
-                    )
-                    .into();
+                    ];
+                    let in_range = rates
+                        .iter()
+                        .flatten()
+                        .all(|rate| rate.is_finite() && *rate >= 0.0);
+                    match in_range {
+                        true => {
+                            let [input, output, cache_read, cache_write] = rates;
+                            record.cost =
+                                declared_cost(&record.id, input, output, cache_read, cache_write)
+                                    .into();
+                        }
+                        false => {
+                            skipped.push(file_format::cost_out_of_range(&provider_key, &record.id))
+                        }
+                    }
                 }
                 records.push(record);
             }

@@ -73,6 +73,20 @@ impl RegistryProvider {
 
 /// The diagnostic for a provider block whose stream limit is outside its
 /// range: the block is skipped, as an unknown auth mode is.
+/// A model whose declared cost has a rate out of range (negative or not
+/// finite): its cost is ignored (#2630 review round 4).
+pub(super) fn cost_out_of_range(provider_key: &str, model_id: &str) -> super::SkippedProviderBlock {
+    let printable = crate::domain::shared::text::printable::printable_name;
+    super::SkippedProviderBlock {
+        provider: provider_key.to_owned(),
+        error: format!(
+            "provider '{}' model '{}' declares a cost rate out of range (each must be a finite, non-negative USD per million tokens); its cost was ignored (the published rate for the id applies, else it is unpriced)",
+            printable(provider_key),
+            printable(model_id)
+        ),
+    }
+}
+
 pub(super) fn stream_limit_out_of_range(
     provider_key: &str,
     error: crate::infrastructure::providers::transport::stream_idle::StreamLimitError,
