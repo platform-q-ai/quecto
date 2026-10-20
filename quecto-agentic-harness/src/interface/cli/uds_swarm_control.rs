@@ -290,7 +290,15 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
         // A wake from outside this process, or a self-wake for this one.
         None => {}
         Some(epoch) if epoch == current_epoch => {}
-        Some(_) => return false,
+        // Stale: it held the one self-wake slot, so the newer suspension
+        // could not schedule its own (#2626 review round 3). Keep what the
+        // wake carried (a deferred outside wake folds into it) and schedule
+        // the newer suspension's self-wake now.
+        Some(_) => {
+            ctx.turn_control.defer_swarm_wake(generation);
+            keep_self_waking(ctx);
+            return false;
+        }
     }
     // #1721: while suspended, learn the control generation without claiming
     // wake events; a pause/resume since the provider failure re-arms us, and

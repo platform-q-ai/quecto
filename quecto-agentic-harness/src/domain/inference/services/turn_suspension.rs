@@ -227,9 +227,6 @@ impl AutomaticTurns {
         })
     }
 
-    /// Whether this session should wake itself after
-    /// [`RECOVERABLE_SELF_WAKE_DELAY`] (#2531): a recoverable failure
-    /// suspended it, so nothing else may wake it again.
     /// Which suspension this is: a self-wake carries the epoch it was
     /// scheduled for, and one for an older suspension is stale.
     pub fn suspension_epoch(&self) -> u64 {
@@ -241,6 +238,9 @@ impl AutomaticTurns {
         self.owed_turn.is_some()
     }
 
+    /// Whether this session should wake itself after
+    /// [`RECOVERABLE_SELF_WAKE_DELAY`] (#2531): a recoverable failure
+    /// suspended it, so nothing else may wake it again.
     pub fn needs_self_wake(&self) -> bool {
         self.recoverable()
     }

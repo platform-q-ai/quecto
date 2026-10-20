@@ -126,9 +126,12 @@ async fn an_owed_turn_a_locked_claim_held_back_is_taken_after_the_delay() {
 }
 
 /// A self-wake scheduled for one suspension is dropped once a newer one
-/// began: it would re-arm the newer one at once, without its delay.
+/// began (it would re-arm the newer one at once, without its delay), and
+/// the newer suspension's self-wake, which the older one's pending slot
+/// kept from being scheduled when it was dated, is scheduled then
+/// (#2626 review round 3, #2531).
 #[tokio::test(start_paused = true)]
-async fn a_self_wake_for_an_older_suspension_is_dropped() {
+async fn a_stale_self_wake_hands_over_to_the_newer_suspension() {
     let mut env = Env::with_unselected_workflow();
     let (mut ctx, _waker, mut wakes) = suspended_over(&mut env, Arc::new(Claimed));
     let older = ctx.session.automatic_turns().suspension_epoch();
@@ -136,22 +139,70 @@ async fn a_self_wake_for_an_older_suspension_is_dropped() {
         ctx.turn_control
             .schedule_self_wake(RECOVERABLE_SELF_WAKE_DELAY, older)
     );
+    // A newer suspension, dated as production dates it, while the older
+    // self-wake is still pending: its own self-wake cannot be scheduled.
     ctx.session
         .automatic_turns()
         .suspend_after_failure(&unavailable());
+    date_provider_suspension(&mut ctx).await;
     let generation = self_wake_within(&mut wakes, RECOVERABLE_SELF_WAKE_DELAY * 2)
         .await
         .expect("the older self-wake fires");
     handle_wake(&mut ctx, generation).await;
-    assert!(user_prompts(&ctx).is_empty(), "nothing re-armed");
+    assert!(
+        user_prompts(&ctx).is_empty(),
+        "the stale wake re-armed nothing"
+    );
     assert!(!ctx.session.automatic_turns_allowed());
-    // The newer suspension's own self-wake, at the current epoch, runs.
-    date_provider_suspension(&mut ctx).await;
-    let generation = self_wake_within(&mut wakes, RECOVERABLE_SELF_WAKE_DELAY * 2)
+    let early = RECOVERABLE_SELF_WAKE_DELAY - std::time::Duration::from_secs(1);
+    assert_eq!(
+        self_wake_within(&mut wakes, early).await,
+        None,
+        "it keeps its delay"
+    );
+    let generation = self_wake_within(&mut wakes, RECOVERABLE_SELF_WAKE_DELAY)
         .await
-        .expect("the newer self-wake");
+        .expect("the newer suspension's self-wake");
     handle_wake(&mut ctx, generation).await;
     assert_eq!(user_prompts(&ctx), [RECOVERED_WAKE]);
+}
+
+/// A stale self-wake keeps a deferred outside wake's generation for the
+/// next wake rather than losing it.
+#[tokio::test(start_paused = true)]
+async fn a_stale_self_wake_keeps_a_deferred_wake() {
+    let mut env = Env::with_unselected_workflow();
+    let (mut ctx, _waker, _wakes) = suspended_over(&mut env, Arc::new(Claimed));
+    let older = ctx.session.automatic_turns().suspension_epoch();
+    ctx.session
+        .automatic_turns()
+        .suspend_after_failure(&unavailable());
+    ctx.turn_control.defer_swarm_wake(41);
+    assert!(
+        ctx.turn_control
+            .schedule_self_wake(std::time::Duration::ZERO, older)
+    );
+    tokio::task::yield_now().await;
+    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    handle_wake(&mut ctx, 0).await;
+    assert_eq!(ctx.turn_control.take_swarm_wake(0), 41, "kept");
+}
+
+/// A durable probe error (not contention) schedules no further self-wake.
+#[tokio::test(start_paused = true)]
+async fn a_durable_probe_error_schedules_no_self_wake() {
+    let mut env = Env::with_unselected_workflow();
+    let (mut ctx, _waker, mut wakes) = suspended_over(
+        &mut env,
+        Arc::new(super::super::Answer(Err("run not found"))),
+    );
+    ctx.turn_control.queue_swarm_wake(3);
+    handle_wake(&mut ctx, 3).await;
+    assert!(!ctx.session.automatic_turns_allowed());
+    assert_eq!(
+        self_wake_within(&mut wakes, RECOVERABLE_SELF_WAKE_DELAY * 2).await,
+        None
+    );
 }
 
 /// A paused run takes no turn: its wake leaves a recoverable failure
