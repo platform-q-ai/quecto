@@ -65,6 +65,14 @@ pub(super) struct Clock {
 }
 
 impl Clock {
+    /// A clock that starts now, for the actor's own tests.
+    #[cfg(test)]
+    pub(super) fn starting_now() -> Self {
+        Self {
+            start: Instant::now(),
+        }
+    }
+
     pub(super) fn now_ms(&self) -> u64 {
         u64::try_from(self.start.elapsed().as_millis()).unwrap_or(u64::MAX)
     }

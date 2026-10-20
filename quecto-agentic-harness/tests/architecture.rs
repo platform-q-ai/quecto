@@ -4255,13 +4255,48 @@ fn the_authority_actor_settles_binds_and_disconnects_through_use_cases() {
 }
 
 /// Whether `source` holds a constant-time comparison: one named so, or the
-/// shape of one, an XOR folded into an accumulator (`acc |= x ^ y`,
-/// `acc |= usize::from(x ^ y)`).
+/// shape of one on the syntax tree, an OR (`|` or `|=`) with an XOR in an
+/// operand, however the loop, the fold or the names are spelled (#2627
+/// review).
 fn constant_time_comparison_in(source: &str) -> bool {
-    let compact: String = source.split_whitespace().collect();
-    source.contains("fn constant_time_eq(")
-        || (compact.contains("|=") && (compact.contains("|=x^y") || compact.contains("^y)")))
-            && compact.contains(".zip(")
+    use syn::visit::Visit;
+    #[derive(Default)]
+    struct XorIn(bool);
+    impl<'ast> Visit<'ast> for XorIn {
+        fn visit_expr_binary(&mut self, expr: &'ast syn::ExprBinary) {
+            if matches!(expr.op, syn::BinOp::BitXor(_) | syn::BinOp::BitXorAssign(_)) {
+                self.0 = true;
+            }
+            syn::visit::visit_expr_binary(self, expr);
+        }
+    }
+    fn holds_xor(expr: &syn::Expr) -> bool {
+        let mut found = XorIn::default();
+        found.visit_expr(expr);
+        found.0
+    }
+    #[derive(Default)]
+    struct Folded(bool);
+    impl<'ast> Visit<'ast> for Folded {
+        fn visit_expr_binary(&mut self, expr: &'ast syn::ExprBinary) {
+            if matches!(expr.op, syn::BinOp::BitOr(_) | syn::BinOp::BitOrAssign(_))
+                && (holds_xor(&expr.left) || holds_xor(&expr.right))
+            {
+                self.0 = true;
+            }
+            syn::visit::visit_expr_binary(self, expr);
+        }
+    }
+    if source.contains("fn constant_time_eq(") {
+        return true;
+    }
+    let Ok(file) = syn::parse_file(source) else {
+        // Fail closed: a file the scan cannot read is judged by its text.
+        return source.contains('^');
+    };
+    let mut folded = Folded::default();
+    folded.visit_file(&file);
+    folded.0
 }
 
 #[test]
@@ -4270,10 +4305,21 @@ fn a_constant_time_comparison_is_recognised_by_its_shape() {
         "fn constant_time_eq(a: &str, b: &str) -> bool { true }",
         "fn matches(a: &[u8], b: &[u8]) -> bool { let mut d = 0u8; for (x, y) in a.iter().zip(b) { d |= x ^ y; } d == 0 }",
         "fn same(a: &[u8], b: &[u8]) -> bool { let mut d = 0; for (x, y) in a.iter().zip(b) { d |= usize::from(x ^ y); } d == 0 }",
+        // Review (#2627 round 3): a fold, renamed loop variables, an index
+        // loop and `std::iter::zip`.
+        "fn f(a: &[u8], b: &[u8]) -> bool { a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0 }",
+        "fn f(a: &[u8], b: &[u8]) -> bool { let mut acc = 0; for (left, right) in a.iter().zip(b) { acc |= left ^ right; } acc == 0 }",
+        "fn f(a: &[u8], b: &[u8]) -> bool { let mut acc = 0; for i in 0..a.len() { acc |= a[i] ^ b[i]; } acc == 0 }",
+        "fn f(a: &[u8], b: &[u8]) -> bool { let mut acc = 0; for (x, y) in std::iter::zip(a, b) { acc = acc | (x ^ y); } acc == 0 }",
     ] {
         assert!(constant_time_comparison_in(source), "{source}");
     }
-    assert!(!constant_time_comparison_in("fn f(a: u8) -> u8 { a ^ 1 }"));
+    for source in [
+        "fn f(a: u8) -> u8 { a ^ 1 }",
+        "fn f(a: u8, b: u8) -> u8 { a | b }",
+    ] {
+        assert!(!constant_time_comparison_in(source), "{source}");
+    }
 }
 
 /// The journal has one owner (#1910 review): the restore use case reads the
