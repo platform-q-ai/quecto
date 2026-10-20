@@ -254,3 +254,31 @@ fn a_numeric_throttle_code_does_not_throttle_a_responses_attempt() {
     assert!(!seen.hinted);
     assert!(seen.failure, "an error event always fails the attempt");
 }
+
+/// #2609 review: the Responses wire reads only its own error names and
+/// shapes. Another wire's throttle name fails an attempt without
+/// throttling it; an `error` event's own code is recorded where the
+/// throttle check reads it.
+#[test]
+fn a_responses_attempt_reads_only_its_own_error_vocabulary() {
+    use crate::domain::inference::value_objects::attempt_diagnostics::ErrorCode;
+    for line in [
+        r#"data: {"type":"error","error":{"type":"rate_limit_error"}}"#,
+        r#"data: {"type":"response.failed","response":{"error":{"type":"overloaded_error"}}}"#,
+    ] {
+        let seen = observed(profile(), &[line], None);
+        assert!(seen.failure, "{line}");
+        assert!(!seen.hinted, "{line}");
+        assert_eq!(seen.diagnostics.error_code, None, "{line}");
+    }
+    let own = observed(
+        profile(),
+        &[r#"data: {"type":"error","code":"rate_limit_exceeded","message":"x"}"#],
+        None,
+    );
+    assert!(own.hinted);
+    assert_eq!(
+        own.diagnostics.error_code,
+        Some(ErrorCode::RateLimitExceeded)
+    );
+}

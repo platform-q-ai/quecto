@@ -608,6 +608,102 @@ fn every_way_out_of_the_folder_is_refused() {
     assert!(escapes(&mounted, Path::new("transport"), &in_folder).is_empty());
 }
 
+/// The error names the wires declare, read from the source of every module
+/// of `providers/` outside `transport/` that implements `WireDialect`
+/// (#2620 review). `ErrorName`'s fields are private, so its `const`
+/// constructors (`ErrorName::throttle("…", …)` and its siblings) are the
+/// only way to declare one: each must name a string literal, and each
+/// file's names must number exactly its `[ErrorName; N]` tables.
+fn wire_error_names() -> Vec<String> {
+    wire_sources()
+        .iter()
+        .flat_map(|(file, source, _)| declared_error_names(source, &file.display().to_string()))
+        .collect()
+}
+
+/// The error names `source` (the file `file`) declares; panics on an
+/// `ErrorName` named by anything but a string literal, or names that do not
+/// number its `[ErrorName; N]` tables.
+fn declared_error_names(source: &str, file: &str) -> Vec<String> {
+    #[derive(Default)]
+    struct Names {
+        names: Vec<String>,
+        declared: usize,
+    }
+    impl<'ast> Visit<'ast> for Names {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            let segments: Vec<String> = match &*call.func {
+                syn::Expr::Path(path) => path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let constructor = segments.len() >= 2 && segments[segments.len() - 2] == "ErrorName";
+            if constructor {
+                match call.args.first() {
+                    Some(syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(name),
+                        ..
+                    })) => self.names.push(name.value()),
+                    other => panic!(
+                        "an ErrorName must name a string literal: {}",
+                        other.map_or(String::new(), |arg| arg.to_token_stream().to_string())
+                    ),
+                }
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+        fn visit_type_array(&mut self, array: &'ast syn::TypeArray) {
+            let of_names = matches!(
+                &*array.elem,
+                syn::Type::Path(path) if path.path.segments.last().is_some_and(|last| last.ident == "ErrorName")
+            );
+            if of_names {
+                match &array.len {
+                    syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Int(count),
+                        ..
+                    }) => self.declared += count.base10_parse::<usize>().expect("a table length"),
+                    other => panic!(
+                        "an ErrorName table has a literal length: {}",
+                        other.to_token_stream()
+                    ),
+                }
+            }
+            syn::visit::visit_type_array(self, array);
+        }
+    }
+    let mut names = Names::default();
+    names.visit_file(&syn::parse_file(source).expect("a wire parses"));
+    assert_eq!(
+        names.names.len(),
+        names.declared,
+        "{file}: the error names declared are those its tables hold"
+    );
+    names.names
+}
+
+/// #2620 review: an error name declared any other way than a constructor
+/// on a string literal, or a table the names do not fill, is refused.
+#[test]
+fn error_names_are_declared_only_as_literals_in_counted_tables() {
+    let declared = "static E: [ErrorName; 2] = [\
+        ErrorName::throttle(\"a\", ErrorCode::Overloaded),\
+        crate::x::ErrorName::plain(\"b\", ErrorCode::ServerError)];";
+    assert_eq!(declared_error_names(declared, "fixture"), ["a", "b"]);
+    for refused in [
+        "const N: &str = \"overloaded_error\";\nstatic E: [ErrorName; 1] = [ErrorName::throttle(N, ErrorCode::Overloaded)];",
+        "static E: [ErrorName; 2] = [ErrorName::throttle(\"a\", ErrorCode::Overloaded)];",
+        "static E: [ErrorName; 1] = [ErrorName::plain(concat!(\"a\", \"b\"), ErrorCode::ServerError)];",
+    ] {
+        let caught = std::panic::catch_unwind(|| declared_error_names(refused, "fixture"));
+        assert!(caught.is_err(), "not refused: {refused}");
+    }
+}
+
 /// Every literal of `stream`, decoded.
 fn literals(stream: TokenStream, found: &mut Vec<String>) {
     for token in stream {
@@ -619,58 +715,13 @@ fn literals(stream: TokenStream, found: &mut Vec<String>) {
     }
 }
 
-/// The event names the wires declare: every string in each wire's
-/// `Vocabulary` statics (its known events and its terminal ones), read from
-/// the source of every module of `providers/` outside `transport/` that
-/// implements `WireDialect` (#2609 review round 2).
-fn wire_event_names() -> Vec<String> {
-    #[derive(Default)]
-    struct Names(Vec<String>);
-    impl<'ast> Visit<'ast> for Names {
-        fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
-            let vocabulary = matches!(
-                &*item.ty,
-                syn::Type::Path(path) if path.path.segments.last().is_some_and(|last| last.ident == "Vocabulary")
-            );
-            if vocabulary {
-                let mut found = Vec::new();
-                literals(item.expr.to_token_stream(), &mut found);
-                self.0.extend(found);
-            }
-            syn::visit::visit_item_static(self, item);
-        }
-    }
-    let mut wires = Vec::new();
-    rust_files(Path::new("src/infrastructure/providers"), &mut wires);
-    let mut names = Names::default();
-    let mut files = 0;
-    for wire in wires.iter().filter(|file| !file.starts_with(TRANSPORT)) {
-        let source = std::fs::read_to_string(wire).expect("read a source");
-        if source.contains("impl WireDialect for") {
-            files += 1;
-            names.visit_file(&syn::parse_file(&source).expect("a wire parses"));
-        }
-    }
-    assert!(files >= 3, "every wire was read ({files})");
-    names.0
-}
-
-/// The event names `transport/` may still spell, each because it is also
-/// a field name every wire's error payloads use: `error`.
-const SHARED_EVENT_NAMES: &[&str] = &["error"];
-
-/// #2609 review round 2: a wire's events live beside its dialect. No
-/// production module of `transport/` spells any wire's event name, but for
-/// [`SHARED_EVENT_NAMES`], so none slides back into the shared mechanics.
+/// #2620 review: a wire's error vocabulary lives beside its dialect. No
+/// production module of `transport/` spells any wire's error name, so none
+/// slides back into the shared readers.
 #[test]
-fn transport_spells_no_wire_event_name() {
-    let names = wire_event_names();
-    for expected in [
-        "response.completed",
-        "response.incomplete",
-        "message_stop",
-        "ping",
-    ] {
+fn transport_spells_no_wire_error_name() {
+    let names = wire_error_names();
+    for expected in ["rate_limit_exceeded", "overloaded_error", "invalid_api_key"] {
         assert!(
             names.iter().any(|name| name == expected),
             "{expected} in {names:?}"
@@ -690,14 +741,243 @@ fn transport_spells_no_wire_event_name() {
             );
             spelled
                 .into_iter()
-                .filter(|literal| {
-                    names.contains(literal) && !SHARED_EVENT_NAMES.contains(&literal.as_str())
-                })
+                .filter(|literal| names.contains(literal))
+                .map(move |literal| format!("{}: {literal:?}", file.display()))
+        })
+        .collect();
+    assert!(
+        found.is_empty(),
+        "a wire's error name in transport/: {found:#?}"
+    );
+}
+
+/// The event names the wires declare: every string in each wire's
+/// `Vocabulary` statics (its known events and its terminal ones), read from
+/// the source of every module of `providers/` outside `transport/` that
+/// implements `WireDialect` (#2609 review round 2).
+fn wire_event_names() -> Vec<String> {
+    wire_sources()
+        .iter()
+        .flat_map(|(_, _, parsed)| vocabulary_names(parsed))
+        .collect()
+}
+
+/// Whether `file` implements `WireDialect` anywhere: an `impl` whose trait
+/// path ends in `WireDialect`, however it is named (#2620 review round 3).
+fn implements_wire_dialect(file: &syn::File) -> bool {
+    #[derive(Default)]
+    struct Found(bool);
+    impl<'ast> Visit<'ast> for Found {
+        fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+            let dialect = item.trait_.as_ref().is_some_and(|(_, path, _)| {
+                path.segments
+                    .last()
+                    .is_some_and(|last| last.ident == "WireDialect")
+            });
+            self.0 |= dialect;
+            syn::visit::visit_item_impl(self, item);
+        }
+    }
+    let mut found = Found::default();
+    found.visit_file(file);
+    found.0
+}
+
+/// Every module of `providers/` outside `transport/` that implements
+/// `WireDialect`: its path, source and parse. At least the three wires.
+fn wire_sources() -> Vec<(PathBuf, String, syn::File)> {
+    let mut files = Vec::new();
+    rust_files(Path::new("src/infrastructure/providers"), &mut files);
+    let wires: Vec<(PathBuf, String, syn::File)> = files
+        .into_iter()
+        .filter(|file| !file.starts_with(TRANSPORT))
+        .filter_map(|file| {
+            let source = std::fs::read_to_string(&file).expect("read a source");
+            let parsed = syn::parse_file(&source).expect("a source parses");
+            implements_wire_dialect(&parsed).then_some((file, source, parsed))
+        })
+        .collect();
+    assert!(wires.len() >= 3, "every wire was read ({})", wires.len());
+    wires
+}
+
+/// #2620 review round 3: a wire is found by its `impl`, however its trait
+/// is named, and its vocabulary is read from a `const` as from a `static`.
+#[test]
+fn a_wire_is_found_by_its_impl_and_read_from_any_item() {
+    for named in [
+        "impl WireDialect for X {}",
+        "impl wire_dialect::WireDialect for X {}",
+        "mod inner { impl crate::infrastructure::providers::transport::wire_dialect::WireDialect for X {} }",
+    ] {
+        assert!(
+            implements_wire_dialect(&syn::parse_file(named).unwrap()),
+            "{named}"
+        );
+    }
+    for unrelated in [
+        "impl Other for X {}",
+        "impl X {}",
+        "// impl WireDialect for X\nfn f() {}",
+    ] {
+        assert!(
+            !implements_wire_dialect(&syn::parse_file(unrelated).unwrap()),
+            "{unrelated}"
+        );
+    }
+    let constant = "const V: Vocabulary = Vocabulary { known: &[\"a.b\"], terminal: &[] };\n\
+        static W: transport::Vocabulary = Vocabulary { known: &[\"c\"], terminal: &[] };";
+    assert_eq!(
+        vocabulary_names(&syn::parse_file(constant).unwrap()),
+        ["a.b", "c"]
+    );
+}
+
+/// The strings of `file`'s `Vocabulary` items, `static` or `const`.
+fn vocabulary_names(file: &syn::File) -> Vec<String> {
+    #[derive(Default)]
+    struct Names(Vec<String>);
+    fn vocabulary(ty: &syn::Type) -> bool {
+        matches!(ty, syn::Type::Path(path) if path.path.segments.last().is_some_and(|last| last.ident == "Vocabulary"))
+    }
+    impl<'ast> Visit<'ast> for Names {
+        fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
+            if vocabulary(&item.ty) {
+                literals(item.expr.to_token_stream(), &mut self.0);
+            }
+            syn::visit::visit_item_static(self, item);
+        }
+        fn visit_item_const(&mut self, item: &'ast syn::ItemConst) {
+            if vocabulary(&item.ty) {
+                literals(item.expr.to_token_stream(), &mut self.0);
+            }
+            syn::visit::visit_item_const(self, item);
+        }
+    }
+    let mut names = Names::default();
+    names.visit_file(file);
+    names.0
+}
+
+/// #2609 review round 2: a wire's events live beside its dialect. No
+/// production item of `transport/` spells any wire's event name, so none
+/// slides back into the shared mechanics.
+#[test]
+fn transport_spells_no_wire_event_name() {
+    let names = wire_event_names();
+    for expected in [
+        "response.completed",
+        "response.incomplete",
+        "message_stop",
+        "ping",
+    ] {
+        assert!(
+            names.iter().any(|name| name == expected),
+            "{expected} in {names:?}"
+        );
+    }
+    let found: Vec<String> = dependency_scan::mounted_under(&MODULE)
+        .iter()
+        .filter(|(_, _, test)| !test)
+        .flat_map(|(file, _, _)| {
+            let source = std::fs::read_to_string(file).expect("read a source");
+            // Its production items only: a `#[cfg(test)]` item (the test
+            // wire) is the tests'.
+            let mut spelled = Vec::new();
+            for item in syn::parse_file(&source).expect("a source parses").items {
+                if !dependency_scan::item_test_only(&item) {
+                    literals(item.to_token_stream(), &mut spelled);
+                }
+            }
+            spelled
+                .into_iter()
+                .filter(|literal| names.contains(literal))
                 .map(move |literal| format!("{}: {literal:?}", file.display()))
         })
         .collect();
     assert!(
         found.is_empty(),
         "a wire's event name in transport/: {found:#?}"
+    );
+}
+
+/// Every string literal of `stream` (byte and C strings too) outside
+/// documentation text, decoded: numbers name no wire.
+fn code_literals(stream: TokenStream, found: &mut Vec<String>) {
+    let tokens: Vec<TokenTree> = stream.into_iter().collect();
+    for (at, token) in tokens.iter().enumerate() {
+        match token {
+            TokenTree::Group(group) if !doc_text(&tokens[..at], group) => {
+                code_literals(group.stream(), found)
+            }
+            TokenTree::Literal(literal) => {
+                let string = matches!(
+                    syn::parse2::<syn::Lit>(literal.to_token_stream()),
+                    Ok(syn::Lit::Str(_) | syn::Lit::ByteStr(_) | syn::Lit::CStr(_))
+                );
+                if string {
+                    found.push(decoded(literal));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The literals `transport/` shares with the wires' dialects, each because
+/// it names nothing of one wire: the empty string, the `type` field every
+/// typed payload carries (bare, and quoted as a long event's start spells
+/// it), the `code` field every wire's error objects carry beside their
+/// `type` (the shared readers read both), and the `response` a failed
+/// read's message names.
+const SHARED_LITERALS: &[&str] = &["", "type", "\"type\"", "code", "response"];
+
+/// #2609 review round 2 (completed here, once the error vocabulary has
+/// moved): no production module of `transport/` spells a literal any
+/// wire's dialect spells — an event name, an error name, a field or reason
+/// only that wire sends (`incomplete_details`, `max_output_tokens`) — but
+/// for [`SHARED_LITERALS`].
+#[test]
+fn transport_shares_no_literal_with_a_wire_but_the_neutral_ones() {
+    let mut spelled_by_wires = Vec::new();
+    for (_, _, parsed) in wire_sources() {
+        code_literals(parsed.to_token_stream(), &mut spelled_by_wires);
+    }
+    for expected in [
+        "incomplete_details",
+        "max_output_tokens",
+        "response.completed",
+        "overloaded_error",
+    ] {
+        assert!(
+            spelled_by_wires.iter().any(|literal| literal == expected),
+            "{expected} is a wire's"
+        );
+    }
+    let found: Vec<String> = dependency_scan::mounted_under(&MODULE)
+        .iter()
+        .filter(|(_, _, test)| !test)
+        .flat_map(|(file, _, _)| {
+            let source = std::fs::read_to_string(file).expect("read a source");
+            // Its production items only: a `#[cfg(test)]` item (the test
+            // wire) is the tests'.
+            let mut spelled = Vec::new();
+            for item in syn::parse_file(&source).expect("a source parses").items {
+                if !dependency_scan::item_test_only(&item) {
+                    code_literals(item.to_token_stream(), &mut spelled);
+                }
+            }
+            spelled
+                .into_iter()
+                .filter(|literal| {
+                    spelled_by_wires.contains(literal)
+                        && !SHARED_LITERALS.contains(&literal.as_str())
+                })
+                .map(move |literal| format!("{}: {literal:?}", file.display()))
+        })
+        .collect();
+    assert!(
+        found.is_empty(),
+        "a wire's literal in transport/: {found:#?}"
     );
 }

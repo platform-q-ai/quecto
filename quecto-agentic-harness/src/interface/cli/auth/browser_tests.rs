@@ -62,6 +62,14 @@ impl TokenExchange for IssuesForTheCallbackCode {
             ))),
         }
     }
+
+    fn refresh(
+        &self,
+        _provider: LoginProvider,
+        _refresh_token: &str,
+    ) -> Result<IssuedToken, TokenExchangeError> {
+        unreachable!("a browser login refreshes nothing")
+    }
 }
 
 /// Composition's handles with the browser login over the real loopback
