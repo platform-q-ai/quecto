@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use quecto::domain::admission::value_objects::inference_admission::WorkloadClass;
 use quecto::infrastructure::admission::{AdminConnection, AuthorityConnection, AuthorityDirectory};
+use quecto::infrastructure::processes::parent_death_signal::{DeathSignal, arm_in_child};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -131,12 +132,83 @@ fn write_config(dir: &Path, provider_base: &str, admission: Option<(usize, u64)>
     path
 }
 
-struct Proc(Child);
+/// A child the test kills and reaps when it is dropped, so a failed
+/// assertion never strands it (#2631). `into_inner` hands it over, unkilled,
+/// to be waited on to its own end.
+struct Proc(Option<Child>);
+
+impl Proc {
+    fn new(child: Child) -> Self {
+        Self(Some(child))
+    }
+
+    fn child(&mut self) -> &mut Child {
+        self.0
+            .as_mut()
+            .expect("the child is held until it is handed over")
+    }
+
+    fn id(&self) -> u32 {
+        self.0
+            .as_ref()
+            .expect("the child is held until it is handed over")
+            .id()
+    }
+
+    fn into_inner(mut self) -> Child {
+        self.0
+            .take()
+            .expect("the child is held until it is handed over")
+    }
+}
+
 impl Drop for Proc {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
+}
+
+/// Every child of this test dies with the thread that spawned it, even when
+/// the test binary itself is killed and no `Drop` runs (#2631): the kernel
+/// sends it SIGTERM (Linux `PR_SET_PDEATHSIG`, armed as the harness arms its
+/// own children).
+fn dies_with_the_test(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    let parent = libc::pid_t::try_from(std::process::id()).expect("a process id fits pid_t");
+    // The closure runs in the forked child before exec.
+    // SAFETY: there, arm_in_child's contract holds.
+    unsafe {
+        command.pre_exec(move || arm_in_child(parent, DeathSignal::Terminate));
+    }
+}
+
+/// The guard proven (#2631): a child armed by [`dies_with_the_test`] is
+/// signalled when the thread that spawned it ends, with nothing reaping it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_test_child_dies_with_the_thread_that_spawned_it() {
+    use std::os::unix::process::ExitStatusExt;
+    let child = std::thread::spawn(|| {
+        let mut command = Command::new("sleep");
+        command.arg("30");
+        dies_with_the_test(&mut command);
+        command.spawn().expect("spawn sleep")
+    })
+    .join()
+    .expect("the spawning thread ends");
+    let mut child = Proc::new(child);
+    let deadline = Instant::now() + LIMIT;
+    let status = loop {
+        if let Some(status) = child.child().try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "the orphaned child kept running");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(status.signal(), Some(libc::SIGTERM), "{status:?}");
 }
 
 fn quecto(dir: &Path, args: &[&str]) -> Command {
@@ -149,6 +221,7 @@ fn quecto(dir: &Path, args: &[&str]) -> Command {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    dies_with_the_test(&mut command);
     std::fs::create_dir_all(dir.join("run")).unwrap();
     command
 }
@@ -177,7 +250,7 @@ fn start_broker(dir: &Path, config: &Path) -> Proc {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-    Proc(child)
+    Proc::new(child)
 }
 
 fn root_agent(dir: &Path, config: &Path, extra: &[&str]) -> Child {
@@ -354,30 +427,32 @@ async fn descendant_context_waits_behind_its_root_and_a_forged_context_fails_clo
     // Readiness negotiates admission: a UDS child with a forged capability
     // exits before its control socket ever accepts.
     let socket = temp.path().join("run").join("forged.sock");
-    let mut uds = quecto(
-        temp.path(),
-        &[
-            "--config",
-            config.to_str().unwrap(),
-            "agent",
-            "--mode",
-            "uds",
-            "--no-session",
-            "--socket",
-            socket.to_str().unwrap(),
-            "--admission-context",
-            forged.to_str().unwrap(),
-        ],
-    )
-    .spawn()
-    .unwrap();
+    let mut uds = Proc::new(
+        quecto(
+            temp.path(),
+            &[
+                "--config",
+                config.to_str().unwrap(),
+                "agent",
+                "--mode",
+                "uds",
+                "--no-session",
+                "--socket",
+                socket.to_str().unwrap(),
+                "--admission-context",
+                forged.to_str().unwrap(),
+            ],
+        )
+        .spawn()
+        .unwrap(),
+    );
     let deadline = Instant::now() + LIMIT;
     loop {
         assert!(
             std::os::unix::net::UnixStream::connect(&socket).is_err(),
             "forged child must not announce readiness"
         );
-        if let Some(status) = uds.try_wait().unwrap() {
+        if let Some(status) = uds.child().try_wait().unwrap() {
             assert!(!status.success(), "forged UDS child exits non-zero");
             break;
         }
@@ -466,25 +541,27 @@ async fn sigkilled_authority_restarts_with_orphans_and_does_not_kill_clients() {
     let config = write_config(temp.path(), &provider.base, Some((2, 2_000)));
     let broker = start_broker(temp.path(), &config);
     let socket = temp.path().join("run").join("root.sock");
-    let mut uds_root = quecto(
-        temp.path(),
-        &[
-            "--config",
-            config.to_str().unwrap(),
-            "agent",
-            "--mode",
-            "uds",
-            "--no-session",
-            "--socket",
-            socket.to_str().unwrap(),
-        ],
-    )
-    .spawn()
-    .unwrap();
+    let mut uds_root = Proc::new(
+        quecto(
+            temp.path(),
+            &[
+                "--config",
+                config.to_str().unwrap(),
+                "agent",
+                "--mode",
+                "uds",
+                "--no-session",
+                "--socket",
+                socket.to_str().unwrap(),
+            ],
+        )
+        .spawn()
+        .unwrap(),
+    );
     let deadline = Instant::now() + LIMIT;
     while !socket.exists() {
         assert!(
-            uds_root.try_wait().unwrap().is_none(),
+            uds_root.child().try_wait().unwrap().is_none(),
             "uds root exited early"
         );
         assert!(Instant::now() < deadline, "uds root never became ready");
@@ -499,7 +576,7 @@ async fn sigkilled_authority_restarts_with_orphans_and_does_not_kill_clients() {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    let broker_pid = broker.0.id();
+    let broker_pid = broker.id();
     assert!(
         Command::new("kill")
             .args(["-KILL", &broker_pid.to_string()])
@@ -510,7 +587,7 @@ async fn sigkilled_authority_restarts_with_orphans_and_does_not_kill_clients() {
     drop(broker);
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(
-        uds_root.try_wait().unwrap().is_none(),
+        uds_root.child().try_wait().unwrap().is_none(),
         "authority death must not kill unrelated sessions"
     );
     let _restarted = start_broker(temp.path(), &config);
@@ -537,8 +614,7 @@ async fn sigkilled_authority_restarts_with_orphans_and_does_not_kill_clients() {
         "outstanding attempt is orphaned, not forgotten"
     );
     assert_eq!(status["groups"]["g"]["active"], 1);
-    let _ = uds_root.kill();
-    let _ = uds_root.wait();
+    drop(uds_root);
     let _ = tokio::task::spawn_blocking(move || finish(holder)).await;
 }
 
@@ -549,17 +625,19 @@ async fn sigterm_stops_the_authority_cleanly() {
     let temp = tempfile::tempdir().unwrap();
     let provider = fake_provider(Duration::from_millis(10)).await;
     let config = write_config(temp.path(), &provider.base, Some((2, 2_000)));
-    let mut broker = quecto(
-        temp.path(),
-        &[
-            "--config",
-            config.to_str().unwrap(),
-            "admission-broker",
-            "run",
-        ],
-    )
-    .spawn()
-    .expect("spawn broker");
+    let mut broker = Proc::new(
+        quecto(
+            temp.path(),
+            &[
+                "--config",
+                config.to_str().unwrap(),
+                "admission-broker",
+                "run",
+            ],
+        )
+        .spawn()
+        .expect("spawn broker"),
+    );
     let socket = temp
         .path()
         .join("authority")
@@ -567,11 +645,15 @@ async fn sigterm_stops_the_authority_cleanly() {
         .join("admission.sock");
     let deadline = Instant::now() + LIMIT;
     while std::os::unix::net::UnixStream::connect(&socket).is_err() {
-        assert!(broker.try_wait().unwrap().is_none(), "broker exited early");
+        assert!(
+            broker.child().try_wait().unwrap().is_none(),
+            "broker exited early"
+        );
         assert!(Instant::now() < deadline, "authority never accepted");
         std::thread::sleep(Duration::from_millis(20));
     }
     let pid = broker.id();
+    let broker = broker.into_inner();
     assert!(
         Command::new("kill")
             .args(["-TERM", &pid.to_string()])
