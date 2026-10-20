@@ -78,8 +78,10 @@ pub fn published_cost(id: &str) -> Option<ModelCost> {
 /// The cost a declaration states for model `id` (#1855 review M2), each
 /// rate it leaves out filled in: from the published table for `id` when
 /// the table knows it; else a cache rate is the input rate (a cache read
-/// or write is never free unless declared so), and an input or output rate
-/// is zero. A rate the declaration states always wins.
+/// or write is never free unless declared so). For an id the table does
+/// not know, a declaration without both an input and an output rate is no
+/// price at all (it would bill the missing one at $0). A rate the
+/// declaration states always wins.
 pub fn declared_cost(
     id: &str,
     input: Option<f64>,
@@ -88,12 +90,10 @@ pub fn declared_cost(
     cache_write: Option<f64>,
 ) -> ModelCost {
     let published = published_cost(id);
-    // A declaration that states no rate, for an id the table does not
-    // know, states no price.
-    let declared = [input, output, cache_read, cache_write]
-        .iter()
-        .any(Option::is_some)
-        || published.is_some();
+    // For an id the table does not know, a declaration states a price only
+    // when it states both an input and an output rate: a missing one would
+    // silently bill at $0, so such a cost stays unpriced (#2630 review).
+    let declared = published.is_some() || (input.is_some() && output.is_some());
     let input = input
         .or(published.as_ref().map(|cost| cost.input))
         .unwrap_or(0.0);

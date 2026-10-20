@@ -103,7 +103,8 @@ fn a_model_declared_free_is_priced_at_zero() {
         tmp.path().join("models.json"),
         r#"{"providers":{"local":{"api":"openai-completions","baseUrl":"http://127.0.0.1:8080/v1","models":[
             {"id":"free-model","cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}},
-            {"id":"unstated-model"}
+            {"id":"unstated-model"},
+            {"id":"input-only-model","cost":{"input":3}}
         ]}}}"#,
     )
     .unwrap();
@@ -111,4 +112,7 @@ fn a_model_declared_free_is_priced_at_zero() {
     assert_eq!(free.price, micro(0.0, 0.0, 0.0, 0.0));
     let unstated = published_model_limits_for(tmp.path(), "local/unstated-model");
     assert_eq!(unstated.price, None);
+    // #2630 review: an input rate alone would bill output at $0: unpriced.
+    let partial = published_model_limits_for(tmp.path(), "local/input-only-model");
+    assert_eq!(partial.price, None);
 }

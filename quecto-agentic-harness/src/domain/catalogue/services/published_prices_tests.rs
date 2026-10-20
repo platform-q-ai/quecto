@@ -147,7 +147,11 @@ fn mythos_and_haiku_5_5_carry_their_published_rates() {
 #[test]
 fn only_a_stated_cost_is_declared() {
     assert!(!declared_cost("local-model", None, None, None, None).declared);
-    assert!(declared_cost("local-model", Some(0.0), None, None, None).declared);
+    // #2630 review: an unknown id needs both an input and an output rate,
+    // or the missing one would bill at $0.
+    assert!(!declared_cost("local-model", Some(3.0), None, None, None).declared);
+    assert!(!declared_cost("local-model", None, Some(3.0), None, None).declared);
+    assert!(declared_cost("local-model", Some(0.0), Some(0.0), None, None).declared);
     assert!(declared_cost("claude-opus-4-6", None, None, None, None).declared);
     assert!(published_cost("grok-4.5").unwrap().declared);
     assert!(!cost_of_id("local-model").declared);
