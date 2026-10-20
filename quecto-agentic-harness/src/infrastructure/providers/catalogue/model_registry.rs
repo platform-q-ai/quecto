@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::domain::catalogue::value_objects::model_facts::PromptLimit;
 use crate::domain::conversation::value_objects::message::{ModelPricing, model_pricing};
+use crate::infrastructure::persistence::file::json_failure;
 use crate::infrastructure::providers::transport::stream_idle::{StreamIdle, StreamLimits};
 
 /// The price of a Claude 5 built-in, `None` for any other id.
@@ -116,7 +117,13 @@ impl std::fmt::Display for ModelRegistryError {
         match self {
             Self::Io(e) => write!(f, "failed to read models registry: {e}"),
             Self::Parse(why) => write!(f, "failed to parse models registry: {why}"),
-            Self::UnknownApi(api) => write!(f, "unknown api '{api}' in models registry"),
+            // The declared api is quoted, escaped: it names a transport, not
+            // a secret, and saying which helps (#2617 review 2).
+            Self::UnknownApi(api) => write!(
+                f,
+                "unknown api '{}' in models registry",
+                json_failure::escaped(api)
+            ),
         }
     }
 }
@@ -256,8 +263,7 @@ impl ModelRegistry {
         }
         let content = std::fs::read_to_string(path).map_err(ModelRegistryError::Io)?;
         let file: RegistryFile =
-            crate::infrastructure::persistence::file::json_failure::from_str(&content)
-                .map_err(ModelRegistryError::Parse)?;
+            json_failure::from_str(&content).map_err(ModelRegistryError::Parse)?;
         // Deterministic provider order regardless of the map's iteration.
         let mut providers: Vec<_> = file.providers.into_iter().collect();
         providers.sort_by(|a, b| a.0.cmp(&b.0));
@@ -313,7 +319,8 @@ impl ModelRegistry {
                             skipped.push(SkippedProviderBlock {
                                 provider: provider_key.clone(),
                                 error: format!(
-                                    "provider '{provider_key}' declares an unknown auth mode (supported: apiKey, oauth); its models were skipped"
+                                    "provider '{}' declares an unknown auth mode (supported: apiKey, oauth); its models were skipped",
+                                    json_failure::escaped(&provider_key)
                                 ),
                             });
                             continue;

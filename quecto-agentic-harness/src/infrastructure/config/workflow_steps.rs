@@ -4,6 +4,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use super::ConfigError;
+use crate::infrastructure::persistence::file::json_failure::{self as json, escaped, printable};
 
 pub(super) const MAX_WORKFLOW_STEP_FILE_BYTES: u64 = 64 * 1024;
 
@@ -42,8 +43,8 @@ pub(super) fn resolve_workflow_step_entries(
         let id = template
             .get("id")
             .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
+            .map(escaped)
+            .unwrap_or_default();
         let Some(steps) = template
             .get_mut("steps")
             .and_then(serde_json::Value::as_array_mut)
@@ -104,8 +105,10 @@ pub(super) fn resolve_workflow_step_entry(
             let mut step = load_workflow_step(base_dir, &reference)?;
             let target = step.as_object_mut().expect("loaded step is an object");
             target.extend(object);
-            serde_json::from_value::<crate::domain::workflow::WorkflowTemplateStep>(step.clone())
-                .map_err(|error| ConfigError::WorkflowStep(format!("{reference}: {error}")))?;
+            json::from_value::<crate::domain::workflow::WorkflowTemplateStep>(step.clone())
+                .map_err(|why| {
+                    ConfigError::WorkflowStep(format!("{}: {why}", printable(&reference)))
+                })?;
             Ok(step)
         }
         serde_json::Value::Object(object) => Ok(serde_json::Value::Object(object)),
@@ -129,51 +132,51 @@ pub(super) fn load_workflow_step(
         })
     {
         return Err(ConfigError::WorkflowStep(format!(
-            "step reference must remain within the config directory: {reference}"
+            "step reference must remain within the config directory: {}",
+            printable(reference)
         )));
     }
     if relative.extension().is_none() {
         relative.set_extension("json");
     }
     let path = base_dir.join(relative);
+    // The path holds the configuration's own reference: shown escaped.
+    let shown = printable(&path.display().to_string());
     let canonical_base = base_dir
         .canonicalize()
         .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", base_dir.display())))?;
     let canonical_path = path
         .canonicalize()
-        .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", path.display())))?;
+        .map_err(|error| ConfigError::WorkflowStep(format!("{shown}: {error}")))?;
     if !canonical_path.starts_with(&canonical_base) {
         return Err(ConfigError::WorkflowStep(format!(
-            "{}: step reference escapes config directory",
-            path.display()
+            "{shown}: step reference escapes config directory"
         )));
     }
     let size = canonical_path
         .metadata()
-        .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", path.display())))?
+        .map_err(|error| ConfigError::WorkflowStep(format!("{shown}: {error}")))?
         .len();
     if size > MAX_WORKFLOW_STEP_FILE_BYTES {
         return Err(ConfigError::WorkflowStep(format!(
-            "{}: step file is too large: {size} > {MAX_WORKFLOW_STEP_FILE_BYTES}",
-            path.display()
+            "{shown}: step file is too large: {size} > {MAX_WORKFLOW_STEP_FILE_BYTES}"
         )));
     }
     let content = std::fs::read_to_string(&canonical_path)
-        .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", path.display())))?;
-    let value: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", path.display())))?;
-    let object = value.as_object().ok_or_else(|| {
-        ConfigError::WorkflowStep(format!("{}: expected a step object", path.display()))
-    })?;
+        .map_err(|error| ConfigError::WorkflowStep(format!("{shown}: {error}")))?;
+    let value: serde_json::Value = json::from_str(&content)
+        .map_err(|why| ConfigError::WorkflowStep(format!("{shown}: {why}")))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| ConfigError::WorkflowStep(format!("{shown}: expected a step object")))?;
     if object.contains_key("ref") {
         return Err(ConfigError::WorkflowStep(format!(
-            "{}: expected a step object; recursive references are not allowed",
-            path.display()
+            "{shown}: expected a step object; recursive references are not allowed"
         )));
     }
-    reject_unknown_keys(object, WORKFLOW_STEP_FIELDS, &path.display().to_string())?;
-    serde_json::from_value::<crate::domain::workflow::WorkflowTemplateStep>(value.clone())
-        .map_err(|error| ConfigError::WorkflowStep(format!("{}: {error}", path.display())))?;
+    reject_unknown_keys(object, WORKFLOW_STEP_FIELDS, &shown)?;
+    json::from_value::<crate::domain::workflow::WorkflowTemplateStep>(value.clone())
+        .map_err(|why| ConfigError::WorkflowStep(format!("{shown}: {why}")))?;
     Ok(value)
 }
 
@@ -184,7 +187,8 @@ fn reject_unknown_keys(
 ) -> Result<(), ConfigError> {
     if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
         return Err(ConfigError::WorkflowStep(format!(
-            "{context}: unknown field `{key}`"
+            "{context}: unknown field `{}`",
+            escaped(key)
         )));
     }
     Ok(())

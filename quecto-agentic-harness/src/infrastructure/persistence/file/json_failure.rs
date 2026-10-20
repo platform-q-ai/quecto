@@ -9,6 +9,8 @@
 //! duplicate field, and the values a variant may take; never a value or a
 //! key the file holds.
 
+use crate::application::configuration::dto::DocumentTextFailure;
+
 /// The longest a field-path segment is printed; longer keys are cut.
 const SEGMENT_CHARS: usize = 64;
 
@@ -18,10 +20,12 @@ const SEGMENT_CHARS: usize = 64;
 pub fn category(error: &serde_json::Error) -> String {
     use serde_json::error::Category;
     match error.classify() {
-        Category::Syntax => "malformed JSON".to_string(),
-        Category::Eof => "the file ends early".to_string(),
-        Category::Io => "the file could not be read".to_string(),
         Category::Data => data_category(&error.to_string()),
+        // A failure of the text itself: worded once, as the configuration
+        // readers word it, so every reader says the same.
+        Category::Syntax | Category::Eof | Category::Io => {
+            DocumentTextFailure::of(error).words().to_string()
+        }
     }
 }
 
@@ -63,9 +67,18 @@ fn strip_position(text: &str) -> &str {
     }
 }
 
-/// `text` printable: control characters (an ANSI escape) escaped, and cut
-/// to [`SEGMENT_CHARS`].
-fn escaped(text: &str) -> String {
+/// `text` printable whole: control characters (a newline, an ANSI escape)
+/// escaped, so a name read from a file can neither forge a line nor reach
+/// the terminal as a sequence.
+pub(crate) fn printable(text: &str) -> String {
+    let shown = text.escape_debug().to_string();
+    debug_assert!(!shown.contains(char::is_control), "escaped: {shown:?}");
+    shown
+}
+
+/// `text` printable, as [`printable`], and cut to [`SEGMENT_CHARS`]: a key
+/// or a name read from a file, as a diagnostic names it.
+pub(crate) fn escaped(text: &str) -> String {
     let mut out: String = text
         .chars()
         .flat_map(char::escape_debug)
@@ -140,6 +153,12 @@ pub fn describe_at(path: &serde_path_to_error::Path, error: &serde_json::Error) 
 pub fn from_value<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T, String> {
     serde_path_to_error::deserialize(value)
         .map_err(|error| describe_at(&error.path().clone(), error.inner()))
+}
+
+/// `bytes` as a JSON value, a failure of its text described by
+/// [`describe`]: a document, as the configuration readers parse one.
+pub fn value_from_slice(bytes: &[u8]) -> Result<serde_json::Value, String> {
+    serde_json::from_slice(bytes).map_err(|error| describe(&error))
 }
 
 /// `T` from `text`, a parse failure described by [`describe_at`].

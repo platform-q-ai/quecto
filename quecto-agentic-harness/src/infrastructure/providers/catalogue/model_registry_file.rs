@@ -80,7 +80,8 @@ pub(super) fn stream_limit_out_of_range(
     super::SkippedProviderBlock {
         provider: provider_key.to_owned(),
         error: format!(
-            "provider '{provider_key}' declares {} out of range ({error}); its models were skipped",
+            "provider '{}' declares {} out of range ({error}); its models were skipped",
+            crate::infrastructure::persistence::file::json_failure::escaped(provider_key),
             error.json_name()
         ),
     }

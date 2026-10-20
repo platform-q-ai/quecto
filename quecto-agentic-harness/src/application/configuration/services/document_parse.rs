@@ -1,11 +1,12 @@
-//! Parsing a configuration document without quoting it (#2617): the one
-//! wording every configuration reader gives a malformed document, the same
-//! fixed categories the infrastructure's parse helper
-//! (`infrastructure::persistence::file::json_failure`) gives, pinned
-//! equal by its tests. A document parses into a JSON value, so only its
-//! syntax can fail, and the position says where.
+//! Parsing a configuration document without quoting it (#2617): every
+//! configuration reader words a malformed document through
+//! [`DocumentTextFailure`], as the infrastructure's parse helper does. A
+//! document parses into a JSON value, so only its text can fail, and the
+//! position says where.
 
 use serde_json::Value;
+
+use crate::application::configuration::dto::DocumentTextFailure;
 
 /// `bytes` as a JSON value, or what kind of failure and where.
 pub fn parse_document(bytes: &[u8]) -> Result<Value, String> {
@@ -14,13 +15,7 @@ pub fn parse_document(bytes: &[u8]) -> Result<Value, String> {
 
 /// `error` as its fixed category and, when known, its line and column.
 pub fn describe(error: &serde_json::Error) -> String {
-    use serde_json::error::Category;
-    let category = match error.classify() {
-        Category::Syntax => "malformed JSON",
-        Category::Eof => "the file ends early",
-        Category::Io => "the file could not be read",
-        Category::Data => "a field has the wrong type or value",
-    };
+    let category = DocumentTextFailure::of(error).words();
     match error.line() {
         0 => category.to_string(),
         line => format!("{category} at line {line} column {}", error.column()),

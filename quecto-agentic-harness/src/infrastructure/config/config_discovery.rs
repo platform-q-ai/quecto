@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use super::{Config, ConfigError, resolve_workflow_step_entry};
+use crate::infrastructure::persistence::file::json_failure::{self as json, escaped, printable};
 
 /// Outcome of workflow template discovery (PRD workflow-composable-templates
 /// §3.2, slice 2).
@@ -127,7 +128,8 @@ fn reject_unknown_template_keys(
 ) -> Result<(), ConfigError> {
     if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
         return Err(ConfigError::WorkflowTemplate(format!(
-            "{context}: unknown field `{key}`"
+            "{context}: unknown field `{}`",
+            escaped(key)
         )));
     }
     Ok(())
@@ -165,7 +167,8 @@ fn load_workflow_template_file(
     dir: &Path,
     path: &Path,
 ) -> Result<crate::domain::workflow::WorkflowTemplate, ConfigError> {
-    let context = path.display().to_string();
+    // The file's name is the user's: shown escaped, as the keys are.
+    let context = printable(&path.display().to_string());
     let id = path
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -185,8 +188,8 @@ fn load_workflow_template_file(
     }
     let content = std::fs::read_to_string(path)
         .map_err(|error| ConfigError::WorkflowTemplate(format!("{context}: {error}")))?;
-    let value: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|error| ConfigError::WorkflowTemplate(format!("{context}: {error}")))?;
+    let value: serde_json::Value = json::from_str(&content)
+        .map_err(|why| ConfigError::WorkflowTemplate(format!("{context}: {why}")))?;
     let serde_json::Value::Object(mut object) = value else {
         return Err(ConfigError::WorkflowTemplate(format!(
             "{context}: expected a template object"
@@ -251,13 +254,13 @@ fn load_workflow_template_file(
     }
     object.insert("id".into(), serde_json::Value::String(id));
     let template: crate::domain::workflow::WorkflowTemplate =
-        serde_json::from_value(serde_json::Value::Object(object))
-            .map_err(|error| ConfigError::WorkflowTemplate(format!("{context}: {error}")))?;
+        json::from_value(serde_json::Value::Object(object))
+            .map_err(|why| ConfigError::WorkflowTemplate(format!("{context}: {why}")))?;
     let mut seen = std::collections::HashSet::new();
     if let Some(step) = template.steps.iter().find(|step| !seen.insert(&step.key)) {
         return Err(ConfigError::WorkflowTemplate(format!(
             "{context}: duplicate step key `{}`",
-            step.key
+            escaped(&step.key)
         )));
     }
     Ok(template)
