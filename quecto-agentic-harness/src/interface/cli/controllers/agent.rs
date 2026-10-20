@@ -246,9 +246,7 @@ pub(crate) fn cmd_agent(
     if flags.uds_mode {
         return match flags.backend.unwrap_or_default() {
             MemberBackend::Quecto => cmd_agent_uds(ctx, flags, stderr),
-            MemberBackend::ClaudeCode => {
-                crate::interface::cli::claude_member::run(ctx, &flags, stderr)
-            }
+            MemberBackend::ClaudeCode => super::claude_member::run(ctx, &flags, stderr),
         };
     }
 
@@ -303,9 +301,9 @@ pub(crate) fn cmd_agent(
         project_board: ctx.project_board_recording,
     };
     event_log::attach(&mut agent, &flags, &target, out.stderr);
-    let handles = crate::interface::cli::run_end_fleet::RunHandles {
+    let handles = super::run_end_fleet::RunHandles {
         retention: &build.retention,
-        run_end: crate::interface::cli::run_end_fleet::RunEnd::compose(
+        run_end: super::run_end_fleet::RunEnd::compose(
             ctx.run_end_fleet,
             build.subagent_registry,
             build.harness_lifecycle,
@@ -323,7 +321,7 @@ pub(crate) fn build_agent_from_config(
     stderr: &mut String,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> Option<AgentBuildResult> {
-    let env_overrides = crate::interface::cli::config_loading::quecto_env_overrides();
+    let env_overrides = super::config_loading::quecto_env_overrides();
     build_agent_from_config_in(
         base_dir,
         selection,
@@ -362,7 +360,7 @@ pub(crate) fn build_agent_from_config_in(
         debug_assert!(false, "a configuration loaded only through the capability");
         return None;
     };
-    for line in crate::interface::cli::config_loading::layer_diagnostics(&loaded.sources) {
+    for line in super::config_loading::layer_diagnostics(&loaded.sources) {
         stderr.push_str(&line);
         stderr.push('\n');
     }
@@ -417,7 +415,7 @@ pub(crate) fn build_agent_from_config_in(
     });
     // The run's reloadable configuration (#1849): the reload use case is
     // seeded now, after the startup composition read the same files.
-    let runtime_inputs = crate::interface::cli::catalogue_handles::RuntimeConfigurationInputs {
+    let runtime_inputs = super::catalogue_handles::RuntimeConfigurationInputs {
         selection: selection.clone(),
         inherited_child: crate::infrastructure::admission::process::current()
             .is_some_and(|admission| admission.inherits_authority()),
@@ -513,7 +511,7 @@ pub(crate) fn build_agent_from_config_in(
             .unwrap_or(config.agents.defaults.max_tool_iterations),
     )
     .with_model_limits(limits);
-    let mut agent = crate::interface::cli::swarm_composition::wire_member(
+    let mut agent = super::swarm_composition::wire_member(
         agent,
         &flags.swarm_participation,
         &config.agents.defaults,

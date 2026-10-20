@@ -8,7 +8,7 @@ use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl}
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::shared::error::DomainError;
-use crate::interface::cli::run_end_fleet::RunHandles;
+use crate::interface::cli::controllers::run_end_fleet::RunHandles;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;

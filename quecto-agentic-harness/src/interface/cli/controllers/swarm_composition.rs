@@ -46,8 +46,8 @@ pub(super) fn wire_member(
     wire_agent(agent, crate::interface::tool_runtime::swarm_context())
 }
 
-pub(super) fn bind_suspension(
-    cancel: &super::uds_cancel::CancelHandle,
+pub(in crate::interface::cli) fn bind_suspension(
+    cancel: &super::super::uds_cancel::CancelHandle,
     context: Option<SwarmContext>,
 ) {
     if let Some(context) = context {
@@ -57,13 +57,13 @@ pub(super) fn bind_suspension(
     }
 }
 
-pub(super) fn suspension_callback(
-    cancel: &super::uds_cancel::CancelHandle,
+pub(in crate::interface::cli) fn suspension_callback(
+    cancel: &super::super::uds_cancel::CancelHandle,
     context: SwarmContext,
 ) -> Arc<dyn Fn(crate::domain::swarm::value_objects::lifecycle::RunStatus, u64) + Send + Sync> {
     let cancel = cancel.clone();
     Arc::new(move |status, generation| {
-        super::uds_cancel::suspend_swarm_turn(&cancel, generation, &|| {
+        super::super::uds_cancel::suspend_swarm_turn(&cancel, generation, &|| {
             context
                 .control_status()
                 .and_then(|value| SwarmContext::decode_control_receipt(value, false))

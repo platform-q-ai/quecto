@@ -87,7 +87,7 @@ pub(crate) struct UdsAgentContext {
     /// configuration at build time — before a scenario's later config edits,
     /// as the CLI's agent build does — so `reload` and the pre-turn poll
     /// see those edits as changes.
-    pub(crate) catalogue: quecto::interface::cli::catalogue_handles::CatalogueHandles,
+    pub(crate) catalogue: quecto::interface::cli::controllers::catalogue_handles::CatalogueHandles,
 }
 
 /// Build the agent and session key from world state + config.
@@ -113,7 +113,7 @@ pub(crate) fn build_uds_agent(
     let catalogue = quecto::composition::catalogue::build_catalogue_handles(
         base,
         Some(
-            &quecto::interface::cli::catalogue_handles::RuntimeConfigurationInputs {
+            &quecto::interface::cli::controllers::catalogue_handles::RuntimeConfigurationInputs {
                 selection: quecto::application::configuration::dto::ConfigSelection::Explicit(
                     config_path,
                 ),

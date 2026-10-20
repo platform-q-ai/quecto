@@ -172,7 +172,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/composition/fleet_settlement.rs",
     "src/composition/retention.rs",
     "src/interface/cli/uds_session_handles.rs",
-    "src/interface/cli/retention_handles.rs",
+    "src/interface/cli/controllers/retention_handles.rs",
     "src/infrastructure/persistence/file/context_spill.rs",
     "src/infrastructure/tools/native/recall.rs",
     "src/interface/cli/uds_sync.rs",
@@ -747,7 +747,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/use_cases/retain_context.rs", 118),
     ("src/application/sessions/dto/retained_context.rs", 92),
     ("src/composition/retention.rs", 35),
-    ("src/interface/cli/retention_handles.rs", 33),
+    ("src/interface/cli/controllers/retention_handles.rs", 33),
     ("src/infrastructure/tools/native/recall.rs", 152),
     // #2212: the gauge moved to its own module (336 → 332); #2342: the
     // spill writers and the swarm cap moved to their own modules (→ 310);
@@ -1845,7 +1845,7 @@ const RETENTION_PORT_HOLDERS: &[&str] = &[
     "src/composition/retention.rs",
     "src/composition/sessions.rs",
     "src/infrastructure/persistence/file/context_spill.rs",
-    "src/interface/cli/retention_handles.rs",
+    "src/interface/cli/controllers/retention_handles.rs",
     "src/interface/cli/uds_session_handles.rs",
 ];
 

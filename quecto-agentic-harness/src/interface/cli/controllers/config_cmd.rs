@@ -5,12 +5,12 @@
 
 use std::path::PathBuf;
 
+use super::config_loading::layer_diagnostics;
 use crate::application::configuration::dto::{
     ConfigLayer, ConfigPatch, ConfigReadRequest, ConfigReadScope, ConfigSelection, ConfigUnset,
     OverlayTrustRequest,
 };
 use crate::interface::cli::CliContext;
-use crate::interface::cli::config_loading::layer_diagnostics;
 
 const USAGE: &str = "usage: quecto config get [<dotted.path>] [--effective|--global|--local] [--show-secrets]\n       quecto config set <dotted.path> <json-value> [--global|--local]\n       quecto config unset <dotted.path> [--global|--local]\n       quecto config trust [--path <file>]\n(`--` ends the options; a negative number is always a value; secret-shaped values print as \"<redacted>\" without --show-secrets)\n";
 

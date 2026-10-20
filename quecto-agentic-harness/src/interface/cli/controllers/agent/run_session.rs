@@ -15,7 +15,7 @@ pub(crate) fn run_agent_session(
     base_dir: &std::path::Path,
     sessions: crate::interface::cli::SessionHandlesBuilder,
     mut agent: AgentLoopImpl,
-    handles: crate::interface::cli::run_end_fleet::RunHandles<'_>,
+    handles: super::super::run_end_fleet::RunHandles<'_>,
     flags: &AgentFlags,
     out: &mut AgentOutput<'_>,
 ) -> i32 {
@@ -55,7 +55,7 @@ pub(crate) fn run_agent_session(
         }
     };
     // Dropped before the runtime on every return: rollbacks finish (#2173).
-    let _exit = crate::interface::cli::launch_rollback_wait::WaitForLaunchRollbacks(&rt);
+    let _exit = super::super::launch_rollback_wait::WaitForLaunchRollbacks(&rt);
 
     // Open the session (#1863, D8 #1977): the transaction claims it (a key
     // owned by another live process is refused at open, #1460), loads it and

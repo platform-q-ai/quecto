@@ -9,7 +9,7 @@ use crate::infrastructure::persistence::file::sessions::fresh_session_identity::
 use crate::infrastructure::persistence::file::sessions::session_images::FileImageSidecarStore;
 use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
 use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
-use crate::interface::cli::retention_handles::RetentionHandles;
+use crate::interface::cli::controllers::retention_handles::RetentionHandles;
 use crate::interface::uds::sessions::controller::ListSessionsController;
 use std::sync::Arc;
 
