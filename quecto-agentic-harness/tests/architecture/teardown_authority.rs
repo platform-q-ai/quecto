@@ -432,7 +432,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/application/environments/ports/hosted_swarm.rs",
     "src/application/environments/ports/process.rs",
     "src/application/environments/ports/registry.rs",
-    "src/application/environments/dto.rs",
+    "src/application/environments/dto/mod.rs",
     "src/application/environments/dto/assets.rs",
     "src/application/environments/dto/gc.rs",
     "src/application/environments/dto/standard_image.rs",
