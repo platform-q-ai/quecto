@@ -18,6 +18,16 @@ use crate::infrastructure::auth::oauth::OAuthEndpoints;
 use crate::infrastructure::time::auth_clock::SystemAuthClock;
 use crate::interface::cli::auth::{AuthEnvironment, AuthHandles};
 
+/// `auth status` over `base_dir`'s credentials and the system clock: the
+/// one wiring of the status use case, shared with `quecto status`'s
+/// credential presence (#1843).
+pub fn build_auth_status(base_dir: &std::path::Path) -> Arc<InspectAuthStatus> {
+    Arc::new(InspectAuthStatus::new(
+        Arc::new(CredentialStore::new(base_dir)),
+        Arc::new(SystemAuthClock),
+    ))
+}
+
 pub fn build_auth_handles(environment: &AuthEnvironment) -> AuthHandles {
     let store: Arc<dyn CredentialStorePort> = Arc::new(CredentialStore::new(&environment.base_dir));
     let endpoints = OAuthEndpoints::new(environment.oauth_base_url.clone());
@@ -28,10 +38,7 @@ pub fn build_auth_handles(environment: &AuthEnvironment) -> AuthHandles {
     AuthHandles {
         token_login: Arc::new(LogInWithToken::new(Arc::clone(&store))),
         logout: Arc::new(RemoveStoredCredentials::new(Arc::clone(&store))),
-        status: Arc::new(InspectAuthStatus::new(
-            Arc::clone(&store),
-            Arc::clone(&clock),
-        )),
+        status: build_auth_status(&environment.base_dir),
         device_code_login: Arc::new(StartDeviceCodeLogin::new(device_code)),
         oauth_login: Arc::new(LogInWithOAuth::new(
             Arc::clone(&browser) as _,

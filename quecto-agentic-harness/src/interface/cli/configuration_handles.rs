@@ -8,7 +8,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::application::configuration::use_cases::{
-    PatchConfiguration, ReadConfiguration, ResolveEffectiveConfig, SelectConfig, TrustConfigOverlay,
+    InspectEffectiveConfiguration, PatchConfiguration, ReadConfiguration, ResolveEffectiveConfig,
+    SelectConfig, TrustConfigOverlay,
 };
 use crate::infrastructure::config::Config;
 
@@ -27,6 +28,8 @@ pub struct ConfigurationHandles {
     pub resolve: Arc<ResolveEffectiveConfig>,
     /// `quecto config get`.
     pub read: Arc<ReadConfiguration>,
+    /// `quecto status` (#1843).
+    pub inspect: Arc<InspectEffectiveConfiguration>,
     /// `quecto config set` and the tool-policy persistence hook: the one
     /// safe write path.
     pub patch: Arc<PatchConfiguration>,

@@ -15,12 +15,12 @@ pub(super) fn cmd_auth_status(ctx: &CliContext, stdout: &mut String, stderr: &mu
             } else {
                 stdout.push_str("Credentials:\n");
                 for status in &statuses {
-                    stdout.push_str(&format!(
-                        "  {} ({}) — {}\n",
-                        status.provider,
+                    let entry = credential_entry(
+                        &status.provider,
                         status.method.as_str(),
-                        status.state.as_str()
-                    ));
+                        status.state.as_str(),
+                    );
+                    stdout.push_str(&format!("  {entry}\n"));
                 }
             }
             0
@@ -31,6 +31,49 @@ pub(super) fn cmd_auth_status(ctx: &CliContext, stdout: &mut String, stderr: &mu
             1
         }
     }
+}
+
+/// Longest name shown whole; a longer one is cut and ends in `…`.
+const SHOWN_NAME_CHARS: usize = 64;
+
+/// A stored credential as `auth status` and `quecto status` list it:
+/// "openai (oauth) — active". Every part is shown through [`shown_name`].
+pub(in crate::interface::cli) fn credential_entry(
+    provider: &str,
+    method: &str,
+    state: &str,
+) -> String {
+    format!(
+        "{} ({}) — {}",
+        shown_name(provider),
+        shown_name(method),
+        shown_name(state)
+    )
+}
+
+/// A name read from a hand-editable file, as a terminal line shows it:
+/// escaped, so a newline cannot forge a line nor an ESC sequence reach the
+/// terminal, and capped at [`SHOWN_NAME_CHARS`].
+pub(in crate::interface::cli) fn shown_name(name: &str) -> String {
+    let mut chars = name.chars();
+    let head: String = chars.by_ref().take(SHOWN_NAME_CHARS).collect();
+    let cut = chars.next().is_some();
+    let mut shown = shown_text(&head);
+    if cut {
+        shown.push('…');
+    }
+    shown
+}
+
+/// Text read from a hand-editable file, escaped as [`shown_name`] escapes
+/// it but never cut: a long workspace path is still worth reading whole.
+pub(in crate::interface::cli) fn shown_text(text: &str) -> String {
+    let shown = text.escape_debug().to_string();
+    debug_assert!(
+        !shown.chars().any(char::is_control),
+        "an escaped text holds no control character"
+    );
+    shown
 }
 
 #[cfg(test)]

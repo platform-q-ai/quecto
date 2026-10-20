@@ -1,5 +1,8 @@
-use super::config_loading::{layer_diagnostics, load_selected_config, overlay_summary};
+use super::auth::{credential_entry, shown_name, shown_text};
+use super::config_loading::{layer_diagnostics, overlay_summary};
 use super::{CliContext, selected_config_missing};
+use crate::application::configuration::dto::ConfigurationInspection;
+use crate::application::configuration::ports::StoredCredentialsUnavailable;
 
 pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut String) -> i32 {
     let selection = match ctx.config_selection() {
@@ -21,60 +24,21 @@ pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut Str
 
     // Missing global config is not an error: quecto is zero-config (defaults
     // apply). Status never prompts for overlay trust; it reports it.
-    let Some(build_configuration) = ctx.configuration else {
-        stderr.push_str("configuration capability not composed\n");
-        return 1;
+    let handles = match ctx.configuration_handles(false) {
+        Ok(handles) => handles,
+        Err(why) => {
+            stderr.push_str(&format!("{why}\n"));
+            return 1;
+        }
     };
-    let loaded = match load_selected_config(
-        build_configuration,
-        &ctx.base_dir(),
-        &selection,
-        false,
-        &Default::default(),
-        false,
-    ) {
-        Ok(loaded) => loaded,
+    let inspection = match handles.inspect.execute(&selection) {
+        Ok(inspection) => inspection,
         Err(error) => {
             stderr.push_str(&format!("{error}\n"));
             return 1;
         }
     };
-    stdout.push_str(&format!(
-        "  Overlay:   {}\n",
-        overlay_summary(&loaded.sources)
-    ));
-    for line in layer_diagnostics(&loaded.sources) {
-        stderr.push_str(&line);
-        stderr.push('\n');
-    }
-
-    let config = loaded.config;
-    let ws = config.workspace_path();
-    stdout.push_str(&format!("  Workspace: {}\n", ws));
-    stdout.push_str(&format!("  Model:     {}\n", config.agents.defaults.model));
-    stdout.push_str(&format!(
-        "  Effort:    {}\n",
-        config
-            .agents
-            .defaults
-            .effort
-            .as_deref()
-            .unwrap_or("default")
-    ));
-
-    // Provider availability
-    let openai_status = if config.providers.openai.api_key.is_empty() {
-        "not set".to_string()
-    } else {
-        "configured".to_string()
-    };
-    let anthropic_status = if config.providers.anthropic.api_key.is_empty() {
-        "not set".to_string()
-    } else {
-        "configured".to_string()
-    };
-    stdout.push_str(&format!("  OpenAI API:    {}\n", openai_status));
-    stdout.push_str(&format!("  Anthropic API: {}\n", anthropic_status));
+    present(&inspection, stdout, stderr);
 
     // Status is config-only when no runtime was composed in this process.
     // Never infer broker health from a file or absent published snapshot.
@@ -84,6 +48,68 @@ pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut Str
     0
 }
 
+/// The inspection as `quecto status` prints it, after its `Config:` line.
+fn present(inspection: &ConfigurationInspection, stdout: &mut String, stderr: &mut String) {
+    stdout.push_str(&format!(
+        "  Overlay:   {}\n",
+        overlay_summary(&inspection.sources)
+    ));
+    for line in layer_diagnostics(&inspection.sources) {
+        stderr.push_str(&line);
+        stderr.push('\n');
+    }
+    let settings = &inspection.settings;
+    stdout.push_str(&format!(
+        "  Workspace: {}\n",
+        shown_text(&settings.workspace)
+    ));
+    stdout.push_str(&format!("  Model:     {}\n", shown_text(&settings.model)));
+    stdout.push_str(&format!(
+        "  Effort:    {}\n",
+        shown_text(settings.effort.as_deref().unwrap_or("default"))
+    ));
+    let presence = |set: bool| if set { "configured" } else { "not set" };
+    stdout.push_str(&format!(
+        "  OpenAI API:    {}\n",
+        presence(settings.openai_key)
+    ));
+    stdout.push_str(&format!(
+        "  Anthropic API: {}\n",
+        presence(settings.anthropic_key)
+    ));
+    if !settings.endpoint_keys.is_empty() {
+        stdout.push_str(&format!(
+            "  Endpoint keys: {}\n",
+            settings
+                .endpoint_keys
+                .iter()
+                .map(|prefix| shown_name(prefix))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    let credentials = match &inspection.stored_credentials {
+        Ok(stored) if stored.is_empty() => "none stored".to_string(),
+        Ok(stored) => stored
+            .iter()
+            .map(|credential| {
+                credential_entry(&credential.provider, &credential.method, &credential.state)
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+        Err(StoredCredentialsUnavailable::Malformed) => "unreadable (malformed store)".to_string(),
+        Err(StoredCredentialsUnavailable::PermissionDenied) => {
+            "unreadable (permission denied)".to_string()
+        }
+        Err(StoredCredentialsUnavailable::Unreadable) => "unreadable".to_string(),
+    };
+    stdout.push_str(&format!("  Credentials:   {credentials}\n"));
+}
+
 #[cfg(test)]
 #[path = "commands_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "commands_inspect_tests.rs"]
+mod inspect_tests;
