@@ -30,7 +30,7 @@ use super::super::dto::{
     KillDelegatedAgentError, KillDelegatedAgentOutcome, KillDelegatedAgentRequest,
     TerminateDelegatedAgentError, TerminateDelegatedAgentRequest, TerminationRouted,
 };
-use super::super::ports::owned_child_termination::TerminationResult;
+use super::super::ports::child_routing::TerminationResult;
 use super::super::ports::{
     child_routing::DownstreamRejection,
     delegated_agent_registry::{

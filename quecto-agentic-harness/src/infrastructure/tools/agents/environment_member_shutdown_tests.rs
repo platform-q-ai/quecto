@@ -9,14 +9,13 @@ use crate::application::environments::ports::{
 };
 use crate::application::subagents::ports::{
     PortFuture,
-    child_routing::{ChildRoutingError, DirectChildRouting},
+    child_routing::{ChildRoutingError, DirectChildRouting, TerminationResult},
     delegated_agent_registry::{
         CompensationObservation, DelegatedAgentRegistry, ResolutionError, StoppingClaimError,
         TerminalClaim, TerminationCause,
     },
     owned_child_termination::{
         ConclusionBudget, OwnedChildTermination, ProtocolAttempt, TerminationConclusion,
-        TerminationResult,
     },
     teardown_compensation::{Compensated, TeardownCompensation},
 };

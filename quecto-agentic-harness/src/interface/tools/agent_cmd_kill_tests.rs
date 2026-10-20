@@ -1,6 +1,6 @@
 use super::*;
+use crate::application::subagents::ports::child_routing::TerminationResult;
 use crate::application::subagents::ports::delegated_agent_registry::ResolutionError;
-use crate::application::subagents::ports::owned_child_termination::TerminationResult;
 use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, TerminationRouteError,
 };

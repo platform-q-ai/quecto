@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use crate::application::subagents::ports::{
     PortFuture,
+    child_routing::TerminationResult,
     child_routing::{ChildRoutingError, DirectChildRouting, DownstreamRejection},
-    owned_child_termination::TerminationResult,
 };
 use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, RoutingDepth, ShutdownReason,

@@ -7,7 +7,7 @@ use cucumber::{given, then, when};
 use quecto::application::subagents::dto::{
     KillDelegatedAgentError, ObserveOwnedChildExitRequest, ObservedExit,
 };
-use quecto::application::subagents::ports::owned_child_termination::TerminationResult;
+use quecto::application::subagents::ports::child_routing::TerminationResult;
 use quecto::application::subagents::ports::{
     delegated_agent_registry::{ExitObservation, ResolutionError},
     owned_child_termination::TerminationConclusion,

@@ -5046,6 +5046,50 @@ fn application_has_no_shared_ports_facade() {
     );
 }
 
+/// Every `use` of `source` that is not private, in the file or in any module
+/// nested in it: `pub`, `pub(crate)`, `pub(super)`, `pub(in …)` (#2629
+/// review).
+fn reexports_in(source: &str) -> Vec<String> {
+    fn walk(items: &[syn::Item], found: &mut Vec<String>) {
+        for item in items {
+            match item {
+                syn::Item::Use(item) if !matches!(item.vis, syn::Visibility::Inherited) => {
+                    found.push(item.to_token_stream().to_string());
+                }
+                syn::Item::Mod(module) => {
+                    if let Some((_, nested)) = &module.content {
+                        walk(nested, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let file = syn::parse_file(source).expect("a ports file parses");
+    let mut found = Vec::new();
+    walk(&file.items, &mut found);
+    found
+}
+
+#[test]
+fn a_ports_reexport_of_any_visibility_is_found() {
+    for source in [
+        "pub use child_routing::DirectChildRouting;",
+        "pub(crate) use child_routing::DirectChildRouting;",
+        "pub(super) use child_routing::DirectChildRouting;",
+        "mod inner { pub(in crate::application) use super::child_routing::DirectChildRouting; }",
+    ] {
+        assert_eq!(reexports_in(source).len(), 1, "{source}");
+    }
+    for source in [
+        "use super::PortFuture;",
+        "pub mod child_routing;",
+        "mod inner { use super::PortFuture; }",
+    ] {
+        assert!(reexports_in(source).is_empty(), "{source}");
+    }
+}
+
 /// The files of `application/subagents/ports/` (#2367): one per concern.
 const SUBAGENT_PORT_FILES: &[&str] = &[
     "child_routing.rs",
@@ -5077,11 +5121,13 @@ fn subagent_teardown_ports_are_capability_local() {
         ports_files, listed,
         "application/subagents/ports/ must hold exactly SUBAGENT_PORT_FILES"
     );
-    // The ports surface names each port at its owning file: no re-export.
+    // The ports surface names each port at its owning file: no re-export of
+    // any visibility, in the file or a module nested in it.
     for file in &ports_files {
+        let reexports = reexports_in(&fs::read_to_string(file).unwrap());
         assert!(
-            !fs::read_to_string(file).unwrap().contains("pub use "),
-            "{file} re-exports; importers name each port at its owning file"
+            reexports.is_empty(),
+            "{file} re-exports {reexports:?}; importers name each port at its owning file"
         );
     }
     let declared: Vec<String> = ports_files
@@ -5980,8 +6026,7 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
 /// graceful / fallback / already-exited / failed.
 #[test]
 fn kill_result_vocabulary_is_graceful_fallback_already_exited_failed() {
-    let ports =
-        fs::read_to_string("src/application/subagents/ports/owned_child_termination.rs").unwrap();
+    let ports = fs::read_to_string("src/application/subagents/ports/child_routing.rs").unwrap();
     for word in ["\"graceful\"", "\"fallback\"", "\"already-exited\""] {
         assert!(ports.contains(word), "ports lack {word}");
     }

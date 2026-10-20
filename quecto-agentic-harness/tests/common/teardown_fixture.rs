@@ -164,9 +164,7 @@ impl DirectChildRouting for Routing {
     ) -> PortFuture<
         'a,
         Result<
-            Option<
-                quecto::application::subagents::ports::owned_child_termination::TerminationResult,
-            >,
+            Option<quecto::application::subagents::ports::child_routing::TerminationResult>,
             ChildRoutingError,
         >,
     > {

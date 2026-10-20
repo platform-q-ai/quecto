@@ -6,7 +6,7 @@ use crate::domain::agents::services::subagent_teardown::{
 };
 use crate::domain::identity::ids::AgentUuid;
 
-use super::ports::owned_child_termination::TerminationResult;
+use super::ports::child_routing::TerminationResult;
 
 /// Independent inbound events that all converge on one common shutdown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

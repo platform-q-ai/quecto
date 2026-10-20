@@ -288,7 +288,7 @@ fn fake_child_answering(body: serde_json::Value) -> std::path::PathBuf {
 #[tokio::test]
 async fn a_forward_relays_the_owners_result_and_the_refusals_kind() {
     use quecto::application::subagents::ports::{
-        child_routing::DownstreamRejection, owned_child_termination::TerminationResult,
+        child_routing::DownstreamRejection, child_routing::TerminationResult,
     };
     for (body, expected) in [
         (

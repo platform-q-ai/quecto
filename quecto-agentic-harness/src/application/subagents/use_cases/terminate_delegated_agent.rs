@@ -19,7 +19,7 @@ use crate::domain::agents::services::subagent_teardown::{
 use super::super::dto::{
     TerminateDelegatedAgentError, TerminateDelegatedAgentRequest, TerminationRouted,
 };
-use super::super::ports::owned_child_termination::TerminationResult;
+use super::super::ports::child_routing::TerminationResult;
 use super::super::ports::{
     child_routing::{ChildRoutingError, DirectChildRouting},
     delegated_agent_registry::{

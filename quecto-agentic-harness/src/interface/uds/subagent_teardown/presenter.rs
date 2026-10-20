@@ -8,7 +8,7 @@ use crate::application::subagents::dto::{
     HarnessShutdownError, PreparedShutdown, TerminateDelegatedAgentError, TerminationRouted,
 };
 use crate::application::subagents::ports::child_routing::DownstreamRejection;
-use crate::application::subagents::ports::owned_child_termination::TerminationResult;
+use crate::application::subagents::ports::child_routing::TerminationResult;
 use crate::domain::agents::services::subagent_teardown::TerminationRouteError;
 
 use super::wire::{

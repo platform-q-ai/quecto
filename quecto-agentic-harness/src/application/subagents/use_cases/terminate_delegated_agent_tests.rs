@@ -302,7 +302,7 @@ mod owner {
     };
     use super::super::super::teardown_fakes::{FakeLifecycle, FakeRouting, root_tree};
     use super::*;
-    use crate::application::subagents::ports::owned_child_termination::TerminationResult;
+    use crate::application::subagents::ports::child_routing::TerminationResult;
     use crate::application::subagents::ports::{
         child_routing::DownstreamRejection, delegated_agent_registry::TerminationCause,
         owned_child_termination::TerminationConclusion,

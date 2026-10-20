@@ -8,7 +8,7 @@ use crate::domain::agents::services::subagent_teardown::{
 };
 use crate::domain::identity::ids::AgentUuid;
 
-use crate::application::subagents::ports::owned_child_termination::TerminationResult;
+use crate::application::subagents::ports::child_routing::TerminationResult;
 use crate::application::subagents::ports::{
     PortFuture,
     child_routing::{ChildRoutingError, DirectChildRouting, DownstreamRejection},

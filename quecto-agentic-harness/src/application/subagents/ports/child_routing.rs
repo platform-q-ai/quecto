@@ -1,8 +1,8 @@
-//! Control across exactly one edge, this harness to a direct child, and the
-//! refusals a hop relays back.
+//! Control across exactly one edge, this harness to a direct child: the
+//! refusals a hop relays back, and how a selected termination ended (the
+//! result a hop relays).
 
 use super::PortFuture;
-use super::owned_child_termination::TerminationResult;
 use crate::domain::agents::services::subagent_teardown::DelegatedAgentIdentity;
 use crate::domain::agents::services::subagent_teardown::RoutingDepth;
 use crate::domain::agents::services::subagent_teardown::ShutdownReason;
@@ -126,4 +126,44 @@ pub trait DirectChildRouting: Send + Sync {
         target: &'a DelegatedAgentIdentity,
         remaining_depth: RoutingDepth,
     ) -> PortFuture<'a, Result<Option<TerminationResult>, ChildRoutingError>>;
+}
+
+/// How the selected agent ended. `failed` is the error side
+/// (`KillDelegatedAgentError::Failed`), never a success.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminationResult {
+    /// The child acknowledged the protocol and its exit was observed; no
+    /// fallback signal was sent.
+    Graceful,
+    /// The protocol did not suffice and the directly owned handle's
+    /// fallback produced the exit.
+    Fallback,
+    /// The child had already exited when the termination reached it.
+    AlreadyExited,
+}
+
+impl TerminationResult {
+    /// The inverse of [`Self::as_str`]; `None` for any other word.
+    pub fn parse(word: &str) -> Option<Self> {
+        match word {
+            "graceful" => Some(Self::Graceful),
+            "fallback" => Some(Self::Fallback),
+            "already-exited" => Some(Self::AlreadyExited),
+            _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Graceful => "graceful",
+            Self::Fallback => "fallback",
+            Self::AlreadyExited => "already-exited",
+        }
+    }
+}
+
+impl fmt::Display for TerminationResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
