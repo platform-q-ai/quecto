@@ -353,3 +353,41 @@ fn a_typed_stream_failure_renders_the_status_its_name_stands_for() {
         "{classed}"
     );
 }
+
+/// #2531 (#2626 review MED3): a Codex overload that arrives mid-stream
+/// (`service_unavailable_error` / `server_is_overloaded`), rendered as the
+/// wire classes it (`classed_stream_failure`), suspends a member as a
+/// recoverable failure, and the next swarm wake re-arms it and owes the run
+/// a turn to continue the interrupted work.
+#[test]
+fn a_codex_overload_mid_stream_suspends_as_recoverable_and_the_next_wake_re_arms() {
+    use crate::domain::inference::services::turn_suspension::{
+        AutomaticTurns, OwedTurn, SuspensionCause, WakeOutcome,
+    };
+    use crate::domain::shared::error::DomainError;
+    let rendered = CodexProvider::format_stream_failure(&serde_json::json!({
+        "type": "error",
+        "error": {
+            "type": "service_unavailable_error",
+            "code": "server_is_overloaded",
+            "message": "The server is overloaded"
+        }
+    }))
+    .expect("a failure");
+    assert!(
+        rendered.starts_with("provider stream failure ("),
+        "the class is rendered: {rendered}"
+    );
+    let mut turns = AutomaticTurns::default();
+    turns.suspend_after_failure(&DomainError::Provider(rendered), Some(3));
+    assert_eq!(
+        turns.suspension().map(|suspension| suspension.cause),
+        Some(SuspensionCause::RecoverableProviderFailure)
+    );
+    assert_eq!(turns.wake(3), WakeOutcome::RearmedAfterRecoverableFailure);
+    assert!(turns.allowed());
+    assert_eq!(
+        turns.take_owed_turn(),
+        Some(OwedTurn::AfterRecoverableFailure)
+    );
+}
