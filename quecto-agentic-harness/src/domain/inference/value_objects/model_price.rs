@@ -20,7 +20,7 @@ impl ModelPrice {
     /// finite, non-negative rates are a price; anything else is no price.
     pub fn of(cost: &ModelCost) -> Option<Self> {
         let rates = [cost.input, cost.output, cost.cache_read, cost.cache_write];
-        let valid = rates.iter().all(|rate| rate.is_finite() && *rate >= 0.0);
+        let valid = rates.into_iter().all(ModelCost::rate_in_range);
         let declared = cost.declared;
         let micro = |usd: f64| (usd * 1_000_000.0).round() as u64;
         (valid && declared).then(|| Self {

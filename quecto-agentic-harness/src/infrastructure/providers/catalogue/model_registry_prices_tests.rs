@@ -165,6 +165,10 @@ fn an_out_of_range_declared_rate_is_reported_and_ignored() {
         reasons[0].contains("'claude-sonnet-4-6' declares a cost rate out of range"),
         "{reasons:?}"
     );
+    assert!(
+        reasons[1].contains("'my-model' declares a cost rate out of range"),
+        "{reasons:?}"
+    );
     let record = |id: &str| {
         config
             .records

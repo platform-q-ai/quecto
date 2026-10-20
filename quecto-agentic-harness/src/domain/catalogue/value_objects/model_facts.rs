@@ -13,6 +13,15 @@ pub struct ModelCost {
     pub declared: bool,
 }
 
+impl ModelCost {
+    /// Whether `rate` can be a price rate: finite and non-negative, in USD
+    /// per million tokens (#1855). The one rule both a price and a
+    /// `models.json` declaration are checked by.
+    pub fn rate_in_range(rate: f64) -> bool {
+        rate.is_finite() && rate >= 0.0
+    }
+}
+
 /// Capabilities and limits of a model, replacing the heuristics currently
 /// scattered across consumers.
 #[derive(Debug, Clone, PartialEq)]

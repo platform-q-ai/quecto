@@ -361,10 +361,9 @@ impl ModelRegistry {
                         cost.cache_read.or(cost.cache_read_camel),
                         cost.cache_write.or(cost.cache_write_camel),
                     ];
-                    let in_range = rates
-                        .iter()
-                        .flatten()
-                        .all(|rate| rate.is_finite() && *rate >= 0.0);
+                    let in_range = rates.into_iter().flatten().all(
+                        crate::domain::catalogue::value_objects::model_facts::ModelCost::rate_in_range,
+                    );
                     match in_range {
                         true => {
                             let [input, output, cache_read, cache_write] = rates;
