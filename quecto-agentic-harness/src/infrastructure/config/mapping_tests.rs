@@ -133,10 +133,18 @@ fn a_wrong_typed_field_is_named_never_quoted() {
             "providers.openai_compatible.endpoints[0].api_key",
         ),
     ] {
+        let file = base.path().join("config.json");
+        std::fs::write(&file, document.to_string()).unwrap();
         let errors = [
             validator.validate(&document).unwrap_err(),
+            validator.validate_layer(&document).unwrap_err(),
+            validator.validate_inherited_child(&document).unwrap_err(),
             realize_config(document.clone(), &HashMap::new(), base.path()).unwrap_err(),
             Config::from_document(document.clone())
+                .err()
+                .unwrap()
+                .to_string(),
+            Config::load(file.to_str().unwrap())
                 .err()
                 .unwrap()
                 .to_string(),

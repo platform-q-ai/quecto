@@ -634,6 +634,9 @@ use builtin_tables::{BuiltinSpec, gpt_5_6_cost, gpt_5_6_window};
 #[path = "model_registry_catalogue_2435_tests.rs"]
 mod catalogue_2435_tests;
 #[cfg(test)]
+#[path = "model_registry_escape_tests.rs"]
+mod escape_tests;
+#[cfg(test)]
 #[path = "model_registry_image_input_tests.rs"]
 mod image_input_tests;
 #[cfg(test)]

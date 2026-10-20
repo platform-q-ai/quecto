@@ -117,3 +117,14 @@ fn the_configuration_readers_word_a_malformed_document_the_same() {
         );
     }
 }
+
+/// serde ends a parse-of-text message with its own " at line L column C";
+/// the description places the position once, after the field.
+#[test]
+fn an_unknown_variant_in_text_is_placed_once() {
+    let error = from_str::<Shape>(r#"{"key": "k", "list": [], "mode": "sk-FAKE"}"#).unwrap_err();
+    assert_eq!(
+        error,
+        "unknown variant, expected `token` or `oauth` at mode (line 1 column 42)"
+    );
+}
