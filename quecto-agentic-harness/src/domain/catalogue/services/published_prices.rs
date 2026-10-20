@@ -27,6 +27,11 @@ use crate::domain::conversation::value_objects::message::starts_with_ci;
 const PUBLISHED_RATES: &[(&str, [f64; 4])] = &[
     ("claude-fable-5-1", [10.0, 50.0, 0.25, 12.5]),
     ("claude-fable-5", [10.0, 50.0, 1.0, 12.5]),
+    ("claude-mythos-5-1", [10.0, 50.0, 0.25, 12.5]),
+    ("claude-mythos-5", [10.0, 50.0, 1.0, 12.5]),
+    // Haiku 5.5's rates for prompts up to 100,000 tokens; its higher tier
+    // for longer prompts is not modelled (#2643).
+    ("claude-haiku-5-5", [0.1, 0.5, 0.01, 0.125]),
     ("claude-opus-5-5", [4.0, 20.0, 0.2, 5.0]),
     ("claude-opus-5", [5.0, 25.0, 0.5, 6.25]),
     ("claude-opus-4-8", [5.0, 25.0, 0.5, 6.25]),
@@ -45,7 +50,8 @@ const PUBLISHED_RATES: &[(&str, [f64; 4])] = &[
     ("gpt-6.1-sol", [2.0, 10.0, 0.1, 2.5]),
     ("gpt-6-luna", [0.1, 0.5, 0.01, 0.125]),
     // GPT-5.6 Sol's promotional price, "available at least through
-    // November 21, 2026" (its model page); re-read it after that date.
+    // November 21, 2026" (its model page); re-read it after that date
+    // (#2642).
     ("gpt-5.6-sol", [4.0, 20.0, 0.4, 5.0]),
     ("gpt-5.6-terra", [2.0, 12.0, 0.2, 2.5]),
     ("gpt-5.6-luna", [0.2, 1.2, 0.02, 0.25]),
@@ -65,6 +71,7 @@ pub fn published_cost(id: &str) -> Option<ModelCost> {
             output: *output,
             cache_read: *cache_read,
             cache_write: *cache_write,
+            declared: true,
         })
 }
 
@@ -81,6 +88,12 @@ pub fn declared_cost(
     cache_write: Option<f64>,
 ) -> ModelCost {
     let published = published_cost(id);
+    // A declaration that states no rate, for an id the table does not
+    // know, states no price.
+    let declared = [input, output, cache_read, cache_write]
+        .iter()
+        .any(Option::is_some)
+        || published.is_some();
     let input = input
         .or(published.as_ref().map(|cost| cost.input))
         .unwrap_or(0.0);
@@ -98,6 +111,7 @@ pub fn declared_cost(
         output,
         cache_read,
         cache_write,
+        declared,
     }
 }
 

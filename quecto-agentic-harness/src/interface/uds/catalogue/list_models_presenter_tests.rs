@@ -43,6 +43,7 @@ fn entry(oauth: bool) -> CatalogueEntry {
                     output: 2.0,
                     cache_read: 0.25,
                     cache_write: 0.5,
+                    declared: true,
                 },
                 prompt_limit: Default::default(),
             },

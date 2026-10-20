@@ -7,6 +7,10 @@ pub struct ModelCost {
     pub output: f64,
     pub cache_read: f64,
     pub cache_write: f64,
+    /// Whether someone stated these rates — a published row or a
+    /// `models.json` declaration (#1855). Only a stated cost is a price:
+    /// stated all zero is a free model; unstated is unpriced.
+    pub declared: bool,
 }
 
 /// Capabilities and limits of a model, replacing the heuristics currently

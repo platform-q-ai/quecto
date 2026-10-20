@@ -88,6 +88,7 @@ fn entry_from_record(record: &ModelRecord) -> Result<CatalogueEntry, String> {
                     output: record.cost.output,
                     cache_read: record.cost.cache_read,
                     cache_write: record.cost.cache_write,
+                    declared: record.cost.declared,
                 },
                 prompt_limit: record.prompt_limit,
             },

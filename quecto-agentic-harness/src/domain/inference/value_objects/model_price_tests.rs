@@ -6,6 +6,7 @@ fn cost(input: f64, output: f64, cache_read: f64, cache_write: f64) -> ModelCost
         output,
         cache_read,
         cache_write,
+        declared: true,
     }
 }
 
@@ -40,7 +41,21 @@ fn a_catalogue_cost_is_its_price_in_micro_usd_per_million() {
 
 #[test]
 fn a_cost_that_declares_no_price_or_an_invalid_rate_is_no_price() {
-    assert_eq!(ModelPrice::of(&ModelCost::default()), None, "all zero");
+    assert_eq!(
+        ModelPrice::of(&ModelCost::default()),
+        None,
+        "nobody stated it"
+    );
+    // #2635 review M1: a stated all-zero cost is a free model's price.
+    assert_eq!(
+        ModelPrice::of(&cost(0.0, 0.0, 0.0, 0.0)),
+        Some(ModelPrice {
+            input: 0,
+            output: 0,
+            cache_read: 0,
+            cache_write: 0,
+        })
+    );
     for bad in [f64::NAN, f64::INFINITY, -1.0] {
         assert_eq!(ModelPrice::of(&cost(bad, 10.0, 0.0, 0.0)), None, "{bad}");
     }

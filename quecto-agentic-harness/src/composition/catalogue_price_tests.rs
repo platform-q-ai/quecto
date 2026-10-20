@@ -93,3 +93,22 @@ fn an_unsupported_transport_entry_lists_its_published_price() {
         (2.0, 6.0, 0.3, 2.0)
     );
 }
+
+/// #2635 review M1: a `models.json` model declared free (every rate zero)
+/// is priced at zero, never left unpriced.
+#[test]
+fn a_model_declared_free_is_priced_at_zero() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"local":{"api":"openai-completions","baseUrl":"http://127.0.0.1:8080/v1","models":[
+            {"id":"free-model","cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}},
+            {"id":"unstated-model"}
+        ]}}}"#,
+    )
+    .unwrap();
+    let free = published_model_limits_for(tmp.path(), "local/free-model");
+    assert_eq!(free.price, micro(0.0, 0.0, 0.0, 0.0));
+    let unstated = published_model_limits_for(tmp.path(), "local/unstated-model");
+    assert_eq!(unstated.price, None);
+}

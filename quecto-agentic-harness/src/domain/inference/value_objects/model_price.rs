@@ -14,13 +14,14 @@ pub struct ModelPrice {
 }
 
 impl ModelPrice {
-    /// The price of a model whose catalogue cost declares one: `None` when
-    /// every rate is zero (no price declared). Only finite, non-negative
-    /// rates are a price; anything else is no price at all.
+    /// The price of a model whose catalogue cost was stated (a published
+    /// row or a `models.json` declaration): `None` for a cost nobody stated.
+    /// A stated all-zero cost is a free model's price (#2635 review). Only
+    /// finite, non-negative rates are a price; anything else is no price.
     pub fn of(cost: &ModelCost) -> Option<Self> {
         let rates = [cost.input, cost.output, cost.cache_read, cost.cache_write];
         let valid = rates.iter().all(|rate| rate.is_finite() && *rate >= 0.0);
-        let declared = rates.iter().any(|rate| *rate > 0.0);
+        let declared = cost.declared;
         let micro = |usd: f64| (usd * 1_000_000.0).round() as u64;
         (valid && declared).then(|| Self {
             input: micro(cost.input),

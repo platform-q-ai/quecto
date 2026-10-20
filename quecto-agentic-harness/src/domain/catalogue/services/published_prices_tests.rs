@@ -102,6 +102,17 @@ fn a_declared_costs_missing_rates_are_filled() {
         )),
         (1.0, 2.0, 1.0, 1.0)
     );
+    // #2630 review L1: a declared zero input or output wins over the table.
+    assert_eq!(
+        cost(declared_cost(
+            "claude-opus-4-6",
+            Some(0.0),
+            Some(0.0),
+            None,
+            None
+        )),
+        (0.0, 0.0, 0.5, 6.25)
+    );
     // Declared rates win, a declared zero included.
     assert_eq!(
         cost(declared_cost(
@@ -120,4 +131,24 @@ fn a_declared_costs_missing_rates_are_filled() {
     );
     assert_eq!(cost_of_id("local-model"), ModelCost::default());
     assert_eq!(cost_of_id("grok-4.5").cache_read, 0.3);
+}
+
+/// #2630 review L4: the Mythos models and Haiku 5.5 (its rates for prompts
+/// up to 100,000 tokens) are priced from Anthropic's page.
+#[test]
+fn mythos_and_haiku_5_5_carry_their_published_rates() {
+    assert_eq!(known("claude-mythos-5-1"), Some((10.0, 50.0, 0.25, 12.5)));
+    assert_eq!(known("claude-mythos-5"), Some((10.0, 50.0, 1.0, 12.5)));
+    assert_eq!(known("claude-haiku-5-5"), Some((0.1, 0.5, 0.01, 0.125)));
+}
+
+/// #2635 review M1: a declaration stating no rate for an id the table does
+/// not know states no price; one stating any rate, or a known id, does.
+#[test]
+fn only_a_stated_cost_is_declared() {
+    assert!(!declared_cost("local-model", None, None, None, None).declared);
+    assert!(declared_cost("local-model", Some(0.0), None, None, None).declared);
+    assert!(declared_cost("claude-opus-4-6", None, None, None, None).declared);
+    assert!(published_cost("grok-4.5").unwrap().declared);
+    assert!(!cost_of_id("local-model").declared);
 }

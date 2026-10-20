@@ -87,3 +87,19 @@ fn every_grok_built_in_is_priced() {
         assert_eq!(rates(&record.cost), expected, "{id}");
     }
 }
+
+/// #2630 review L2: every built-in model has a price row.
+#[test]
+fn every_built_in_has_a_price() {
+    use crate::domain::inference::value_objects::model_price::ModelPrice;
+    for record in ModelRegistry::builtin().models() {
+        let cost = crate::domain::catalogue::value_objects::model_facts::ModelCost {
+            input: record.cost.input,
+            output: record.cost.output,
+            cache_read: record.cost.cache_read,
+            cache_write: record.cost.cache_write,
+            declared: record.cost.declared,
+        };
+        assert!(ModelPrice::of(&cost).is_some(), "{}", record.qualified_id());
+    }
+}

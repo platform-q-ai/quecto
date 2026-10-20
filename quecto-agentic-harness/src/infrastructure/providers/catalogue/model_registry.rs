@@ -80,6 +80,8 @@ pub struct ModelCost {
     pub output: f64,
     pub cache_read: f64,
     pub cache_write: f64,
+    /// Whether the rates were stated (published or declared), not defaulted.
+    pub declared: bool,
 }
 
 impl From<crate::domain::catalogue::value_objects::model_facts::ModelCost> for ModelCost {
@@ -91,6 +93,7 @@ impl From<crate::domain::catalogue::value_objects::model_facts::ModelCost> for M
             output: cost.output,
             cache_read: cost.cache_read,
             cache_write: cost.cache_write,
+            declared: cost.declared,
         }
     }
 }
