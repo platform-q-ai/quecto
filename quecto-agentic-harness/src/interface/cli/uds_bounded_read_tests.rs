@@ -47,7 +47,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
     let tmp = tempfile::TempDir::new().unwrap();
     let mut agent = make_agent();
     let mut messages: Vec<Message> = Vec::new();
-    let mut session = AgentSession::new("stub".into());
+    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     let session_key = "cli:test".to_string();
     let initial_stats =
         crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);

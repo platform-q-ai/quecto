@@ -114,3 +114,310 @@ fn this_wires_cut_short_error_is_recognised_and_retried() {
     let class = classify_provider_error(&DomainError::Provider(message.into()));
     assert_eq!(class, ProviderErrorClass::Network, "{message}");
 }
+
+/// #2597: the Messages wire knows only its own events: another wire's
+/// event line names nothing, and another wire's shapes generate nothing.
+#[test]
+fn anthropic_knows_no_other_wires_events() {
+    for name in ["response.completed", "response.created", "[DONE]"] {
+        assert_eq!(ANTHROPIC_WIRE.event_line(name), Some(""), "{name}");
+        assert!(!ANTHROPIC_WIRE.known_event(name, &json!({})), "{name}");
+        assert_eq!(
+            ANTHROPIC_WIRE.terminal_event(name, &json!({})),
+            None,
+            "{name}"
+        );
+    }
+    for event in [
+        json!({"choices": [{"delta": {"content": "c", "reasoning": "r", "tool_calls": [{}]}}]}),
+        json!({"type": "response.output_text.delta", "delta": "t"}),
+        json!({"type": "response.reasoning_summary_text.delta", "delta": "t"}),
+        json!({"type": "response.output_item.added", "item": {"type": "function_call"}}),
+    ] {
+        assert_eq!(
+            ANTHROPIC_WIRE.generated(&event),
+            Generated::default(),
+            "{event}"
+        );
+    }
+}
+
+/// What each Messages event shows the model generated.
+#[test]
+fn an_anthropic_event_shows_text_tool_calls_and_thinking() {
+    let only = |text, tool_call, thinking| Generated {
+        text,
+        tool_call,
+        thinking,
+    };
+    for (event, generated) in [
+        (
+            json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "a"}}),
+            only(true, false, false),
+        ),
+        (
+            json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": ""}}),
+            only(false, false, false),
+        ),
+        (
+            json!({"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "a"}}),
+            only(false, false, true),
+        ),
+        (
+            json!({"type": "content_block_start", "content_block": {"type": "tool_use", "name": "f"}}),
+            only(false, true, false),
+        ),
+        (
+            json!({"type": "content_block_start", "content_block": {"type": "text", "text": ""}}),
+            only(false, false, false),
+        ),
+        (
+            json!({"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{"}}),
+            only(false, false, false),
+        ),
+    ] {
+        assert_eq!(ANTHROPIC_WIRE.generated(&event), generated, "{event}");
+    }
+}
+
+/// The Messages terminal events record what ended the attempt.
+#[test]
+fn anthropic_terminal_events_record_how_the_reply_ended() {
+    use crate::domain::inference::value_objects::attempt_diagnostics::TerminalEvent;
+    let value = json!({});
+    assert_eq!(
+        ANTHROPIC_WIRE.terminal_event("error", &value),
+        Some(TerminalEvent::Error)
+    );
+    assert_eq!(
+        ANTHROPIC_WIRE.terminal_event("message_stop", &value),
+        Some(TerminalEvent::MessageStop)
+    );
+    for name in ["ping", "message_delta", ""] {
+        assert_eq!(ANTHROPIC_WIRE.terminal_event(name, &value), None, "{name}");
+    }
+}
+
+/// #2433: which Messages events carry output (moved from `transport/` with
+/// the progress vocabulary, #2597). `[DONE]` is none: this wire ends at
+/// `message_stop`.
+#[test]
+fn messages_events_carry_output_by_what_they_hold() {
+    let carries = |data: &str| {
+        crate::infrastructure::providers::transport::sse_progress::carries_output(
+            &ANTHROPIC_WIRE,
+            data,
+        )
+    };
+    for data in [
+        r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"a"}}"#,
+        r#"{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hm"}}"#,
+        r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{"}}"#,
+        r#"{"type":"content_block_start","content_block":{"type":"text","text":"a"}}"#,
+        r#"{"type":"content_block_start","content_block":{"type":"thinking","thinking":"hm"}}"#,
+        r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
+        r#"{"type":"message_stop"}"#,
+        r#"{"type":"error","error":{"type":"overloaded_error"}}"#,
+    ] {
+        assert!(carries(data), "{data}");
+    }
+    for data in [
+        r#"{"type":"ping"}"#,
+        r#"{"type":"message_start","message":{"content":[]}}"#,
+        r#"{"type":"content_block_start","content_block":{"type":"text","text":""}}"#,
+        r#"{"type":"content_block_start","content_block":{"type":"tool_use","name":"f","input":{}}}"#,
+        r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":""}}"#,
+        r#"{"type":"content_block_delta","delta":{"type":"signature_delta","signature":"s"}}"#,
+        r#"{"type":"content_block_stop","index":0}"#,
+        r#"{"type":"message_delta","delta":{"stop_reason":null},"usage":{}}"#,
+        "[DONE]",
+        "{not json",
+        // Another wire's output is none of this wire's (#2597).
+        r#"{"type":"response.completed","response":{}}"#,
+        r#"{"choices":[{"index":0,"delta":{"content":"a"},"finish_reason":"stop"}]}"#,
+    ] {
+        assert!(!carries(data), "{data}");
+    }
+}
+
+/// #2433 review M4: a long Messages event is output by the type its start
+/// names: a delta or a terminal event.
+#[test]
+fn a_long_anthropic_event_is_output_by_the_type_its_start_names() {
+    let long = |start: &str| {
+        crate::infrastructure::providers::transport::sse_progress::long_event_carries_output(
+            &ANTHROPIC_WIRE,
+            start.as_bytes(),
+        )
+    };
+    for start in [
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"xx"#,
+        r#"{"index":0,"delta":{"type":"text_delta","text":"xx"#,
+        r#"{"type":"message_stop","padding":"xx"#,
+    ] {
+        assert!(long(start), "{start}");
+    }
+    for start in [
+        r#"{"type": "ping", "padding":"xx"#,
+        r#"{"type":"message_start","message":{"xx"#,
+        r#"{"padding":"xx"#,
+        "",
+        // Another wire's long event is none of this wire's (#2597).
+        r#"{"type":"response.output_text.delta","delta":"xxxx"#,
+        r#"{"choices":[{"index":0,"delta":{"content":"xx"#,
+    ] {
+        assert!(!long(start), "{start}");
+    }
+}
+
+/// #1679 P2 AC5, #2609 review: a Messages payload is a throttle by its
+/// `error` object's typed fields alone, a billing name taking precedence.
+/// Moved from `transport/` (and the contract suite) with this wire's error
+/// names; a Responses-only name or shape is none of this wire's.
+#[test]
+fn a_messages_throttle_is_read_from_its_error_object_only() {
+    for (value, throttle) in [
+        (
+            json!({"type": "error", "error": {"type": "rate_limit_error"}}),
+            true,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "overloaded_error", "message": "x"}}),
+            true,
+        ),
+        (
+            json!({"error": {"type": "rate_limit_error", "code": "insufficient_quota"}}),
+            false,
+        ),
+        (
+            json!({"error": {"type": "overloaded_error", "code": "billing_error"}}),
+            false,
+        ),
+        (
+            json!({"error": {"message": "429 rate_limit_error overloaded_error"}}),
+            false,
+        ),
+        (json!({"error": {"type": "authentication_error"}}), false),
+        (json!({"error": {"type": "invalid_request_error"}}), false),
+        (json!({"type": "rate_limit_error"}), false),
+        (json!(null), false),
+        // The root of an `error` event is not read (#2620 review): neither
+        // its throttle nor its billing name counts.
+        (json!({"type": "error", "code": "overloaded_error"}), false),
+        (
+            json!({"type": "error", "code": "billing_error", "error": {"type": "overloaded_error"}}),
+            true,
+        ),
+        // Declared narrowing: another wire's shapes and names.
+        (
+            json!({"type": "error", "code": "rate_limit_exceeded"}),
+            false,
+        ),
+        (json!({"error": {"code": "rate_limit_exceeded"}}), false),
+        (
+            json!({"response": {"error": {"type": "overloaded_error"}}}),
+            false,
+        ),
+    ] {
+        assert_eq!(ANTHROPIC_WIRE.is_throttle(&value), throttle, "{value}");
+    }
+}
+
+/// An HTTP error body naming a billing error or a request this wire
+/// refuses is terminal; a throttle is not.
+#[test]
+fn a_messages_error_body_is_terminal_by_its_typed_fields() {
+    for (value, terminal) in [
+        (
+            json!({"type": "error", "error": {"type": "authentication_error"}}),
+            true,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "permission_error"}}),
+            true,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "invalid_request_error"}}),
+            true,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "billing_error"}}),
+            true,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "overloaded_error"}}),
+            false,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "api_error"}}),
+            false,
+        ),
+        // Declared narrowing: another wire's refusal names and shapes.
+        (json!({"error": {"code": "invalid_api_key"}}), false),
+        (
+            json!({"response": {"error": {"type": "invalid_request_error"}}}),
+            false,
+        ),
+    ] {
+        assert_eq!(
+            ANTHROPIC_WIRE.is_terminal_error(&value),
+            terminal,
+            "{value}"
+        );
+    }
+}
+
+/// The Messages error names an attempt records.
+#[test]
+fn a_messages_error_records_its_code() {
+    use crate::domain::inference::value_objects::attempt_diagnostics::ErrorCode;
+    for (name, code) in [
+        ("rate_limit_error", ErrorCode::RateLimitExceeded),
+        ("overloaded_error", ErrorCode::Overloaded),
+        ("authentication_error", ErrorCode::AuthenticationError),
+        ("permission_error", ErrorCode::PermissionError),
+        ("invalid_request_error", ErrorCode::InvalidRequestError),
+    ] {
+        assert_eq!(
+            ANTHROPIC_WIRE.error_name(name).map(|known| known.code()),
+            Some(code),
+            "{name}"
+        );
+    }
+    for name in [
+        "rate_limit_exceeded",
+        "server_error",
+        "invalid_api_key",
+        "usage_limit_reached",
+    ] {
+        assert!(ANTHROPIC_WIRE.error_name(name).is_none(), "{name}");
+    }
+    let value = json!({"response": {"incomplete_details": {"reason": "max_output_tokens"}}});
+    assert_eq!(ANTHROPIC_WIRE.incomplete_reason(&value), None);
+    let observe = |data: &str| {
+        let profile = crate::infrastructure::providers::transport::attempt_profile::Profile::new(
+            &ANTHROPIC_WIRE,
+            Surface::Incremental,
+            Default::default(),
+        );
+        crate::infrastructure::providers::transport::attempt_transport::observed(
+            profile,
+            &["event: error", data],
+            None,
+        )
+        .diagnostics
+        .error_code
+    };
+    // An object naming two known errors records its `type`'s, as before
+    // the move; a root code is not read (#2620 review).
+    assert_eq!(
+        observe(
+            r#"data: {"type":"error","error":{"type":"overloaded_error","code":"rate_limit_error"}}"#
+        ),
+        Some(ErrorCode::Overloaded)
+    );
+    assert_eq!(
+        observe(r#"data: {"type":"error","code":"overloaded_error"}"#),
+        None
+    );
+}

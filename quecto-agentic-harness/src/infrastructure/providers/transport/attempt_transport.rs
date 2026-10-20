@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
-use super::admission_feedback::{CooldownHint, is_typed_throttle, normalize_throttle};
+use super::admission_feedback::{CooldownHint, normalize_throttle};
 use super::attempt_profile::Profile;
 use super::sse_common::{SseHandler, SseLineOutcome};
 use super::wire_dialect::{Ending, WireDialect};
@@ -129,14 +129,15 @@ impl Receipt {
             _ => {}
         }
     }
-    /// A typed error payload that is (`throttled`) or is not a throttle.
-    fn typed_as(&self, value: &serde_json::Value, throttled: bool) {
+    /// A typed error payload of `wire` that is (`throttled`) or is not a
+    /// throttle.
+    fn typed_as(&self, wire: &dyn WireDialect, value: &serde_json::Value, throttled: bool) {
         debug_assert!(
-            !is_typed_throttle(value) || throttled,
+            !wire.is_throttle(value) || throttled,
             "a typed throttle is always a throttle"
         );
         let mut state = self.0.lock().unwrap();
-        diagnostics::typed(&mut state.diagnostics, value);
+        diagnostics::typed(&mut state.diagnostics, wire, value);
         if throttled {
             state.failure = true;
         }
@@ -146,29 +147,14 @@ impl Receipt {
             state.hinted = true;
         }
     }
-    fn http_error(&self, status: u16, body: &str) {
+    /// The provider answered `status` with the error `body` of `wire`.
+    fn http_error(&self, wire: &dyn WireDialect, status: u16, body: &str) {
         let value = serde_json::from_str::<serde_json::Value>(body).unwrap_or_default();
-        let terminal = [&value["error"], &value["response"]["error"]]
-            .iter()
-            .any(|error| {
-                ["type", "code"].iter().any(|field| {
-                    error[*field].as_str().is_some_and(|name| {
-                        crate::domain::inference::services::provider_error::is_billing_error_name(
-                            name,
-                        ) || matches!(
-                            name,
-                            "authentication_error"
-                                | "permission_error"
-                                | "invalid_request_error"
-                                | "invalid_api_key"
-                        )
-                    })
-                })
-            });
+        let terminal = wire.is_terminal_error(&value);
         let mut state = self.0.lock().unwrap();
-        diagnostics::typed(&mut state.diagnostics, &value);
+        diagnostics::typed(&mut state.diagnostics, wire, &value);
         state.failure = true;
-        let throttled = matches!(status, 429 | 529) || is_typed_throttle(&value);
+        let throttled = matches!(status, 429 | 529) || wire.is_throttle(&value);
         let state = &mut *state;
         if let (false, false, true, Some(permit)) =
             (state.hinted, terminal, throttled, state.permit.as_mut())
@@ -512,7 +498,15 @@ pub(in crate::infrastructure::providers) async fn stream<H: SseHandler>(
         let (local_tx, rx) = tokio::sync::mpsc::channel(1);
         let pump = async {
             let idle = profile.idle;
-            diagnostic_sse::pump_sse(&receipt, &mut response, &local_tx, &mut handler, idle).await;
+            diagnostic_sse::pump_sse(
+                &receipt,
+                &mut response,
+                &local_tx,
+                &mut handler,
+                idle,
+                profile.dialect,
+            )
+            .await;
             drop(local_tx);
         };
         let (_, terminal) = tokio::join!(pump, forward(rx, &output, &receipt));

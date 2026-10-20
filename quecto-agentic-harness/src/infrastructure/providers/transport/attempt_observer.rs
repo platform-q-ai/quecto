@@ -61,6 +61,10 @@ impl ProtocolObserver {
             event: "",
         }
     }
+    /// The wire this observer reads.
+    pub(super) fn dialect(&self) -> &'static dyn WireDialect {
+        self.dialect
+    }
     pub(super) fn observe(&mut self, line: &str, receipt: &Receipt) {
         if self.terminal {
             return;
@@ -95,32 +99,11 @@ impl ProtocolObserver {
             let mut state = receipt.0.lock().unwrap();
             match serde_json::from_str::<serde_json::Value>(data) {
                 Ok(value) => {
-                    diagnostics::typed(&mut state.diagnostics, &value);
-                    let nonempty =
-                        |v: &serde_json::Value| v.as_str().is_some_and(|s| !s.is_empty());
-                    state.diagnostics.generated_text |= nonempty(&value["delta"]["text"])
-                        || nonempty(&value["choices"][0]["delta"]["content"])
-                        || (value["type"] == "response.output_text.delta"
-                            && nonempty(&value["delta"]));
-                    state.diagnostics.generated_tool_call |=
-                        value["choices"][0]["delta"]["tool_calls"]
-                            .as_array()
-                            .is_some_and(|v| !v.is_empty())
-                            || value["item"]["type"] == "function_call"
-                            || value["content_block"]["type"] == "tool_use";
-                    // OpenAI-compatible reasoning models (DeepSeek, GLM,
-                    // OpenRouter) stream thinking as `reasoning` or
-                    // `reasoning_content` (#2151).
-                    state.diagnostics.generated_thinking |= nonempty(&value["delta"]["thinking"])
-                        || nonempty(&value["choices"][0]["delta"]["reasoning"])
-                        || nonempty(&value["choices"][0]["delta"]["reasoning_content"])
-                        || (matches!(
-                            value["type"].as_str(),
-                            Some(
-                                "response.reasoning_summary_text.delta"
-                                    | "response.reasoning.summary_text.delta"
-                            )
-                        ) && nonempty(&value["delta"]));
+                    diagnostics::typed(&mut state.diagnostics, self.dialect, &value);
+                    let generated = self.dialect.generated(&value);
+                    state.diagnostics.generated_text |= generated.text;
+                    state.diagnostics.generated_tool_call |= generated.tool_call;
+                    state.diagnostics.generated_thinking |= generated.thinking;
                     let token = state.diagnostics.generated_text
                         || state.diagnostics.generated_tool_call
                         || state.diagnostics.generated_thinking;
@@ -139,15 +122,7 @@ impl ProtocolObserver {
                     let kind = self.dialect.event_kind(self.event, &value);
                     count_kind(&mut state, kind);
                     let event = self.dialect.event_name(self.event, &value);
-                    let terminal = match event {
-                        _ if self.dialect.is_error_chunk(&value) => Some(TerminalEvent::Error),
-                        "response.completed" => Some(TerminalEvent::ResponseCompleted),
-                        "response.failed" => Some(TerminalEvent::ResponseFailed),
-                        "response.incomplete" => Some(TerminalEvent::ResponseIncomplete),
-                        "error" => Some(TerminalEvent::Error),
-                        "message_stop" => Some(TerminalEvent::MessageStop),
-                        _ => None,
-                    };
+                    let terminal = self.dialect.terminal_event(event, &value);
                     if terminal.is_some() {
                         state.diagnostics.terminal_event = terminal;
                         state.diagnostics.termination = Termination::Completed;
@@ -192,7 +167,7 @@ impl ProtocolObserver {
             }
         }
         if let Some((feedback, throttle)) = failure {
-            receipt.typed_as(&feedback, throttle);
+            receipt.typed_as(self.dialect, &feedback, throttle);
             receipt.fail();
         }
         self.terminal = true;

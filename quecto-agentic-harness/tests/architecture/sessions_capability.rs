@@ -1006,8 +1006,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // (was 305 before D9).
     // #1845 split the single-client loop out of uds_lifecycle (311 → 203);
     // the moved lines are ratcheted at their new home.
-    ("src/interface/cli/uds_lifecycle.rs", 193),
-    ("src/interface/cli/uds_single_client.rs", 127),
+    // #1909 hands both loops composition's automatic-turns builder (the
+    // resume-after-a-provider-failure use case; was 193 and 127).
+    ("src/interface/cli/uds_lifecycle.rs", 197),
+    ("src/interface/cli/uds_single_client.rs", 129),
     // #2446 moved the client-disconnect bookkeeping to `uds_multi/clients.rs`.
     ("src/interface/cli/uds_multi.rs", 599),
     // Same merge of D3/D4/D5/D6/D7 handles (was 111 before D7); D10 #1979
@@ -1017,7 +1019,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // D10 #1979: the tracker keeps no session key; the presenters, the
     // workflow-nudge descendant check and the agent loop's key accessor are
     // pinned at their D10 size.
-    ("src/interface/cli/uds_session.rs", 628),
+    // #1909: the suspension rule moved to the domain and the agent-turn
+    // use case; the tracker holds the use case (628 → 610).
+    ("src/interface/cli/uds_session.rs", 610),
     ("src/interface/cli/uds_query.rs", 232),
     ("src/interface/cli/uds_workflow_nudge.rs", 109),
     (
@@ -1033,7 +1037,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #2218: the idle drain's test hooks moved to `uds_turn_test_hooks.rs`
     // and every turn ends with the one routine save, run by the turn itself
     // before `agent_end` (711 → 698).
-    ("src/interface/cli/uds.rs", 695),
+    // #1909: a prompt or steer re-arms through the automatic-turns use case
+    // (695 → 690; the steer is now read from the turn's work).
+    ("src/interface/cli/uds.rs", 690),
     ("src/interface/cli/uds_session_history.rs", 205),
     // #2404: the ranged builder's unused thinking switch went (290 → 283).
     ("src/interface/cli/uds_session_message_range.rs", 283),

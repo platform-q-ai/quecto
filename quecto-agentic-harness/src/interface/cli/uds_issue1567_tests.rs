@@ -37,7 +37,7 @@ fn record_agent_result_emits_normalized_session_usage_log() {
         .finish();
 
     tracing::subscriber::with_default(subscriber, || {
-        let mut session = AgentSession::new("gpt-5".to_string());
+        let mut session = AgentSession::new("gpt-5".to_string(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
         let mut result = crate::domain::agents::value_objects::agent::AgentResult::text("ok");
         result.context_tokens = 105;
         result.billed_input_tokens = 70;
@@ -80,7 +80,7 @@ fn record_agent_result_without_usage_does_not_emit_session_usage_log() {
         .finish();
 
     tracing::subscriber::with_default(subscriber, || {
-        let mut session = AgentSession::new("gpt-5".to_string());
+        let mut session = AgentSession::new("gpt-5".to_string(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
         session.record_agent_result(
             "cli:test",
             &crate::domain::agents::value_objects::agent::AgentResult::text("ok"),

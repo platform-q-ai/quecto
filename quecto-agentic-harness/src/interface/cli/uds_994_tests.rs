@@ -59,7 +59,7 @@ impl Fixture {
             Self {
                 agent: make_agent(),
                 messages: Vec::new(),
-                session: AgentSession::new("stub".into()),
+                session: AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new()),
                 session_key: "cli:test".to_string(),
                 _tmp: tmp,
                 writer: tokio::io::sink(),
@@ -402,7 +402,7 @@ async fn run_stub_turn_event_types_with_sink(
 
     let mut agent = make_agent();
     let mut messages = Vec::new();
-    let mut session = AgentSession::new("stub".into());
+    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;

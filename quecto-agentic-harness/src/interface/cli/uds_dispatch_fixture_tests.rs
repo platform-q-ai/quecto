@@ -68,7 +68,7 @@ impl Fixture {
         let mut fixture = Self {
             agent,
             messages: Vec::new(),
-            session: AgentSession::new(RIG_MODEL.into()),
+            session: AgentSession::new(RIG_MODEL.into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new()),
             session_key: "cli:test".to_string(),
             store: store.clone(),
             sessions: list_handle_placeholder(&store),

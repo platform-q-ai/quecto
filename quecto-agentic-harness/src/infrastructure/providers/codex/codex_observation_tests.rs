@@ -1,6 +1,7 @@
 //! #2597: what the attempt observer makes of the Responses (Codex) wire, pinned
 //! before attempt observation moved out of `transport/` into per-vendor
-//! strategies: every case must read exactly as it did.
+//! strategies: every case must read exactly as it did, but for the one row
+//! marked a declared change (#2597, M1: each wire knows only its own events).
 use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
 use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface};
 use crate::infrastructure::providers::transport::attempt_transport::{observation, observed};
@@ -96,8 +97,11 @@ const CASES: &[(&str, &[&str], &str)] = &[
             r#"data: {"choices":[{"delta":{"content":"c"}}]}"#,
             r#"data: {"type":"message_stop"}"#,
         ],
-        r#"terminal=[false, false, false, false] failure=false hinted=false first_token=true
-{"attempt_number":0,"started_unix_ms":0,"finished_unix_ms":0,"elapsed_ms":0,"wire_status":null,"headers":[],"stop_reason":null,"terminal_event":"MessageStop","error_code":null,"incomplete_reason":null,"event_count":4,"generated_text":true,"generated_tool_call":false,"generated_thinking":false,"output_bytes":0,"oversized_lines":0,"parse_errors":0,"unknown_events":1,"event_types":{"(unknown)":1,"message_start":1,"message_stop":1,"ping":1},"termination":"Completed"}"#,
+        // Declared change (#2597, M1): the Responses wire knows only its own
+        // events, so another wire's events are unknown, generate nothing and
+        // end nothing.
+        r#"terminal=[false, false, false, false] failure=false hinted=false first_token=false
+{"attempt_number":0,"started_unix_ms":0,"finished_unix_ms":0,"elapsed_ms":0,"wire_status":null,"headers":[],"stop_reason":null,"terminal_event":null,"error_code":null,"incomplete_reason":null,"event_count":4,"generated_text":false,"generated_tool_call":false,"generated_thinking":false,"output_bytes":0,"oversized_lines":0,"parse_errors":0,"unknown_events":4,"event_types":{"(unknown)":4},"termination":"Dropped"}"#,
     ),
     (
         "malformed_and_event_lines",
@@ -249,4 +253,32 @@ fn a_numeric_throttle_code_does_not_throttle_a_responses_attempt() {
     );
     assert!(!seen.hinted);
     assert!(seen.failure, "an error event always fails the attempt");
+}
+
+/// #2609 review: the Responses wire reads only its own error names and
+/// shapes. Another wire's throttle name fails an attempt without
+/// throttling it; an `error` event's own code is recorded where the
+/// throttle check reads it.
+#[test]
+fn a_responses_attempt_reads_only_its_own_error_vocabulary() {
+    use crate::domain::inference::value_objects::attempt_diagnostics::ErrorCode;
+    for line in [
+        r#"data: {"type":"error","error":{"type":"rate_limit_error"}}"#,
+        r#"data: {"type":"response.failed","response":{"error":{"type":"overloaded_error"}}}"#,
+    ] {
+        let seen = observed(profile(), &[line], None);
+        assert!(seen.failure, "{line}");
+        assert!(!seen.hinted, "{line}");
+        assert_eq!(seen.diagnostics.error_code, None, "{line}");
+    }
+    let own = observed(
+        profile(),
+        &[r#"data: {"type":"error","code":"rate_limit_exceeded","message":"x"}"#],
+        None,
+    );
+    assert!(own.hinted);
+    assert_eq!(
+        own.diagnostics.error_code,
+        Some(ErrorCode::RateLimitExceeded)
+    );
 }

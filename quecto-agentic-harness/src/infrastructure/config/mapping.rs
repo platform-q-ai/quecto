@@ -8,9 +8,9 @@
 //! the resolve use case directly.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::application::configuration::ports::ConfigValidator;
+use crate::application::configuration::ports::{ConfigValidator, RunSettings, RunSettingsSource};
 use crate::infrastructure::config::{Config, ConfigError};
 
 impl Config {
@@ -171,6 +171,47 @@ pub fn realize_inherited_child_config(
         .and_then(|config| config.with_env_overrides(env_overrides))
         .map(|config| config.with_admission_base_dir(base_dir))
         .map_err(|error| error.to_string())
+}
+
+/// The run settings an effective document yields (#1843): the
+/// configuration capability's `RunSettingsSource` over the `Config`
+/// schema, so `quecto status` reports what a run would use without the
+/// interface or application reading `Config` itself.
+/// Realizes a document as a run in `base_dir` would, without `QUECTO_*`
+/// overrides: `status` reports the files, not this process's environment.
+#[derive(Debug, Clone)]
+pub struct ConfigRunSettings {
+    base_dir: PathBuf,
+}
+
+impl ConfigRunSettings {
+    pub fn for_base_dir(base_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            base_dir: base_dir.into(),
+        }
+    }
+}
+
+impl RunSettingsSource for ConfigRunSettings {
+    fn settings(&self, document: serde_json::Value) -> Result<RunSettings, String> {
+        let config = realize_config(document, &HashMap::new(), &self.base_dir)?;
+        let has = |key: &str| !key.is_empty();
+        Ok(RunSettings {
+            workspace: config.workspace_path(),
+            model: config.agents.defaults.model.clone(),
+            effort: config.agents.defaults.effort.clone(),
+            openai_key: has(&config.providers.openai.api_key),
+            anthropic_key: has(&config.providers.anthropic.api_key),
+            endpoint_keys: config
+                .providers
+                .openai_compatible
+                .endpoints
+                .iter()
+                .filter(|endpoint| has(&endpoint.api_key))
+                .map(|endpoint| endpoint.prefix.clone())
+                .collect(),
+        })
+    }
 }
 
 #[cfg(test)]

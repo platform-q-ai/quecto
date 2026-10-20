@@ -273,7 +273,7 @@ fn listing_and_session_state_surfaces_report_the_snapshot_effort_vocabulary() {
             None,
             &handles.effort.choices(qualified),
         );
-        let state = quecto::interface::cli::uds_session::AgentSession::new(qualified.to_string())
+        let state = quecto::interface::cli::uds_session::AgentSession::new(qualified.to_string(), quecto::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new())
             .state_snapshot("conformance", 0, None, 0, view);
         assert_eq!(
             state.effort_levels.join(", "),

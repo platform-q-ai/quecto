@@ -43,13 +43,13 @@ fn session_dir_entries_reads_real_entries() {
     assert_eq!(session_dir_entries(&sessions_dir).len(), 1);
 }
 
-/// Helper: write a minimal config with a fake OpenAI key.
 /// A CLI context over `base_dir` carrying composition's sessions and
 /// retained-context builders, as `main` supplies them.
 pub(super) fn composed_ctx(base_dir: &std::path::Path) -> CliContext {
     CliContext {
         base_dir: Some(base_dir.to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),

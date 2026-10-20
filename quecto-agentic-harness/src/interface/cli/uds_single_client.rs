@@ -13,6 +13,7 @@ use crate::domain::conversation::value_objects::message::Message;
 
 pub(super) struct SingleClientArgs<'a> {
     pub(super) agent: AgentLoopImpl,
+    pub(super) automatic_turns: super::AutomaticTurnsBuilder,
     pub(super) workspace: &'a std::path::Path,
     pub(super) messages: Vec<Message>,
     pub(super) model: String,
@@ -33,6 +34,7 @@ pub(super) async fn single_client_loop(
 ) -> i32 {
     let SingleClientArgs {
         mut agent,
+        automatic_turns,
         workspace,
         mut messages,
         model,
@@ -60,7 +62,7 @@ pub(super) async fn single_client_loop(
 
     inject_system_prompt(&mut messages, &system_prompt);
 
-    let mut agent_session = AgentSession::new(model);
+    let mut agent_session = AgentSession::new(model, automatic_turns());
     agent_session.set_admission_warnings(&admission_slots);
     agent_session.set_startup_warnings(&catalogue.startup_warnings);
     agent_session.observe_runtime(catalogue.runtime_store.clone());

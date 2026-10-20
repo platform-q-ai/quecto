@@ -60,7 +60,14 @@ async fn pump_sse_anthropic_wire_stream_cut_before_message_stop_is_an_error() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let mut handler = AnthropicSseHandler::new_for_test(None);
 
-    pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
+    pump_sse(
+        &mut response,
+        &tx,
+        &mut handler,
+        Default::default(),
+        &super::anthropic::anthropic_wire::ANTHROPIC_WIRE,
+    )
+    .await;
 
     assert!(matches!(rx.recv().await.unwrap(), StreamEvent::TextDelta(t) if t == "split"));
     // No `message_stop`: the reply was cut short (#2249 review).

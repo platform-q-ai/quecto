@@ -743,3 +743,6 @@ pub(crate) fn catalogue_handles(
 ) -> crate::interface::cli::catalogue_handles::CatalogueHandles {
     crate::composition::catalogue::build_catalogue_handles(base, None)
 }
+
+/// A session's automatic turns, as composition builds them (#1909).
+pub(crate) use crate::composition::bootstrap::agent_turn::build_automatic_turns as automatic_turns;

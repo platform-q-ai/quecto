@@ -82,10 +82,11 @@ pub(super) async fn pump_sse<H: SseHandler>(
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
     handler: &mut H,
     idle: StreamIdle,
+    wire: &'static dyn WireDialect,
 ) {
     let mut carry: Vec<u8> = Vec::new();
     // Bounded from the body's last event, not its last bytes (#2433).
-    let mut idle = super::super::stream_idle::EventIdle::events(idle);
+    let mut idle = super::super::stream_idle::EventIdle::events(idle, wire);
 
     loop {
         let bytes = match idle.next(response.chunk()).await {
@@ -219,7 +220,7 @@ pub(super) async fn error_body(
     if receipt.0.lock().unwrap().diagnostics.termination == Termination::Dropped {
         receipt.termination(Termination::HttpError);
     }
-    receipt.http_error(status, &text);
+    receipt.http_error(profile.dialect, status, &text);
     let text = profile.error_body(text);
     DomainError::Provider(format!(
         "HTTP {status} from {}: {text}{suffix}",
