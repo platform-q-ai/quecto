@@ -389,7 +389,9 @@ fn the_agents_own_request_counters_are_always_reported() {
 /// client through `get_state`, so the TUI can show them.
 #[test]
 fn get_state_carries_the_startup_warnings() {
-    let mut session = super::uds_session::AgentSession::new("openai-oauth/gpt-5.5".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session(
+        "openai-oauth/gpt-5.5".into(),
+    );
     let warning = "agent: warning: model `openai-oauth/gpt-5.5` was retired".to_string();
     session.set_startup_warnings(std::slice::from_ref(&warning));
     let state = session.state_snapshot(
@@ -401,7 +403,7 @@ fn get_state_carries_the_startup_warnings() {
     );
     let data = slim_state_response_data(&state, None);
     assert_eq!(data["startupWarnings"], serde_json::json!([warning]));
-    let quiet = super::uds_session::AgentSession::new("m".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let quiet = crate::composition::bootstrap::agent_turn::build_turn_session("m".into());
     let state = quiet.state_snapshot(
         "cli:w",
         0,
@@ -424,7 +426,9 @@ fn get_state_carries_the_startup_warnings() {
 fn a_model_switch_clears_the_startup_warnings_of_the_previous_model() {
     let view =
         || crate::interface::uds::catalogue::effort_presenter::EffortStateView::new(None, &[]);
-    let mut session = super::uds_session::AgentSession::new("openai-oauth/gpt-5.5".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session(
+        "openai-oauth/gpt-5.5".into(),
+    );
     session
         .set_startup_warnings(&["agent: warning: model `openai-oauth/gpt-5.5` was retired".into()]);
     session.set_model("openai-oauth/gpt-5.5".into());

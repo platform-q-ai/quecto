@@ -47,10 +47,10 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
     let tmp = tempfile::TempDir::new().unwrap();
     let mut agent = make_agent();
     let mut messages: Vec<Message> = Vec::new();
-    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
     let session_key = "cli:test".to_string();
     let initial_stats =
-        crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
+        crate::interface::cli::uds_session::history_session_stats(&session_key, &messages);
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(1024);
     // #2423 review M2: an extension call is waiting on this client; the
     // dropped message may be its result, so it fails now, not at its timeout.

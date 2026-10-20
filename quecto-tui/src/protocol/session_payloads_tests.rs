@@ -29,8 +29,7 @@ fn parse_session_stats_extracts_typed_values() {
     assert_eq!(stats.cache_read_tokens, 30);
     assert_eq!(stats.cache_write_tokens, 5);
     assert_eq!(stats.total_tokens, 579);
-    assert_eq!(stats.cost_micro_usd, 125_000);
-    assert_eq!(stats.cost, 0.125);
+    assert_eq!(stats.cost_micro_usd, Some(125_000));
     assert!((stats.cache_hit_ratio.unwrap() - (30.0 / 158.0)).abs() < 1e-9);
     assert_eq!(stats.context_usage, Some((3000, 12000)));
 }
@@ -42,8 +41,7 @@ fn parse_session_stats_cost_micro_usd_precedes_legacy_cost() {
         "cost": 99.0
     }));
 
-    assert_eq!(stats.cost_micro_usd, 1234);
-    assert_eq!(stats.cost, 0.001234);
+    assert_eq!(stats.cost_micro_usd, Some(1234));
 }
 
 #[test]
@@ -53,16 +51,14 @@ fn parse_session_stats_malformed_cost_micro_usd_blocks_legacy_cost() {
         "cost": 99.0
     }));
 
-    assert_eq!(stats.cost_micro_usd, 0);
-    assert_eq!(stats.cost, 0.0);
+    assert_eq!(stats.cost_micro_usd, None, "null is unknown, never 0");
 }
 
 #[test]
 fn parse_session_stats_converts_legacy_cost_when_micros_absent() {
     let stats = parse_session_stats(&json!({ "cost": 0.001234 }));
 
-    assert_eq!(stats.cost_micro_usd, 1234);
-    assert_eq!(stats.cost, 0.001234);
+    assert_eq!(stats.cost_micro_usd, Some(1234));
 }
 
 #[test]
@@ -76,8 +72,11 @@ fn parse_session_stats_defaults_malformed_fields() {
     assert_eq!(stats.cache_read_tokens, 0);
     assert_eq!(stats.cache_write_tokens, 0);
     assert_eq!(stats.total_tokens, 0);
-    assert_eq!(stats.cost_micro_usd, 0);
-    assert_eq!(stats.cost, 0.0);
+    assert_eq!(
+        stats.cost_micro_usd,
+        Some(0),
+        "no cost field: legacy fallback"
+    );
     assert_eq!(stats.cache_hit_ratio, None);
     assert_eq!(stats.context_usage, None);
 }
@@ -394,4 +393,29 @@ fn a_message_s_image_count_is_read_in_place_and_clamped() {
     assert_eq!(message_image_count(&json!({"imageCount": "x"})), 0);
     assert_eq!(message_image_count(&json!({"content": "no images"})), 0);
     assert_eq!(message_image_count(&json!(["not", "an", "object"])), 0);
+}
+
+/// #1855: the harness's count of replies it could not price.
+#[test]
+fn parse_session_stats_reads_unpriced_attempts() {
+    let stats = parse_session_stats(&json!({"costMicroUsd": null, "unpricedAttempts": 3}));
+    assert_eq!((stats.cost_micro_usd, stats.unpriced_attempts), (None, 3));
+    assert_eq!(parse_session_stats(&json!({})).unpriced_attempts, 0);
+}
+
+/// #2635 review: null and 0 are told apart.
+#[test]
+fn parse_session_stats_keeps_null_and_zero_apart() {
+    assert_eq!(
+        parse_session_stats(&json!({"costMicroUsd": null})).cost_micro_usd,
+        None
+    );
+    assert_eq!(
+        parse_session_stats(&json!({"costMicroUsd": 0})).cost_micro_usd,
+        Some(0)
+    );
+    assert_eq!(
+        parse_session_stats(&json!({"cost": 0.000005})).cost_micro_usd,
+        Some(5)
+    );
 }

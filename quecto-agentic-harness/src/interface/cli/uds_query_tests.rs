@@ -134,7 +134,7 @@ impl Fx {
                     crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
             }),
             messages: vec![Message::user("one"), Message::assistant("two", vec![])],
-            session: AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new()),
+            session: crate::composition::bootstrap::agent_turn::build_turn_session("stub".into()),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
             store: Arc::new(FileSessionStore::new(
@@ -155,13 +155,11 @@ impl Fx {
         &mut self,
         workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     ) -> crate::interface::cli::uds::DispatchCtx<'_> {
-        let initial_stats = compute_session_stats_with_usage(
+        let initial_stats = present_session_stats(self.session.usage_report(
             &self.session_key,
             &self.messages,
-            self.session.usage_snapshot(),
-            self.session.context_tokens(),
             self.agent.max_context_tokens(),
-        );
+        ));
         let save_session =
             crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(
                 &self.session_key,

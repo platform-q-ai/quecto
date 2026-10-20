@@ -719,8 +719,8 @@ impl crate::application::providers::ports::LlmProvider for CountingProvider {
 /// id-less prompt stays a user instruction.
 #[test]
 fn wake_nudges_queue_as_automatic_messages() {
-    use crate::interface::cli::uds_session::{AgentSession, PendingMessage};
-    let mut session = AgentSession::new("m".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    use crate::interface::cli::uds_session::PendingMessage;
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("m".into());
     assert!(session.enqueue_control(
         None,
         crate::interface::cli::uds_swarm_control::SWARM_WAKE,

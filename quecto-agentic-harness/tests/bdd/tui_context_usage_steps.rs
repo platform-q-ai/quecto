@@ -13,7 +13,7 @@ use quecto::application::agent_turn::agent_loop::UsageTotals;
 use quecto::application::agent_turn::context::context_pruning::estimate_total_tokens;
 use quecto::domain::conversation::value_objects::message::UsageInfo;
 use quecto::interface::cli::protocol::SessionStats as WireSessionStats;
-use quecto::interface::cli::uds_session::{AgentSession, compute_session_stats_with_usage};
+use quecto::interface::cli::uds_session::present_session_stats;
 use quecto_tui::protocol::client::Event;
 use quecto_tui::shell::app::tui_harness::TuiHarness;
 
@@ -248,7 +248,8 @@ fn then_provider_usage_drives_gauge_and_totals(world: &mut QuectoWorld) {
 
 #[given("multiple LLM calls return input, output, cache, and cost usage")]
 fn given_multiple_llm_calls(world: &mut QuectoWorld) {
-    let mut session = AgentSession::new("test-model".to_string(), quecto::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session =
+        quecto::composition::bootstrap::agent_turn::build_turn_session("test-model".to_string());
     // Two turns' worth of provider usage accumulate into the session totals.
     session.record_usage("cli:test", UsageTotals::billed(1_200, 340, 500, 20, 4_200));
     session.record_usage("cli:test", UsageTotals::billed(800, 160, 300, 10, 1_800));
@@ -258,13 +259,9 @@ fn given_multiple_llm_calls(world: &mut QuectoWorld) {
         Message::user("second"),
         Message::assistant("reply two", vec![]),
     ];
-    let stats: WireSessionStats = compute_session_stats_with_usage(
-        "cli:default",
-        &messages,
-        session.usage_snapshot(),
-        1_234,
-        AGENT_WINDOW,
-    );
+    session.set_context_tokens(1_234);
+    let stats: WireSessionStats =
+        present_session_stats(session.usage_report("cli:default", &messages, AGENT_WINDOW));
     world.tui_session_stats_json = Some(serde_json::to_value(&stats).expect("serialize stats"));
 }
 

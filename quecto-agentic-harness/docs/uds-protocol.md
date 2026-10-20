@@ -984,6 +984,7 @@ Return token usage and cost statistics for the current session. `sessionKey` is 
     "total": 0
   },
   "costMicroUsd": 0,
+  "unpricedAttempts": 0,
   "cacheHitRatio": null,
   "contextTokens": 0,
   "maxContextTokens": 0
@@ -999,7 +1000,8 @@ Return token usage and cost statistics for the current session. `sessionKey` is 
 | `toolResults` | integer | Number of tool results received |
 | `totalMessages` | integer | Total messages (including system, tool) |
 | `tokens` | object | Normalized token usage breakdown (`input` full-price input, `output`, `cacheRead`, `cacheWrite`, `total` = input + output) |
-| `costMicroUsd` | integer | Estimated cumulative cost in micro-USD |
+| `costMicroUsd` | integer or null | Cumulative cost of the priced usage in micro-USD, at the active model's catalogue price (#1855); `null` when the session billed usage and none of it was priced, never `0` for unpriced usage |
+| `unpricedAttempts` | integer | Provider attempts that reported usage with no price to cost it at, counted as the cost is summed (every attempt that reported usage, a cut-short one included) |
 | `cacheHitRatio` | number or null | Shared cache-hit ratio (`cacheRead / (input + cacheRead + cacheWrite)`) or null when denominator is zero |
 | `contextTokens` | integer | Provider-reported prompt occupancy when available, else local estimate |
 | `maxContextTokens` | integer | Active model context-window limit (`0` when unknown) |

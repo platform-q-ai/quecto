@@ -744,5 +744,6 @@ pub(crate) fn catalogue_handles(
     crate::composition::catalogue::build_catalogue_handles(base, None)
 }
 
-/// A session's automatic turns, as composition builds them (#1909).
-pub(crate) use crate::composition::bootstrap::agent_turn::build_automatic_turns as automatic_turns;
+/// A session tracker holding its agent-turn use cases, as composition
+/// builds it (#1909, #1855).
+pub(crate) use crate::composition::bootstrap::agent_turn::build_turn_session as turn_session;

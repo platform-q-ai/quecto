@@ -86,6 +86,7 @@ const USE_CASES: &[&str] = &[
     "InitialiseStandardContainer",
     "ImportExternalCredentials",
     "InspectAuthStatus",
+    "InspectSessionUsage",
     "InspectEffectiveConfiguration",
     "InspectAuthority",
     "InspectEndedChild",

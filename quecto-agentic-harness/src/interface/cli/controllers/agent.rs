@@ -571,7 +571,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         return 1;
     };
 
-    let Some((sessions, automatic_turns)) = composed_loop_builders(ctx, stderr) else {
+    let Some((sessions, turn_session)) = composed_loop_builders(ctx, stderr) else {
         return 1;
     };
 
@@ -682,7 +682,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         broadcast_tx,
         parent_control,
         teardown_graph: ctx.teardown_graph,
-        automatic_turns,
+        turn_session,
         environment_control: build.environment_control,
         extensions: build.extensions,
     });

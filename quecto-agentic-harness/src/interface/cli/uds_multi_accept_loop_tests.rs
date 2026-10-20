@@ -73,7 +73,7 @@ pub(super) fn make_args(
             sync: 1,
         })),
         session_stats_snapshot: Arc::new(tokio::sync::RwLock::new(
-            crate::interface::cli::uds_session::compute_session_stats(
+            crate::interface::cli::uds_session::history_session_stats(
                 "cli:test",
                 &[Message::user("hello")],
             ),

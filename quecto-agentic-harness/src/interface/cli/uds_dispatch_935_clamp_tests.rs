@@ -10,7 +10,6 @@ use crate::interface::cli::uds::DispatchCtx;
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
-use crate::interface::cli::uds_session::AgentSession;
 
 #[tokio::test]
 async fn dispatch_set_model_re_clamps_effective_max_tokens() {
@@ -48,11 +47,11 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
     assert_eq!(agent.effective_max_tokens(), 100);
 
     let mut messages = Vec::new();
-    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let initial_stats =
-        crate::interface::cli::uds_session::compute_session_stats(&session_key, &messages);
+        crate::interface::cli::uds_session::history_session_stats(&session_key, &messages);
 
     let cmd = AgentCommand::SetModel {
         id: Some("s".into()),

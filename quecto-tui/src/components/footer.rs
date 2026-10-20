@@ -15,6 +15,8 @@ pub struct Footer {
     context_used: Option<u64>,
     /// Cumulative session cost in USD. `None` until the first stats report.
     session_cost: Option<f64>,
+    /// Some of the session's usage could not be priced (#1855).
+    session_cost_unpriced: bool,
     session_cache_read: u64,
     session_cache_write: u64,
     session_cache_hit_ratio: Option<f64>,
@@ -51,6 +53,7 @@ impl Footer {
             context_window: 0,
             context_used: None,
             session_cost: None,
+            session_cost_unpriced: false,
             session_cache_read: 0,
             session_cache_write: 0,
             session_cache_hit_ratio: None,
@@ -139,6 +142,7 @@ impl Footer {
         self.context_used = None;
         if percent.is_none() && window == 0 {
             self.session_cost = None;
+            self.session_cost_unpriced = false;
             self.session_cache_read = 0;
             self.session_cache_write = 0;
             self.session_cache_hit_ratio = None;
@@ -166,11 +170,6 @@ impl Footer {
 
     pub fn is_streaming(&self) -> bool {
         self.is_streaming
-    }
-
-    /// Record cumulative session cost (USD). `None` hides the indicator.
-    pub fn set_cost(&mut self, cost: Option<f64>) {
-        self.session_cost = cost.filter(|c| c.is_finite() && *c > 0.0);
     }
 
     /// Apply typed `get_state` footer fields (model + context-window + effort).
@@ -210,12 +209,22 @@ impl Footer {
     /// Apply a parsed session-stats snapshot to the context + cost gauges.
     /// Single source of truth for the stats→footer mapping shared by the master
     /// footer path and per-session sub-agent footers (#805) — keeps the cost
-    /// gate (`cost > 0`) from drifting between the two.
+    /// rule from drifting between the two: a known cost shows when above $0
+    /// or beside unpriced usage, an unknown one only as unpriced (#1855).
     pub fn apply_session_stats(&mut self, stats: &crate::protocol::session_payloads::SessionStats) {
         if let Some((used, window)) = stats.context_usage {
             self.update_context_usage(used, window);
         }
-        self.set_cost((stats.cost > 0.0).then_some(stats.cost));
+        // #1855: a known cost is shown when it is above $0, or beside
+        // unpriced usage (a declared-free model's $0 + unpriced); an
+        // unknown one is only "unpriced".
+        let unpriced = stats.unpriced_attempts > 0;
+        self.session_cost = match (stats.cost_micro_usd, unpriced) {
+            (Some(micro), true) => Some(micro as f64 / 1_000_000.0),
+            (Some(micro), false) if micro > 0 => Some(micro as f64 / 1_000_000.0),
+            (Some(_), false) | (None, _) => None,
+        };
+        self.session_cost_unpriced = unpriced;
         self.session_cache_read = stats.cache_read_tokens;
         self.session_cache_write = stats.cache_write_tokens;
         self.session_cache_hit_ratio = stats.cache_hit_ratio;
@@ -258,8 +267,12 @@ impl Component for Footer {
         if let Some(ratio) = self.session_cache_hit_ratio {
             left_parts.push(format!("hit {:.1}%", ratio * 100.0));
         }
-        if let Some(cost) = self.session_cost {
-            left_parts.push(format!("cost ${cost:.6}"));
+        // #1855: usage the harness could not price is unknown, never $0.
+        match (self.session_cost, self.session_cost_unpriced) {
+            (Some(cost), false) => left_parts.push(format!("cost ${cost:.6}")),
+            (Some(cost), true) => left_parts.push(format!("cost ${cost:.6} + unpriced")),
+            (None, true) => left_parts.push("cost unpriced".to_string()),
+            (None, false) => {}
         }
         let left = left_parts.join(" · ");
         // Prefix the model with a streaming indicator while a response is

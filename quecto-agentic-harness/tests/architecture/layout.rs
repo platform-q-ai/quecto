@@ -93,7 +93,7 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("domain/tool_policy", &["value_objects", "services"]),
     Capability("domain/catalogue", &["entities", "value_objects", "services"]),
     Capability("domain/swarm", &["entities", "value_objects", "services", "events"]),
-    Capability("application/agent_turn", &["agent_loop", "context", "ports", "use_cases"]),
+    Capability("application/agent_turn", &["agent_loop", "context", "dto", "ports", "use_cases"]),
     Capability("domain/audit", &[]),
     Capability("domain/sessions", &["entities", "value_objects", "services"]),
     Capability("domain/inference", &["value_objects", "services", "events"]),
