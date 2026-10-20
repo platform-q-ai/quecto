@@ -397,3 +397,7 @@ mod tests;
 #[cfg(test)]
 #[path = "changes_superseded_tests.rs"]
 mod superseded_tests;
+
+#[cfg(test)]
+#[path = "changes_stamp_tests.rs"]
+mod stamp_tests;
