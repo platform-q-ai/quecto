@@ -21,3 +21,17 @@ impl DocumentTextFailure {
         }
     }
 }
+
+/// `what` failed, placed by line and column when the parse knew them
+/// (`line` 0 means it did not): the one position format every reader of
+/// a document gives, so the same broken file reads the same everywhere.
+pub fn placed(what: &str, line: usize, column: usize) -> String {
+    match line {
+        0 => what.to_string(),
+        line => format!("{what} at line {line} column {column}"),
+    }
+}
+
+#[cfg(test)]
+#[path = "document_failure_tests.rs"]
+mod tests;

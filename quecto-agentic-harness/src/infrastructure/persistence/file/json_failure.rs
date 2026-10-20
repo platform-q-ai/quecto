@@ -9,7 +9,7 @@
 //! duplicate field, and the values a variant may take; never a value or a
 //! key the file holds.
 
-use crate::domain::shared::document_failure::DocumentTextFailure;
+use crate::domain::shared::document_failure::{DocumentTextFailure, placed};
 use crate::domain::shared::text::printable::printable_name;
 
 /// What kind of failure `error` is, in fixed words (plus, for a missing
@@ -94,14 +94,7 @@ fn field(path: &serde_path_to_error::Path) -> Option<String> {
 /// `error` as its category and position: line and column when it has
 /// them (a parse of text), nothing more when it does not (a document).
 pub fn describe(error: &serde_json::Error) -> String {
-    match error.line() {
-        0 => category(error),
-        line => format!(
-            "{} at line {line} column {}",
-            category(error),
-            error.column()
-        ),
-    }
+    placed(&category(error), error.line(), error.column())
 }
 
 /// `error`, met at the field `path`: its category, the field when one is

@@ -6,7 +6,7 @@
 
 use serde_json::Value;
 
-use crate::domain::shared::document_failure::DocumentTextFailure;
+use crate::domain::shared::document_failure::{DocumentTextFailure, placed};
 
 /// `bytes` as a JSON value, or what kind of failure and where.
 pub fn parse_document(bytes: &[u8]) -> Result<Value, String> {
@@ -22,11 +22,7 @@ pub fn describe(error: &serde_json::Error) -> String {
         // memory: whatever else fails is malformed text.
         Category::Syntax | Category::Io | Category::Data => DocumentTextFailure::Malformed,
     };
-    let category = failure.words();
-    match error.line() {
-        0 => category.to_string(),
-        line => format!("{category} at line {line} column {}", error.column()),
-    }
+    placed(failure.words(), error.line(), error.column())
 }
 
 #[cfg(test)]
