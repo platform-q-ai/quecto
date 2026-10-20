@@ -1,6 +1,6 @@
 # ADR-0026: Single-host shared inference admission
 
-**Status:** Accepted; the missing-binding fail-closed decision is narrowly superseded by [ADR-0028](adr-0028-advisory-unbound-admission.md). Usable unbound slots remain available without broker gating; other admission failures remain hard errors.
+**Status:** Accepted; the missing-binding fail-closed decision is narrowly superseded by [ADR-0028](adr-0028-advisory-unbound-admission.md). Usable unbound slots remain available without broker gating; other admission failures remain hard errors. The "no expiry-based free slot" outcome for client death and restart orphans is narrowly superseded by [ADR-0031](adr-0031-bounded-uncertain-admission-leases.md): an uncertain lease clears at its attempt deadline plus a margin.
 **Date:** 2026-09-07
 **Scope:** #1679 P0 contract; enforcement is not implemented by this record.
 

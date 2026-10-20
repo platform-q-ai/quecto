@@ -1,6 +1,7 @@
 //! One settling turn of the running authority (#1910): dispatch what the
-//! policy allows, answer every waiter that is no longer queued, and report
-//! the attempts that must stop and when the policy next needs a turn.
+//! policy allows, release lost scopes whose work has cleared, answer every
+//! waiter that is no longer queued, and report the attempts that must stop
+//! and when the policy next needs a turn.
 
 use super::dispatch_admissions::DispatchAdmissions;
 use crate::application::admission::dto::broker::{AuthorityError, Settlement};
@@ -23,7 +24,9 @@ impl SettleAuthority {
     /// answer. A waiter that observes `Cancelled` while the journal is
     /// unhealthy was withdrawn by dispatch, not cancelled by its client (a
     /// client's cancel answers its own waiter), so it is answered
-    /// `JournalUnavailable`.
+    /// `JournalUnavailable`. A waiter whose wait expired while uncertain
+    /// leases held its group is answered with that hold (#2664), so it says
+    /// why it waited instead of timing out bare.
     pub fn execute<S: AdmissionSecretSource>(
         &self,
         authority: &mut AdmissionAuthority<S>,
@@ -36,6 +39,9 @@ impl SettleAuthority {
             Ok(_) | Err(AuthorityError::Admission(_)) => None,
             Err(failure) => Some(failure),
         };
+        // A lost client's scope whose lease cleared holds nothing and no
+        // connection: release it so its slot is not leaked (#2664).
+        authority.release_idle_detached();
         let journal_healthy = authority.journal_healthy();
         let answers = waiting
             .iter()
@@ -44,6 +50,18 @@ impl SettleAuthority {
                     Ok(RequestState::Queued { .. }) => return None,
                     Ok(RequestState::Terminal(TerminalOutcome::Cancelled)) if !journal_healthy => {
                         Err(AuthorityError::JournalUnavailable)
+                    }
+                    Ok(timed_out @ RequestState::Terminal(TerminalOutcome::TimedOut)) => {
+                        match authority.held(id, now) {
+                            Ok(Some(hold)) => Err(AuthorityError::HeldByUncertainLease(hold)),
+                            Ok(None) => Ok(timed_out),
+                            // The wait was just observed, so it is known; it
+                            // still answers its timeout if that ever breaks.
+                            Err(error) => {
+                                debug_assert!(false, "an observed wait is known: {error:?}");
+                                Ok(timed_out)
+                            }
+                        }
                     }
                     observed => observed,
                 };

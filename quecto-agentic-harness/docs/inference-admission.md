@@ -253,10 +253,22 @@ nothing but the pre-created `client/` mountpoint, which rootless Podman with
 - A client that disconnects or is killed while an attempt is outstanding leaves
   **uncertain** occupancy: the group stops granting (quarantine) because the
   remote work may still be running. The same session reconnecting and
-  completing the attempt clears it.
+  completing the attempt clears it. Otherwise the lease clears by itself at
+  the attempt's deadline (`attempt_timeout_ms` after its grant) plus 60 s
+  (#2664, [ADR-0031](architecture-design-records/adr-0031-bounded-uncertain-admission-leases.md));
+  the lost client's scope is then released.
 - An authority restart keeps the epoch and turns outstanding work into
-  orphaned uncertain occupancy; it never restarts with an empty ledger. Roots
-  reconnect and re-register; children fail closed and are respawned.
+  orphaned uncertain occupancy; it never restarts with an empty ledger. The
+  ledger records each attempt's remaining time to its bound, so an orphan
+  clears when that time has passed after the restart (a ledger written before
+  #2664 bounds it by `attempt_timeout_ms` plus 60 s). Roots reconnect and
+  re-register; children fail closed and are respawned.
+- A wait that expires while uncertain leases hold its group says so:
+  ``admission queue wait deadline elapsed: group `…` is held by N uncertain
+  lease(s) left by a client lost mid-request; it clears by itself in about S s,
+  or `quecto admission-broker reset` clears it now (revoking every session's
+  capability)``. It is the same terminal `admission` class as a plain queue
+  timeout.
 - `quecto admission-broker reset` starts a new epoch, revokes every
   capability (roots re-register on their next attempt; children fail closed
   once and are respawned by their parents) and explicitly gives up any claim
@@ -375,8 +387,12 @@ Quarantine (a group has stopped granting):
    session disconnected or was killed while an attempt was outstanding, or the
    authority restarted with work in flight.
 2. If that session is still alive and reconnects with the same capability,
-   completing the attempt clears the entry; wait for it.
-3. Otherwise `quecto admission-broker reset` starts a new epoch. It revokes
+   completing the attempt clears the entry; wait for it. Otherwise the entry
+   clears by itself at the attempt's deadline plus 60 s (at most
+   `attempt_timeout_ms` plus 60 s after the grant, or after a restart); a
+   queued request that times out meanwhile names the group and how long is
+   left.
+3. To clear it sooner, `quecto admission-broker reset` starts a new epoch. It revokes
    every capability — roots re-register on their next prompt without an agent
    restart, children fail closed once and must be respawned by their parents —
    and it gives up the claim that the old remote work is bounded. Cooldown and

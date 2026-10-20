@@ -485,7 +485,7 @@ fn grant_or_terminal(state: RequestState, now: u64) -> Body {
         },
         RequestState::Terminal(TerminalOutcome::TimedOut) => Body::Error {
             code: ErrorCode::Timeout,
-            reason: "queue wait deadline elapsed".into(),
+            reason: QUEUE_TIMEOUT_REASON.into(),
         },
         RequestState::Terminal(TerminalOutcome::Finished) => Body::State {
             state: state.into(),

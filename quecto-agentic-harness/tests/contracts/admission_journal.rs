@@ -14,7 +14,8 @@ use quecto::application::admission::use_cases::{
 };
 use quecto::domain::admission::value_objects::inference_admission::{
     AbandonReport, AdmissionConfig, AdmissionError, AdmissionLedger, Feedback, GroupId,
-    GroupPolicy, RequestId, RequestState, ScopeId, TerminalOutcome, WorkloadClass,
+    GroupPolicy, RequestId, RequestState, ScopeId, TerminalOutcome, UNCERTAIN_LEASE_MARGIN_MS,
+    UncertainHold, WorkloadClass,
 };
 use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
@@ -577,10 +578,6 @@ fn journal_errors_convert_to_the_authority_error() {
 #[path = "admission_session.rs"]
 mod session;
 
-/// The margin past an attempt's deadline after which its uncertain lease
-/// clears by itself (#2664).
-const MARGIN_MS: u64 = 60_000;
-
 /// #2664: a wait that expires behind an uncertain lease is not answered as a
 /// bare queue timeout: the answer names the lease that held it.
 #[test]
@@ -596,12 +593,17 @@ fn a_wait_that_expires_behind_an_uncertain_lease_says_so() {
         scope: waiting.scope,
         sequence: 1,
     };
-    let answers = a.settle(&[id], 1_010).answers;
-    assert_eq!(answers.len(), 1, "the expired wait is answered");
-    assert_ne!(
-        answers[0],
-        (id, Ok(RequestState::Terminal(TerminalOutcome::TimedOut))),
-        "not a bare timeout"
+    assert_eq!(
+        a.settle(&[id], 1_010).answers,
+        vec![(
+            id,
+            Err(AuthorityError::HeldByUncertainLease(UncertainHold {
+                group: group(),
+                leases: 1,
+                clears_in_ms: 5_000 + UNCERTAIN_LEASE_MARGIN_MS - 1_010,
+            }))
+        )],
+        "not a bare timeout: the answer names the lease and when it clears"
     );
 }
 
@@ -640,7 +642,7 @@ fn a_lost_scope_is_released_once_its_lease_clears() {
         2,
         "the lost scope is kept for now"
     );
-    let release = 5_000 + MARGIN_MS;
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
     a.acquire(&other, 1, "g", release).unwrap();
     let settled = a.settle(&[], release);
     assert_eq!(settled.dispatch_failure, None);
@@ -668,7 +670,7 @@ fn a_rebound_scope_is_kept_when_its_lease_clears() {
     a.pump(0).unwrap();
     a.disconnect(root.scope, 1).unwrap();
     assert_eq!(a.bind(&root, false, 2).unwrap(), 2, "rebound");
-    let release = 5_000 + MARGIN_MS;
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
     a.settle(&[], release);
     assert_eq!(a.inspect(release).live_scopes, 1, "the rebound scope stays");
     a.acquire(&root, 2, "g", release).unwrap();

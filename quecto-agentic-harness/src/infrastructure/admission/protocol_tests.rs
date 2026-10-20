@@ -234,3 +234,40 @@ fn typed_conversions_are_lossless() {
         assert!(matches!(error_body(&error), Body::Error { .. }));
     }
 }
+
+/// #2664: a wait that expired behind uncertain leases travels as a queue
+/// timeout whose reason names the group, the leases, when they clear and the
+/// reset command; the client renders it after the plain timeout text.
+#[test]
+fn a_held_timeout_names_the_uncertain_lease_and_the_reset_command() {
+    use crate::infrastructure::admission::client::ClientError;
+    let hold = UncertainHold {
+        group: GroupId::new("openai-pro").unwrap(),
+        leases: 1,
+        clears_in_ms: 61_500,
+    };
+    let Body::Error { code, reason } = error_body(&AuthorityError::HeldByUncertainLease(hold))
+    else {
+        panic!("a held wait is an error reply");
+    };
+    assert_eq!(code, ErrorCode::Timeout);
+    let expected = "queue wait deadline elapsed: group `openai-pro` is held by 1 uncertain \
+                    lease left by a client lost mid-request; it clears by itself in about 62 s, \
+                    or `quecto admission-broker reset` clears it now (revoking every session's \
+                    capability)";
+    assert_eq!(reason, expected);
+    assert_eq!(
+        ClientError::Timeout(reason).to_string(),
+        format!("admission {expected}")
+    );
+    assert_eq!(
+        ClientError::Timeout(QUEUE_TIMEOUT_REASON.into()).to_string(),
+        "admission queue wait deadline elapsed",
+        "a plain timeout reads as before"
+    );
+    assert_eq!(
+        ClientError::Timeout("something else".into()).to_string(),
+        "admission queue wait deadline elapsed",
+        "only a reason extending the timeout adds detail"
+    );
+}

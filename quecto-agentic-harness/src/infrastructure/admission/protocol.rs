@@ -435,7 +435,30 @@ pub fn error_body(error: &AuthorityError) -> Body {
             code: ErrorCode::Admission,
             reason: format!("{e:?}"),
         },
+        AuthorityError::HeldByUncertainLease(hold) => Body::Error {
+            code: ErrorCode::Timeout,
+            reason: held_reason(hold),
+        },
     }
+}
+
+/// The reason a plain queue timeout carries.
+pub const QUEUE_TIMEOUT_REASON: &str = "queue wait deadline elapsed";
+
+/// A queue timeout behind uncertain leases (#2664): which group, how many
+/// leases, when they clear by themselves and how to clear them now. It
+/// extends [`QUEUE_TIMEOUT_REASON`], so a client that knows only the plain
+/// timeout still reads it as one.
+fn held_reason(hold: &UncertainHold) -> String {
+    let plural = if hold.leases == 1 { "" } else { "s" };
+    format!(
+        "{QUEUE_TIMEOUT_REASON}: group `{group}` is held by {leases} uncertain lease{plural} \
+         left by a client lost mid-request; it clears by itself in about {secs} s, or \
+         `quecto admission-broker reset` clears it now (revoking every session's capability)",
+        group = hold.group.as_str(),
+        leases = hold.leases,
+        secs = hold.clears_in_ms.div_ceil(1_000),
+    )
 }
 
 pub fn status_body(status: &AuthorityStatus) -> Body {

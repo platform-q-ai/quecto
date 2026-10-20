@@ -6,7 +6,7 @@ use quecto::application::admission::ports::inference_admission::{
 use quecto::application::admission::services::inference_admission::AdmissionService;
 use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, AdmissionError, Feedback, GroupId, GroupPolicy, RequestId, RequestState,
-    ScopeId, TerminalOutcome, WorkloadClass,
+    ScopeId, TerminalOutcome, UNCERTAIN_LEASE_MARGIN_MS, UncertainHold, WorkloadClass,
 };
 use std::collections::BTreeMap;
 
@@ -336,10 +336,6 @@ fn scope_limit_counts_live_scopes_and_serials_are_never_recycled() {
     assert_eq!(s.high_water(a), Err(AdmissionError::UnknownScope));
 }
 
-/// The margin past an attempt's deadline after which its uncertain lease
-/// clears by itself (#2664).
-const MARGIN_MS: u64 = 60_000;
-
 /// #2664: one lost client must not wedge its group until an operator reset.
 /// Root one's attempt was granted at 0 with a 5 000 ms attempt deadline, so
 /// its uncertain lease clears at the deadline plus the margin.
@@ -347,7 +343,7 @@ const MARGIN_MS: u64 = 60_000;
 fn an_uncertain_lease_clears_itself_once_its_deadline_and_margin_pass() {
     let (mut s, one, two) = seeded();
     s.abandon(one, 2).unwrap();
-    let release = 5_000 + MARGIN_MS;
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
     s.enqueue(two, 2, "a", release - 1).unwrap();
     assert_eq!(
         s.next(&group("a"), release - 1),
@@ -376,7 +372,7 @@ fn an_uncertain_lease_clears_itself_once_its_deadline_and_margin_pass() {
 fn next_wake_includes_the_instant_an_uncertain_lease_clears() {
     let (mut s, one, two) = seeded();
     s.abandon(one, 2).unwrap();
-    let release = 5_000 + MARGIN_MS;
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
     s.enqueue(two, 2, "a", release - 500).unwrap();
     assert_eq!(s.next_wake(release - 500).unwrap(), Some(release));
 }
@@ -387,7 +383,7 @@ fn next_wake_includes_the_instant_an_uncertain_lease_clears() {
 fn a_late_completion_of_a_cleared_lease_frees_nothing_twice() {
     let (mut s, one, two) = seeded();
     s.abandon(one, 2).unwrap();
-    let release = 5_000 + MARGIN_MS;
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
     s.enqueue(two, 2, "a", release).unwrap();
     s.next(&group("a"), release).unwrap().unwrap();
     assert_eq!(
@@ -416,7 +412,7 @@ fn a_restored_orphan_clears_itself_within_its_bound() {
         restored.next(&group("a"), 1_001),
         Err(AdmissionError::Quarantined)
     );
-    let bound = 1_000 + 5_000 + MARGIN_MS;
+    let bound = 1_000 + 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
     restored.enqueue(root, 2, "a", bound).unwrap();
     assert!(
         restored.next(&group("a"), bound).unwrap().is_some(),
@@ -428,4 +424,100 @@ fn a_restored_orphan_clears_itself_within_its_bound() {
         1,
         "only the new grant is outstanding"
     );
+}
+
+/// #2664: the ledger carries each outstanding attempt's remaining bound, so a
+/// restart clears it no later than it would have cleared without one.
+#[test]
+fn the_ledger_carries_each_attempts_remaining_bound_and_restore_honours_it() {
+    let (mut s, _one, _two) = seeded();
+    let ledger = s.ledger(1).unwrap();
+    let remaining = 5_000 + UNCERTAIN_LEASE_MARGIN_MS - 1;
+    assert_eq!(
+        ledger
+            .outstanding
+            .iter()
+            .map(|o| o.release_remaining_ms)
+            .collect::<Vec<_>>(),
+        vec![Some(remaining)]
+    );
+    let mut restored = AdmissionService::restore(config(), &ledger, 1_000).unwrap();
+    let root = restored.register_root(WorkloadClass::Interactive).unwrap();
+    restored
+        .enqueue(root, 1, "a", 1_000 + remaining - 1)
+        .unwrap();
+    assert_eq!(
+        restored.next(&group("a"), 1_000 + remaining - 1),
+        Err(AdmissionError::Quarantined)
+    );
+    assert_eq!(
+        restored.ledger(1_000 + remaining - 1).unwrap().outstanding[0].release_remaining_ms,
+        Some(1),
+        "a checkpoint of the orphan keeps its bound"
+    );
+    restored.enqueue(root, 2, "a", 1_000 + remaining).unwrap();
+    assert!(
+        restored
+            .next(&group("a"), 1_000 + remaining)
+            .unwrap()
+            .is_some()
+    );
+}
+
+/// #2664: a ledger written before bounds existed restores its orphans bounded
+/// by the full attempt timeout plus the margin, and a recorded bound is never
+/// trusted beyond that.
+#[test]
+fn restore_bounds_legacy_and_excessive_ledger_entries_by_the_attempt_timeout() {
+    let (mut s, _one, _two) = seeded();
+    let bound = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
+    for recorded in [None, Some(u64::MAX)] {
+        let mut ledger = s.ledger(1).unwrap();
+        ledger.outstanding[0].release_remaining_ms = recorded;
+        let mut restored = AdmissionService::restore(config(), &ledger, 1_000).unwrap();
+        assert_eq!(
+            restored.ledger(1_000).unwrap().outstanding[0].release_remaining_ms,
+            Some(bound),
+            "{recorded:?}"
+        );
+        assert_eq!(restored.next_wake(1_000).unwrap(), Some(1_000 + bound));
+        assert_eq!(
+            restored
+                .snapshot(&group("a"), 1_000 + bound)
+                .unwrap()
+                .uncertain,
+            0
+        );
+    }
+}
+
+/// #2664: a wait that expires behind uncertain leases records the hold; a
+/// wait that expires for any other reason records none.
+#[test]
+fn held_names_the_leases_a_wait_expired_behind() {
+    let (mut s, one, two) = seeded();
+    assert_eq!(s.held(two, 1, 1), Ok(None), "a queued wait has not expired");
+    s.abandon(one, 2).unwrap();
+    assert_eq!(
+        s.status(two, 1, 1_001).unwrap(),
+        RequestState::Terminal(TerminalOutcome::TimedOut)
+    );
+    assert_eq!(
+        s.held(two, 1, 1_001),
+        Ok(Some(UncertainHold {
+            group: group("a"),
+            leases: 1,
+            clears_in_ms: 5_000 + UNCERTAIN_LEASE_MARGIN_MS - 1_001,
+        }))
+    );
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
+    s.enqueue(two, 2, "b", release).unwrap();
+    s.next(&group("b"), release).unwrap().unwrap();
+    s.enqueue(two, 3, "b", release).unwrap();
+    assert_eq!(
+        s.status(two, 3, release + 1_000).unwrap(),
+        RequestState::Terminal(TerminalOutcome::TimedOut),
+        "capacity, not uncertainty, held this wait"
+    );
+    assert_eq!(s.held(two, 3, release + 1_000), Ok(None));
 }

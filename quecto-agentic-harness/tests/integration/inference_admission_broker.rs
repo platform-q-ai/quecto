@@ -138,6 +138,7 @@ fn file_journal_is_durable_round_trip_and_fails_closed_on_corruption() {
             group: group(),
             scope: 3,
             sequence: 11,
+            release_remaining_ms: Some(65_000),
         }],
         groups: BTreeMap::from([(
             group(),
@@ -156,6 +157,16 @@ fn file_journal_is_durable_round_trip_and_fails_closed_on_corruption() {
         .mode()
         & 0o777;
     assert_eq!(mode, 0o600);
+    // #2664: a ledger written before lease bounds existed still loads, its
+    // attempt without a recorded bound.
+    std::fs::write(
+        dir.journal_path(),
+        br#"{"format":1,"epoch":9,"outstanding":[{"group":"g","scope":3,"sequence":11}],"groups":{}}"#,
+    )
+    .unwrap();
+    let legacy = FileJournal::new(&dir).load().unwrap().unwrap();
+    assert_eq!(legacy.outstanding[0].release_remaining_ms, None);
+    assert_eq!(legacy.outstanding[0].sequence, 11);
     std::fs::write(dir.journal_path(), b"{not json").unwrap();
     assert!(
         FileJournal::new(&dir).load().is_err(),

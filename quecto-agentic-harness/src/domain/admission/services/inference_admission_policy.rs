@@ -22,6 +22,19 @@ struct Request {
     // One fingerprint per retained attempt, never an unbounded receipt history.
     // It survives completion and is evicted with the terminal request.
     last_report: Option<(u64, ThrottleFeedback)>,
+    /// The attempt's uncertain lease cleared by itself (#2664): a late
+    /// completion is acknowledged without freeing anything a second time.
+    lease_cleared: bool,
+    /// The queued wait expired while its group was held by uncertain leases:
+    /// how many, and when the latest clears (#2664).
+    held: Option<(usize, u64)>,
+}
+
+/// Restart-orphaned occupancy and the instant it clears by itself (#2664).
+#[derive(Debug)]
+struct Orphan {
+    attempt: OutstandingAttempt,
+    release_at: u64,
 }
 
 #[derive(Debug)]
@@ -37,7 +50,7 @@ struct Group {
     /// Active attempts whose client vanished before acknowledgement.
     uncertain: BTreeSet<RequestId>,
     /// Outstanding attempts inherited from a previous authority process.
-    orphans: Vec<OutstandingAttempt>,
+    orphans: Vec<Orphan>,
 }
 
 /// In-memory policy, deliberately without persistence or transport assumptions.
@@ -172,6 +185,9 @@ impl AdmissionPolicy {
             return Err(AdmissionError::TimeRegression);
         }
         self.now = now;
+        // Leases clear before queue expiry so a wait expiring at the same
+        // instant is held only by leases that still hold.
+        self.clear_elapsed_leases(now);
         let expired: Vec<_> = self
             .requests
             .iter()
@@ -181,7 +197,9 @@ impl AdmissionPolicy {
             })
             .collect();
         for id in expired {
+            let held = self.hold_of(&self.requests[&id].group);
             self.terminal(id, TerminalOutcome::TimedOut, None);
+            self.requests.get_mut(&id).expect("live request").held = held;
         }
         for request in self.requests.values_mut() {
             if let RequestState::Active {
@@ -269,6 +287,8 @@ impl AdmissionPolicy {
                 state,
                 feedback: None,
                 last_report: None,
+                lease_cleared: false,
+                held: None,
             },
         );
         self.scopes
@@ -401,6 +421,9 @@ impl AdmissionPolicy {
         // Replays below the mark are fenced separately and cannot free work.
         let request = self.request(scope, sequence)?;
         if let RequestState::Terminal(_) = request.state {
+            if request.lease_cleared {
+                return Ok(request.state);
+            }
             return if request.feedback == Some(feedback) {
                 Ok(request.state)
             } else {

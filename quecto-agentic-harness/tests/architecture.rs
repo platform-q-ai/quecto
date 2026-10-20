@@ -4137,6 +4137,11 @@ fn the_authority_surface_is_an_exhaustive_allowlist() {
         "disconnect",
         "cancellation_due",
         "next_wake",
+        // #2664: a rebound scope is live again, a lost scope whose lease
+        // cleared is released, and a held wait says what held it.
+        "attach",
+        "release_idle_detached",
+        "held",
     ];
     let source = production_source("src/application/admission/services/inference_authority.rs");
     let file = syn::parse_file(&source).expect("the authority parses");
