@@ -14,7 +14,10 @@
 //! another session launched, a board that could not be read whole, a
 //! process restarted between the teardown and this end), it is folded
 //! back as a swarm that ended so with nothing reported is: every task item
-//! as todo, its cost unknown. A run ends as `succeeded` only when every
+//! as todo, its cost unknown. A stop, a failure or a loss is recorded
+//! from the board a run had reached as its owner ended its coordinator
+//! while it still ran or was paused, when that is what was kept (#2674);
+//! a success never is. A run ends as `succeeded` only when every
 //! task item is done there (`items_not_done` otherwise, from the domain),
 //! so no success is recorded over items the board shows undone; nor while
 //! a revision the recorded items' evidence names is on no branch or tag of
@@ -140,10 +143,17 @@ impl EndRun {
             });
         }
         // Read once, before any write: the board its swarm left, if kept.
-        let report = self
-            .reports
-            .as_ref()
-            .and_then(|reports| reports.ended_run(id, number));
+        // A success only from a run that ended there; any other end from
+        // the board a run had reached as its owner stopped it too (#2674).
+        let report = self.reports.as_ref().and_then(|reports| {
+            let ended = reports.ended_run(id, number);
+            match request.outcome {
+                RunEndOutcome::Succeeded => ended,
+                RunEndOutcome::Stopped | RunEndOutcome::Failed | RunEndOutcome::Lost => {
+                    ended.or_else(|| reports.left_run(id, number))
+                }
+            }
+        });
         let message = format!(
             "board: run {number} of {} ended, {}",
             id.as_str(),

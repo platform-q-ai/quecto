@@ -84,3 +84,27 @@ fn only_the_newest_boards_are_kept() {
         "the newest stays"
     );
 }
+
+/// #2674: the board a run had reached as its owner ended its coordinator
+/// while it ran or was paused is kept as left, apart from an ended one;
+/// one of any other status is not; and either replaces the other.
+#[test]
+fn a_running_or_paused_runs_board_is_kept_as_left() {
+    let kept = KeptSwarmBoards::default();
+    let port: &dyn EndedSwarmBoards = &kept;
+    port.keep_left("s1", "board-a-run-1", board("running", 5));
+    assert_eq!(kept.view("s1", "board-a-run-1"), None, "not an ended run");
+    let left = kept.left_view("s1", "board-a-run-1").expect("kept as left");
+    assert_eq!((left.end, left.observed_tokens), (SwarmEnd::Cancelled, 5));
+    port.keep_left("s1", "board-a-run-2", board("paused", 6));
+    assert!(kept.left_view("s1", "board-a-run-2").is_some());
+    for status in ["succeeded", "setup", "odd"] {
+        port.keep_left("s1", "board-a-run-3", board(status, 7));
+        assert_eq!(kept.left_view("s1", "board-a-run-3"), None, "{status}");
+    }
+    port.keep_left("s1", "my-ad-hoc-swarm", board("running", 8));
+    assert_eq!(kept.left_view("s1", "my-ad-hoc-swarm"), None);
+    port.keep("s1", "board-a-run-1", board("cancelled", 9));
+    assert_eq!(kept.left_view("s1", "board-a-run-1"), None, "replaced");
+    assert_eq!(spent(&kept, "s1", "board-a-run-1"), Some(9));
+}

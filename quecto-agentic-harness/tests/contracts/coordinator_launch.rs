@@ -73,7 +73,7 @@ pub(super) fn launched_child(environment_ref: Option<&str>) -> String {
     serde_json::json!({"spawned": {"uuid": "0b5e", "environment_ref": environment_ref}}).to_string()
 }
 
-fn agent_cmd() -> Arc<Spawn> {
+pub(super) fn agent_cmd() -> Arc<Spawn> {
     Arc::new(Spawn {
         name: "agent_cmd",
         content: "killed".into(),
@@ -109,7 +109,7 @@ fn launcher_over(
     )
 }
 
-fn launcher_stopping_with(
+pub(super) fn launcher_stopping_with(
     spawn: Arc<Spawn>,
     agent_cmd: Arc<Spawn>,
     allowed: bool,

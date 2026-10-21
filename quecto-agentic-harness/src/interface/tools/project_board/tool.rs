@@ -164,7 +164,12 @@ impl BoardTool {
                 format!("{opened}: ended it as {outcome}")
             }
             false => {
-                let code = answer["error"]["code"].as_str().unwrap_or("refused");
+                // A rule's own code when the board's rules refused it.
+                let error = &answer["error"];
+                let code = error["rule"]["code"]
+                    .as_str()
+                    .or_else(|| error["code"].as_str())
+                    .unwrap_or("refused");
                 format!(
                     "{opened}, and ending it as {outcome} was refused ({code}): end it with end_run"
                 )

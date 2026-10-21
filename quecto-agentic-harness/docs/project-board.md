@@ -438,14 +438,21 @@ a fold-back matches it), with its owner and evidence, and the swarm's observed
 tokens as its cost. The swarm's board lives in the coordinator's container and
 goes with it once a closed run's coordinator is killed, so the final-member
 teardown reads it first, when the run has ended (succeeded, failed,
-budget-exhausted, blocked or cancelled; never one still running or paused), and
-keeps what a fold-back reads of it in the harness's memory, under the session
+budget-exhausted, blocked or cancelled), and keeps what a fold-back reads of it
+in the harness's memory, under the session
 and the coordinator's spawn label (`board-<task>-run-<n>`; no other label's
 board is kept, so an ad-hoc swarm's never is). The agent tool's `end_run` finds
 it by that label, with no memory of the launch. A board is kept only when its
 projection holds every item (one that left items out is logged and not kept;
 members or evidence left out do not matter), only the newest 16 are kept, and
-one is dropped once its run is recorded. Where no board was kept, the run is recorded
+one is dropped once its run is recorded. A run still running or paused is kept
+only when its owner ended the coordinator on purpose (a one-shot parent's end,
+an `agent_cmd kill`; #2674), as far as it got, apart from an ended one: a
+`stopped`, `failed` or `lost` end records its items from that board (finished
+items with their owners and evidence), and a `succeeded` end never does (it
+answers `items_not_done` with `report` `"none_kept"`). On any other end (the
+coordinator exiting by itself, a harness shutdown) a running or paused run's
+board is not kept: it may yet change. Where no board was kept, the run is recorded
 as a swarm that ended so and reported nothing would be: each task item as todo,
 its cost unknown. That is so from the CLI, for a run another session launched,
 for a board that could not be read whole, and for the gaps a restart leaves:
@@ -518,10 +525,16 @@ session's own starts launched that the board still shows open is ended as
 for it, so it is not `lost`. Each end goes through the same path as an
 `end_run` from the agent tool, with its rules (the holder's live claim) and its
 liveness check (a coordinator still running keeps the run open), and its
-`board_op` record names the client `session_end`. The session says on stderr
-what became of each: "board: run <n> of task <task> was still open as this
-session ended: ended it as stopped", or, when the end was refused, "…, and
-ending it as stopped was refused (<code>): end it with end_run". A run another
+`board_op` record names the client `session_end`. The run's items are recorded
+from the board its swarm had reached as the session ended its coordinator, kept
+as above, so items its workers finished keep their state and evidence. The
+session says on stderr what became of each: "board: run <n> of task <task> was
+still open as this session ended: ended it as stopped", or, when the end was
+refused, "…, and ending it as stopped was refused (<code>): end it with
+end_run", `<code>` being the rule's own (`not_holder`) when the board's rules
+refused it. When the board cannot be read it says "board: the runs this session
+started could not be read as it ended (<why>): end any still open with
+end_run". A run another
 session launched, or one the board shows ended, is left alone; the task stays
 as it is, held until its claim lapses or its holder moves it. A run that
 failed (a provider error), a crash, a signal, and a harness the TUI or the

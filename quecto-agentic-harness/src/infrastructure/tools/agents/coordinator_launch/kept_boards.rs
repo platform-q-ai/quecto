@@ -26,6 +26,7 @@ use crate::application::environments::dto::SwarmBoardSnapshot;
 use crate::application::environments::ports::hosted_swarm::EndedSwarmBoards;
 use crate::application::project_board::dto::SwarmRunView;
 use crate::application::project_board::ports::SwarmRunReports;
+use crate::domain::environments::services::environment_retention::BoardKept;
 use crate::domain::project_board::value_objects::slug::Slug;
 
 /// The most boards one store keeps.
@@ -34,27 +35,58 @@ pub const MAX_KEPT: usize = 16;
 /// A kept board's key: the session, and the member's label.
 type Key = (String, String);
 
-/// Ended runs' boards by session and label, oldest first. Composition
-/// builds one per harness and hands it to the teardown and the launcher.
+/// Ended runs' boards (and, #2674, the boards runs had reached as their
+/// owner ended their coordinator), by session and label, oldest first.
+/// Composition builds one per harness and hands it to the teardown and
+/// the launcher.
 #[derive(Debug, Default)]
 pub struct KeptSwarmBoards {
-    boards: Mutex<VecDeque<(Key, SwarmRunView)>>,
+    boards: Mutex<VecDeque<(Key, SwarmRunView, BoardKept)>>,
 }
 
 impl KeptSwarmBoards {
-    /// The board kept for `session`'s member `label`, if one is.
+    /// The board of an ended run kept for `session`'s member `label`, if
+    /// one is.
     pub fn view(&self, session: &str, label: &str) -> Option<SwarmRunView> {
+        self.kept_as(session, label, BoardKept::Ended)
+    }
+
+    /// The board a run had reached as its owner ended `session`'s member
+    /// `label` (#2674), if one is kept.
+    pub fn left_view(&self, session: &str, label: &str) -> Option<SwarmRunView> {
+        self.kept_as(session, label, BoardKept::Left)
+    }
+
+    fn kept_as(&self, session: &str, label: &str, which: BoardKept) -> Option<SwarmRunView> {
         let boards = self.boards.lock().unwrap_or_else(|e| e.into_inner());
         boards
             .iter()
-            .find(|((kept_session, kept_label), _)| kept_session == session && kept_label == label)
-            .map(|(_, view)| view.clone())
+            .find(|((kept_session, kept_label), _, kept)| {
+                kept_session == session && kept_label == label && *kept == which
+            })
+            .map(|(_, view, _)| view.clone())
+    }
+
+    /// Keeps `view` as `which` for `session`'s member `label`, replacing
+    /// any kept for it: one guard, the old board going as the new comes.
+    fn put(&self, session: &str, label: &str, view: SwarmRunView, which: BoardKept) {
+        let key = (session.to_owned(), label.to_owned());
+        let mut boards = self.boards.lock().unwrap_or_else(|e| e.into_inner());
+        boards.retain(|(kept, _, _)| *kept != key);
+        boards.push_back((key, view, which));
+        while boards.len() > MAX_KEPT {
+            boards.pop_front();
+        }
+        assert!(
+            (1..=MAX_KEPT).contains(&boards.len()),
+            "a keep leaves between one and {MAX_KEPT} boards"
+        );
     }
 
     /// Drops the board kept for `session`'s member `label`, if one is.
     pub fn forget(&self, session: &str, label: &str) {
         let mut boards = self.boards.lock().unwrap_or_else(|e| e.into_inner());
-        boards.retain(|((kept_session, kept_label), _)| {
+        boards.retain(|((kept_session, kept_label), _, _)| {
             !(kept_session == session && kept_label == label)
         });
     }
@@ -78,18 +110,22 @@ impl EndedSwarmBoards for KeptSwarmBoards {
             );
             return;
         };
-        let key = (session.to_owned(), label.to_owned());
-        // One guard: the old board goes and the new one comes at once.
-        let mut boards = self.boards.lock().unwrap_or_else(|e| e.into_inner());
-        boards.retain(|(kept, _)| *kept != key);
-        boards.push_back((key, view));
-        while boards.len() > MAX_KEPT {
-            boards.pop_front();
+        self.put(session, label, view, BoardKept::Ended);
+    }
+
+    fn keep_left(&self, session: &str, label: &str, board: SwarmBoardSnapshot) {
+        match super::is_board_label(label) {
+            true => {}
+            false => return,
         }
-        assert!(
-            (1..=MAX_KEPT).contains(&boards.len()),
-            "a keep leaves between one and {MAX_KEPT} boards"
-        );
+        let Some(view) = super::run_report::left_run_view(&board.into_value()) else {
+            tracing::warn!(
+                member = %label,
+                "a stopped swarm's board was not kept: not a whole running or paused run"
+            );
+            return;
+        };
+        self.put(session, label, view, BoardKept::Left);
     }
 }
 
@@ -116,6 +152,11 @@ impl SwarmRunReports for KeptRunReports {
     fn ended_run(&self, task: &Slug, run: u32) -> Option<SwarmRunView> {
         self.kept
             .view(&self.session, &super::label(task.as_str(), run))
+    }
+
+    fn left_run(&self, task: &Slug, run: u32) -> Option<SwarmRunView> {
+        self.kept
+            .left_view(&self.session, &super::label(task.as_str(), run))
     }
 
     fn recorded(&self, task: &Slug, run: u32) {

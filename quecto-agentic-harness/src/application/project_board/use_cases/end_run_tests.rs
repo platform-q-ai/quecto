@@ -75,6 +75,10 @@ impl SwarmRunReports for Kept {
         }
     }
 
+    fn left_run(&self, _: &Slug, _: u32) -> Option<SwarmRunView> {
+        None
+    }
+
     fn recorded(&self, task: &Slug, run: u32) {
         assert_eq!((task.as_str(), run), ("board-store", 1), "the run kept");
         assert!(self.0.lock().unwrap().take().is_some(), "recorded once");
@@ -483,3 +487,6 @@ mod pushed;
 
 #[path = "end_run_lost_tests.rs"]
 mod lost;
+
+#[path = "end_run_left_tests.rs"]
+mod left;

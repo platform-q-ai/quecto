@@ -13,8 +13,8 @@ use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, KillClaim,
 };
 use crate::domain::environments::services::environment_retention::{
-    MemberFinalizeMode, SwarmRunObservation, ends_plain_environment, loss_reason,
-    retains_environment, retention_reason, unrecorded_loss_reason,
+    BoardKept, MemberFinalizeMode, SwarmRunObservation, board_kept, ends_plain_environment,
+    loss_reason, retains_environment, retention_reason, unrecorded_loss_reason,
 };
 
 use crate::application::environments::ports::{
@@ -105,13 +105,12 @@ impl FinalizeEnvironmentMember {
         } else {
             SwarmRunObservation::NoStore
         };
-        // An ended run's board is kept before anything can tear it down:
-        // one still running or paused may yet change, and is not.
-        match (&observed, label) {
-            (SwarmRunObservation::Run(hosted), Some(label))
-                if hosted.created() && hosted.status.terminal() =>
-            {
-                self.keep_board(&record, label).await;
+        // An ended run's board is kept before anything can tear it down;
+        // one still running or paused only on its owner's word, as far as
+        // it got (#2674): it may yet change, so nothing else keeps it.
+        let kept = match (&observed, label) {
+            (SwarmRunObservation::Run(hosted), Some(label)) => {
+                board_kept(mode, hosted).map(|kept| (label, kept))
             }
             (
                 SwarmRunObservation::Run(_)
@@ -119,7 +118,10 @@ impl FinalizeEnvironmentMember {
                 | SwarmRunObservation::NoStoreUnverified
                 | SwarmRunObservation::Unreadable(_),
                 _,
-            ) => {}
+            ) => None,
+        };
+        if let Some((label, kept)) = kept {
+            self.keep_board(&record, label, kept).await;
         }
         if retains_environment(mode, &observed) {
             // `None`: the owner closed the run between the observation and
@@ -159,14 +161,16 @@ impl FinalizeEnvironmentMember {
     /// Keeps the board `record` hosts under this session and `label`, when
     /// this use case keeps boards: best effort, as a board that cannot be
     /// read is logged and the teardown goes on.
-    async fn keep_board(&self, record: &EnvironmentRecord, label: &str) {
+    async fn keep_board(&self, record: &EnvironmentRecord, label: &str, which: BoardKept) {
         let Some((boards, kept)) = &self.ended else {
             return;
         };
-        match boards.board(record).await {
-            Ok(Some(board)) => kept.keep(self.registry.session(), label, board),
-            Ok(None) => {}
-            Err(error) => tracing::warn!(
+        let session = self.registry.session();
+        match (boards.board(record).await, which) {
+            (Ok(Some(board)), BoardKept::Ended) => kept.keep(session, label, board),
+            (Ok(Some(board)), BoardKept::Left) => kept.keep_left(session, label, board),
+            (Ok(None), _) => {}
+            (Err(error), _) => tracing::warn!(
                 environment = %record.environment_ref,
                 %error,
                 "the ended swarm's board could not be kept"

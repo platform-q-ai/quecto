@@ -607,6 +607,12 @@ pub trait SwarmRunReports: Send + Sync {
     /// The board of run `run` of `task`'s swarm as it ended, if kept here.
     fn ended_run(&self, task: &Slug, run: u32) -> Option<SwarmRunView>;
 
+    /// The board run `run` of `task`'s swarm had reached as its owner
+    /// ended its coordinator while it still ran or was paused (#2674), if
+    /// kept here: what a stop, a failure or a loss of the run records,
+    /// never a success.
+    fn left_run(&self, task: &Slug, run: u32) -> Option<SwarmRunView>;
+
     /// The board of run `run` of `task`'s swarm has been recorded on the
     /// project board: it need not be kept any longer.
     fn recorded(&self, task: &Slug, run: u32);

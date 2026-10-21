@@ -286,3 +286,53 @@ fn status_name(status: RunStatus) -> &'static str {
         RunStatus::BudgetExhausted => "budget-exhausted",
     }
 }
+
+/// Which board of a hosted swarm run is kept as its member leaves, before
+/// any teardown (#2481 S4c follow-up, #2674): an ended run's whole board;
+/// or, when its owner ended the member on purpose while the run was still
+/// running or paused (a one-shot parent's end, an `agent_cmd kill`), the
+/// board as far as the run got, so a stop of it records the items it had
+/// finished, with their evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoardKept {
+    Ended,
+    Left,
+}
+
+/// The board kept of `hosted` as its member leaves in `mode`, if one is
+/// (an allowlist): never of a run no coordinator created.
+pub fn board_kept(mode: MemberFinalizeMode, hosted: &HostedSwarmRun) -> Option<BoardKept> {
+    match (
+        hosted.created(),
+        hosted.status.terminal(),
+        mode,
+        hosted.status,
+    ) {
+        (true, true, _, _) => Some(BoardKept::Ended),
+        (true, false, MemberFinalizeMode::OwnerEnd, RunStatus::Running | RunStatus::Paused) => {
+            Some(BoardKept::Left)
+        }
+        (false, _, _, _)
+        | (
+            true,
+            false,
+            MemberFinalizeMode::Exit
+            | MemberFinalizeMode::ParentKill
+            | MemberFinalizeMode::OwnerTeardown
+            | MemberFinalizeMode::LaunchRollback
+            | MemberFinalizeMode::LaunchRollbackOwned,
+            _,
+        )
+        | (
+            true,
+            false,
+            MemberFinalizeMode::OwnerEnd,
+            RunStatus::Setup
+            | RunStatus::Succeeded
+            | RunStatus::Blocked
+            | RunStatus::Failed
+            | RunStatus::Cancelled
+            | RunStatus::BudgetExhausted,
+        ) => None,
+    }
+}

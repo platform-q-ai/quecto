@@ -109,3 +109,13 @@ fn a_run_ended_unknown_or_never_launched_here_is_not_left() {
         "a run ended already"
     );
 }
+
+/// Round 1 (#2674): a run named twice among the started is owed once.
+#[test]
+fn a_run_named_twice_is_left_once() {
+    let store = started_board();
+    let ends = left(&store, vec![("board-store", 1), ("board-store", 1)])
+        .execute()
+        .unwrap();
+    assert_eq!(ends.len(), 1, "{ends:?}");
+}

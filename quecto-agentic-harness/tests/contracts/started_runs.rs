@@ -4,7 +4,10 @@
 //! none.
 use std::sync::Arc;
 
-use super::coordinator_launch::{RUNNING, launched, launched_child, launcher, spawn, spawned_with};
+use super::coordinator_launch::{
+    RUNNING, agent_cmd, launched, launched_child, launcher, launcher_stopping_with, spawn,
+    spawned_with,
+};
 use quecto::application::project_board::ports::StartedRuns;
 use quecto::domain::project_board::value_objects::slug::Slug;
 
@@ -29,4 +32,16 @@ async fn the_runs_a_launcher_started_are_the_ones_it_launched() {
         refusing.started().is_empty(),
         "a refused launch started none"
     );
+}
+
+/// Round 1 (#2674): spawn answering while the launch is refused anyway (a
+/// coordinator that came up outside a container, so it was stopped)
+/// started no run.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_refused_after_spawn_answered_started_none() {
+    let local = spawned_with("running", false, Some(&launched_child(None)));
+    let (launching, _registry) = launcher_stopping_with(local, agent_cmd(), true);
+    let launching = Arc::new(launching);
+    assert!(launched(Arc::clone(&launching)).await.is_err());
+    assert!(launching.started().is_empty(), "{:?}", launching.started());
 }
