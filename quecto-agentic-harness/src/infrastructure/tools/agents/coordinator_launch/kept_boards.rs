@@ -13,7 +13,8 @@
 //! its items with their states, owners and evidence, and its spend), read
 //! from the board's projection as it is kept; a projection that is not a
 //! whole ended run is not kept. A board is dropped once its run is
-//! recorded, and only the newest [`MAX_KEPT`] are kept, so a long-lived
+//! recorded, and only the newest [`MAX_KEPT`] are kept (a left board going
+//! before any ended one, #2674), so a long-lived
 //! process never grows without end. Kept in memory: a process that
 //! restarts between the coordinator's teardown and the run's end has lost
 //! it, and a teardown that no longer knows the coordinator's label (a
@@ -74,8 +75,20 @@ impl KeptSwarmBoards {
         let mut boards = self.boards.lock().unwrap_or_else(|e| e.into_inner());
         boards.retain(|(kept, _, _)| *kept != key);
         boards.push_back((key, view, which));
+        // Past the bound, the oldest left board goes first (#2674 round 2):
+        // one a run only reached never evicts an ended run's.
         while boards.len() > MAX_KEPT {
-            boards.pop_front();
+            let oldest_left = boards
+                .iter()
+                .position(|(_, _, kept)| *kept == BoardKept::Left);
+            match oldest_left {
+                Some(at) => {
+                    boards.remove(at);
+                }
+                None => {
+                    boards.pop_front();
+                }
+            }
         }
         assert!(
             (1..=MAX_KEPT).contains(&boards.len()),

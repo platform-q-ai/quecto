@@ -108,3 +108,36 @@ fn a_running_or_paused_runs_board_is_kept_as_left() {
     assert_eq!(kept.left_view("s1", "board-a-run-1"), None, "replaced");
     assert_eq!(spent(&kept, "s1", "board-a-run-1"), Some(9));
 }
+
+/// #2674 round 2: past the bound, a left board goes before any ended one,
+/// so boards runs only reached never evict ended runs' boards.
+#[test]
+fn left_boards_are_evicted_before_ended_ones() {
+    let kept = KeptSwarmBoards::default();
+    kept.keep_left("s1", "board-left-run-1", board("running", 0));
+    for member in 0..MAX_KEPT - 1 {
+        kept.keep(
+            "s1",
+            &format!("board-e{member}-run-1"),
+            board("succeeded", 1),
+        );
+    }
+    kept.keep("s1", "board-last-run-1", board("succeeded", 2));
+    assert_eq!(
+        kept.left_view("s1", "board-left-run-1"),
+        None,
+        "the left board went"
+    );
+    assert_eq!(
+        spent(&kept, "s1", "board-e0-run-1"),
+        Some(1),
+        "the oldest ended one stays"
+    );
+    assert_eq!(spent(&kept, "s1", "board-last-run-1"), Some(2));
+    kept.keep_left("s1", "board-new-left-run-1", board("paused", 3));
+    assert_eq!(
+        spent(&kept, "s1", "board-e0-run-1"),
+        Some(1),
+        "a left board never evicts an ended one"
+    );
+}

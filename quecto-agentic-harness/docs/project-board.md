@@ -449,8 +449,11 @@ one is dropped once its run is recorded. A run still running or paused is kept
 only when its owner ended the coordinator on purpose (a one-shot parent's end,
 an `agent_cmd kill`; #2674), as far as it got, apart from an ended one: a
 `stopped`, `failed` or `lost` end records its items from that board (finished
-items with their owners and evidence), and a `succeeded` end never does (it
-answers `items_not_done` with `report` `"none_kept"`). On any other end (the
+items with their owners and evidence; their evidence commits are recorded
+unchecked, as only a success is judged by where its commits are), and a
+`succeeded` end never does (it answers `items_not_done` with `report`
+`"none_kept"`). Only the newest 16 boards are kept in all, and past that a left
+board goes before any ended run's. On any other end (the
 coordinator exiting by itself, a harness shutdown) a running or paused run's
 board is not kept: it may yet change. Where no board was kept, the run is recorded
 as a swarm that ended so and reported nothing would be: each task item as todo,
