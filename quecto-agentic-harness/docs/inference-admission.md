@@ -209,13 +209,23 @@ name.
 
 When the broker came back with a **different policy** (the session reads
 `restartRequired: true`), the footer shows `admission ✗ restart required` and
-the TUI offers the one-step restart once. `/admission restart` then restarts
-the broker (so it reads the current config) and, the session being unable to
-rejoin a different policy, answers `sessionRestartRequired: true`: a TUI that
-owns its agent ends it as an ordinary exit does (persisting first) and starts
-itself again with the same arguments, so a fresh agent composes against the
-broker's policy. A TUI attached to an agent it does not end
-(`--detach-on-exit`, or `--socket`) says to restart that agent instead.
+the TUI offers the restart once, worded for what it can do. In a session that
+already reads `restartRequired`, `/admission restart` restarts **only this
+session**: the broker already serves the new policy and is not restarted
+again (otherwise every session accepting the offer would restart it in turn).
+Otherwise `/admission restart` restarts the broker (so it reads the current
+config) and, when the session cannot rejoin a different policy, answers
+`sessionRestartRequired: true`.
+
+A TUI that owns its agent restarts the session by ending that agent as an
+ordinary exit does (persisting first) and starting itself again with the same
+arguments plus `--resume <session>` and the session's current `--model` and
+`--effort`, so a fresh agent composes against the broker's policy and the
+conversation carries on. It does not relaunch after a termination signal or
+without a terminal; it prints the `quecto-tui --resume <session>` command to
+run instead. A TUI started with `--no-persist` cannot keep the conversation
+and says to restart it yourself; one attached to an agent it does not end
+(`--detach-on-exit`, or `--socket`) says to restart that agent.
 
 ### Commands
 

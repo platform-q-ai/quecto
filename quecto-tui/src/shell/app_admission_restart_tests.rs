@@ -129,21 +129,35 @@ async fn the_badge_shows_health_and_this_sessions_queue_depth() {
     );
 }
 
+/// A harness whose TUI owns its agent and knows its session, model and
+/// effort (from `get_state`), as a spawned TUI does.
+async fn owning_harness() -> TuiHarness {
+    let mut h = TuiHarness::new().await;
+    h.app_mut()
+        .set_child_exit_watch(crate::shell::child_watch::ChildWatch::for_tests(Some(4242)));
+    h.event_line(
+        &serde_json::json!({
+            "type": "response", "command": "get_state", "success": true,
+            "data": {"state": "idle", "model": "openai-oauth/gpt-6", "effort": "high",
+                     "sessionKey": "cli:work", "generation": 1}
+        })
+        .to_string(),
+    );
+    h
+}
+
+const OFFER_RELAUNCH: &str = "The admission broker came back with a different policy; this session must restart to use it. /admission restart restarts this session and resumes this conversation.";
+
 #[tokio::test]
 async fn a_required_session_restart_is_offered_once_and_badged() {
-    let mut h = TuiHarness::new().await;
+    let mut h = owning_harness().await;
     let changed = serde_json::json!({
         "waiting": 0, "revision": 1, "authorityStatus": "unavailable", "restartRequired": true
     });
     h.event_line(&admission_line(changed.clone()));
     let footer = h.master_footer_text();
     assert!(footer.contains("admission ✗ restart required"), "{footer}");
-    assert_eq!(
-        h.notification_messages(),
-        [
-            "The admission broker came back with a different policy; this session must restart to use it. /admission restart restarts the broker and this session."
-        ]
-    );
+    assert_eq!(h.notification_messages(), [OFFER_RELAUNCH]);
     // Still required: offered once, not on every event.
     let mut again = changed;
     again["revision"] = 2.into();
@@ -156,6 +170,42 @@ async fn a_required_session_restart_is_offered_once_and_badged() {
     assert!(
         h.master_footer_text()
             .contains("admission ✗ restart required")
+    );
+    // A cleared view forgets it: no stale badge, and a later requirement
+    // is offered again.
+    h.app_mut().clear_master_admission();
+    h.event_line(&admission_line(
+        serde_json::json!({"waiting": 0, "revision": 4}),
+    ));
+    assert!(!h.master_footer_text().contains("restart required"));
+    h.event_line(&admission_line(serde_json::json!({
+        "waiting": 0, "revision": 5, "authorityStatus": "unavailable", "restartRequired": true
+    })));
+    assert_eq!(h.notification_messages().len(), 2, "offered again");
+}
+
+/// #2615 review: the offer says what this TUI will actually do.
+#[tokio::test]
+async fn the_offer_is_worded_for_what_this_tui_can_do() {
+    let required = admission_line(serde_json::json!({
+        "waiting": 0, "revision": 1, "authorityStatus": "unavailable", "restartRequired": true
+    }));
+    let mut not_owned = TuiHarness::new().await;
+    not_owned.event_line(&required);
+    assert_eq!(
+        not_owned.notification_messages(),
+        [
+            "The admission broker came back with a different policy; this session must restart to use it. This TUI does not end its agent: restart that agent."
+        ]
+    );
+    let mut ephemeral = owning_harness().await;
+    ephemeral.app_mut().set_session_persisted(false);
+    ephemeral.event_line(&required);
+    assert_eq!(
+        ephemeral.notification_messages(),
+        [
+            "The admission broker came back with a different policy; this session must restart to use it, and it is not persisted (--no-persist): restart quecto-tui yourself."
+        ]
     );
 }
 
@@ -171,41 +221,77 @@ fn session_restart_line() -> String {
 }
 
 #[tokio::test]
-async fn a_tui_that_owns_its_agent_restarts_the_session_for_a_changed_policy() {
-    let mut h = TuiHarness::new().await;
-    h.app_mut()
-        .set_child_exit_watch(crate::shell::child_watch::ChildWatch::for_tests(Some(4242)));
+async fn a_tui_that_owns_its_agent_restarts_the_session_resuming_it() {
+    let mut h = owning_harness().await;
     h.event_line(&session_restart_line());
     assert_eq!(
         h.notification_messages(),
-        ["Admission broker restarted; restarting this session to use its policy…"]
+        [
+            "Admission broker restarted; restarting this session to use its policy (resuming this conversation)…"
+        ]
     );
     assert!(
         h.should_exit(),
         "the ordinary exit ends the owned agent first"
     );
-    assert!(h.app_mut().session_restart_requested());
+    assert_eq!(
+        h.app_mut().session_relaunch().cloned(),
+        Some(crate::shell::app::app_ordinary_exit::SessionRelaunch {
+            session_key: "cli:work".into(),
+            model: Some("openai-oauth/gpt-6".into()),
+            effort: Some("high".into()),
+        })
+    );
 }
 
 #[tokio::test]
-async fn a_tui_that_does_not_end_its_agent_says_what_to_restart() {
-    for (owned, kill_on_exit) in [(false, true), (true, false)] {
-        let mut h = TuiHarness::new().await;
-        if owned {
-            h.app_mut()
-                .set_child_exit_watch(crate::shell::child_watch::ChildWatch::for_tests(Some(4242)));
-        }
-        h.app_mut().set_ordinary_exit_kill_owned(kill_on_exit);
+async fn a_tui_that_cannot_resume_its_session_says_what_to_restart() {
+    type Setup = fn(&mut TuiHarness);
+    let cases: [(&str, Setup); 2] = [
+        (
+            "Admission broker restarted; its policy changed, and this TUI does not end its agent: restart that agent to use it",
+            |h| h.app_mut().set_ordinary_exit_kill_owned(false),
+        ),
+        (
+            "Admission broker restarted; its policy changed, and this session is not persisted (--no-persist), so restarting it would lose this conversation: restart quecto-tui yourself to use it",
+            |h| h.app_mut().set_session_persisted(false),
+        ),
+    ];
+    for (expected, setup) in cases {
+        let mut h = owning_harness().await;
+        setup(&mut h);
         h.event_line(&session_restart_line());
-        assert_eq!(
-            h.notification_messages(),
-            [
-                "Admission broker restarted; its policy changed, and this TUI does not end its agent: restart that agent to use it"
-            ]
-        );
+        assert_eq!(h.notification_messages(), [expected]);
         assert!(!h.should_exit());
-        assert!(!h.app_mut().session_restart_requested());
+        assert!(h.app_mut().session_relaunch().is_none());
     }
+}
+
+/// #2615 review: a session already told the broker serves a new policy
+/// restarts itself only; the broker is not restarted again (other sessions
+/// accepting the same offer would otherwise restart it in turn).
+#[tokio::test]
+async fn an_accepted_offer_restarts_only_this_session() {
+    let mut h = owning_harness().await;
+    h.event_line(&admission_line(serde_json::json!({
+        "waiting": 0, "revision": 1, "authorityStatus": "unavailable", "restartRequired": true
+    })));
+    h.submit("/admission restart");
+    assert!(
+        !h.drain_commands()
+            .await
+            .iter()
+            .any(|c| c.contains("restart_admission")),
+        "the broker is not restarted"
+    );
+    assert_eq!(
+        h.notification_messages().last().map(String::as_str),
+        Some(
+            "The admission broker serves a new policy; restarting this session to use its policy (resuming this conversation)…"
+        )
+    );
+    assert!(h.should_exit());
+    assert!(h.app_mut().session_relaunch().is_some());
 }
 
 /// #2615 review: a restart others share is confirmed by a second

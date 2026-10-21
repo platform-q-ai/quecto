@@ -23,6 +23,9 @@ pub(crate) struct CliFlags {
     pub(crate) model: Option<String>,
     /// `--effort <e>`: the spawned agent's startup effort for this run.
     pub(crate) effort: Option<String>,
+    /// `--resume <session>`: resume this persisted session at startup
+    /// (#2615: how a session restart carries its conversation over).
+    pub(crate) resume: Option<String>,
 }
 
 pub fn run(args: Vec<String>) -> i32 {
@@ -53,6 +56,7 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
         kill_on_exit: true,
         model: None,
         effort: None,
+        resume: None,
     };
     let mut system_literal_seen = false;
     let mut i = 1;
@@ -72,6 +76,10 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
             }
             "--effort" if i + 1 < args.len() && !args[i + 1].starts_with("--") => {
                 flags.effort = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--resume" if i + 1 < args.len() && !args[i + 1].starts_with("--") => {
+                flags.resume = Some(args[i + 1].clone());
                 i += 2;
             }
             flag @ ("--model" | "--effort") => {
@@ -255,6 +263,10 @@ async fn run_tui(flags: CliFlags) -> i32 {
         app.set_child_exit_watch(watch.clone());
     }
     app.set_ordinary_exit_kill_owned(flags.kill_on_exit);
+    app.set_session_persisted(flags.persist);
+    if let Some(session) = &flags.resume {
+        app.send_resume_session(session);
+    }
     app.set_termination_stream(termination_rx);
     let exit_code = app.run().await;
     if let Some(signal) = app.termination_signal() {
@@ -268,9 +280,18 @@ async fn run_tui(flags: CliFlags) -> i32 {
     }
 
     drop(child_watch);
-    // #2615: the owned agent has ended; a fresh TUI adopts the new policy.
-    if app.session_restart_requested() {
-        return session_restart::restart_session();
+    // #2615: the owned agent has ended (persisting first); a fresh TUI
+    // resuming the session adopts the broker's new policy.
+    if let Some(relaunch) = app.session_relaunch() {
+        use std::io::IsTerminal;
+        let terminal = std::io::stdin().is_terminal();
+        if session_restart::should_relaunch(true, app.termination_signal(), terminal) {
+            return session_restart::restart_session(relaunch);
+        }
+        eprintln!(
+            "not restarting quecto-tui (no terminal, or it was asked to stop); start it again with `quecto-tui --resume {}`",
+            relaunch.session_key
+        );
     }
 
     exit_code

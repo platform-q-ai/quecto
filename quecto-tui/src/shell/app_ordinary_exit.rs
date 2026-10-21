@@ -21,9 +21,12 @@ pub(crate) struct OrdinaryExitPolicy {
     pub(crate) leader_budget_override: Option<LeaderBudget>,
     /// The termination signal this exit answers, if it was one (#2053).
     pub(crate) termination_signal: Option<crate::shell::signals::TerminationSignal>,
-    /// This exit restarts the session (#2615): the TUI starts itself again
-    /// once its owned agent has ended.
-    pub(crate) restart_session: bool,
+    /// This exit restarts the session (#2615): the TUI starts itself again,
+    /// resuming it, once its owned agent has ended.
+    pub(crate) relaunch: Option<SessionRelaunch>,
+    /// The session is persisted (not `--no-persist`), so a relaunch can
+    /// resume it (#2615).
+    pub(crate) session_persisted: bool,
     /// Every settling notice shown, in order (test seam).
     #[cfg(any(test, feature = "test-harness"))]
     pub(crate) settling_notices_shown: Vec<String>,
@@ -41,13 +44,23 @@ impl Default for OrdinaryExitPolicy {
             kill_owned: true,
             leader_budget_override: None,
             termination_signal: None,
-            restart_session: false,
+            relaunch: None,
+            session_persisted: true,
             #[cfg(any(test, feature = "test-harness"))]
             settling_notices_shown: Vec::new(),
             #[cfg(test)]
             finalization_errors_emitted: Vec::new(),
         }
     }
+}
+
+/// What a session restart resumes (#2615): the persisted session, on the
+/// model and effort it was using.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionRelaunch {
+    pub(crate) session_key: String,
+    pub(crate) model: Option<String>,
+    pub(crate) effort: Option<String>,
 }
 
 impl App {
@@ -80,9 +93,14 @@ impl App {
         self.exit_policy.termination_signal
     }
 
-    /// Whether this exit restarts the session (#2615).
-    pub(crate) fn session_restart_requested(&self) -> bool {
-        self.exit_policy.restart_session
+    /// The session this exit restarts, if it does (#2615).
+    pub(crate) fn session_relaunch(&self) -> Option<&SessionRelaunch> {
+        self.exit_policy.relaunch.as_ref()
+    }
+
+    /// Whether the session is persisted, so a restart can resume it.
+    pub(crate) fn set_session_persisted(&mut self, persisted: bool) {
+        self.exit_policy.session_persisted = persisted;
     }
 
     pub(crate) fn set_ordinary_exit_kill_owned(&mut self, kill_owned: bool) {

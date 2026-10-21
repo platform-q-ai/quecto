@@ -88,6 +88,7 @@ When `quecto-tui` spawns the agent for you, it can forward these flags:
 | `--config <path>` | Use an alternate quecto config file when spawning the agent |
 | `--model <provider/model>` | Start the spawned agent on this model, in memory only — nothing is written |
 | `--effort <level>` | Start the spawned agent on this reasoning-effort level, in memory only |
+| `--resume <session>` | Resume this persisted session at startup (what a session restart for a changed admission policy uses) |
 
 By default, the spawned UDS agent has the workflow tool available but dormant:
 you can talk normally, then ask the model to select a workflow template when you
