@@ -175,7 +175,7 @@ fn build_with_warnings(
     };
     Ok(ProjectBoardHandles {
         operations: RunBoardOperation::new(parts),
-        board: None.or_else(|| GitBoardStore::board_id_of(&url).filter(|_| false)),
+        board: GitBoardStore::board_id_of(&url),
     })
 }
 

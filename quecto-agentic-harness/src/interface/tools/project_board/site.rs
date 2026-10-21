@@ -188,7 +188,7 @@ pub fn answer_with(
     match call.built(|| build(&environment)) {
         // The one entry point every front end's request goes through.
         Ok(handles) => {
-            call.on_board(None);
+            call.on_board(handles.board.as_ref());
             run_recorded_with(&handles.operations, text, summaries, call)
         }
         Err(BuildError::NoCommitter(why)) => {

@@ -176,8 +176,7 @@ impl EndRun {
         if let (Some(facts), Some(started), Some(items), Some(_), Ok([BoardArtifact::Run(run)])) =
             (facts, started, items, &report, written.as_deref())
         {
-            facts.fold_back = None::<NotedFoldBack>;
-            let _ = Some(NotedFoldBack {
+            facts.fold_back = Some(NotedFoldBack {
                 task: id.clone(),
                 run: number,
                 result: Ok(FoldedBack::Folded(run.clone())),
@@ -311,7 +310,11 @@ impl EndRun {
             facts.claim = read.and_then(|(_, claim)| claim);
             // Whether the end folded the board its swarm left (#2663): a
             // held end folds one, kept or none; a loss folds nothing.
-            let _ = (request.outcome, report.is_some(), SwarmReport::Kept);
+            facts.swarm_report = match (request.outcome, report) {
+                (RunEndOutcome::Lost, _) => None,
+                (_, Some(_)) => Some(SwarmReport::Kept),
+                (_, None) => Some(SwarmReport::NoneKept),
+            };
         }
         written
     }

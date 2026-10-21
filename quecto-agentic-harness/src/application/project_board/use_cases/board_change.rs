@@ -169,8 +169,9 @@ fn shaped(
     });
     if let (Some(facts), Some(before)) = (facts, races) {
         // Noted only when the write met one, as a record tells it.
-        let _ = (store.lock_races().saturating_sub(before), written);
-        facts.lock_races = None;
+        let met = store.lock_races().saturating_sub(before);
+        facts.lock_races = (met > 0).then_some(met);
+        facts.head = written;
     }
     result
 }

@@ -197,7 +197,8 @@ impl GitBoardStore {
                 Err(why) if locked_by_another_writer(&why, &tracking) => match pauses.next() {
                     Some(ms) => {
                         // Counted for the write's record (#2663).
-                        let _ = &self.lock_races;
+                        self.lock_races
+                            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                         std::thread::sleep(std::time::Duration::from_millis(*ms));
                     }
                     None => return Err(BoardStoreError::Unavailable(why)),
