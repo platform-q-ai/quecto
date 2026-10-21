@@ -96,6 +96,11 @@ impl App {
                 self.offer_session_restart();
             }
         }
+        let alert = self.ac().admission_restart_required;
+        self.ac_mut()
+            .master_session
+            .footer
+            .set_admission_alert(alert);
         let badge = match self.ac().admission_restart_required {
             true => Some(crate::protocol::admission_payloads::RESTART_REQUIRED_BADGE.to_string()),
             false => self.ac().admission_authority.as_deref().and_then(|status| {
@@ -139,6 +144,10 @@ impl App {
         self.ac_mut().admission_view = None;
         self.ac_mut().admission_authority = None;
         self.ac_mut().admission_restart_required = false;
+        self.ac_mut()
+            .master_session
+            .footer
+            .set_admission_alert(false);
         self.ac_mut()
             .master_session
             .footer

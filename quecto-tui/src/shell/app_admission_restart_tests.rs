@@ -412,3 +412,18 @@ async fn an_unknown_outcome_is_not_reported_as_a_restart() {
         ]
     );
 }
+
+/// #2615 review round 2: on a narrow line a required restart stays visible.
+#[tokio::test]
+async fn a_required_restart_stays_visible_on_a_narrow_line() {
+    use crate::components::component::Component;
+    let mut footer = crate::components::footer::Footer::new();
+    footer.set_model("anthropic/claude-sonnet-4-5");
+    footer.set_admission_health(Some("admission ✗ restart required".into()));
+    footer.set_admission_alert(true);
+    let narrow = crate::components::ansi::strip_ansi(&footer.render(50).join("\n"));
+    assert!(narrow.contains("admission!"), "{narrow}");
+    footer.set_admission_alert(false);
+    let quiet = crate::components::ansi::strip_ansi(&footer.render(50).join("\n"));
+    assert!(!quiet.contains("admission"), "{quiet}");
+}

@@ -113,6 +113,12 @@ impl ResumeDecisionDialog {
         };
         let mut forms = Vec::new();
         match (&refusal.command, &refusal.resume) {
+            // A harness since #2615 spells a command that also resumes the
+            // session there: one step.
+            (Some(command), Some(resume)) if command.contains(RESUMING) => {
+                forms.push(step("Open it there:", command));
+                forms.push(step("Open quecto in that folder, then type:", resume));
+            }
             (Some(command), Some(resume)) => {
                 let mut whole = step("Open quecto there:", command);
                 whole.extend(step("then type:", resume));
@@ -133,6 +139,9 @@ impl ResumeDecisionDialog {
         forms
     }
 }
+
+/// What a command that opens quecto resuming the session contains.
+const RESUMING: &str = " && quecto-tui --resume ";
 
 fn title(code: ResumeRefusalCode) -> &'static str {
     match code {

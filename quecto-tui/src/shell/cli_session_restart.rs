@@ -1,54 +1,88 @@
 //! Restarting the session (#2615): when the admission broker serves a
 //! different policy, `/admission restart` ends the owned agent as an
-//! ordinary exit does (persisting first) and then starts this TUI again,
-//! resuming the same session on the same model and effort, so a fresh agent
-//! composes against the broker's policy and the conversation carries on.
+//! ordinary exit does (persisting first) and then starts this TUI again with
+//! the flags it ran with, resuming the same session on the same model and
+//! effort, so a fresh agent composes against the broker's policy and the
+//! conversation carries on.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use super::CliFlags;
 use crate::shell::app::app_ordinary_exit::SessionRelaunch;
 
-/// The flags a relaunch replaces with the session's own (each takes one
-/// value).
-const REPLACED: [&str; 3] = ["--resume", "--model", "--effort"];
-
-/// The arguments of the relaunched TUI: the original ones without any
-/// `--resume`, `--model` or `--effort`, then the session to resume and the
-/// model and effort it was using.
-pub(super) fn relaunch_args(
-    original: impl IntoIterator<Item = OsString>,
-    relaunch: &SessionRelaunch,
-) -> Vec<OsString> {
+/// The arguments that make `parse_flags` give back `flags`.
+pub(super) fn tui_args(flags: &CliFlags) -> Vec<String> {
     let mut args = Vec::new();
-    let mut original = original.into_iter();
-    while let Some(arg) = original.next() {
-        match arg.to_str().is_some_and(|arg| REPLACED.contains(&arg)) {
-            true => {
-                let _value = original.next();
-            }
-            false => args.push(arg),
+    let mut pair = |flag: &str, value: &str| {
+        args.push(flag.to_string());
+        args.push(value.to_string());
+    };
+    if let Some(socket) = &flags.socket_path {
+        pair("--socket", &socket.to_string_lossy());
+    }
+    if let Some(config) = &flags.config_path {
+        pair("--config", &config.to_string_lossy());
+    }
+    if let Some(system) = &flags.system_prompt {
+        pair("--system", system);
+    }
+    for tool in &flags.disable_tools {
+        pair("--disable-tool", tool);
+    }
+    if let Some(model) = &flags.model {
+        pair("--model", model);
+    }
+    if let Some(effort) = &flags.effort {
+        pair("--effort", effort);
+    }
+    if let Some(resume) = &flags.resume {
+        pair("--resume", resume);
+    }
+    args.push(
+        match flags.persist {
+            true => "--persist",
+            false => "--no-persist",
         }
+        .into(),
+    );
+    args.push(
+        match flags.kill_on_exit {
+            true => "--kill-on-exit",
+            false => "--detach-on-exit",
+        }
+        .into(),
+    );
+    if flags.workflow_disabled {
+        args.push("--no-workflow".into());
     }
-    args.extend(["--resume".into(), relaunch.session_key.clone().into()]);
-    if let Some(model) = &relaunch.model {
-        args.extend(["--model".into(), model.into()]);
+    if flags.workflow {
+        args.push("--workflow".into());
     }
-    if let Some(effort) = &relaunch.effort {
-        args.extend(["--effort".into(), effort.into()]);
+    if flags.workflow_guards {
+        args.push("--workflow-guards".into());
     }
     args
 }
 
-/// Whether to relaunch at all: only a requested restart, never one a
-/// termination signal overtook (the terminal may be gone), and only onto a
-/// terminal.
+/// The flags of the relaunched TUI: the ones it ran with, resuming the
+/// session on the model and effort it was using.
+pub(super) fn relaunch_flags(flags: &CliFlags, relaunch: &SessionRelaunch) -> CliFlags {
+    CliFlags {
+        resume: Some(relaunch.session_key.clone()),
+        model: relaunch.model.clone().or_else(|| flags.model.clone()),
+        effort: relaunch.effort.clone().or_else(|| flags.effort.clone()),
+        ..flags.clone()
+    }
+}
+
+/// Whether to relaunch: never when a termination signal overtook the
+/// restart (the terminal may be gone), and only onto a terminal.
 pub(super) fn should_relaunch(
-    requested: bool,
     signal: Option<crate::shell::signals::TerminationSignal>,
     stdin_is_terminal: bool,
 ) -> bool {
-    requested && signal.is_none() && stdin_is_terminal
+    signal.is_none() && stdin_is_terminal
 }
 
 /// The program to relaunch: the running binary while it still exists (a
@@ -67,7 +101,7 @@ pub(super) fn relaunch_program(
 /// Replace this process with a fresh TUI resuming `relaunch`. Returns only
 /// when that fails, with the exit code to leave with; the reason is on
 /// stderr.
-pub(super) fn restart_session(relaunch: &SessionRelaunch) -> i32 {
+pub(super) fn restart_session(flags: &CliFlags, relaunch: &SessionRelaunch) -> i32 {
     use std::os::unix::process::CommandExt;
     let manual = format!(
         "start it again with `quecto-tui --resume {}`",
@@ -80,7 +114,7 @@ pub(super) fn restart_session(relaunch: &SessionRelaunch) -> i32 {
     };
     eprintln!("restarting quecto-tui to use the admission broker's policy…");
     let error = std::process::Command::new(program)
-        .args(relaunch_args(std::env::args_os().skip(1), relaunch))
+        .args(tui_args(&relaunch_flags(flags, relaunch)))
         .exec();
     eprintln!("could not restart quecto-tui: {error}; {manual}");
     1

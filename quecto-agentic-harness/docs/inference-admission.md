@@ -213,7 +213,7 @@ The TUI footer shows the broker's health beside the model:
 `admission ✓ connected`, `admission ⟳ reconnecting` or
 `admission ✗ unavailable`, followed by `· N queued here` while this session
 has attempts waiting; on a narrow terminal the badge gives way to the model
-name.
+name, except that a required restart keeps a short `admission!` marker.
 
 When the broker came back with a **different policy** (the session reads
 `restartRequired: true`), the footer shows `admission ✗ restart required` and
@@ -226,8 +226,8 @@ config) and, when the session cannot rejoin a different policy, answers
 `sessionRestartRequired: true`.
 
 A TUI that owns its agent restarts the session by ending that agent as an
-ordinary exit does (persisting first) and starting itself again with the same
-arguments plus `--resume <session>` and the session's current `--model` and
+ordinary exit does (persisting first) and starting itself again with the
+flags it ran with plus `--resume <session>` and the session's current `--model` and
 `--effort`, so a fresh agent composes against the broker's policy and the
 conversation carries on. It does not relaunch after a termination signal or
 without a terminal; it prints the `quecto-tui --resume <session>` command to

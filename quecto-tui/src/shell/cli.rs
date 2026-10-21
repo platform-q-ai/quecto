@@ -7,7 +7,7 @@ pub(crate) use super::socket_path::validate_socket_path;
 #[cfg(test)]
 use super::socket_path::{canonical_allowed_socket_roots, canonicalize_socket_roots};
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CliFlags {
     pub(crate) socket_path: Option<PathBuf>,
     pub(crate) workflow: bool,
@@ -82,7 +82,7 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
                 flags.resume = Some(args[i + 1].clone());
                 i += 2;
             }
-            flag @ ("--model" | "--effort") => {
+            flag @ ("--model" | "--effort" | "--resume") => {
                 eprintln!("warning: {flag} requires a value; ignoring it");
                 i += 1;
             }
@@ -162,12 +162,25 @@ fn apply_workflow_defaults(flags: &mut CliFlags) {
     }
 }
 
+/// The startup the flags ask of the app: whether ordinary exit ends its
+/// agent, whether the session is persisted, and the session to resume
+/// (#2615).
+pub(crate) fn apply_startup_flags(app: &mut crate::shell::app::App, flags: &CliFlags) {
+    app.set_ordinary_exit_kill_owned(flags.kill_on_exit);
+    app.set_session_persisted(flags.persist);
+    if let Some(session) = &flags.resume {
+        app.send_resume_session(session);
+    }
+}
+
 async fn run_tui(flags: CliFlags) -> i32 {
+    // What a session restart relaunches with (#2615).
+    let relaunch_flags = flags.clone();
     // From here on SIGHUP/SIGTERM/SIGINT are ours (#2053): a signal during
     // the startup window is kept and answered once there is something to
     // end; one in the loop takes the ordinary exit.
     let mut termination_rx = crate::shell::signals::termination_stream();
-    let (socket, child_watch, announced_protocol) = match flags.socket_path {
+    let (socket, child_watch, announced_protocol) = match flags.socket_path.clone() {
         Some(path) => (path, None, None),
         None => match spawn_agent(&flags, &mut termination_rx).await {
             Ok((path, child, stderr_tail, announced_protocol)) => {
@@ -262,11 +275,7 @@ async fn run_tui(flags: CliFlags) -> i32 {
     if let Some(watch) = &child_watch {
         app.set_child_exit_watch(watch.clone());
     }
-    app.set_ordinary_exit_kill_owned(flags.kill_on_exit);
-    app.set_session_persisted(flags.persist);
-    if let Some(session) = &flags.resume {
-        app.send_resume_session(session);
-    }
+    apply_startup_flags(&mut app, &flags);
     app.set_termination_stream(termination_rx);
     let exit_code = app.run().await;
     if let Some(signal) = app.termination_signal() {
@@ -285,8 +294,8 @@ async fn run_tui(flags: CliFlags) -> i32 {
     if let Some(relaunch) = app.session_relaunch() {
         use std::io::IsTerminal;
         let terminal = std::io::stdin().is_terminal();
-        if session_restart::should_relaunch(true, app.termination_signal(), terminal) {
-            return session_restart::restart_session(relaunch);
+        if session_restart::should_relaunch(app.termination_signal(), terminal) {
+            return session_restart::restart_session(&relaunch_flags, relaunch);
         }
         eprintln!(
             "not restarting quecto-tui (no terminal, or it was asked to stop); start it again with `quecto-tui --resume {}`",
