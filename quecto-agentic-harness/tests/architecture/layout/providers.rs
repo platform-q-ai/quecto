@@ -106,25 +106,11 @@ const FOLDERS: &[(&str, &[&str])] = &[
     ),
 ];
 
-/// Every file the providers root may hold, each of which must exist: its
-/// `mod.rs`, the module's own tests, and the cross-vendor suites `mod.rs`
-/// declares (each drives every vendor through the factory or the shared
-/// stream bounds, so none belongs to one folder; #2580 records why each
-/// stays).
-const ROOT_FILES: &[&str] = &[
-    "mod.rs",
-    "mod_tests.rs",
-    "attempt_observation_tests.rs",
-    "issue_996_efficiency_tests.rs",
-    "output_cap_eof_tests.rs",
-    "output_cap_provider_tests.rs",
-    "providers_cov2_tests.rs",
-    "sse_wire_cov_tests.rs",
-    "stream_end_2249_tests.rs",
-    "stream_idle_provider_tests.rs",
-    "stream_progress_provider_tests.rs",
-    "tool_schema_adapter_tests.rs",
-];
+/// Every file the providers root may hold, each of which must exist: only
+/// its `mod.rs`, which declares the folders (#2679: provider construction
+/// moved to `routing/provider_factory.rs` and the root test suites beside
+/// the code they exercise).
+const ROOT_FILES: &[&str] = &["mod.rs"];
 
 fn providers() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infrastructure/providers")

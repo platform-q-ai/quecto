@@ -148,7 +148,10 @@ impl Vendor {
     }
 }
 
-pub(super) fn request<'a>(messages: &'a [Message], trace: &Arc<RequestTrace>) -> ChatRequest<'a> {
+pub(in crate::infrastructure::providers) fn request<'a>(
+    messages: &'a [Message],
+    trace: &Arc<RequestTrace>,
+) -> ChatRequest<'a> {
     ChatRequest {
         trace: Some(trace.clone()),
         admission: None,
@@ -166,7 +169,7 @@ pub(super) fn request<'a>(messages: &'a [Message], trace: &Arc<RequestTrace>) ->
     }
 }
 
-pub(super) fn traced() -> Arc<RequestTrace> {
+pub(in crate::infrastructure::providers) fn traced() -> Arc<RequestTrace> {
     let trace = Arc::new(RequestTrace::default());
     trace.start();
     trace

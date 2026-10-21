@@ -275,3 +275,6 @@ mod finish_reason_tests;
 #[cfg(test)]
 #[path = "openai_sse_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "openai_sse_wire_cov_tests.rs"]
+mod wire_cov_tests;

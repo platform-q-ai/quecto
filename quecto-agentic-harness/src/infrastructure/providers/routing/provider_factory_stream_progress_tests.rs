@@ -5,7 +5,7 @@
 //! Real sockets, so short bounds in real time.
 use std::time::Duration;
 
-use super::stream_idle_provider_tests::{Vendor, assembled, codex_chat, incremental};
+use super::stream_idle_tests::{Vendor, assembled, codex_chat, incremental};
 use super::transport::stream_idle::StreamIdle;
 use super::transport::stream_idle::tests::{LIVE, servers};
 use crate::domain::inference::services::provider_error::{
@@ -107,8 +107,8 @@ async fn output_among_the_events_keeps_a_reply_going() {
             crate::domain::conversation::value_objects::message::Message::system("sys"),
             crate::domain::conversation::value_objects::message::Message::user("hi"),
         ];
-        let trace = super::stream_idle_provider_tests::traced();
-        let request = super::stream_idle_provider_tests::request(&messages, &trace);
+        let trace = super::stream_idle_tests::traced();
+        let request = super::stream_idle_tests::request(&messages, &trace);
         let mut rx = provider.chat_stream_incremental(request).await;
         let reading = async {
             while let Some(event) = rx.recv().await {
@@ -135,8 +135,8 @@ async fn pings_alone_are_not_cut_by_the_progress_bound() {
             crate::domain::conversation::value_objects::message::Message::system("sys"),
             crate::domain::conversation::value_objects::message::Message::user("hi"),
         ];
-        let trace = super::stream_idle_provider_tests::traced();
-        let request = super::stream_idle_provider_tests::request(&messages, &trace);
+        let trace = super::stream_idle_tests::traced();
+        let request = super::stream_idle_tests::request(&messages, &trace);
         let mut rx = provider.chat_stream_incremental(request).await;
         let reading = async {
             while let Some(event) = rx.recv().await {

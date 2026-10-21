@@ -3,8 +3,8 @@
 //! must count against the cap at end of file: crossing the cap there fails
 //! as `OutputCapped`, never `Ok`. A pump hands its handler that last line
 //! too (#2249 review), so there it fails as `OutputCapped` as well.
-use super::output_cap_provider_tests::{CAP, DELTA, capped_trace, is_cap_error};
-use super::stream_idle_provider_tests::{Vendor, request, terminations};
+use super::output_cap_tests::{CAP, DELTA, capped_trace, is_cap_error};
+use super::stream_idle_tests::{Vendor, request, terminations};
 use super::transport::stream_idle::tests::{LIVE, bounded, servers};
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::inference::value_objects::attempt_diagnostics::Termination;

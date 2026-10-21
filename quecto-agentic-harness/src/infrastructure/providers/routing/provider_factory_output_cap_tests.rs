@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use super::stream_idle_provider_tests::{Vendor, request, terminations, traced};
+use super::stream_idle_tests::{Vendor, request, terminations, traced};
 use super::transport::stream_idle::tests::{LIVE, bounded, servers};
 use crate::application::providers::ports::LlmProvider;
 use crate::domain::conversation::value_objects::message::Message;
