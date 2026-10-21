@@ -47,8 +47,21 @@ impl IdleWatch {
     /// forgets the idle start, so the next idle spell runs a whole period;
     /// `Stop` is only ever answered for an observation of holding nothing.
     pub fn observe(&mut self, holds_anything: bool, now: u64) -> IdleVerdict {
-        let _ = (holds_anything, now, self.idle_since, self.period_ms);
-        IdleVerdict::Holding
+        match holds_anything {
+            true => {
+                self.idle_since = None;
+                IdleVerdict::Holding
+            }
+            false => {
+                let since = *self.idle_since.get_or_insert(now);
+                let deadline = since.saturating_add(self.period_ms);
+                debug_assert!(deadline > since || since == u64::MAX, "a positive period");
+                match now >= deadline {
+                    true => IdleVerdict::Stop,
+                    false => IdleVerdict::IdleUntil(deadline),
+                }
+            }
+        }
     }
 }
 

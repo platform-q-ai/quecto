@@ -9,7 +9,11 @@ use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ExitStatus};
+use std::process::{Child, Command, ExitStatus, Stdio};
+
+use crate::infrastructure::processes::parent_death_signal::own_session;
+#[cfg(any(test, feature = "test-support"))]
+use crate::infrastructure::processes::parent_death_signal::own_session_dying_with_us;
 
 /// A log past this size is started afresh rather than appended to, so
 /// repeated starts never grow it without bound.
@@ -42,8 +46,30 @@ pub struct DetachedCommand {
 /// # Errors
 /// The log cannot be opened, or the process cannot be started.
 pub fn spawn_detached(command: &DetachedCommand) -> Result<DetachedProcess, String> {
-    let _ = (command, open_log);
-    Err("not implemented".into())
+    let log = open_log(&command.log)?;
+    let log_err = log
+        .try_clone()
+        .map_err(|error| format!("log {}: {error}", command.log.display()))?;
+    let mut process = Command::new(&command.program);
+    process
+        .args(&command.args)
+        .envs(command.env.iter().map(|(key, value)| (key, value)))
+        .current_dir("/")
+        .stdin(Stdio::null())
+        .stdout(log)
+        .stderr(log_err);
+    match command.tether {
+        Tether::Detached => own_session(&mut process),
+        #[cfg(any(test, feature = "test-support"))]
+        Tether::DiesWithLaunchingThread => own_session_dying_with_us(&mut process),
+    }
+    let child = process
+        .spawn()
+        .map_err(|error| format!("cannot start {}: {error}", command.program.display()))?;
+    Ok(DetachedProcess {
+        child: Some(child),
+        exited: None,
+    })
 }
 
 /// Open `path` owner-only for appending; past [`LOG_CAP_BYTES`] it starts

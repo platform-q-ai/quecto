@@ -20,7 +20,7 @@ pub(in crate::interface::cli) fn help_text(out: &mut String) {
     out.push_str("\nCommands:\n");
     out.push_str("  admission-broker run|status|reset|install-service|uninstall-service\n");
     out.push_str("              Shared inference admission authority (requires an `admission` config section)\n");
-    out.push_str("              [--config <file>|--directory <dir>] on every action; run [--accept-missing-ledger];\n");
+    out.push_str("              [--config <file>|--directory <dir>] on every action; run [--accept-missing-ledger] [--stop-when-idle];\n");
     out.push_str("              install-service|uninstall-service [--dry-run]\n");
     out.push_str("  agent       Run a one-shot agent session (-m required)\n");
     out.push_str("              Options: -s <name>  Named session (default: \"default\")\n");

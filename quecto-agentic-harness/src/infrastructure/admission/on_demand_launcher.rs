@@ -6,13 +6,17 @@
 //! with its output in `broker.log` in the admission directory (outside
 //! `client/`), reports how it ended, and paces probes with the link's
 //! reconnect backoff.
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use super::directory::AuthorityDirectory;
 use super::link::Backoff;
 use crate::application::admission::ports::{
     AuthorityLaunch, AuthorityLauncher, LaunchState, LaunchedAuthority,
 };
-use crate::infrastructure::processes::local::detached_process::{DetachedProcess, Tether};
+use crate::infrastructure::processes::local::detached_process::{
+    DetachedCommand, DetachedProcess, Tether, spawn_detached,
+};
 
 /// The only program this launcher starts: the quecto CLI itself.
 const BROKER_PROGRAM: &str = "quecto";
@@ -64,19 +68,48 @@ impl DetachedAuthorityLauncher {
 
 impl AuthorityLauncher for DetachedAuthorityLauncher {
     fn probe(&self, directory: &Path) -> Result<(), String> {
-        let _ = directory;
-        Err("not implemented".into())
+        let socket = AuthorityDirectory::from_directory(directory).client_socket();
+        std::os::unix::net::UnixStream::connect(&socket)
+            .map(drop)
+            .map_err(|error| format!("connect {}: {error}", socket.display()))
     }
 
     fn launch(&self, launch: &AuthorityLaunch) -> Result<Box<dyn LaunchedAuthority>, String> {
-        let _ = (
-            launch,
-            &self.program,
-            self.tether,
-            BROKER_PROGRAM,
-            BUSY_EXIT,
-        );
-        Err("not implemented".into())
+        let program = self.program.clone()?;
+        // Affirmative guard: only the quecto CLI is ever started, so a
+        // harness embedded in another binary (a test binary, say) never
+        // starts itself with the broker's arguments.
+        match program.file_name().and_then(|name| name.to_str()) {
+            Some(BROKER_PROGRAM) => {}
+            _ => {
+                return Err(format!(
+                    "{} is not the quecto binary; start `quecto admission-broker run` yourself",
+                    program.display()
+                ));
+            }
+        }
+        // The broker's own private directory, created owner-only (or
+        // refused when it is shared) before its log is opened in it.
+        let directory = AuthorityDirectory::open(&launch.directory)
+            .map_err(|error| format!("directory {}: {error}", launch.directory.display()))?;
+        let log = Self::log_path(directory.path());
+        let args = [
+            OsString::from("admission-broker"),
+            "run".into(),
+            "--stop-when-idle".into(),
+            "--config".into(),
+            launch.config.clone().into(),
+            "--directory".into(),
+            launch.directory.clone().into(),
+        ];
+        let process = spawn_detached(&DetachedCommand {
+            program,
+            args: args.to_vec(),
+            env: vec![("QUECTO_BASE_DIR".into(), launch.base_dir.clone().into())],
+            log: log.clone(),
+            tether: self.tether,
+        })?;
+        Ok(Box::new(LaunchedBroker { process, log }))
     }
 
     fn pause(&self, attempt: u32) {
@@ -85,7 +118,7 @@ impl AuthorityLauncher for DetachedAuthorityLauncher {
 }
 
 /// A broker this launcher started.
-pub struct LaunchedBroker {
+struct LaunchedBroker {
     process: DetachedProcess,
     log: PathBuf,
 }

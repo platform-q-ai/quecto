@@ -20,7 +20,7 @@ use std::sync::Arc;
 use crate::application::admission::dto::negotiation::{
     AuthorityAvailability, NegotiationInputs, NegotiationPlan,
 };
-use crate::application::admission::ports::{AuthorityLaunch, AuthorityLauncher};
+use crate::application::admission::ports::{AuthorityLaunch, AuthorityLauncher, LaunchState};
 
 /// How many probes follow a launch: the link's reconnect bound (≈10 s with
 /// its backoff), ample for a broker to bind its sockets.
@@ -69,8 +69,34 @@ impl NegotiateAuthority {
         &self,
         launch: &AuthorityLaunch,
     ) -> Result<AuthorityAvailability, String> {
-        let _ = (launch, &self.launcher, ENSURE_ATTEMPTS);
-        Ok(AuthorityAvailability::AlreadyRunning)
+        if self.launcher.probe(&launch.directory).is_ok() {
+            return Ok(AuthorityAvailability::AlreadyRunning);
+        }
+        let mut launched = self.launcher.launch(launch)?;
+        let mut lost_race = false;
+        let mut last = String::from("not probed");
+        for attempt in 0..ENSURE_ATTEMPTS {
+            self.launcher.pause(attempt);
+            match self.launcher.probe(&launch.directory) {
+                Ok(()) => return Ok(AuthorityAvailability::StartedOnDemand),
+                Err(reason) => last = reason,
+            }
+            match launched.state() {
+                LaunchState::Running => {}
+                LaunchState::LostRace => match lost_race {
+                    false => lost_race = true,
+                    true => {
+                        launched = self.launcher.launch(launch)?;
+                        lost_race = false;
+                    }
+                },
+                LaunchState::Failed { reason } => return Err(reason),
+            }
+        }
+        Err(format!(
+            "the admission broker started for {} did not answer ({last})",
+            launch.directory.display()
+        ))
     }
 }
 

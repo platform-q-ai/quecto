@@ -426,8 +426,17 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
     /// included. A state it cannot read counts as holding, so the idle stop
     /// fails safe.
     pub(in crate::application::admission) fn holds_anything(&mut self, now: u64) -> bool {
-        let _ = now;
-        true
+        let roots = self.issued.values().any(|issued| issued.parent.is_none());
+        let outstanding = self
+            .service
+            .ledger(now)
+            .map_or(true, |ledger| !ledger.outstanding.is_empty());
+        let occupied = self.groups.iter().any(|group| {
+            self.service.snapshot(group, now).map_or(true, |snapshot| {
+                snapshot.active > 0 || snapshot.queued > 0 || snapshot.uncertain > 0
+            })
+        });
+        roots || !self.detached.is_empty() || outstanding || occupied
     }
 
     pub fn inspect(&mut self, now: u64) -> AuthorityStatus {
