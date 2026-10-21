@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use crate::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, AdmissionError, GroupId, GroupSnapshot, RequestId, RequestState, ScopeId,
+    UncertainHold,
 };
 
 /// Scope identity plus the opaque secret proving the caller was issued it.
@@ -21,6 +22,9 @@ pub enum AuthorityError {
     Unauthorized,
     Admission(AdmissionError),
     JournalUnavailable,
+    /// A queued wait expired while uncertain leases held its group (#2664):
+    /// the waiter is told which, and when they clear by themselves.
+    HeldByUncertainLease(UncertainHold),
 }
 
 impl From<AdmissionError> for AuthorityError {

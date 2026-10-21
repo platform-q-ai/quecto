@@ -1,10 +1,88 @@
 //! Uncertainty, durability and epoch transitions for [`AdmissionPolicy`].
 //!
-//! Nothing here reclaims capacity on elapsed time: occupancy leaves only through
-//! a verified terminal transition or an explicit operator reset.
+//! Occupancy leaves through a verified terminal transition, an explicit
+//! operator reset, or (#2664) an uncertain lease reaching its bound: the
+//! later of the attempt's deadline and the instant it became uncertain, plus
+//! [`UNCERTAIN_LEASE_MARGIN_MS`]. Nothing else reclaims capacity on elapsed
+//! time.
 use super::*;
 
+/// The instant an uncertain lease clears: the margin for owner teardown runs
+/// from the later of the attempt's `deadline` and the instant its owner was
+/// lost (`since`), so an owner lost long after its deadline still gets it.
+fn lease_release(deadline: u64, since: u64) -> u64 {
+    deadline
+        .max(since)
+        .saturating_add(UNCERTAIN_LEASE_MARGIN_MS)
+}
+
 impl AdmissionPolicy {
+    /// Clear every uncertain lease and orphan whose bound has passed (#2664).
+    /// An uncertain attempt becomes terminal (its late completion is still
+    /// acknowledged); an orphan has no request, so it is dropped.
+    pub(super) fn clear_elapsed_leases(&mut self, now: u64) {
+        let cleared: Vec<RequestId> = self
+            .groups
+            .values()
+            .flat_map(|group| group.uncertain.iter())
+            .filter(|(id, since)| match self.requests.get(id).map(|r| r.state) {
+                Some(RequestState::Active { deadline, .. }) => {
+                    lease_release(deadline, **since) <= now
+                }
+                other => {
+                    debug_assert!(false, "an uncertain lease is an active request: {other:?}");
+                    false
+                }
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in cleared {
+            self.terminal(id, TerminalOutcome::Cancelled, None);
+            self.requests
+                .get_mut(&id)
+                .expect("a terminal request is retained")
+                .lease_cleared = true;
+        }
+        for group in self.groups.values_mut() {
+            group.orphans.retain(|orphan| orphan.release_at > now);
+        }
+    }
+
+    /// The uncertain leases holding `group`, and when the latest clears;
+    /// `None` when nothing uncertain holds it.
+    pub(super) fn hold_of(&self, group: &GroupId) -> Option<(usize, u64)> {
+        let held = &self.groups[group];
+        let uncertain = held.uncertain.iter().filter_map(|(id, since)| {
+            match self.requests.get(id).map(|r| r.state) {
+                Some(RequestState::Active { deadline, .. }) => {
+                    Some(lease_release(deadline, *since))
+                }
+                _ => None,
+            }
+        });
+        let orphans = held.orphans.iter().map(|orphan| orphan.release_at);
+        let clears_at = uncertain.chain(orphans).max()?;
+        Some((held.uncertain.len() + held.orphans.len(), clears_at))
+    }
+
+    /// Why the queued wait `sequence` of `scope` expired, when it expired
+    /// behind uncertain leases (#2664); `None` for any other request.
+    pub fn held(
+        &mut self,
+        scope: ScopeId,
+        sequence: u64,
+        now: u64,
+    ) -> Result<Option<UncertainHold>, AdmissionError> {
+        self.scope(scope)?;
+        self.tick(now)?;
+        let request = self.request(scope, sequence)?;
+        Ok(request.held.map(|(leases, clears_at)| UncertainHold {
+            group: request.group.clone(),
+            leases,
+            clears_in_ms: clears_at.saturating_sub(now),
+        }))
+    }
+
     /// Highest acquire sequence accepted for `scope`; a reconnecting client
     /// continues above it so replay fencing keeps holding.
     pub fn high_water(&self, scope: ScopeId) -> Result<u64, AdmissionError> {
@@ -12,7 +90,8 @@ impl AdmissionPolicy {
     }
 
     /// The client owning `scope` vanished: queued work can never dispatch, and
-    /// active work becomes uncertain occupancy that quarantines its group.
+    /// active work becomes uncertain occupancy that quarantines its group
+    /// until it is completed, reset, or its lease clears (#2664).
     pub fn abandon(&mut self, scope: ScopeId, now: u64) -> Result<AbandonReport, AdmissionError> {
         self.scope(scope)?;
         self.tick(now)?;
@@ -32,7 +111,11 @@ impl AdmissionPolicy {
                 RequestState::Active { .. } => {
                     report.active += 1;
                     let group = self.groups.get_mut(&group).expect("configured group");
-                    if group.uncertain.insert(id) {
+                    // A lease already uncertain keeps the instant it was lost.
+                    if let std::collections::btree_map::Entry::Vacant(lost) =
+                        group.uncertain.entry(id)
+                    {
+                        lost.insert(now);
                         report.uncertain += 1;
                     }
                 }
@@ -78,6 +161,9 @@ impl AdmissionPolicy {
             let policy = &self.config.groups[id];
             let mut queued = 0usize;
             let mut active = group.orphans.len();
+            for orphan in &group.orphans {
+                consider(orphan.release_at);
+            }
             for (request_id, request) in self.requests.iter().filter(|(_, r)| &r.group == id) {
                 match request.state {
                     RequestState::Queued { deadline } => {
@@ -90,7 +176,9 @@ impl AdmissionPolicy {
                         ..
                     } => {
                         active += 1;
-                        if !cancellation_required && !group.uncertain.contains(request_id) {
+                        if let Some(since) = group.uncertain.get(request_id) {
+                            consider(lease_release(deadline, *since));
+                        } else if !cancellation_required {
                             consider(deadline);
                         }
                     }
@@ -114,16 +202,28 @@ impl AdmissionPolicy {
         let mut outstanding: Vec<OutstandingAttempt> = self
             .requests
             .iter()
-            .filter(|(_, r)| matches!(r.state, RequestState::Active { .. }))
-            .map(|(id, r)| OutstandingAttempt {
-                group: r.group.clone(),
-                scope: id.scope.serial,
-                sequence: id.sequence,
+            .filter_map(|(id, r)| match r.state {
+                // A restart loses every owner: an attempt not yet uncertain
+                // is lost no earlier than now, so its margin counts from here.
+                RequestState::Active { deadline, .. } => {
+                    let since = self.groups[&r.group].uncertain.get(id).copied();
+                    let release = lease_release(deadline, since.unwrap_or(now));
+                    Some(OutstandingAttempt {
+                        group: r.group.clone(),
+                        scope: id.scope.serial,
+                        sequence: id.sequence,
+                        release_remaining_ms: Some(release.saturating_sub(now)),
+                    })
+                }
+                _ => None,
             })
             .collect();
         let mut groups = BTreeMap::new();
         for (id, group) in &self.groups {
-            outstanding.extend(group.orphans.iter().cloned());
+            outstanding.extend(group.orphans.iter().map(|orphan| OutstandingAttempt {
+                release_remaining_ms: Some(orphan.release_at.saturating_sub(now)),
+                ..orphan.attempt.clone()
+            }));
             groups.insert(
                 id.clone(),
                 LedgerGroup {
@@ -141,8 +241,10 @@ impl AdmissionPolicy {
     }
 
     /// Rehydrate a restarted authority at the ledger's epoch. Every outstanding
-    /// attempt becomes orphaned occupancy: its scope no longer exists, so only
-    /// an explicit reset can release it.
+    /// attempt becomes orphaned occupancy: its scope no longer exists, so it
+    /// is released by an explicit reset or when its lease clears (#2664). The
+    /// remaining time counts from the restart, so downtime only lengthens it,
+    /// and it never exceeds the group's attempt timeout plus the margin.
     pub fn restore(
         config: AdmissionConfig,
         ledger: &AdmissionLedger,
@@ -164,12 +266,23 @@ impl AdmissionPolicy {
             group.unavailable = durable.unavailable;
         }
         for attempt in &ledger.outstanding {
+            let bound = policy
+                .config
+                .groups
+                .get(&attempt.group)
+                .ok_or(AdmissionError::UnknownGroup)?
+                .attempt_timeout_ms
+                .saturating_add(UNCERTAIN_LEASE_MARGIN_MS);
+            let remaining = attempt.release_remaining_ms.map_or(bound, |r| r.min(bound));
             policy
                 .groups
                 .get_mut(&attempt.group)
-                .ok_or(AdmissionError::UnknownGroup)?
+                .expect("configured group")
                 .orphans
-                .push(attempt.clone());
+                .push(Orphan {
+                    attempt: attempt.clone(),
+                    release_at: now.saturating_add(remaining),
+                });
         }
         Ok(policy)
     }

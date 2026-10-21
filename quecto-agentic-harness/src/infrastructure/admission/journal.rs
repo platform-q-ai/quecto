@@ -31,6 +31,10 @@ struct OutstandingWire {
     group: String,
     scope: u64,
     sequence: u64,
+    /// Added by #2664 without a format change: a ledger written before it
+    /// has none, and an older reader ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    release_remaining_ms: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -51,6 +55,7 @@ fn encode(ledger: &AdmissionLedger) -> Vec<u8> {
                 group: o.group.as_str().to_owned(),
                 scope: o.scope,
                 sequence: o.sequence,
+                release_remaining_ms: o.release_remaining_ms,
             })
             .collect(),
         groups: ledger
@@ -89,6 +94,7 @@ fn decode(bytes: &[u8]) -> Result<AdmissionLedger, JournalError> {
             group: group(&o.group)?,
             scope: o.scope,
             sequence: o.sequence,
+            release_remaining_ms: o.release_remaining_ms,
         });
     }
     let mut groups = BTreeMap::new();

@@ -38,6 +38,11 @@ impl DispatchAdmissions {
         }
         let (grants, first_error) = authority.select_grants(now);
         if grants.is_empty() {
+            // A lease that cleared on time left no write of its own: make
+            // that durable, so a restart does not bring it back (#2664).
+            if authority.checkpoint_due(now)? {
+                persist_current(&self.journal, authority, now)?;
+            }
             return match first_error {
                 Some(error) => Err(error.into()),
                 None => Ok(grants),
@@ -48,5 +53,16 @@ impl DispatchAdmissions {
             return Err(AuthorityError::JournalUnavailable);
         }
         Ok(grants)
+    }
+
+    /// Make the current ledger durable, as the authority stops (#2664): the
+    /// remaining lease bounds then count the uptime already served, so a
+    /// restart only lengthens them by its downtime.
+    pub fn checkpoint<S: AdmissionSecretSource>(
+        &self,
+        authority: &mut AdmissionAuthority<S>,
+        now: u64,
+    ) -> Result<(), AuthorityError> {
+        persist_current(&self.journal, authority, now)
     }
 }
