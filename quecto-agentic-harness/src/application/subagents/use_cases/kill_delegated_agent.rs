@@ -13,7 +13,10 @@
 //!    owner's result comes back with the hop's answer;
 //! 4. only then claim and run the terminal compensation (cleanup,
 //!    membership, subtree removal, one broadcast) — or join the path that
-//!    already ran it.
+//!    already ran it;
+//! 5. report the environments that teardown kept (#2681): those the
+//!    target's subtree was a member of before the route, retained after
+//!    the compensation, each with the reason its record holds.
 //!
 //! A refusal before anything reached the agent lifts the stopping claim
 //! and leaves the registry as it was. A failure after effects were
@@ -38,6 +41,7 @@ use super::super::ports::{
         TerminalClaim, TerminationCause,
     },
     harness_shutdown::SubagentLifecycleRepository,
+    kept_environments::KeptEnvironments,
     teardown_compensation::TeardownCompensation,
 };
 use super::terminate_delegated_agent::TerminateDelegatedAgent;
@@ -51,11 +55,28 @@ pub struct KillDelegatedAgentPorts {
 pub struct KillDelegatedAgent {
     route: Arc<TerminateDelegatedAgent>,
     ports: KillDelegatedAgentPorts,
+    /// Where the environments the teardown kept are read (#2681); `None`:
+    /// none are reported.
+    environments: Option<Arc<dyn KeptEnvironments>>,
 }
 
 impl KillDelegatedAgent {
     pub fn new(route: Arc<TerminateDelegatedAgent>, ports: KillDelegatedAgentPorts) -> Self {
-        Self { route, ports }
+        Self {
+            route,
+            ports,
+            environments: None,
+        }
+    }
+
+    /// This use case, reporting through `environments` the environments
+    /// the kill's teardown kept rather than ended (#2681).
+    #[must_use]
+    pub fn reporting_kept(self, environments: Arc<dyn KeptEnvironments>) -> Self {
+        Self {
+            environments: Some(environments),
+            ..self
+        }
     }
 
     pub async fn execute(
@@ -102,12 +123,27 @@ impl KillDelegatedAgent {
         target: &DelegatedAgentIdentity,
         lineage: &LineageSnapshot,
     ) -> Result<KillDelegatedAgentOutcome, KillDelegatedAgentError> {
+        // Read before the route: a teardown takes the memberships it ends.
+        let memberships = match &self.environments {
+            Some(environments) => environments.memberships(&subtree(lineage, target)),
+            None => Vec::new(),
+        };
         let result = self.route_one_edge(target, lineage).await?;
         let removed = self.compensate(target, lineage).await?;
+        let kept = match (&self.environments, memberships.as_slice()) {
+            (Some(environments), [_, ..]) => environments.kept(&memberships),
+            (Some(_) | None, _) => Vec::new(),
+        };
+        debug_assert!(
+            kept.iter()
+                .all(|kept| memberships.contains(&kept.environment_ref)),
+            "only an environment the subtree was a member of is reported kept"
+        );
         Ok(KillDelegatedAgentOutcome {
             target: target.clone(),
             result,
             removed,
+            kept,
         })
     }
 

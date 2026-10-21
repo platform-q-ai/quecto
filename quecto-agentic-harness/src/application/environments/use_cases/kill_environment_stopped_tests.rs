@@ -522,3 +522,93 @@ fn a_stopped_box_hosting_an_unfinished_run_is_refused_naming_it() {
         assert!(registry.get("C6").is_none());
     }
 }
+
+/// The state directory on disk, as configured.
+struct Disk(crate::application::environments::dto::StateOnDisk);
+
+impl crate::application::environments::ports::process::EnvironmentProcess for Disk {
+    fn observe(&self, _: &EnvironmentRecord) -> EnvironmentLiveness {
+        panic!("the kill asks the runtime through its own commands")
+    }
+
+    fn cleanup(&self, _: &EnvironmentRecord) -> Result<(), String> {
+        panic!("the kill cleans up through its own commands")
+    }
+
+    fn state_on_disk(
+        &self,
+        environment_dir: &std::path::Path,
+    ) -> crate::application::environments::dto::StateOnDisk {
+        assert_eq!(environment_dir, std::path::Path::new("/state/env-C6"));
+        self.0.clone()
+    }
+
+    fn inspect_clock_millis(&self) -> u64 {
+        0
+    }
+}
+
+/// #2684: the kill of a stopped box the runtime reports gone, its state
+/// directory as `disk` says and its checkout's board unreadable (as one
+/// whose directory went with a clean kill is: "No such file").
+fn kill_after_a_clean_kill(
+    disk: crate::application::environments::dto::StateOnDisk,
+) -> (
+    EnvironmentRegistry,
+    Arc<Commands>,
+    Result<crate::application::environments::use_cases::KilledEnvironment, KillEnvironmentError>,
+) {
+    let registry = EnvironmentRegistry::new();
+    registry.commit(record(
+        "C6",
+        EnvironmentStatus::Stopped,
+        EnvironmentOrigin::Created,
+    ));
+    let commands = Commands::answering(EnvironmentLiveness::Gone);
+    let use_case = KillEnvironment::new(
+        registry.clone(),
+        Arc::new(NoMembers),
+        commands.clone(),
+        Arc::new(Hosting(SwarmRunObservation::Unreadable(
+            "checkout /state/env-C6/workspace/repo: No such file or directory (os error 2)".into(),
+        ))),
+    )
+    .judging_leftovers(Arc::new(Disk(disk)));
+    let outcome = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(use_case.kill_container(&by_ref("C6")));
+    (registry, commands, outcome)
+}
+
+/// #2684: after a clean kill took the container and its state directory,
+/// `kill_container` answers that nothing was left — never "remove it by
+/// hand" — forgets the record, and runs no script.
+#[test]
+fn a_stopped_environment_that_left_nothing_is_forgotten_and_says_so() {
+    use crate::application::environments::dto::StateOnDisk;
+    let (registry, commands, outcome) = kill_after_a_clean_kill(StateOnDisk::Absent);
+    let killed = outcome.expect("nothing left is a success");
+    assert!(killed.removed_stopped && killed.nothing_left, "{killed:?}");
+    assert_eq!(commands.ran(), ["liveness env-C6"], "no script ran");
+    assert!(registry.get("C6").is_none(), "forgotten");
+}
+
+/// A state directory still there, or one the host cannot tell about, is
+/// not nothing: the board is judged as before, and an unreadable one
+/// keeps everything.
+#[test]
+fn a_stopped_environment_whose_state_may_remain_is_judged_as_before() {
+    use crate::application::environments::dto::StateOnDisk;
+    for disk in [
+        StateOnDisk::Present,
+        StateOnDisk::Unknown("permission denied".into()),
+    ] {
+        let (registry, commands, outcome) = kill_after_a_clean_kill(disk.clone());
+        let error = outcome.unwrap_err().to_string();
+        assert!(error.contains("could not be read"), "{disk:?}: {error}");
+        assert_eq!(commands.ran(), ["liveness env-C6"], "{disk:?}");
+        let record = registry.get("C6").expect("kept");
+        assert_eq!(record.status, EnvironmentStatus::Stopped, "{disk:?}");
+    }
+}

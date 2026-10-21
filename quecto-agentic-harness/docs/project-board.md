@@ -558,10 +558,16 @@ at <revision>`) is not on the board's remote, or that cannot be told: the board,
 the session's board repository or its remote cannot be read (each git call
 within 15 seconds), or the completion names no one commit the push rule checks
 (the same reading as the evidence's). The reason names the environment and its
-workspace: "board run succeeded at <revision>, which is on no branch or tag of
-the board's remote: environment <ref> kept so its work can be pushed from its
-workspace <path>; kill_container <ref> to remove it once pushed". The work
-survives, and can be fetched from that workspace and pushed. The board's remote
+git checkout (the create's advertised `checkout`, `<workspace>/repo` for the
+shipped scripts, else the workspace): "board run succeeded at <revision>, which
+is on no branch or tag of the board's remote: environment <ref> kept so its work
+can be pushed from its checkout <path>; kill_container <ref> to remove it once
+pushed". The work survives, and can be fetched from that checkout and pushed.
+The kill's own answer says so (#2681): beside `result` and `killed` it carries
+`"kept": [{"environment": "<ref>", "reason": "<the reason above>"}]` for each
+environment its teardown kept, and `quecto container ls` shows the same reason
+(a `note: <ref> retained: <reason>` line on stderr, the `retained` field of
+`--json`). The board's remote
 is the `origin` of the repository the session's board tool works on. Only that
 kill keeps it: a run closed and then left to the session's end (its teardown of
 everything, or a harness shutdown) is torn down as before, so push first. If a

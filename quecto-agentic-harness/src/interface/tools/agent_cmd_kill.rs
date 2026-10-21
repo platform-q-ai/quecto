@@ -63,6 +63,19 @@ pub fn present_outcome(outcome: &KillDelegatedAgentOutcome) -> ToolResult {
     if outcome.removed.len() > MAX_REPORTED_AGENTS {
         body["omitted_agents"] = serde_json::json!(outcome.removed.len() - MAX_REPORTED_AGENTS);
     }
+    // #2681: an environment the teardown kept is named, with why.
+    if !outcome.kept.is_empty() {
+        body["kept"] = outcome
+            .kept
+            .iter()
+            .map(|kept| {
+                serde_json::json!({
+                    "environment": kept.environment_ref,
+                    "reason": kept.reason,
+                })
+            })
+            .collect();
+    }
     result(body.to_string(), false)
 }
 

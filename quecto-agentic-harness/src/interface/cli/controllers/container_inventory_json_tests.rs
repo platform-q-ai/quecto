@@ -276,6 +276,7 @@ fn the_json_shape_is_stable() {
             created_at: Some(100),
             age_s: Some(23),
             unverified: None,
+            retained: None,
         },
         LsJsonEnvironment {
             environment_ref: "C2".into(),
@@ -288,6 +289,7 @@ fn the_json_shape_is_stable() {
             created_at: None,
             age_s: None,
             unverified: Some("inspect failed".into()),
+            retained: Some("kept for a push".into()),
         },
     ];
     assert_eq!(
@@ -296,11 +298,11 @@ fn the_json_shape_is_stable() {
             r#"{"environments":["#,
             r#"{"ref":"C1","name":"tab\tname","config":"official","status":"running","members":2,"#,
             r#""repository":"https://***@example.test/my repo","created_by":"cli:pocket-7","#,
-            r#""created_at":100,"age_s":23,"unverified":null},"#,
+            r#""created_at":100,"age_s":23,"unverified":null,"retained":null},"#,
             r#"{"ref":"C2","name":"x\ny \"z\" \u2028\u2029\u0085","config":"official","#,
             r#""status":"cleanup-failed","members":0,"#,
             r#""repository":null,"created_by":null,"created_at":null,"age_s":null,"#,
-            r#""unverified":"inspect failed"}"#,
+            r#""unverified":"inspect failed","retained":"kept for a push"}"#,
             r#"],"hidden_stopped":4}"#,
             "\n"
         )

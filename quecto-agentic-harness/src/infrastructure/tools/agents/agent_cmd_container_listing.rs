@@ -41,9 +41,6 @@ const MAX_TEXT_CHARS: usize = 400;
 /// at most.
 const MAX_LABEL_CHARS: usize = 200;
 
-/// The metadata key a create script names the members' checkout under.
-const CHECKOUT_KEY: &str = "checkout";
-
 /// `all` absent, null or `false` lists what the caller can act on; `true`
 /// lists every environment on record.
 pub(super) fn decode_scope(args: &serde_json::Value) -> Result<ListingScope, String> {
@@ -322,15 +319,9 @@ fn clip(text: &str, max_chars: usize) -> String {
     }
 }
 
-/// Where the members work: the create script's absolute
-/// `metadata.checkout`, else the environment's workspace.
+/// Where the members work: the record's own reading (#2682).
 fn checkout(record: &EnvironmentRecord) -> String {
-    match record.metadata.get(CHECKOUT_KEY) {
-        Some(serde_json::Value::String(path)) if std::path::Path::new(path).is_absolute() => {
-            path.clone()
-        }
-        _ => record.workspace_path.display().to_string(),
-    }
+    record.checkout().display().to_string()
 }
 
 /// The record's repository as the model may see it (userinfo and secret

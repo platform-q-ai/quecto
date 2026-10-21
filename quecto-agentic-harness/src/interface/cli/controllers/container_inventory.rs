@@ -128,6 +128,16 @@ pub(crate) fn cmd_ls(
                 present_table(&shown, all, records.len(), stdout);
             }
             present_restore_notes(&handles, stderr);
+            // #2681: why each listed retained environment is kept, in its
+            // teardown's own words.
+            for record in &shown {
+                if let Some(reason) = record.retained_reason() {
+                    stderr.push_str(&format!(
+                        "note: {} retained: {reason}\n",
+                        record.environment_ref
+                    ));
+                }
+            }
             for (environment_ref, reason) in &handles.restore.retained {
                 stderr.push_str(&format!(
                     "note: {environment_ref} retained at restore: {reason}\n"
@@ -204,6 +214,9 @@ pub(super) struct LsJsonEnvironment {
     /// Why the restore could not verify it against the runtime, when it
     /// could not (the stderr note's reason).
     pub unverified: Option<String>,
+    /// Why a `retained` environment is kept, as its teardown recorded it
+    /// (#2681); `null` for any other.
+    pub retained: Option<String>,
 }
 
 impl LsJsonEnvironment {
@@ -225,6 +238,7 @@ impl LsJsonEnvironment {
             created_at: record.created_at,
             age_s: record.created_at.map(|at| now.saturating_sub(at)),
             unverified,
+            retained: record.retained_reason().map(str::to_owned),
         }
     }
 }
@@ -489,7 +503,13 @@ pub(crate) fn cmd_kill(
                 .as_deref()
                 .map(|name| format!(" ({name})"))
                 .unwrap_or_default();
-            let line = if killed.removed_stopped {
+            let line = if killed.nothing_left {
+                // #2684: it had left nothing; its record alone went.
+                format!(
+                    "nothing left of stopped {}{name}: its container and state directory were already gone; its record is forgotten\n",
+                    killed.record.environment_ref
+                )
+            } else if killed.removed_stopped {
                 // #2206: a stopped environment's leftovers went.
                 format!(
                     "removed stopped {}{name}: its container and state directory are gone and its record is forgotten\n",

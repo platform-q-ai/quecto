@@ -118,13 +118,54 @@ impl EnvironmentRecord {
     pub fn retain_with(&mut self, reason: &str) {
         self.status = EnvironmentStatus::Retained;
         self.members.clear();
+        if !self.metadata.is_object() {
+            self.metadata = serde_json::json!({});
+        }
         if let Some(object) = self.metadata.as_object_mut() {
-            object.insert("retained".to_string(), serde_json::json!(reason));
-        } else {
-            self.metadata = serde_json::json!({ "retained": reason });
+            object.insert(RETAINED_KEY.to_string(), serde_json::json!(reason));
+        }
+        debug_assert_eq!(
+            self.retained_reason(),
+            Some(reason).filter(|r| !r.is_empty())
+        );
+    }
+
+    /// Why a `retained` record is kept (#2681): the reason [`Self::retain_with`]
+    /// recorded, the one owner of that text. `None` for any other status,
+    /// or a retained record that names no reason.
+    pub fn retained_reason(&self) -> Option<&str> {
+        match self.status {
+            EnvironmentStatus::Retained => self
+                .metadata
+                .get(RETAINED_KEY)
+                .and_then(serde_json::Value::as_str)
+                .filter(|reason| !reason.is_empty()),
+            EnvironmentStatus::Running
+            | EnvironmentStatus::Killing
+            | EnvironmentStatus::Stopped
+            | EnvironmentStatus::CleanupFailed => None,
+        }
+    }
+
+    /// The git checkout the members work in (#2682): the create result's
+    /// absolute `metadata.checkout` (the shipped scripts clone into
+    /// `<workspace>/repo`), else the workspace itself. What a parent
+    /// fetches a kept box's commits from.
+    pub fn checkout(&self) -> PathBuf {
+        match self.metadata.get(CHECKOUT_KEY) {
+            Some(serde_json::Value::String(path)) if std::path::Path::new(path).is_absolute() => {
+                PathBuf::from(path)
+            }
+            _ => self.workspace_path.clone(),
         }
     }
 }
+
+/// The metadata key naming why a retained record is kept (#1924).
+const RETAINED_KEY: &str = "retained";
+
+/// The create-result metadata key naming the members' checkout (#1924).
+pub const CHECKOUT_KEY: &str = "checkout";
 
 /// Mint the hidden environment UUID committed with each new environment.
 /// Distinct from the `CN` ref, the runtime id, and agent UUIDs by
