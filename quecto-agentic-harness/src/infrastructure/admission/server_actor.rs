@@ -31,6 +31,8 @@ pub(super) enum Command {
         session: u64,
         role: Role,
         notices: mpsc::UnboundedSender<Reply>,
+        /// Ends the connection when sent or dropped.
+        close: oneshot::Sender<()>,
     },
     Request {
         session: u64,
@@ -47,6 +49,7 @@ struct Session {
     greeted: bool,
     credential: Option<Credential>,
     notices: mpsc::UnboundedSender<Reply>,
+    close: Option<oneshot::Sender<()>>,
 }
 
 type Authority = AdmissionAuthority<RandomSecretSource>;
@@ -100,15 +103,25 @@ impl Actor {
         tokio::pin!(sleep);
         loop {
             tokio::select! {
-                _ = shutdown.changed() => return,
+                _ = shutdown.changed() => break,
                 command = rx.recv() => match command {
                     Some(command) => self.handle(command),
-                    None => return,
+                    None => break,
                 },
                 _ = &mut sleep => {}
             }
             let wake = self.settle();
             sleep.as_mut().reset(wake.into());
+        }
+        // The last turn: lease bounds are durable as they stand, so the
+        // uptime already served is not lost to a restart (#2664).
+        let now = self.clock.now_ms();
+        if let Err(error) = self
+            .use_cases
+            .settle
+            .checkpoint_on_stop(&mut self.authority, now)
+        {
+            tracing::warn!(?error, "admission ledger not made durable at shutdown");
         }
     }
 
@@ -118,6 +131,7 @@ impl Actor {
                 session,
                 role,
                 notices,
+                close,
             } => {
                 self.sessions.insert(
                     session,
@@ -126,6 +140,7 @@ impl Actor {
                         greeted: false,
                         credential: None,
                         notices,
+                        close: Some(close),
                     },
                 );
             }
@@ -285,9 +300,14 @@ impl Actor {
         );
         if let Some(previous) = previous.filter(|previous| *previous != session) {
             // The superseded connection no longer holds the capability, and
-            // its waiters can never be answered.
+            // its waiters can never be answered. It is closed, so its client
+            // sees the loss and tears down any transport it still runs
+            // before the lease it left can clear (#2664, ADR-0031).
             if let Some(old) = self.sessions.get_mut(&previous) {
                 old.credential = None;
+                if let Some(close) = old.close.take() {
+                    let _ = close.send(());
+                }
             }
             self.waiters.retain(|id, _| id.scope != credential.scope);
         }
@@ -485,7 +505,7 @@ fn grant_or_terminal(state: RequestState, now: u64) -> Body {
         },
         RequestState::Terminal(TerminalOutcome::TimedOut) => Body::Error {
             code: ErrorCode::Timeout,
-            reason: "queue wait deadline elapsed".into(),
+            reason: QUEUE_TIMEOUT_REASON.into(),
         },
         RequestState::Terminal(TerminalOutcome::Finished) => Body::State {
             state: state.into(),
