@@ -625,8 +625,16 @@ fn url_spans(lowered: &str) -> Vec<std::ops::Range<usize>> {
             continue;
         };
         let after_scheme = start + scheme.len();
+        // A bracketed IPv6 literal (hex digits, `:`, `.`, `%` zone) is part
+        // of the host; any other bracketed text is not a host.
+        let ipv6_byte = |b: u8| b.is_ascii_hexdigit() || matches!(b, b':' | b'.' | b'%');
         let host = match lowered[after_scheme..].strip_prefix('[') {
-            Some(ipv6) => ipv6.find(']').map_or(0, |close| close + 2),
+            Some(ipv6) => ipv6
+                .find(']')
+                .filter(|&close| {
+                    close > 0 && ipv6.as_bytes()[..close].iter().all(|&b| ipv6_byte(b))
+                })
+                .map_or(0, |close| close + 2),
             None => 0,
         };
         let body = &lowered[after_scheme + host..];

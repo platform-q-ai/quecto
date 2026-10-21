@@ -96,3 +96,40 @@ fn an_ipv6_url_is_protected_whole() {
     assert_eq!(provider_http_status(&error), None);
     assert_eq!(classify_provider_error(&error), ProviderErrorClass::Network);
 }
+
+/// Review round 2: every URL in a message is skipped, not only the first, so
+/// a redirect or proxy error naming two URLs reads no status from either.
+#[test]
+fn a_message_naming_two_urls_reads_no_status_from_either() {
+    let error = provider(
+        "error following redirect from https://api.example.com/v1/chat/completions to \
+         http://100.83.173.59:8888/v1/chat/completions: tcp connect error: connection refused",
+    );
+    assert_eq!(provider_http_status(&error), None);
+    assert_eq!(classify_provider_error(&error), ProviderErrorClass::Network);
+}
+
+/// Review round 2: only an IPv6 literal opens a bracketed host; an unclosed
+/// or non-address bracket ends the URL, so a status after it is still read.
+#[test]
+fn a_bracket_that_is_not_an_ipv6_host_ends_the_url() {
+    for message in [
+        "error sending request for url http://[ status 503 [retry]",
+        "error sending request for url http://[x] status 503",
+    ] {
+        assert_eq!(
+            provider_http_status(&provider(message)),
+            Some(503),
+            "{message}"
+        );
+    }
+}
+
+/// Review round 2: a double quote ends a URL.
+#[test]
+fn a_status_glued_after_a_quoted_url_is_read() {
+    assert_eq!(
+        provider_http_status(&provider("\"http://10.0.0.1/v1\"status:503")),
+        Some(503)
+    );
+}
