@@ -74,9 +74,10 @@ pub struct EndedRun {
     pub liveness: LivenessCheck,
     pub report: RunReport,
     /// For a success recorded from its swarm's kept board, how many of its
-    /// evidence revisions the push rule did not check: naming no commit,
-    /// or one shorter than 12 hex digits or longer than a full id
-    /// (#2666 round 2). `None` for any other end.
+    /// recorded items' evidence entries name no commit the push rule
+    /// checked: none at all, or one shorter than 12 hex digits or longer
+    /// than a full id; each entry counted, repeats included (#2666). `None`
+    /// for any other end.
     pub unchecked: Option<u64>,
 }
 

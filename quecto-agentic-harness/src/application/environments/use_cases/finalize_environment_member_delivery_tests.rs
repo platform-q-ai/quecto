@@ -58,6 +58,7 @@ struct Check {
 impl CompletionDeliveryCheck for Check {
     fn delivery<'a>(
         &'a self,
+        _session: &'a str,
         label: &'a str,
         board: Option<&'a SwarmBoardSnapshot>,
     ) -> PortFuture<'a, CompletionDelivery> {
@@ -123,12 +124,13 @@ fn a_succeeded_runs_box_is_kept_while_its_completion_is_not_on_the_remote() {
     );
     assert!(port.kills.lock().unwrap().is_empty(), "no retained kill");
     assert_eq!(
-        retained(&registry, &env_ref).as_deref(),
-        Some(
+        retained(&registry, &env_ref),
+        Some(format!(
             "board run succeeded at 2b23fe18d39ae8692eaab45d60cc50ff1d66c1d3, which is on no \
-             branch or tag of the board's remote: environment kept so its work can be pushed \
-             from its workspace; kill_container to remove it once pushed"
-        )
+             branch or tag of the board's remote: environment {env_ref} kept so its work can \
+             be pushed from its workspace /ws/{env_ref}; kill_container {env_ref} to remove it \
+             once pushed"
+        ))
     );
 }
 
@@ -143,12 +145,13 @@ fn a_box_is_kept_when_where_the_completion_went_cannot_be_told() {
     );
     assert!(port.kills.lock().unwrap().is_empty());
     assert_eq!(
-        retained(&registry, &env_ref).as_deref(),
-        Some(
+        retained(&registry, &env_ref),
+        Some(format!(
             "board run succeeded, but whether its completion commit is on the board's remote \
-             could not be checked (the remote is down): environment kept so its work can be \
-             pushed from its workspace; kill_container to remove it once pushed"
-        )
+             could not be checked (the remote is down): environment {env_ref} kept so its work \
+             can be pushed from its workspace /ws/{env_ref}; kill_container {env_ref} to remove \
+             it once pushed"
+        ))
     );
 }
 

@@ -208,47 +208,34 @@ pub fn run_items(
     folded
 }
 
-/// The shortest prefix of a commit id the push rule checks (#2666 round
-/// 1): a shorter run of hex digits may be a word or a digest.
-pub const MIN_COMMIT_PREFIX: usize = 12;
+pub use crate::domain::project_board::value_objects::commit_token::{
+    MIN_COMMIT_PREFIX, MIN_COMMIT_TOKEN, checks_commit, commit_token,
+};
 
-/// The shortest run of hex digits read as a commit id at all: git's own
-/// abbreviation. One of 7 to 11 is counted, but not checked.
-pub const MIN_COMMIT_TOKEN: usize = 7;
-
-/// The commit id `revision` names, in lower case (round 2): the one
-/// whitespace-separated word of it, backticks trimmed, that is wholly
-/// hex digits, at least [`MIN_COMMIT_TOKEN`] of them (`abc…`, `` `abc…` ``,
-/// `commit abc…`, `abc… (main)`). None when no word is, or more than one
-/// is: no id is guessed.
-pub fn commit_token(revision: &str) -> Option<String> {
-    let mut hex = revision
-        .split_whitespace()
-        .map(|word| word.trim_matches('`'))
-        .filter(|word| {
-            word.len() >= MIN_COMMIT_TOKEN && word.bytes().all(|b| b.is_ascii_hexdigit())
-        });
-    match (hex.next(), hex.next()) {
-        (Some(token), None) => Some(token.to_ascii_lowercase()),
-        (Some(_), Some(_)) | (None, _) => None,
-    }
-}
-
-/// Whether commit token `id` is checked by the push rule in a repository
-/// whose full ids are `id_len` hex digits (40 SHA-1, 64 SHA-256): a full
-/// id or a prefix of at least [`MIN_COMMIT_PREFIX`]. Longer than a full
-/// id (a SHA-256 digest in a SHA-1 repository) or shorter is not.
-pub fn checks_commit(id: &str, id_len: usize) -> bool {
-    (MIN_COMMIT_PREFIX..=id_len).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-/// What the evidence of a run's recorded task items names (#2666): each
-/// commit token once (by [`commit_token`], so case-insensitively), in the
-/// plan's order, and how many entries name none.
+/// What the evidence of a run's recorded task items names (#2666): the
+/// commit token of each entry (by [`commit_token`]: `None` for one naming
+/// none), in the plan's order; and each token once, case-insensitively.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EvidenceRevisions {
     pub ids: Vec<String>,
-    pub unnamed: usize,
+    pub entries: Vec<Option<String>>,
+}
+
+impl EvidenceRevisions {
+    /// How many entries name no commit that a repository whose full ids
+    /// are `id_len` hex digits checks ([`checks_commit`]).
+    pub fn unchecked(&self, id_len: usize) -> usize {
+        let checked = self
+            .entries
+            .iter()
+            .filter(|token| {
+                token
+                    .as_deref()
+                    .is_some_and(|token| checks_commit(token, id_len))
+            })
+            .count();
+        self.entries.len() - checked
+    }
 }
 
 /// What the evidence of the swarm items `plan`'s task items stand for (as
@@ -264,11 +251,13 @@ pub fn evidence_revisions(plan: &Plan, view: &SwarmRunView) -> EvidenceRevisions
         .filter_map(|item| matched(item, view))
         .flat_map(|(_, swarm)| swarm.evidence.iter());
     for entry in entries {
-        match commit_token(&entry.revision) {
-            Some(id) if named.ids.contains(&id) => {}
-            Some(id) => named.ids.push(id),
-            None => named.unnamed += 1,
+        let token = commit_token(&entry.revision);
+        if let Some(id) = &token {
+            if named.ids.iter().all(|named| named != id) {
+                named.ids.push(id.clone());
+            }
         }
+        named.entries.push(token);
     }
     named
 }

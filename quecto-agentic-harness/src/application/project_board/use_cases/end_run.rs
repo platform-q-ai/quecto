@@ -386,17 +386,17 @@ impl EndRun {
             [] => {
                 return Ok(Judged {
                     unpushed: 0,
-                    unchecked: evidence.unnamed,
+                    unchecked: evidence.entries.len(),
                 });
             }
             [_, ..] => self.revisions.commit_id_hex_len()?,
         };
-        let (checked, short): (Vec<String>, Vec<String>) = evidence
+        let (checked, _): (Vec<String>, Vec<String>) = evidence
             .ids
             .iter()
             .cloned()
             .partition(|id| checks_commit(id, id_len));
-        let unchecked = evidence.unnamed + short.len();
+        let unchecked = evidence.unchecked(id_len);
         let unpushed = match checked.as_slice() {
             [] => 0,
             [_, ..] => {

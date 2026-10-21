@@ -153,7 +153,7 @@ impl FinalizeEnvironmentMember {
         // while its completion commit is not on the board's remote, or
         // cannot be told to be: the work survives, to be pushed from it.
         if let Some(reason) = self
-            .undelivered(mode, &observed, label, board.as_ref())
+            .undelivered(mode, &observed, (&record, label), board.as_ref())
             .await
         {
             self.registry.retain(claim, &reason);
@@ -220,17 +220,18 @@ impl FinalizeEnvironmentMember {
         &self,
         mode: MemberFinalizeMode,
         observed: &SwarmRunObservation,
-        label: Option<&str>,
+        (record, label): (&EnvironmentRecord, Option<&str>),
         board: Option<&SwarmBoardSnapshot>,
     ) -> Option<String> {
         let (Some(check), Some(label)) = (&self.delivery, label) else {
             return None;
         };
         let delivery = match judges_delivery(mode, observed) {
-            true => check.delivery(label, board).await,
+            true => check.delivery(self.registry.session(), label, board).await,
             false => CompletionDelivery::NotJudged,
         };
-        undelivered_reason(&delivery)
+        let workspace = record.workspace_path.display().to_string();
+        undelivered_reason(&delivery, &record.environment_ref, &workspace)
     }
 
     /// The cleanup that ends `record`: the environment's own retained
