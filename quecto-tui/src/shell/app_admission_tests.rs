@@ -442,28 +442,29 @@ async fn a_pushed_event_with_an_authority_status_moves_the_health_badge() {
     app.handle_event(event(None, with_status("connected", 1)));
     assert_eq!(
         app.ac().master_session.footer.admission_health(),
-        Some("admission ✓")
+        Some("admission ✓ connected")
     );
     app.handle_event(event(None, with_status("reconnecting", 2)));
     assert_eq!(
         app.ac().master_session.footer.admission_health(),
-        Some("admission ⟳")
+        Some("admission ⟳ reconnecting")
     );
     app.handle_event(event(None, with_status("unavailable", 3)));
     assert_eq!(
         app.ac().master_session.footer.admission_health(),
-        Some("admission ✗")
+        Some("admission ✗ unavailable")
     );
-    // Activity-only event: the badge is not cleared by silence.
+    // Activity-only event: the health is not cleared by silence, and the
+    // queue depth follows the view (#2615).
     app.handle_event(event(None, waiting(2)));
     assert_eq!(
         app.ac().master_session.footer.admission_health(),
-        Some("admission ✗")
+        Some("admission ✗ unavailable · 1 queued")
     );
     app.handle_event(event(None, with_status("connected", 5)));
     assert_eq!(
         app.ac().master_session.footer.admission_health(),
-        Some("admission ✓")
+        Some("admission ✓ connected")
     );
 }
 

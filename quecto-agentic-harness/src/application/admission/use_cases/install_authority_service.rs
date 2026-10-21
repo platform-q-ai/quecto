@@ -120,6 +120,16 @@ impl InstallAuthorityService {
     }
 }
 
+/// Whether unit `contents` (as this use case writes them) run the broker for
+/// the global config at `config` (#2615): the installed service, not a
+/// broker started on demand, serves that config's directory.
+pub(super) fn unit_serves_config(contents: &str, config: &std::path::Path) -> bool {
+    let argument = format!(" admission-broker run --config {}", quote_unit_path(config));
+    contents
+        .lines()
+        .any(|line| line.starts_with("ExecStart=") && line.ends_with(&argument))
+}
+
 /// Quote a path for a systemd `ExecStart=` line: double quotes with the
 /// characters systemd unquotes (`\\`, `"`) escaped, so spaces survive.
 fn quote_unit_path(path: &std::path::Path) -> String {

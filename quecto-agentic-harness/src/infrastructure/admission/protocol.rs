@@ -332,6 +332,8 @@ pub enum Op {
     },
     Inspect,
     Reset,
+    /// Owner-only: stop serving, as SIGTERM would (#2615 restart).
+    Stop,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

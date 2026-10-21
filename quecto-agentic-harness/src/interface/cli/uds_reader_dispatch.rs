@@ -28,6 +28,9 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
         ctx.turn_control.mark_abort();
         super::uds_cancel::fire_cancel(ctx.cancel_handle);
     }
+    if intercept_admission_restart(&ctx) {
+        return true;
+    }
     if super::uds_sync::intercept(&ctx.line, ctx.session, ctx.registry, ctx.client_id).await {
         return true;
     }
@@ -98,6 +101,44 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
         client_id: ctx.client_id,
         admitted,
     }));
+    true
+}
+
+/// `restart_admission` (#2615) is answered here, busy or idle, on its own
+/// task and off the async runtime; the controller does the restart.
+fn intercept_admission_restart(ctx: &ReaderDispatchCtx<'_>) -> bool {
+    use crate::interface::uds::admission::restart_controller::{COMMAND, registered, respond};
+    // Most lines are prompts, some carrying images: only a line naming the
+    // command is parsed.
+    if !ctx.line.contains(COMMAND) {
+        return false;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(ctx.line.trim()) else {
+        return false;
+    };
+    match value.get("type").and_then(|kind| kind.as_str()) {
+        Some(COMMAND) => {}
+        _ => return false,
+    }
+    let id = value
+        .get("id")
+        .and_then(|id| id.as_str())
+        .map(str::to_owned);
+    let (clients, client_id) = (ctx.registry.clone(), ctx.client_id);
+    tokio::spawn(async move {
+        let answered = tokio::task::spawn_blocking(|| respond(registered())).await;
+        let id = id.as_deref();
+        let event = match answered {
+            Ok(Ok(data)) => super::protocol::AgentEvent::ok(id, COMMAND, Some(data)),
+            Ok(Err(error)) => super::protocol::AgentEvent::err(id, COMMAND, error),
+            Err(error) => super::protocol::AgentEvent::err(
+                id,
+                COMMAND,
+                format!("admission restart task failed: {error}"),
+            ),
+        };
+        super::uds_busy_subagents::write_event(&clients, client_id, id, COMMAND, &event).await;
+    });
     true
 }
 

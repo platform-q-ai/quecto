@@ -23,7 +23,7 @@ pub use link::{AuthorityLink, LinkChangeHook, LinkHealth};
 pub use observed_gate::{ActivityHook, AdmissionRecorder, ObservedAdmission};
 pub use on_demand_launcher::DetachedAuthorityLauncher;
 pub use process::{
-    AdmissionContext, BindingKind, Negotiation, ProcessAdmission, negotiate,
+    AdmissionContext, BindingKind, CurrentProcessSession, Negotiation, ProcessAdmission, negotiate,
     read_admission_context, write_admission_context,
 };
 pub use remote_gate::RemoteAdmission;

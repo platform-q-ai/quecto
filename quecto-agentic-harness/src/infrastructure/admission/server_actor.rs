@@ -21,7 +21,9 @@ use super::secret::RandomSecretSource;
 use super::server::{AuthorityUseCases, Clock, wall_ms};
 use crate::application::admission::dto::broker::{AuthorityError, Credential};
 use crate::application::admission::services::inference_authority::AdmissionAuthority;
-use crate::domain::admission::value_objects::authority_idle::{AuthorityLifetime, IdleVerdict};
+use crate::domain::admission::value_objects::authority_idle::{
+    AuthorityLifetime, AuthorityStop, IdleVerdict,
+};
 use crate::domain::admission::value_objects::inference_admission::{
     RequestId, RequestState, ScopeId, TerminalOutcome,
 };
@@ -69,10 +71,11 @@ pub(super) struct Actor {
     last_dispatch_failure: Option<String>,
     /// Whether this authority stops itself when idle (#2615, ADR-0032).
     lifetime: AuthorityLifetime,
-    /// Told `true` when the authority stops for being idle.
-    idle_stopped: Option<watch::Sender<bool>>,
-    /// The idle period ran out: the loop ends after this turn.
-    stop_for_idle: bool,
+    /// Told why when the authority stops itself.
+    stopped: Option<watch::Sender<Option<AuthorityStop>>>,
+    /// The idle period ran out or its owner asked: the loop ends after
+    /// this turn.
+    stopping: Option<AuthorityStop>,
 }
 
 fn far_future() -> Instant {
@@ -99,19 +102,19 @@ impl Actor {
             notified: BTreeSet::new(),
             last_dispatch_failure: None,
             lifetime: AuthorityLifetime::AlwaysOn,
-            idle_stopped: None,
-            stop_for_idle: false,
+            stopped: None,
+            stopping: None,
         }
     }
 
-    /// Serve with `lifetime`, telling `idle_stopped` when it stops itself.
+    /// Serve with `lifetime`, telling `stopped` why when it stops itself.
     pub(super) fn with_lifetime(
         mut self,
         lifetime: AuthorityLifetime,
-        idle_stopped: watch::Sender<bool>,
+        stopped: watch::Sender<Option<AuthorityStop>>,
     ) -> Self {
         self.lifetime = lifetime;
-        self.idle_stopped = Some(idle_stopped);
+        self.stopped = Some(stopped);
         self
     }
 
@@ -135,11 +138,11 @@ impl Actor {
                 _ = &mut sleep => {}
             }
             let wake = self.settle();
-            if self.stop_for_idle {
-                // Stopped in the same turn that found it idle: nothing that
+            if let Some(reason) = self.stopping {
+                // Stopped in the same turn that decided it: nothing that
                 // arrives after this decision is served or granted.
-                if let Some(idle) = &self.idle_stopped {
-                    let _ = idle.send(true);
+                if let Some(stopped) = &self.stopped {
+                    let _ = stopped.send(Some(reason));
                 }
                 break;
             }
@@ -293,9 +296,16 @@ impl Actor {
                 }
             }
             Op::Bind { credential } => self.bind(session, credential.clone().into()),
-            Op::Inspect | Op::Reset if role != Role::Admin => Err(AuthorityError::Unauthorized),
+            Op::Inspect | Op::Reset | Op::Stop if role != Role::Admin => {
+                Err(AuthorityError::Unauthorized)
+            }
             Op::Inspect => Ok(status_body(&self.authority.inspect(now))),
             Op::Reset => self.reset(now),
+            Op::Stop => {
+                // Answered first; the loop ends after this turn (#2615).
+                let _ = AuthorityStop::Requested;
+                Ok(Body::Ok)
+            }
             op => match credential {
                 None => Err(AuthorityError::Unauthorized),
                 Some(credential) => return self.scoped(op, &credential, now),
@@ -461,7 +471,8 @@ impl Actor {
             | Op::RegisterRoot { .. }
             | Op::Bind { .. }
             | Op::Inspect
-            | Op::Reset => {
+            | Op::Reset
+            | Op::Stop => {
                 unreachable!("unscoped operations are dispatched by request()")
             }
         };
@@ -525,7 +536,7 @@ impl Actor {
             IdleVerdict::IdleUntil(deadline) => Some(deadline),
             IdleVerdict::Stop => {
                 debug_assert!(!holding, "only an idle authority stops itself");
-                self.stop_for_idle = true;
+                self.stopping = Some(AuthorityStop::Idle);
                 None
             }
         };

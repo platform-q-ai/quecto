@@ -358,6 +358,12 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Restart the admission broker this root session uses and rejoin it
+    /// (#2615). Served on the reader task, busy or idle.
+    RestartAdmission {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
     GetMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -590,6 +596,7 @@ impl AgentCommand {
             Self::SetWorkflowAutomation { id, .. } => id.as_deref(),
             Self::GetSubagents { id, .. } => id.as_deref(),
             Self::DeleteAllSubagents { id } => id.as_deref(),
+            Self::RestartAdmission { id } => id.as_deref(),
             Self::GetMessage { id, .. } => id.as_deref(),
         }
     }
@@ -626,6 +633,7 @@ impl AgentCommand {
             Self::SetWorkflowAutomation { .. } => "set_workflow_automation",
             Self::GetSubagents { .. } => "get_subagents",
             Self::DeleteAllSubagents { .. } => "delete_all_subagents",
+            Self::RestartAdmission { .. } => "restart_admission",
             Self::GetMessage { .. } => "get_message",
         }
     }

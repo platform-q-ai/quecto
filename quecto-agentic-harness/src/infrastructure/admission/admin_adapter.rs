@@ -74,6 +74,26 @@ impl AuthorityAdmin for SocketAuthorityAdmin {
         })
     }
 
+    fn stop(&self, directory: &Path) -> Result<(), AuthorityAdminError> {
+        let admin_socket = AuthorityDirectory::admin_socket_for(directory);
+        let runtime = Self::runtime().map_err(|reason| AuthorityAdminError::Failed {
+            directory: directory.to_path_buf(),
+            reason,
+        })?;
+        runtime.block_on(async {
+            let admin = AdminConnection::connect(&admin_socket).await.map_err(|e| {
+                AuthorityAdminError::NotRunning {
+                    directory: directory.to_path_buf(),
+                    reason: e.to_string(),
+                }
+            })?;
+            admin.stop().await.map_err(|e| AuthorityAdminError::Failed {
+                directory: directory.to_path_buf(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
     fn reset(&self, directory: &Path) -> Result<ResetReport, AuthorityAdminError> {
         let admin_socket = AuthorityDirectory::admin_socket_for(directory);
         let runtime = Self::runtime().map_err(|reason| AuthorityAdminError::Failed {

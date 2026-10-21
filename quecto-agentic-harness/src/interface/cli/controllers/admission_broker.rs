@@ -16,7 +16,7 @@ use crate::application::admission::dto::{
     service::ServiceReport,
 };
 use crate::domain::admission::value_objects::authority_idle::{
-    AUTHORITY_IDLE_STOP_MS, AuthorityLifetime, IdleWatch,
+    AUTHORITY_IDLE_STOP_MS, AuthorityLifetime, AuthorityStop, IdleWatch,
 };
 use crate::infrastructure::admission::{
     AuthorityDirectory, AuthorityServer, AuthorityUseCaseBuilder, ServerError,
@@ -591,19 +591,20 @@ pub(crate) async fn run_until(
         "admission authority ready: {}",
         server.directory().client_socket().display()
     );
-    let stopped_for_idle = tokio::select! {
-        () = stop => false,
-        () = server.stopped_for_idle() => true,
+    let stopped_itself = tokio::select! {
+        () = stop => None,
+        reason = server.stopped() => Some(reason),
     };
     server.shutdown().await;
-    match stopped_for_idle {
-        true => stdout.push_str(
-            "admission authority stopped itself: idle with no sessions, permits or leases; the next session starts it again\n",
-        ),
-        false => {
-            stdout.push_str("admission authority stopped; outstanding work stays journaled\n")
+    stdout.push_str(match stopped_itself {
+        Some(AuthorityStop::Idle) => {
+            "admission authority stopped itself: idle with no sessions, permits or leases; the next session starts it again\n"
         }
-    }
+        Some(AuthorityStop::Requested) => {
+            "admission authority stopped on request; outstanding work stays journaled\n"
+        }
+        None => "admission authority stopped; outstanding work stays journaled\n",
+    });
     0
 }
 

@@ -36,3 +36,40 @@ pub enum AuthorityAvailability {
     /// starter) and it now answers.
     StartedOnDemand,
 }
+
+/// How `/admission restart` brought the broker back (#2615).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestartOutcome {
+    /// The installed systemd unit serving this config was restarted.
+    ServiceRestarted,
+    /// The running broker stopped and a fresh one was started on demand.
+    Restarted,
+    /// No broker was running; one was started on demand.
+    Started,
+}
+
+/// What `/admission restart` did (#2615).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestartReport {
+    pub outcome: RestartOutcome,
+    /// The session's link health after rejoining.
+    pub health: String,
+}
+
+/// Why `/admission restart` did not complete (#2615).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestartError {
+    /// Admission is off in this session.
+    NotConfigured,
+    /// A child cannot restart the broker its parent's capability lives in.
+    Child,
+    /// Another restart is running; one at a time.
+    InProgress,
+    /// The broker could not be restarted.
+    Restart(String),
+    /// The broker is back, but this session could not rejoin it.
+    Rejoin {
+        outcome: RestartOutcome,
+        reason: String,
+    },
+}

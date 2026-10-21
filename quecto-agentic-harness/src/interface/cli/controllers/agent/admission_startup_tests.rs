@@ -131,13 +131,16 @@ fn a_root_starts_its_broker_on_demand_and_stops_when_it_cannot() {
         selection: &selection,
     };
     let mut stderr = String::new();
-    assert!(!negotiate(
-        &config(Some(&section)),
-        &origin,
-        None,
-        &use_case,
-        &mut stderr
-    ));
+    assert_eq!(
+        negotiate(
+            &config(Some(&section)),
+            &origin,
+            None,
+            &use_case,
+            &mut stderr
+        ),
+        None
+    );
     assert!(
         stderr.starts_with("agent: admission negotiation failed: "),
         "{stderr}"
@@ -148,12 +151,9 @@ fn a_root_starts_its_broker_on_demand_and_stops_when_it_cannot() {
     assert_eq!(launches[0].directory, directory);
     // Disabled starts nothing.
     let mut stderr = String::new();
-    assert!(negotiate(
-        &config(None),
-        &origin,
-        None,
-        &use_case,
-        &mut stderr
-    ));
+    assert_eq!(
+        negotiate(&config(None), &origin, None, &use_case, &mut stderr),
+        Some(Joined::Disabled)
+    );
     assert_eq!(launches.len(), 1);
 }

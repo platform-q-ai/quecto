@@ -697,6 +697,15 @@ impl AdminConnection {
         }
     }
 
+    /// Ask the authority to stop serving (#2615): it answers, then stops as
+    /// SIGTERM would, keeping outstanding work journaled.
+    pub async fn stop(&self) -> Result<(), ClientError> {
+        match self.inner.call(Op::Stop).await? {
+            Body::Ok => Ok(()),
+            other => Err(ClientError::Protocol(format!("expected ok, got {other:?}"))),
+        }
+    }
+
     pub async fn reset(&self) -> Result<u64, ClientError> {
         match self.inner.call(Op::Reset).await? {
             Body::Reset { epoch } => Ok(epoch),

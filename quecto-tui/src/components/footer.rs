@@ -28,7 +28,8 @@ pub struct Footer {
     admission: Option<String>,
     /// The panel-row form of the same label ("12s").
     admission_compact: Option<String>,
-    /// Broker health badge (#2024 S3): "admission ✓" / "⟳" / "✗"; `None` when
+    /// Broker health badge (#2024 S3, #2615): "admission ✓ connected" /
+    /// "⟳ reconnecting" / "✗ unavailable", plus "· N queued"; `None` when
     /// the agent reported no authority status.
     admission_health: Option<String>,
     /// Cached working directory (read once at construction).
