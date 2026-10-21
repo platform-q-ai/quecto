@@ -340,9 +340,7 @@ impl KillEnvironment {
         debug_assert!(record.members.is_empty(), "a stopped record has no members");
         let environment_ref = record.environment_ref.clone();
         if record.retained_cleanup_argv.is_empty() {
-            return Err(KillEnvironmentError::NothingToKill(format!(
-                "environment {environment_ref} is stopped and its script set retained no cleanup; `quecto container gc` collects what it left"
-            )));
+            return self.forget_if_nothing_left(record, condition).await;
         }
         // Claimed before the runtime is asked, so no kill or other removal
         // acts on the record between the answer and the cleanup.
@@ -412,6 +410,46 @@ impl KillEnvironment {
                 })
             }
         }
+    }
+
+    /// A stopped environment whose script set retained no `cleanup`: one
+    /// that left nothing (#2684 round 1: its container affirmed gone, its
+    /// state directory absent) is forgotten as nothing left, under the
+    /// removal claim; any other is the collector's, untouched. Without a
+    /// disk to ask, nothing is asked: refused as before.
+    async fn forget_if_nothing_left(
+        &self,
+        record: EnvironmentRecord,
+        condition: &ClaimCondition,
+    ) -> Result<Removal, KillEnvironmentError> {
+        let environment_ref = record.environment_ref.clone();
+        let refused = || {
+            KillEnvironmentError::NothingToKill(format!(
+                "environment {environment_ref} is stopped and its script set retained no cleanup; `quecto container gc` collects what it left"
+            ))
+        };
+        if self.disk.is_none() {
+            return Err(refused());
+        }
+        let claim = self
+            .registry
+            .begin_removal_if(&record.environment_ref, condition)
+            .map_err(claim_refused)?;
+        let gone = match self.commands.observe_liveness(&record).await {
+            EnvironmentLiveness::Gone => true,
+            EnvironmentLiveness::Running | EnvironmentLiveness::Unknown(_) => false,
+        };
+        if gone && self.left_nothing(&record) {
+            self.registry.complete_removal(claim);
+            return Ok(Removal::Removed(KilledEnvironment {
+                record,
+                members: MemberShutdownReport::default(),
+                removed_stopped: true,
+                nothing_left: true,
+            }));
+        }
+        self.registry.release_removal(claim);
+        Err(refused())
     }
 
     /// Whether `record`, whose container the runtime reports gone, left

@@ -190,3 +190,30 @@ async fn the_tool_parses_invokes_and_presents() {
     assert!(missing.is_error);
     assert!(missing.content.contains("not found"));
 }
+
+/// #2681 round 1: a kept reason reaches the model redacted and clipped,
+/// and the list is capped as `killed` is.
+#[test]
+fn kept_reasons_are_redacted_clipped_and_capped() {
+    let mut kept = outcome(TerminationResult::Graceful, 1);
+    kept.kept = (0..23)
+        .map(
+            |n| crate::application::subagents::ports::kept_environments::KeptEnvironment {
+                environment_ref: format!("C{n}"),
+                reason: format!("token=hunter2 {}", "x".repeat(500)),
+            },
+        )
+        .collect();
+    let body: serde_json::Value = serde_json::from_str(&present_outcome(&kept).content).unwrap();
+    let listed = body["kept"].as_array().unwrap();
+    assert_eq!(listed.len(), 20);
+    assert_eq!(body["omitted_kept"], 3);
+    let reason = listed[0]["reason"].as_str().unwrap();
+    assert!(!reason.contains("hunter2"), "{reason}");
+    assert!(reason.ends_with('…'), "{reason}");
+    assert_eq!(
+        reason.chars().count(),
+        401,
+        "400 characters and the cut mark"
+    );
+}

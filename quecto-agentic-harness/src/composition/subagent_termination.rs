@@ -139,3 +139,7 @@ pub fn build_termination_owners(inputs: KillToolWiring) -> TerminationOwners {
         )),
     }
 }
+
+#[cfg(test)]
+#[path = "subagent_termination_tests.rs"]
+mod tests;

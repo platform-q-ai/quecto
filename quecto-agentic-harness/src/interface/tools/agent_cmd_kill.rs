@@ -12,6 +12,7 @@ use crate::application::subagents::dto::{
 use crate::application::subagents::use_cases::KillDelegatedAgent;
 use crate::application::tools::ports::Tool;
 use crate::domain::shared::error::DomainError;
+use crate::domain::shared::redaction::model_safe_text;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 
 /// Name under which `AgentCmdTool` delegates its `kill` command.
@@ -63,18 +64,24 @@ pub fn present_outcome(outcome: &KillDelegatedAgentOutcome) -> ToolResult {
     if outcome.removed.len() > MAX_REPORTED_AGENTS {
         body["omitted_agents"] = serde_json::json!(outcome.removed.len() - MAX_REPORTED_AGENTS);
     }
-    // #2681: an environment the teardown kept is named, with why.
+    // #2681: an environment the teardown kept is named, with why: the
+    // reason redacted and clipped as every text shown the model is, and
+    // the list capped as `killed` is.
     if !outcome.kept.is_empty() {
         body["kept"] = outcome
             .kept
             .iter()
+            .take(MAX_REPORTED_AGENTS)
             .map(|kept| {
                 serde_json::json!({
-                    "environment": kept.environment_ref,
-                    "reason": kept.reason,
+                    "environment": model_safe_text(&kept.environment_ref),
+                    "reason": model_safe_text(&kept.reason),
                 })
             })
             .collect();
+    }
+    if outcome.kept.len() > MAX_REPORTED_AGENTS {
+        body["omitted_kept"] = serde_json::json!(outcome.kept.len() - MAX_REPORTED_AGENTS);
     }
     result(body.to_string(), false)
 }

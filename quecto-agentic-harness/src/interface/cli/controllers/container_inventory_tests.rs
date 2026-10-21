@@ -490,6 +490,21 @@ fn ls_says_why_a_retained_environment_is_kept() {
         "{}",
         output.stderr
     );
+    assert_eq!(output.stderr.matches("note: C1 retained").count(), 1);
+    // A reason that would break the note's line (or drive the terminal)
+    // is shown on one line.
+    c1.metadata = serde_json::json!({ "retained": "kept\nfor\u{1b}[2J a push" });
+    store.record(&c1).unwrap();
+    let output = run(&["container", "ls"], &ctx);
+    assert!(
+        output
+            .stderr
+            .contains("note: C1 retained: kept for [2J a push\n"),
+        "{:?}",
+        output.stderr
+    );
+    c1.metadata = serde_json::json!({ "retained": reason });
+    store.record(&c1).unwrap();
     let output = run(&["container", "ls", "--all", "--json"], &ctx);
     assert_eq!(output.exit_code, 0, "{output:?}");
     let listing: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();

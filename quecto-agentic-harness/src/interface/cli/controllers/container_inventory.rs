@@ -129,12 +129,19 @@ pub(crate) fn cmd_ls(
             }
             present_restore_notes(&handles, stderr);
             // #2681: why each listed retained environment is kept, in its
-            // teardown's own words.
+            // teardown's own words, on one line; one this restore retained
+            // is said by its own note below.
             for record in &shown {
-                if let Some(reason) = record.retained_reason() {
+                let retained_now = handles
+                    .restore
+                    .retained
+                    .iter()
+                    .any(|(environment_ref, _)| *environment_ref == record.environment_ref);
+                if let (Some(reason), false) = (record.retained_reason(), retained_now) {
                     stderr.push_str(&format!(
-                        "note: {} retained: {reason}\n",
-                        record.environment_ref
+                        "note: {} retained: {}\n",
+                        record.environment_ref,
+                        one_line(reason)
                     ));
                 }
             }
@@ -158,6 +165,15 @@ pub(crate) fn cmd_ls(
         }
         Err(error) => fail(stderr, &error),
     }
+}
+
+/// `text` on one line: every control character (a line break, an escape)
+/// shown as a space, so a reason read from the registry can neither break
+/// the note's line nor drive the terminal.
+fn one_line(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 // ─── ls --json ───────────────────────────────────────────────────────────────
@@ -497,6 +513,10 @@ pub(crate) fn cmd_kill(
     let outcome = end_environment(ctx, args, stderr);
     match outcome {
         Ok(killed) => {
+            debug_assert!(
+                !killed.nothing_left || killed.removed_stopped,
+                "nothing left is a removal of a stopped environment"
+            );
             let name = killed
                 .record
                 .name

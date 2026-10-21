@@ -35,7 +35,7 @@ const CONTAINER_KEY: &str = "container";
 
 /// Characters one text field carries at most; longer text is clipped
 /// with `…`.
-const MAX_TEXT_CHARS: usize = 400;
+const MAX_TEXT_CHARS: usize = crate::domain::shared::redaction::MODEL_TEXT_CHARS;
 
 /// Characters an identifying field (`name`, `config`, `session`) carries
 /// at most.
@@ -301,10 +301,10 @@ fn is_container_name(name: &str) -> bool {
     plain && redact_secrets(name) == name
 }
 
-/// Free text for the model: URL userinfo and known secret shapes
-/// redacted, then clipped to [`MAX_TEXT_CHARS`].
+/// Free text for the model: the shared reading
+/// ([`crate::domain::shared::redaction::model_safe_text`]).
 fn safe_text(text: &str) -> String {
-    clip(&safe_label(text), MAX_TEXT_CHARS)
+    crate::domain::shared::redaction::model_safe_text(text)
 }
 
 /// A label for the model, redacted like free text but not yet clipped.
@@ -313,10 +313,7 @@ fn safe_label(text: &str) -> String {
 }
 
 fn clip(text: &str, max_chars: usize) -> String {
-    match text.char_indices().nth(max_chars) {
-        Some((cut, _)) => format!("{}…", &text[..cut]),
-        None => text.to_string(),
-    }
+    crate::domain::shared::redaction::clip_chars(text, max_chars)
 }
 
 /// Where the members work: the record's own reading (#2682).
