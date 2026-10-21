@@ -20,6 +20,7 @@ use crate::application::admission::use_cases::{
     AdvanceAuthorityEpoch, BindScope, CompleteAdmission, DisconnectScope, RestoreAuthority,
     SettleAuthority,
 };
+use crate::domain::admission::value_objects::authority_idle::AuthorityLifetime;
 use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
 pub(super) use super::server_actor::Command;
@@ -124,6 +125,9 @@ fn bind_private(path: &Path) -> Result<UnixListener, ServerError> {
 pub struct AuthorityServer {
     dir: AuthorityDirectory,
     shutdown: watch::Sender<bool>,
+    /// Becomes `true` when the actor stopped the authority for being idle
+    /// (#2615); the sender drops with the actor.
+    idle_stopped: watch::Receiver<bool>,
     tasks: Vec<JoinHandle<()>>,
     _lock: SingletonLock,
 }
@@ -136,8 +140,17 @@ impl AuthorityServer {
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
         build_use_cases: AuthorityUseCaseBuilder,
+        lifetime: AuthorityLifetime,
     ) -> Result<Self, ServerError> {
-        Self::start_with(dir, proposal, build_use_cases, false, FRAME_DEADLINE).await
+        Self::start_with(
+            dir,
+            proposal,
+            build_use_cases,
+            false,
+            FRAME_DEADLINE,
+            lifetime,
+        )
+        .await
     }
 
     /// Start with a framing deadline other than [`FRAME_DEADLINE`]: the
@@ -149,7 +162,15 @@ impl AuthorityServer {
         build_use_cases: AuthorityUseCaseBuilder,
         frame_deadline: Duration,
     ) -> Result<Self, ServerError> {
-        Self::start_with(dir, proposal, build_use_cases, false, frame_deadline).await
+        Self::start_with(
+            dir,
+            proposal,
+            build_use_cases,
+            false,
+            frame_deadline,
+            AuthorityLifetime::AlwaysOn,
+        )
+        .await
     }
 
     /// Operator acknowledgement that a ledger missing after prior operation
@@ -159,8 +180,17 @@ impl AuthorityServer {
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
         build_use_cases: AuthorityUseCaseBuilder,
+        lifetime: AuthorityLifetime,
     ) -> Result<Self, ServerError> {
-        Self::start_with(dir, proposal, build_use_cases, true, FRAME_DEADLINE).await
+        Self::start_with(
+            dir,
+            proposal,
+            build_use_cases,
+            true,
+            FRAME_DEADLINE,
+            lifetime,
+        )
+        .await
     }
 
     async fn start_with(
@@ -169,6 +199,7 @@ impl AuthorityServer {
         build_use_cases: AuthorityUseCaseBuilder,
         accept_missing_ledger: bool,
         frame_deadline: Duration,
+        lifetime: AuthorityLifetime,
     ) -> Result<Self, ServerError> {
         proposal
             .policy
@@ -216,7 +247,9 @@ impl AuthorityServer {
         let admin_listener = bind_private(&dir.admin_socket())?;
         let (tx, rx) = mpsc::unbounded_channel();
         let (shutdown, shutdown_rx) = watch::channel(false);
-        let actor = Actor::new(authority, use_cases, clock, proposal_wire, owner_token);
+        let (idle_tx, idle_stopped) = watch::channel(false);
+        let actor = Actor::new(authority, use_cases, clock, proposal_wire, owner_token)
+            .with_lifetime(lifetime, idle_tx);
         let tasks = vec![
             tokio::spawn(actor.run(rx, shutdown_rx.clone())),
             tokio::spawn(accept_loop(
@@ -239,6 +272,7 @@ impl AuthorityServer {
         Ok(Self {
             dir,
             shutdown,
+            idle_stopped,
             tasks,
             _lock: lock,
         })
@@ -246,6 +280,15 @@ impl AuthorityServer {
 
     pub fn directory(&self) -> &AuthorityDirectory {
         &self.dir
+    }
+
+    /// Resolves once the authority stopped itself for being idle (#2615);
+    /// never for an always-on authority, nor for one that ended otherwise.
+    pub async fn stopped_for_idle(&self) {
+        let mut idle = self.idle_stopped.clone();
+        if idle.wait_for(|stopped| *stopped).await.is_err() {
+            std::future::pending::<()>().await;
+        }
     }
 
     /// Stop accepting, close sessions and exit the actor. The journal keeps

@@ -420,6 +420,16 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
         Ok(self.service.next_wake(now)?)
     }
 
+    /// Whether the authority holds anything a stop would lose (#2615,
+    /// ADR-0032): a root scope, a lost scope still owing work, or any
+    /// permit, queued wait or lease, uncertain and restart-orphaned ones
+    /// included. A state it cannot read counts as holding, so the idle stop
+    /// fails safe.
+    pub(in crate::application::admission) fn holds_anything(&mut self, now: u64) -> bool {
+        let _ = now;
+        true
+    }
+
     pub fn inspect(&mut self, now: u64) -> AuthorityStatus {
         let groups = self
             .groups

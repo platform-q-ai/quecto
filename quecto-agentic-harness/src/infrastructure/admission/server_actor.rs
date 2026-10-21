@@ -21,6 +21,7 @@ use super::secret::RandomSecretSource;
 use super::server::{AuthorityUseCases, Clock, wall_ms};
 use crate::application::admission::dto::broker::{AuthorityError, Credential};
 use crate::application::admission::services::inference_authority::AdmissionAuthority;
+use crate::domain::admission::value_objects::authority_idle::{AuthorityLifetime, IdleVerdict};
 use crate::domain::admission::value_objects::inference_admission::{
     RequestId, RequestState, ScopeId, TerminalOutcome,
 };
@@ -66,6 +67,12 @@ pub(super) struct Actor {
     notified: BTreeSet<RequestId>,
     /// Last dispatch failure reported, so outages log on transitions only.
     last_dispatch_failure: Option<String>,
+    /// Whether this authority stops itself when idle (#2615, ADR-0032).
+    lifetime: AuthorityLifetime,
+    /// Told `true` when the authority stops for being idle.
+    idle_stopped: Option<watch::Sender<bool>>,
+    /// The idle period ran out: the loop ends after this turn.
+    stop_for_idle: bool,
 }
 
 fn far_future() -> Instant {
@@ -91,7 +98,21 @@ impl Actor {
             waiters: BTreeMap::new(),
             notified: BTreeSet::new(),
             last_dispatch_failure: None,
+            lifetime: AuthorityLifetime::AlwaysOn,
+            idle_stopped: None,
+            stop_for_idle: false,
         }
+    }
+
+    /// Serve with `lifetime`, telling `idle_stopped` when it stops itself.
+    pub(super) fn with_lifetime(
+        mut self,
+        lifetime: AuthorityLifetime,
+        idle_stopped: watch::Sender<bool>,
+    ) -> Self {
+        self.lifetime = lifetime;
+        self.idle_stopped = Some(idle_stopped);
+        self
     }
 
     pub(super) async fn run(
@@ -99,7 +120,10 @@ impl Actor {
         mut rx: mpsc::UnboundedReceiver<Command>,
         mut shutdown: watch::Receiver<bool>,
     ) {
-        let sleep = tokio::time::sleep_until(far_future().into());
+        // The first turn is due at once, so a broker that no client ever
+        // reaches still observes its own idleness (#2615) and clears what
+        // its restored ledger lets it.
+        let sleep = tokio::time::sleep_until(Instant::now().into());
         tokio::pin!(sleep);
         loop {
             tokio::select! {
@@ -111,6 +135,14 @@ impl Actor {
                 _ = &mut sleep => {}
             }
             let wake = self.settle();
+            if self.stop_for_idle {
+                // Stopped in the same turn that found it idle: nothing that
+                // arrives after this decision is served or granted.
+                if let Some(idle) = &self.idle_stopped {
+                    let _ = idle.send(true);
+                }
+                break;
+            }
             sleep.as_mut().reset(wake.into());
         }
         // The last turn: lease bounds are durable as they stand, so the
@@ -483,9 +515,28 @@ impl Actor {
             }
         }
         self.notified.retain(|id| due.contains(id));
+        // The idle stop (#2615, ADR-0032): only a turn that finds nothing
+        // held and no connection open counts as idle, so a broker holding a
+        // root, a permit, a wait or a lease (uncertain ones included), or
+        // serving any connection, never stops.
+        let holding = settlement.holding || !self.sessions.is_empty();
+        let idle_deadline = match self.lifetime.observe(holding, self.clock.now_ms()) {
+            IdleVerdict::Holding => None,
+            IdleVerdict::IdleUntil(deadline) => Some(deadline),
+            IdleVerdict::Stop => {
+                debug_assert!(!holding, "only an idle authority stops itself");
+                self.stop_for_idle = true;
+                None
+            }
+        };
         // Armed now, after the turn: a slow write cannot leave the next
         // probe already due.
-        match settlement.wake_at(self.clock.now_ms()) {
+        let wake = settlement.wake_at(self.clock.now_ms());
+        let wake = match (wake, idle_deadline) {
+            (Some(wake), Some(idle)) => Some(wake.min(idle)),
+            (wake, idle) => wake.or(idle),
+        };
+        match wake {
             Some(ms) => self.clock.instant_at(ms),
             None => far_future(),
         }

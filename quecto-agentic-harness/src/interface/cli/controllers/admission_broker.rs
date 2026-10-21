@@ -15,6 +15,9 @@ use crate::application::admission::dto::{
     authority::AuthorityAdminError, service::InstallServiceRequest, service::ServiceAction,
     service::ServiceReport,
 };
+use crate::domain::admission::value_objects::authority_idle::{
+    AUTHORITY_IDLE_STOP_MS, AuthorityLifetime, IdleWatch,
+};
 use crate::infrastructure::admission::{
     AuthorityDirectory, AuthorityServer, AuthorityUseCaseBuilder, ServerError,
 };
@@ -28,6 +31,9 @@ struct BrokerArgs {
     directory: Option<PathBuf>,
     dry_run: bool,
     accept_missing_ledger: bool,
+    /// `run --stop-when-idle`: the lifetime of a broker started on demand
+    /// (#2615, ADR-0032). Without it `run` serves until it is stopped.
+    stop_when_idle: bool,
 }
 
 fn parse_args(args: &[String], stderr: &mut String) -> Option<BrokerArgs> {
@@ -36,6 +42,7 @@ fn parse_args(args: &[String], stderr: &mut String) -> Option<BrokerArgs> {
         directory: None,
         dry_run: false,
         accept_missing_ledger: false,
+        stop_when_idle: false,
     };
     let mut i = 0;
     while i < args.len() {
@@ -62,6 +69,10 @@ fn parse_args(args: &[String], stderr: &mut String) -> Option<BrokerArgs> {
             }
             "--accept-missing-ledger" => {
                 parsed.accept_missing_ledger = true;
+                i += 1;
+            }
+            "--stop-when-idle" => {
+                parsed.stop_when_idle = true;
                 i += 1;
             }
             other => {
@@ -496,11 +507,18 @@ fn cmd_run(ctx: &CliContext, opts: &BrokerArgs, stdout: &mut String, stderr: &mu
             return 1;
         }
     };
+    let lifetime = match opts.stop_when_idle {
+        true => AuthorityLifetime::StopWhenIdle(
+            IdleWatch::new(AUTHORITY_IDLE_STOP_MS).expect("the idle period is positive"),
+        ),
+        false => AuthorityLifetime::AlwaysOn,
+    };
     let start = BrokerStart {
         build_use_cases: handles.authority,
         dir,
         proposal,
         accept_missing_ledger: opts.accept_missing_ledger,
+        lifetime,
     };
     runtime.block_on(run(start, stdout, stderr))
 }
@@ -513,6 +531,8 @@ pub(crate) struct BrokerStart {
     pub(crate) proposal: AdmissionRuntimeProposal,
     pub(crate) build_use_cases: AuthorityUseCaseBuilder,
     pub(crate) accept_missing_ledger: bool,
+    /// Whether it stops itself when idle (#2615).
+    pub(crate) lifetime: AuthorityLifetime,
 }
 
 async fn run(start: BrokerStart, stdout: &mut String, stderr: &mut String) -> i32 {
@@ -546,11 +566,13 @@ pub(crate) async fn run_until(
         proposal,
         build_use_cases,
         accept_missing_ledger,
+        lifetime,
     } = start;
     let started = if accept_missing_ledger {
-        AuthorityServer::start_accepting_missing_ledger(dir, proposal, build_use_cases).await
+        AuthorityServer::start_accepting_missing_ledger(dir, proposal, build_use_cases, lifetime)
+            .await
     } else {
-        AuthorityServer::start(dir, proposal, build_use_cases).await
+        AuthorityServer::start(dir, proposal, build_use_cases, lifetime).await
     };
     let server = match started {
         Ok(server) => server,
@@ -569,9 +591,19 @@ pub(crate) async fn run_until(
         "admission authority ready: {}",
         server.directory().client_socket().display()
     );
-    stop.await;
+    let stopped_for_idle = tokio::select! {
+        () = stop => false,
+        () = server.stopped_for_idle() => true,
+    };
     server.shutdown().await;
-    stdout.push_str("admission authority stopped; outstanding work stays journaled\n");
+    match stopped_for_idle {
+        true => stdout.push_str(
+            "admission authority stopped itself: idle with no sessions, permits or leases; the next session starts it again\n",
+        ),
+        false => {
+            stdout.push_str("admission authority stopped; outstanding work stays journaled\n")
+        }
+    }
     0
 }
 

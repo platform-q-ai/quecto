@@ -162,6 +162,66 @@ fn run_until_serves_then_stops_and_refuses_a_second_authority() {
     assert!(!dir.client_socket().exists(), "sockets removed on stop");
 }
 
+/// #2615: a broker started on demand (`run --stop-when-idle`) stops itself
+/// once it has held nothing for its idle period, exits 0 and says why;
+/// without the flag `run` keeps serving.
+#[test]
+fn run_until_stops_an_idle_on_demand_broker_and_says_so() {
+    let mut opts = parse_args(&["--stop-when-idle".to_string()], &mut String::new()).unwrap();
+    assert!(opts.stop_when_idle);
+    opts = parse_args(&[], &mut String::new()).unwrap();
+    assert!(!opts.stop_when_idle, "always-on unless asked");
+    let temp = tempfile::tempdir().unwrap();
+    let authority = temp.path().join("authority");
+    let config = ENABLED.replace("DIR", &format!("{:?}", authority.to_string_lossy()));
+    std::fs::write(temp.path().join("config.json"), config).unwrap();
+    let loaded = Config::load(temp.path().join("config.json").to_str().unwrap()).unwrap();
+    let (_, proposal) = loaded.admission_proposal().unwrap().unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dir = AuthorityDirectory::open(&authority).unwrap();
+    let on_demand = BrokerStart {
+        lifetime: AuthorityLifetime::StopWhenIdle(IdleWatch::new(100).unwrap()),
+        ..start(&dir, &proposal)
+    };
+    let (mut out, mut err) = (String::new(), String::new());
+    let code = rt.block_on(async {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            run_until(on_demand, std::future::pending(), &mut out, &mut err),
+        )
+        .await
+        .expect("an idle on-demand broker stops itself")
+    });
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(
+        out,
+        "admission authority stopped itself: idle with no sessions, permits or leases; the next session starts it again\n"
+    );
+    assert!(!dir.client_socket().exists(), "sockets removed on stop");
+    // An always-on broker over the same directory outlives that period.
+    let (mut out, mut err) = (String::new(), String::new());
+    let still_serving = rt.block_on(async {
+        tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            run_until(
+                start(&dir, &proposal),
+                std::future::pending(),
+                &mut out,
+                &mut err,
+            ),
+        )
+        .await
+    });
+    assert!(
+        still_serving.is_err(),
+        "always-on never stops itself: {out}{err}"
+    );
+}
+
 /// Lows (#2024 S3 review): an explicit `--directory` is validated like the
 /// config path (absolute, never the base directory or an ancestor of it,
 /// owner-only when it exists), and `run --directory X --config Y` is
@@ -320,6 +380,7 @@ fn start(dir: &AuthorityDirectory, proposal: &AdmissionRuntimeProposal) -> Broke
         proposal: proposal.clone(),
         build_use_cases: build_authority_use_cases,
         accept_missing_ledger: false,
+        lifetime: AuthorityLifetime::AlwaysOn,
     }
 }
 

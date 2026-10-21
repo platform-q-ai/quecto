@@ -4145,6 +4145,9 @@ fn the_authority_surface_is_an_exhaustive_allowlist() {
         // #2664 review: a lease that clears on time is checkpointed.
         "record_durable",
         "checkpoint_due",
+        // #2615: a settling turn reports whether the authority holds
+        // anything, for the idle stop of a broker started on demand.
+        "holds_anything",
     ];
     let source = production_source("src/application/admission/services/inference_authority.rs");
     let file = syn::parse_file(&source).expect("the authority parses");

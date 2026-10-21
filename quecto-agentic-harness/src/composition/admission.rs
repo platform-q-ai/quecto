@@ -12,8 +12,11 @@ use crate::application::admission::use_cases::{
     InspectAuthority, InstallAuthorityService, NegotiateAuthority, ResetAuthority,
     RestoreAuthority, SettleAuthority, UninstallAuthorityService,
 };
+#[cfg(any(test, feature = "test-support"))]
+use crate::domain::admission::value_objects::authority_idle::{AuthorityLifetime, IdleWatch};
 use crate::infrastructure::admission::{
-    AuthorityDirectory, AuthorityUseCases, FileJournal, SocketAuthorityAdmin,
+    AuthorityDirectory, AuthorityUseCases, DetachedAuthorityLauncher, FileJournal,
+    SocketAuthorityAdmin,
 };
 #[cfg(any(test, feature = "test-support"))]
 use crate::infrastructure::admission::{AuthorityServer, ServerError};
@@ -38,7 +41,9 @@ pub fn build_admission_handles() -> AdmissionHandles {
         reset: Arc::new(ResetAuthority::new(admin)),
         install: Arc::new(InstallAuthorityService::new(manager.clone())),
         uninstall: Arc::new(UninstallAuthorityService::new(manager)),
-        negotiate: Arc::new(NegotiateAuthority::new()),
+        negotiate: Arc::new(NegotiateAuthority::new(Arc::new(
+            DetachedAuthorityLauncher::for_current_exe(),
+        ))),
         authority: build_authority_use_cases,
     }
 }
@@ -71,7 +76,34 @@ pub async fn start_authority(
     dir: AuthorityDirectory,
     proposal: AdmissionRuntimeProposal,
 ) -> Result<AuthorityServer, ServerError> {
-    AuthorityServer::start(dir, proposal, build_authority_use_cases).await
+    AuthorityServer::start(
+        dir,
+        proposal,
+        build_authority_use_cases,
+        AuthorityLifetime::AlwaysOn,
+    )
+    .await
+}
+
+/// Start an authority over `dir` that stops itself once it has held
+/// nothing for `idle_after` (#2615): the on-demand lifetime with a test's
+/// period instead of an hour.
+#[cfg(any(test, feature = "test-support"))]
+pub async fn start_authority_stopping_when_idle(
+    dir: AuthorityDirectory,
+    proposal: AdmissionRuntimeProposal,
+    idle_after: std::time::Duration,
+) -> Result<AuthorityServer, ServerError> {
+    let period = u64::try_from(idle_after.as_millis()).unwrap_or(u64::MAX);
+    let watch = IdleWatch::new(period)
+        .ok_or_else(|| ServerError::Policy("an idle period must be positive".into()))?;
+    AuthorityServer::start(
+        dir,
+        proposal,
+        build_authority_use_cases,
+        AuthorityLifetime::StopWhenIdle(watch),
+    )
+    .await
 }
 
 /// Start an authority over `dir`, accepting a ledger missing after prior
@@ -81,7 +113,13 @@ pub async fn start_authority_accepting_missing_ledger(
     dir: AuthorityDirectory,
     proposal: AdmissionRuntimeProposal,
 ) -> Result<AuthorityServer, ServerError> {
-    AuthorityServer::start_accepting_missing_ledger(dir, proposal, build_authority_use_cases).await
+    AuthorityServer::start_accepting_missing_ledger(
+        dir,
+        proposal,
+        build_authority_use_cases,
+        AuthorityLifetime::AlwaysOn,
+    )
+    .await
 }
 
 /// Start an authority over `dir` with a framing deadline other than the

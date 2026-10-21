@@ -73,16 +73,24 @@ impl LinkHealth {
 /// Bounded exponential backoff with jitter (so many sessions do not all
 /// hammer a restarting broker in lockstep).
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Backoff {
+pub(crate) struct Backoff {
     pub(super) attempts: u32,
     pub(super) base: Duration,
     pub(super) max: Duration,
 }
 
 impl Backoff {
+    /// The reconnect backoff a root's link uses (8 tries, ≈10 s), which a
+    /// broker started on demand is also probed through (#2615).
+    pub(crate) const RECONNECT: Self = Self {
+        attempts: RECONNECT_ATTEMPTS,
+        base: RECONNECT_BASE_DELAY,
+        max: RECONNECT_MAX_DELAY,
+    };
+
     /// The delay after failed attempt `attempt` (0-based): `base * 2^attempt`
     /// capped at `max`, plus up to half of that again as jitter.
-    pub(super) fn delay(&self, attempt: u32) -> Duration {
+    pub(crate) fn delay(&self, attempt: u32) -> Duration {
         use rand::Rng;
         let nominal = self
             .base
@@ -146,11 +154,7 @@ impl AuthorityLink {
             reconnect,
             expected,
             gate: tokio::sync::Mutex::new(()),
-            backoff: Mutex::new(Backoff {
-                attempts: RECONNECT_ATTEMPTS,
-                base: RECONNECT_BASE_DELAY,
-                max: RECONNECT_MAX_DELAY,
-            }),
+            backoff: Mutex::new(Backoff::RECONNECT),
             exhausted: AtomicBool::new(false),
             exhaustions: AtomicU64::new(0),
             last_failure: Mutex::new(None),

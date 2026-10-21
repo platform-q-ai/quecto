@@ -89,6 +89,11 @@ impl SettleAuthority {
             cancellation_due,
             next_wake: authority.next_wake(now),
             journal_healthy,
+            holding: authority.holds_anything(now),
         }
     }
 }
+
+#[cfg(test)]
+#[path = "settle_authority_tests.rs"]
+mod tests;
