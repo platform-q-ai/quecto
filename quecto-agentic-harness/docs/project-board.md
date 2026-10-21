@@ -638,6 +638,17 @@ the claim is refused (`dependency_not_done`), naming the tasks that hold it back
 those not done yet in `tasks`, and those not on the board (or set aside) in
 `missing`.
 
+Only the claim's holder renews it, releases it (`move(task, to ready)` from
+claimed or in progress) and links or unlinks a pull request: anyone else is
+refused (`not_holder`), and once the claim has expired that refusal carries
+`expired: true` and says to take the task over first with `take_over(task)`,
+on every holder-only action alike (#2683). A link is judged on the task first:
+someone who may not link is told so, whatever else is set aside. Only then is a
+link by the holder of a live claim refused while a task file is set aside
+(`set_aside`, or `set_aside_file` for a kept file whose name spells no task),
+since that file may link the same pull request and a pull request is linked to
+one task once (#2686).
+
 `complete(task)` completes a task whose linked pull requests have all merged,
 reading their states from the repository's host (GitHub, or the configured
 `GH_HOST`). A task that links no pull request has nothing to read there: it is

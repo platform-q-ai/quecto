@@ -7,7 +7,7 @@
 //! no view's scope, so it blocks none. A view sees keys only: a kept file
 //! set aside with no key (its artifact unknown) blocks no view, so a link
 //! through [`all_changes`] still refuses while one exists
-//! (`change_board_task`'s `board_readable_for` runs first). An artifact a
+//! (`change_board_task`'s `links_readable` runs first). An artifact a
 //! view finds more than once (a store that broke its contract of one
 //! artifact per key) is refused as [`ProjectBoardError::Duplicate`], never
 //! a panic.
