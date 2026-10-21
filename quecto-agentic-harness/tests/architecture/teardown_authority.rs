@@ -306,6 +306,12 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
         "tool invocation containment: the find tool's own `fd` Child on a cap",
     ),
     (
+        "src/infrastructure/workspace/checkout_history.rs",
+        &["kill("],
+        "the swarm board's own `git merge-base` Child ended through its \
+         retained handle when it outlives its deadline (#2687)",
+    ),
+    (
         "src/infrastructure/tools/swarm/swarm_bridge.rs",
         &["/proc/"],
         "signal-free liveness observation (`/proc/<pid>/stat` start time, \

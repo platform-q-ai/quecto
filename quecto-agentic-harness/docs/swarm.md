@@ -397,6 +397,22 @@ cannot verify the replacement. A submitted task cannot be changed to blocked. On
 tasks with `verify_task` (`task_id`, the claim `token`, `revision`), accept
 evidence using `evidence` (`criterion`, `artifact`, `revision`, `kind`,
 `passed`), and `complete` (`revision`).
+Workers may not commit, so a worker submits evidence at the commit its
+uncommitted change sits on, and the coordinator commits that change. The
+coordinator then verifies at its own commit: when the submission's evidence
+names an earlier commit, `verify_task` carries that evidence forward to the
+verified `revision` instead of refusing it as stale (#2687). It does so only
+for submitted work under the current claim token, only when the verified
+revision and every revision in the evidence are full commit ids, and only
+when git confirms that each earlier commit is an ancestor of the verified
+one in the board's checkout (`git merge-base --is-ancestor`). The
+evidence is then stored at the verified revision, and the `verified` event
+adds `carried_from` (the earlier commits) and `previous_evidence` (the
+submission as the worker made it). Anything else is refused as `stale
+evidence revision`, as before. The worker never has to release, reclaim and
+resubmit the same evidence, and it still cannot change a submission. The
+board does not check what the commit contains: the coordinator, as the
+evidence gate, commits only the work it accepted.
 A worker's `evidence` call records an unaccepted submission. A coordinator
 accepts or rejects it on the reported command results and the required
 independent/human review, judged against the criteria, and rejects with reasons

@@ -1,5 +1,5 @@
-//! The coordination board's file reservations, and the checkout paths they
-//! normalise.
+//! The coordination board's file reservations, the checkout paths they
+//! normalise, and the checkout's commit history (#2687).
 
 use crate::application::swarm::dto::{FileRow, NewReservation};
 use crate::domain::swarm::value_objects::board_error::BoardError;
@@ -60,4 +60,17 @@ pub trait CheckoutPaths: Send + Sync {
     /// `file must resolve inside the shared checkout` for a path that
     /// resolves outside it, or cannot be resolved.
     fn normalize(&self, path: &str) -> Result<String, BoardError>;
+}
+
+/// The shared checkout's commit history (#2687): whether a submission's
+/// evidence, taken at an earlier commit, may be carried to the commit the
+/// coordinator verifies at. Reading it runs git, an effect behind this
+/// port; the adapter is bound to one checkout.
+pub trait CheckoutHistory: Send + Sync {
+    /// Whether `ancestor` is `descendant` or one of its ancestors, both
+    /// full commit ids. `true` only when git answers that it is: every
+    /// other answer (not an ancestor, a commit the checkout does not hold,
+    /// no repository, git failing or not finishing in time) is `false`,
+    /// so nothing is carried that the history does not confirm.
+    fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool;
 }

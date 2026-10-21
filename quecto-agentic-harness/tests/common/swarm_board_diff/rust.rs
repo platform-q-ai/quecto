@@ -21,6 +21,7 @@ use quecto::domain::swarm::events::telemetry::BoardOpObservation;
 use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use quecto::infrastructure::tools::swarm::swarm_board_dispatch::call;
 use quecto::infrastructure::tools::swarm::swarm_board_ops::{member_arguments, wire_text};
+use quecto::infrastructure::workspace::checkout_history::GitCheckoutHistory;
 use quecto::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 use serde_json::Value;
 
@@ -89,6 +90,7 @@ impl RustBoard {
             clock.clone(),
             Arc::new(CounterIds::default()),
             Arc::new(ResolvedCheckout::new(checkout)),
+            Arc::new(GitCheckoutHistory::new(checkout)),
             log,
         );
         Self { handles, clock }
@@ -108,6 +110,7 @@ impl RustBoard {
             clock.clone(),
             Arc::new(CounterIds(Mutex::new(drawn))),
             Arc::new(ResolvedCheckout::new(checkout)),
+            Arc::new(GitCheckoutHistory::new(checkout)),
         );
         Self { handles, clock }
     }

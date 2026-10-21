@@ -93,6 +93,8 @@ mod catalogue_consumers;
 mod catalogue_inputs_loader;
 #[path = "contracts/catalogue_source.rs"]
 mod catalogue_source;
+#[path = "contracts/checkout_history.rs"]
+mod checkout_history;
 #[path = "contracts/checkout_paths.rs"]
 mod checkout_paths;
 #[path = "contracts/completion_delivery_check.rs"]
