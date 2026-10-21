@@ -11,6 +11,14 @@ use std::path::PathBuf;
 use super::CliFlags;
 use crate::shell::app::app_ordinary_exit::SessionRelaunch;
 
+/// The session of a `--resume=<key>` argument: one word, so any key, one
+/// starting with `-` too.
+pub(super) fn resume_key(arg: &str) -> Option<String> {
+    arg.strip_prefix("--resume=")
+        .filter(|key| !key.is_empty())
+        .map(str::to_string)
+}
+
 /// The arguments that make `parse_flags` give back `flags`.
 pub(super) fn tui_args(flags: &CliFlags) -> Vec<String> {
     let mut args = Vec::new();
@@ -24,8 +32,13 @@ pub(super) fn tui_args(flags: &CliFlags) -> Vec<String> {
     if let Some(config) = &flags.config_path {
         pair("--config", &config.to_string_lossy());
     }
-    if let Some(system) = &flags.system_prompt {
-        pair("--system", system);
+    // The system prompt as the user gave it: a file is re-read, never
+    // passed inline (argument limits, `ps`); a workflow's default prompt
+    // is not the user's and is derived again.
+    match (&flags.system_file, &flags.system_prompt) {
+        (Some(file), _) => pair("--system-file", &file.to_string_lossy()),
+        (None, Some(system)) if flags.system_literal => pair("--system", system),
+        _ => {}
     }
     for tool in &flags.disable_tools {
         pair("--disable-tool", tool);
@@ -37,7 +50,8 @@ pub(super) fn tui_args(flags: &CliFlags) -> Vec<String> {
         pair("--effort", effort);
     }
     if let Some(resume) = &flags.resume {
-        pair("--resume", resume);
+        // One word, so a key starting with `-` is still the key.
+        args.push(format!("--resume={resume}"));
     }
     args.push(
         match flags.persist {

@@ -9,7 +9,7 @@ fn the_command_opens_quecto_there_resuming_the_session() {
     // typed inside.
     assert_eq!(
         open_there_command(Path::new("/work/alpha"), "cli:alpha").as_deref(),
-        Some("cd '/work/alpha' && quecto-tui --resume 'cli:alpha'")
+        Some("cd '/work/alpha' && quecto-tui --resume='cli:alpha'")
     );
     assert_eq!(
         cd_there_command(Path::new("/work/alpha")).as_deref(),
@@ -38,7 +38,7 @@ fn shell_metacharacters_stay_inside_one_quoted_word() {
         assert_eq!(shell_quote(dir), quoted, "{dir}");
         assert_eq!(
             open_there_command(Path::new(dir), "cli:x"),
-            Some(format!("cd {quoted} && quecto-tui --resume 'cli:x'")),
+            Some(format!("cd {quoted} && quecto-tui --resume='cli:x'")),
             "{dir}"
         );
     }
@@ -71,7 +71,7 @@ fn a_path_that_would_not_read_the_way_it_runs_has_no_command() {
 fn the_command_resumes_the_session_there() {
     assert_eq!(
         open_there_command(Path::new("/work/it's"), "cli:foreign").as_deref(),
-        Some("cd '/work/it'\\''s' && quecto-tui --resume 'cli:foreign'")
+        Some("cd '/work/it'\\''s' && quecto-tui --resume='cli:foreign'")
     );
     assert_eq!(
         open_there_command(Path::new("/work"), "cli:a\u{202e}b"),
@@ -80,5 +80,15 @@ fn the_command_resumes_the_session_there() {
     assert_eq!(
         open_there_command(Path::new("/work/a\u{1b}b"), "cli:x"),
         None
+    );
+}
+
+/// #2615 review round 3: the one-word `--resume=` form carries a key that
+/// starts with `-`.
+#[test]
+fn a_key_starting_with_a_dash_stays_the_key() {
+    assert_eq!(
+        open_there_command(Path::new("/work"), "--legacy").as_deref(),
+        Some("cd '/work' && quecto-tui --resume='--legacy'")
     );
 }

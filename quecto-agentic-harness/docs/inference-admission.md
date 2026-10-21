@@ -227,9 +227,10 @@ config) and, when the session cannot rejoin a different policy, answers
 
 A TUI that owns its agent restarts the session by ending that agent as an
 ordinary exit does (persisting first) and starting itself again with the
-flags it ran with plus `--resume <session>` and the session's current `--model` and
+flags it ran with plus `--resume=<session>` and the session's current `--model` and
 `--effort`, so a fresh agent composes against the broker's policy and the
-conversation carries on. It does not relaunch after a termination signal or
+conversation carries on. A system prompt given with `--system-file` is passed
+as that file again (never inline), one given with `--system` as that text. It does not relaunch after a termination signal or
 without a terminal; it prints the `quecto-tui --resume <session>` command to
 run instead. A TUI started with `--no-persist` cannot keep the conversation
 and says to restart it yourself; one attached to an agent it does not end

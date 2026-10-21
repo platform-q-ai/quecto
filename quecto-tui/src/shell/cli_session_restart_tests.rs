@@ -130,3 +130,77 @@ async fn a_startup_with_resume_sends_resume_session() {
         "nothing resumed without the flag"
     );
 }
+
+/// #2615 review round 3: `--resume=<key>` carries a key that starts with
+/// `-`, and the relaunch uses that form.
+#[test]
+fn a_key_starting_with_a_dash_resumes_through_the_one_word_form() {
+    assert_eq!(
+        parse(&["--resume=--legacy"]).resume.as_deref(),
+        Some("--legacy")
+    );
+    assert_eq!(
+        parse(&["--resume=cli:work"]).resume.as_deref(),
+        Some("cli:work")
+    );
+    assert_eq!(
+        parse(&["--resume="]).resume,
+        None,
+        "an empty key resumes nothing"
+    );
+    let flags = relaunch_flags(
+        &parse(&[]),
+        &SessionRelaunch {
+            session_key: "--legacy".into(),
+            model: None,
+            effort: None,
+        },
+    );
+    let args = tui_args(&flags);
+    assert!(args.contains(&"--resume=--legacy".to_string()), "{args:?}");
+    let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+    assert_eq!(parse(&argv).resume.as_deref(), Some("--legacy"));
+}
+
+/// #2615 review round 3: a system prompt from a file is re-read from that
+/// file, never passed inline; one given with `--system` stays inline; a
+/// workflow's default prompt is not passed at all.
+#[test]
+fn the_system_prompt_is_relaunched_as_the_user_gave_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("system.md");
+    std::fs::write(&file, "a long system prompt").unwrap();
+    let from_file = parse(&["--system-file", file.to_str().unwrap()]);
+    assert_eq!(
+        from_file.system_prompt.as_deref(),
+        Some("a long system prompt")
+    );
+    let args = tui_args(&from_file);
+    assert!(args.iter().any(|arg| arg == "--system-file"), "{args:?}");
+    assert!(!args.iter().any(|arg| arg == "--system"), "{args:?}");
+    assert!(
+        !args.iter().any(|arg| arg.contains("long system prompt")),
+        "{args:?}"
+    );
+    let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+    assert_eq!(parse(&argv), from_file);
+    let literal = parse(&["--system", "be brief"]);
+    let args = tui_args(&literal);
+    assert!(
+        args.windows(2).any(|w| w == ["--system", "be brief"]),
+        "{args:?}"
+    );
+    let mut workflow = parse(&["--workflow"]);
+    super::super::apply_workflow_defaults(&mut workflow);
+    assert!(
+        workflow.system_prompt.is_some(),
+        "the workflow's default prompt"
+    );
+    let args = tui_args(&workflow);
+    assert!(
+        !args
+            .iter()
+            .any(|arg| arg == "--system" || arg == "--system-file"),
+        "{args:?}"
+    );
+}

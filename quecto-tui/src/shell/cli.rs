@@ -15,6 +15,9 @@ pub(crate) struct CliFlags {
     pub(crate) workflow_disabled: bool,
     pub(crate) config_path: Option<PathBuf>,
     pub(crate) system_prompt: Option<String>,
+    /// How the user gave the system prompt, for a relaunch (#2615).
+    pub(crate) system_literal: bool,
+    pub(crate) system_file: Option<PathBuf>,
     pub(crate) disable_tools: Vec<String>,
     pub(crate) persist: bool,
     pub(crate) kill_on_exit: bool,
@@ -51,6 +54,8 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
         workflow_disabled: false,
         config_path: None,
         system_prompt: None,
+        system_literal: false,
+        system_file: None,
         disable_tools: Vec::new(),
         persist: true,
         kill_on_exit: true,
@@ -58,7 +63,6 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
         effort: None,
         resume: None,
     };
-    let mut system_literal_seen = false;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -82,19 +86,26 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
                 flags.resume = Some(args[i + 1].clone());
                 i += 2;
             }
+            arg if session_restart::resume_key(arg).is_some() => {
+                flags.resume = session_restart::resume_key(arg);
+                i += 1;
+            }
             flag @ ("--model" | "--effort" | "--resume") => {
                 eprintln!("warning: {flag} requires a value; ignoring it");
                 i += 1;
             }
             "--system" if i + 1 < args.len() => {
                 flags.system_prompt = Some(args[i + 1].clone());
-                system_literal_seen = true;
+                (flags.system_literal, flags.system_file) = (true, None);
                 i += 2;
             }
             "--system-file" if i + 1 < args.len() => {
-                if !system_literal_seen {
+                if !flags.system_literal {
                     match std::fs::read_to_string(&args[i + 1]) {
-                        Ok(content) => flags.system_prompt = Some(content),
+                        Ok(content) => {
+                            flags.system_prompt = Some(content);
+                            flags.system_file = Some(PathBuf::from(&args[i + 1]));
+                        }
                         Err(e) => eprintln!(
                             "quecto-tui: failed to read --system-file '{}': {e}",
                             args[i + 1]

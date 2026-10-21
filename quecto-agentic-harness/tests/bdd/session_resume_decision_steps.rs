@@ -135,7 +135,7 @@ fn carries_command(world: &mut QuectoWorld) {
     let folder = foreign_folder(world);
     assert_eq!(
         data["command"],
-        format!("cd '{folder}' && quecto-tui --resume 'cli:foreign'"),
+        format!("cd '{folder}' && quecto-tui --resume='cli:foreign'"),
         "quecto-tui resumes it there: {data}"
     );
     assert_eq!(data["resume"], "/resume cli:foreign", "{data}");
@@ -216,7 +216,7 @@ fn notice_titled(world: &mut QuectoWorld, title: String) {
             "{columns}x{rows}: {command:?} whole: {frame}"
         );
         // #2615: the command itself resumes the session there.
-        assert!(command.ends_with("--resume 'cli:foreign'"), "{command}");
+        assert!(command.ends_with("--resume='cli:foreign'"), "{command}");
         let bottom = frame.lines().position(|l| l.contains('└'));
         let footer = frame.lines().position(|l| l.contains(NOTICE_OPEN));
         assert!(

@@ -1,10 +1,10 @@
 //! The shell command that opens quecto in a session's folder, resuming it (#2045, #2615).
 
-/// `cd '<dir>' && quecto-tui --resume '<key>'`, or `None` if either would not read as it runs.
+/// `cd '<dir>' && quecto-tui --resume='<key>'`, or `None` if either would not read as it runs.
 pub fn open_there_command(dir: &std::path::Path, session: &str) -> Option<String> {
     let cd = cd_there_command(dir).filter(|_| reads_as_it_runs(session))?;
     let key = shell_quote(session);
-    Some(format!("{cd} && quecto-tui --resume {key}"))
+    Some(format!("{cd} && quecto-tui --resume={key}"))
 }
 
 /// `cd '<dir>'` — or `None` when the command would not read the way it runs:

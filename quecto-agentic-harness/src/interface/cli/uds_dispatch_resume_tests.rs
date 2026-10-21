@@ -45,7 +45,7 @@ fn only_a_session_that_lives_elsewhere_carries_a_command_and_a_resume_step() {
     ));
     assert_eq!(
         event["data"]["command"],
-        "cd '/work/plain' && quecto-tui --resume 'cli:foreign'"
+        "cd '/work/plain' && quecto-tui --resume='cli:foreign'"
     );
     assert_eq!(event["data"]["resume"], "/resume cli:foreign");
 }
@@ -70,7 +70,7 @@ fn a_cross_folder_obstacle_is_a_plain_typed_refusal_with_a_command() {
         serde_json::json!({"outcome":"refused","code":"belongs_elsewhere","kind":"cross_folder",
             "session":"cli:foreign","sessionKey":"cli:foreign",
             "executionPath":"/work/else where","detail":"bell\u{fffd}",
-            "command":"cd '/work/else where' && quecto-tui --resume 'cli:foreign'","resume":"/resume cli:foreign"})
+            "command":"cd '/work/else where' && quecto-tui --resume='cli:foreign'","resume":"/resume cli:foreign"})
     );
 }
 #[test]

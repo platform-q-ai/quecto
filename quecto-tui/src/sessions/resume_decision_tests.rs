@@ -303,14 +303,14 @@ fn every_key_it_answers_only_closes_it() {
 fn a_command_that_resumes_there_is_shown_as_one_step() {
     let mut refused = elsewhere();
     refused.command = Some(format!(
-        "cd '{FOLDER}' && quecto-tui --resume 'cli:foreign'"
+        "cd '{FOLDER}' && quecto-tui --resume='cli:foreign'"
     ));
     let mut dialog = ResumeDecisionDialog::new(refused, None);
     let lines = lines(&mut dialog, 120, 40);
     let shown = lines.join("\n");
     assert!(shown.contains("Open it there:"), "{shown}");
     assert!(
-        unwrapped(&lines).contains("quecto-tui --resume 'cli:foreign'"),
+        unwrapped(&lines).contains("quecto-tui --resume='cli:foreign'"),
         "{shown}"
     );
     assert!(!shown.contains("then type:"), "{shown}");

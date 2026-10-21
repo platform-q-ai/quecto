@@ -141,7 +141,7 @@ impl ResumeDecisionDialog {
 }
 
 /// What a command that opens quecto resuming the session contains.
-const RESUMING: &str = " && quecto-tui --resume ";
+const RESUMING: &str = " && quecto-tui --resume=";
 
 fn title(code: ResumeRefusalCode) -> &'static str {
     match code {
