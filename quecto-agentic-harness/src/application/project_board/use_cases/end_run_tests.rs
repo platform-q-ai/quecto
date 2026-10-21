@@ -10,7 +10,7 @@ use crate::application::project_board::fold_back::{SwarmItemState, SwarmRunView}
 use crate::application::project_board::ports::BoardWrite;
 use crate::application::project_board::use_cases::ChangeBoardTask;
 use crate::application::project_board::use_cases::fixtures_tests::{
-    SetClock, at, board, fields, person, slug,
+    Remote, SetClock, at, board, fields, person, slug,
 };
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
@@ -56,6 +56,7 @@ fn ender(store: &MemoryBoardStore, who: &str, when: &str) -> EndRun {
         Arc::new(store.client_as(person(who))),
         SetClock::at(when),
         Arc::new(MarkdownTextCells),
+        Remote::holding_all(),
         None,
         None,
     )
@@ -75,6 +76,10 @@ impl SwarmRunReports for Kept {
         }
     }
 
+    fn left_run(&self, _: &Slug, _: u32) -> Option<SwarmRunView> {
+        None
+    }
+
     fn recorded(&self, task: &Slug, run: u32) {
         assert_eq!((task.as_str(), run), ("board-store", 1), "the run kept");
         assert!(self.0.lock().unwrap().take().is_some(), "recorded once");
@@ -88,6 +93,7 @@ fn ender_keeping(store: &MemoryBoardStore, kept: Option<SwarmRunView>) -> EndRun
         Arc::new(store.client_as(person("Ada"))),
         SetClock::at("10:30:00"),
         Arc::new(MarkdownTextCells),
+        Remote::holding_all(),
         None,
         Some(Arc::new(Kept(std::sync::Mutex::new(kept)))),
     )
@@ -437,6 +443,7 @@ fn a_run_whose_swarm_still_runs_is_not_ended() {
             Arc::new(store.client_as(person("Ada"))),
             SetClock::at("10:30:00"),
             Arc::new(MarkdownTextCells),
+            Remote::holding_all(),
             Some(Arc::new(Running(running))),
             None,
         )
@@ -475,3 +482,12 @@ fn a_front_end_that_sees_no_swarm_ends_the_run_unchecked() {
     assert_eq!(LivenessCheck::NotChecked.as_str(), "not_checked");
     assert_eq!(LivenessCheck::Checked.as_str(), "checked");
 }
+
+#[path = "end_run_pushed_tests.rs"]
+mod pushed;
+
+#[path = "end_run_lost_tests.rs"]
+mod lost;
+
+#[path = "end_run_left_tests.rs"]
+mod left;

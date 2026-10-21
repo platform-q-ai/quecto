@@ -48,7 +48,8 @@ Client {
 Agent => "agent" ,
 PocketRelay => "pocket_relay" ,
 Cli => "cli" ,
-Other => "other"
+Other => "other" ,
+SessionEnd => "session_end" ,
 }
 ) ;
 kinds ! (

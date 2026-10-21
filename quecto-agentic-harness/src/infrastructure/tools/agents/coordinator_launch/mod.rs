@@ -33,6 +33,7 @@ use super::subagent_registry::SubagentRegistry;
 use super::subagent_status::SubagentStatus;
 use crate::application::project_board::ports::{
     CoordinatorLaunch, CoordinatorRequest, LaunchRefused, LaunchedCoordinator, RunLiveness,
+    StartedRuns,
 };
 use crate::application::tools::ports::Tool;
 use crate::domain::agents::services::subagent::{MAX_AGENT_ID_CHARS, validate_agent_id_format};
@@ -40,6 +41,7 @@ use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::sessions::entities::session::SubagentLiveness;
 use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
+pub use delivery::{OpenRemote, RemoteCompletionDelivery, register_board_repository};
 pub use kept_boards::{KeptRunReports, KeptSwarmBoards, MAX_KEPT};
 #[cfg(test)]
 pub(crate) use run_report::swarm_run_view;
@@ -65,6 +67,8 @@ pub struct SpawnCoordinatorLauncher {
     subagents: SubagentRegistry,
     timeout: Duration,
     kill_timeout: Duration,
+    /// The runs this launcher's launches started, oldest first (#2655).
+    started: std::sync::Mutex<Vec<(Slug, u32)>>,
 }
 
 impl SpawnCoordinatorLauncher {
@@ -81,6 +85,7 @@ impl SpawnCoordinatorLauncher {
             subagents,
             timeout: LAUNCH_TIMEOUT,
             kill_timeout: KILL_TIMEOUT,
+            started: std::sync::Mutex::default(),
         }
     }
 
@@ -233,7 +238,18 @@ impl CoordinatorLaunch for SpawnCoordinatorLauncher {
         });
         match waited {
             Waited::Answered(Ok(result)) => match result.is_error {
-                false => self.running(&runtime, result, cancelled),
+                false => {
+                    let launched = self.running(&runtime, result, cancelled);
+                    // Only a coordinator running in its container started
+                    // the run: a refusal stopped what it launched.
+                    if launched.is_ok() {
+                        self.started
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push((request.task.clone(), request.run));
+                    }
+                    launched
+                }
                 true => Err(LaunchRefused::because(result.content)),
             },
             Waited::Answered(Err(error)) => Err(LaunchRefused::because(error.to_string())),
@@ -256,6 +272,15 @@ impl RunLiveness for SpawnCoordinatorLauncher {
             .iter()
             .find(|(key, entry)| entry.effective_display_name(key) == label && runs(entry))
             .map(|(key, _)| key.clone())
+    }
+}
+
+impl StartedRuns for SpawnCoordinatorLauncher {
+    fn started(&self) -> Vec<(Slug, u32)> {
+        self.started
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -347,6 +372,7 @@ fn label(task: &str, run: u32) -> String {
     label
 }
 
+mod delivery;
 mod kept_boards;
 mod run_report;
 mod spawn_permit;

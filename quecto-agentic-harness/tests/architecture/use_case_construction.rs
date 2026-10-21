@@ -98,6 +98,7 @@ const USE_CASES: &[&str] = &[
     "KillEnvironment",
     "ListContainerConfigs",
     "ListEnvironmentsQuery",
+    "ListLeftRuns",
     "ReadSwarmBoard",
     "ListFileOwners",
     "ListModels",

@@ -13,7 +13,7 @@ use super::recording::BoardCall;
 use super::request::{op_of, parse};
 use super::{read, run_recorded_with, summaries_refusal};
 use crate::application::project_board::operations::ListSummaries;
-use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness};
+use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness, StartedRuns};
 use crate::application::project_board::use_cases::RunBoardOperation;
 
 /// What a request does with the board.
@@ -49,10 +49,11 @@ pub struct ProjectBoardEnvironment {
 }
 
 /// A session's swarms as a front end reaches them (S4c): it launches a
-/// started task's coordinator, and sees whether a run's still runs.
-pub trait SessionSwarms: CoordinatorLaunch + RunLiveness {}
+/// started task's coordinator, sees whether a run's still runs, and names
+/// the runs it started (#2655).
+pub trait SessionSwarms: CoordinatorLaunch + RunLiveness + StartedRuns {}
 
-impl<T: CoordinatorLaunch + RunLiveness> SessionSwarms for T {}
+impl<T: CoordinatorLaunch + RunLiveness + StartedRuns> SessionSwarms for T {}
 
 /// A front end's coordinator launcher (S4c).
 pub type Launcher = std::sync::Arc<dyn SessionSwarms>;
@@ -99,6 +100,12 @@ impl BoardSite {
         launcher: Launcher,
         spawned_in: &crate::domain::environments::entities::environment_registry::EnvironmentRegistry,
     ) -> Self {
+        // The one authority on the session's board repository, which its
+        // teardown judges a succeeded board run's completion against (#2666).
+        crate::infrastructure::tools::agents::coordinator_launch::register_board_repository(
+            spawned_in.session(),
+            &repo,
+        );
         Self {
             repo,
             remote: "origin".into(),
@@ -169,18 +176,11 @@ pub fn answer_with(
             "the project board capability is not composed",
         );
     };
-    let environment = ProjectBoardEnvironment {
-        repo: site.repo.clone(),
-        remote: site.remote.clone(),
-        access: match parsed.writes() {
-            true => Access::Write,
-            false => Access::Read,
-        },
-        vars: std::env::vars_os().collect(),
-        cancelled,
-        launcher: site.launcher.clone(),
-        swarm_session: site.swarm_session.clone(),
+    let access = match parsed.writes() {
+        true => Access::Write,
+        false => Access::Read,
     };
+    let environment = environment_of(site, access, cancelled);
     match call.built(|| build(&environment)) {
         // The one entry point every front end's request goes through.
         Ok(handles) => run_recorded_with(&handles.operations, text, summaries, call),
@@ -190,5 +190,43 @@ pub fn answer_with(
         Err(BuildError::Unavailable(why)) => {
             call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::StoreUnavailable, &why)
         }
+    }
+}
+
+/// What composition is given to build `site`'s board for `access`.
+fn environment_of(
+    site: &BoardSite,
+    access: Access,
+    cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> ProjectBoardEnvironment {
+    ProjectBoardEnvironment {
+        repo: site.repo.clone(),
+        remote: site.remote.clone(),
+        access,
+        vars: std::env::vars_os().collect(),
+        cancelled,
+        launcher: site.launcher.clone(),
+        swarm_session: site.swarm_session.clone(),
+    }
+}
+
+/// The ends `site`'s session owes as it ends (#2655): each run its starts
+/// launched that the board still shows open. None when the board is not
+/// composed; why, when it cannot be read.
+///
+/// # Errors
+/// The board could not be built or read: what it said.
+pub fn left_runs(
+    site: &BoardSite,
+) -> Result<Vec<crate::application::project_board::dto::RunEnd>, String> {
+    let Some(build) = site.build else {
+        return Ok(vec![]);
+    };
+    match build(&environment_of(site, Access::Read, None)) {
+        Ok(handles) => handles
+            .operations
+            .left_runs()
+            .map_err(|error| error.to_string()),
+        Err(BuildError::NoCommitter(why) | BuildError::Unavailable(why)) => Err(why),
     }
 }

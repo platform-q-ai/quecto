@@ -5,7 +5,8 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Command;
 
-fn sh(dir: &Path, args: &[&str]) {
+/// Test-side git in `dir`; its trimmed output.
+pub(super) fn sh(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .current_dir(dir)
         .args(args)
@@ -28,6 +29,9 @@ fn sh(dir: &Path, args: &[&str]) {
         "git {args:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    String::from_utf8_lossy(&output.stdout)
+        .trim_end()
+        .to_string()
 }
 
 /// A clone of a bare remote whose committer is configured in the clone.
@@ -682,4 +686,10 @@ fn a_composed_start_asks_whether_its_coordinator_still_runs() {
         ),
         "{started}"
     );
+}
+
+impl crate::application::project_board::ports::StartedRuns for FailedButRunning {
+    fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
+        vec![]
+    }
 }

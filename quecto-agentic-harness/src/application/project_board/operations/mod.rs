@@ -17,8 +17,8 @@ use super::ports::{BoardClock, BoardHead, BoardListings, KeepCopy};
 use super::task_summary::Listed;
 use super::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
-    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ProposePlan, QueryBoard, StartBoardTask,
-    UpdateDraftTask,
+    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ListLeftRuns, ProposePlan, QueryBoard,
+    StartBoardTask, UpdateDraftTask,
 };
 use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::task::Task;
@@ -263,6 +263,9 @@ pub struct BoardOperationParts {
     pub discard_plan: DiscardPlan,
     pub end_run: EndRun,
     pub start: StartBoardTask,
+    /// The runs this front end's starts launched that it would leave open
+    /// as its session ends (#2655); `None` for one that launches none.
+    pub left_runs: Option<ListLeftRuns>,
     pub clear: ClearSetAside,
     pub complete: CompleteMergedTask,
 }

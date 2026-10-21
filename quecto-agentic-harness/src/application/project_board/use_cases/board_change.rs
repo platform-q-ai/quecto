@@ -60,7 +60,7 @@ impl From<&When> for Moment {
 
 /// This machine's time, refused when it runs more than
 /// [`CLOCK_AHEAD_SECONDS`] ahead of the clock's outside reference.
-fn checked_now(clock: &dyn BoardClock) -> Result<When, ProjectBoardError> {
+pub(super) fn checked_now(clock: &dyn BoardClock) -> Result<When, ProjectBoardError> {
     let now = clock.now()?;
     let Some(reference) = clock.reference() else {
         return Ok(When { now, latest: None });

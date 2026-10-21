@@ -88,6 +88,12 @@ pub enum BoardRuleError {
         items: Vec<Slug>,
         report: SwarmReport,
     },
+    /// The run would end as succeeded while `revisions` of the commits its
+    /// task items' evidence names (by full id or a 12-digit prefix) are
+    /// not on the board's remote, on a branch or tag there (#2666): its
+    /// work never left the swarm's container, so a success is not
+    /// recorded over it. Evidence that names no commit is not counted.
+    NotPushed { run: u32, revisions: usize },
     /// The change was stamped by a clock running ahead of the outside
     /// time: building on it would drag the board ahead too.
     ChangeAhead { change: u32, updated: Timestamp },
@@ -290,6 +296,13 @@ impl fmt::Display for BoardRuleError {
                 "run {run} cannot end as succeeded: no board of its swarm was kept to show its \
                  task items done (the coordinator was not torn down here, or this session \
                  restarted); ask the user whether the work was done before ending it"
+            ),
+            Self::NotPushed { run, revisions } => write!(
+                f,
+                "run {run} cannot end as succeeded: {revisions} commit(s) its evidence names \
+                 are on no branch or tag of the board's remote, so its work has not left the \
+                 swarm's container; push them and call end_run again, or, if they went with \
+                 the container, end it as \"failed\" and tell the user"
             ),
             Self::ChangeAhead { change, updated } => write!(
                 f,
