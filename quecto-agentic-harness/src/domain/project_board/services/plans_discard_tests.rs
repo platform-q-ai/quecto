@@ -88,14 +88,7 @@ fn a_plans_change_never_stamps_before_its_tasks_last_change() {
         ..PlanContent::default()
     };
     let versions = [plan(1, PlanState::Accepted), draft.clone()];
-    let proposed = propose_at(
-        &task,
-        &versions,
-        content.clone(),
-        &bob,
-        &when(&now.now.clone()),
-    )
-    .unwrap();
+    let proposed = propose_at(&task, &versions, content.clone(), &bob, &when(&now.now)).unwrap();
     let edited = edit_draft(
         DraftOf {
             task: &task,
@@ -156,7 +149,7 @@ fn a_plans_change_never_stamps_before_another_plan_of_its_task() {
         &versions,
         PlanContent::default(),
         &bob,
-        &when(&now.now.clone()),
+        &when(&now.now),
     )
     .unwrap();
     assert_eq!(
