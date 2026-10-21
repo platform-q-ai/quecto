@@ -42,15 +42,17 @@ impl AuthorityAdmin for SocketAuthorityAdmin {
                     reason: e.to_string(),
                 }
             })?;
-            let status = admin
-                .inspect()
-                .await
-                .map_err(|e| AuthorityAdminError::Failed {
-                    directory: directory.to_path_buf(),
-                    reason: e.to_string(),
-                })?;
+            let (status, on_demand) =
+                admin
+                    .status()
+                    .await
+                    .map_err(|e| AuthorityAdminError::Failed {
+                        directory: directory.to_path_buf(),
+                        reason: e.to_string(),
+                    })?;
             Ok(AuthorityReport {
                 directory: directory.to_path_buf(),
+                on_demand,
                 epoch: status.epoch,
                 journal_healthy: status.journal_healthy,
                 live_scopes: status.live_scopes,

@@ -19,6 +19,8 @@ pub struct AuthorityGroupReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityReport {
     pub directory: PathBuf,
+    /// Started on demand: it stops itself when idle (#2615, ADR-0032).
+    pub on_demand: bool,
     pub epoch: u64,
     pub journal_healthy: bool,
     pub live_scopes: usize,

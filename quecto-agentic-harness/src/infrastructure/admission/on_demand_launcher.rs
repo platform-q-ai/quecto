@@ -15,21 +15,61 @@ use crate::application::admission::ports::{
     AuthorityLaunch, AuthorityLauncher, LaunchState, LaunchedAuthority,
 };
 use crate::infrastructure::processes::local::detached_process::{
-    DetachedCommand, DetachedProcess, Tether, spawn_detached,
+    DetachedCommand, DetachedProcess, Scope, Tether, spawn_detached,
 };
 
 /// The only program this launcher starts: the quecto CLI itself.
 const BROKER_PROGRAM: &str = "quecto";
 /// The broker's log, in the admission directory.
 const LOG_FILE: &str = "broker.log";
+/// Resolved on the broker's `PATH`; absent or without a user manager, the
+/// broker starts plainly in its own session.
+const SYSTEMD_RUN: &str = "systemd-run";
 /// `admission-broker run`'s exit status when another broker holds the lock.
 const BUSY_EXIT: i32 = 3;
+
+/// The variables a broker inherits from its launcher, by exact name; `LC_*`
+/// is matched by prefix. Nothing else reaches it: no provider keys or
+/// tokens (readable in its `/proc/<pid>/environ` for as long as it runs),
+/// and no `RUST_LOG`, which it gets fixed at [`BROKER_LOG_LEVEL`]. `PATH`,
+/// `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` also let
+/// `systemd-run --user` reach the user manager.
+const INHERITED: &[&str] = &[
+    "PATH",
+    "HOME",
+    "XDG_RUNTIME_DIR",
+    "XDG_CONFIG_HOME",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "LANG",
+    "TZ",
+];
+/// The broker logs warnings only, so its log grows on transitions alone.
+const BROKER_LOG_LEVEL: &str = "warn";
+
+/// The broker's whole environment: the allowlisted variables of `parent`,
+/// `QUECTO_BASE_DIR` set to the launch's base directory, and `RUST_LOG`.
+pub fn broker_environment(
+    parent: impl IntoIterator<Item = (OsString, OsString)>,
+    base_dir: &Path,
+) -> Vec<(OsString, OsString)> {
+    let mut env: Vec<(OsString, OsString)> = parent
+        .into_iter()
+        .filter(|(name, _)| {
+            name.to_str()
+                .is_some_and(|name| INHERITED.contains(&name) || name.starts_with("LC_"))
+        })
+        .collect();
+    env.push(("QUECTO_BASE_DIR".into(), base_dir.as_os_str().to_owned()));
+    env.push(("RUST_LOG".into(), BROKER_LOG_LEVEL.into()));
+    env
+}
 
 /// Starts brokers from the quecto binary at `program`.
 #[derive(Debug, Clone)]
 pub struct DetachedAuthorityLauncher {
     program: Result<PathBuf, String>,
     tether: Tether,
+    scope: Scope,
 }
 
 impl DetachedAuthorityLauncher {
@@ -38,6 +78,7 @@ impl DetachedAuthorityLauncher {
         Self {
             program: Ok(program),
             tether: Tether::Detached,
+            scope: Scope::SystemdRun(PathBuf::from(SYSTEMD_RUN)),
         }
     }
 
@@ -48,6 +89,7 @@ impl DetachedAuthorityLauncher {
             program: std::env::current_exe()
                 .map_err(|error| format!("cannot resolve the quecto binary: {error}")),
             tether: Tether::Detached,
+            scope: Scope::SystemdRun(PathBuf::from(SYSTEMD_RUN)),
         }
     }
 
@@ -57,7 +99,24 @@ impl DetachedAuthorityLauncher {
         Self {
             program: Ok(program),
             tether: Tether::DiesWithLaunchingThread,
+            scope: Scope::None,
         }
+    }
+
+    /// Start plainly, never through `systemd-run` (tests: a fake broker
+    /// never touches the real user manager).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn without_scope(mut self) -> Self {
+        self.scope = Scope::None;
+        self
+    }
+
+    /// Leave the launcher's cgroup through `runner` instead of `systemd-run`
+    /// (tests stand a script in for it).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_scope_runner(mut self, runner: PathBuf) -> Self {
+        self.scope = Scope::SystemdRun(runner);
+        self
     }
 
     /// Where a broker started for `directory` logs.
@@ -105,9 +164,10 @@ impl AuthorityLauncher for DetachedAuthorityLauncher {
         let process = spawn_detached(&DetachedCommand {
             program,
             args: args.to_vec(),
-            env: vec![("QUECTO_BASE_DIR".into(), launch.base_dir.clone().into())],
+            env: broker_environment(std::env::vars_os(), &launch.base_dir),
             log: log.clone(),
             tether: self.tether,
+            scope: self.scope.clone(),
         })?;
         Ok(Box::new(LaunchedBroker { process, log }))
     }

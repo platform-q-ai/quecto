@@ -39,7 +39,7 @@ pub fn build_admission_handles() -> AdmissionHandles {
     let launcher = Arc::new(DetachedAuthorityLauncher::for_current_exe());
     let negotiate = Arc::new(NegotiateAuthority::new(launcher.clone()));
     AdmissionHandles {
-        inspect: Arc::new(InspectAuthority::new(admin.clone())),
+        inspect: Arc::new(InspectAuthority::new(admin.clone(), manager.clone())),
         reset: Arc::new(ResetAuthority::new(admin.clone())),
         install: Arc::new(InstallAuthorityService::new(manager.clone())),
         restart: Arc::new(RestartAuthority::new(

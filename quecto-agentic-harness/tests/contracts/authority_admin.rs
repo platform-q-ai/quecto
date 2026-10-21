@@ -71,6 +71,7 @@ fn inspect_and_reset_address_the_running_authority_by_directory() {
     assert_eq!(report.epoch, 1);
     assert_eq!(report.live_scopes, 0);
     assert!(report.groups.contains_key("g"));
+    assert!(!report.on_demand, "an always-on authority");
 
     let reset = admin.reset(&directory).unwrap();
     assert_eq!(reset.directory, directory);
@@ -111,5 +112,29 @@ fn stop_asks_the_running_authority_to_stop() {
         reason,
         quecto::domain::admission::value_objects::authority_idle::AuthorityStop::Requested
     );
+    rt.block_on(server.shutdown());
+}
+
+/// #2615 review: an authority started on demand says so to `status`.
+#[test]
+fn an_on_demand_authority_reports_itself_as_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let directory = tmp.path().join("authority");
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let server = rt
+        .block_on(
+            quecto::composition::admission::start_authority_stopping_when_idle(
+                AuthorityDirectory::open(&directory).unwrap(),
+                proposal(),
+                std::time::Duration::from_secs(3600),
+            ),
+        )
+        .unwrap();
+    let report = SocketAuthorityAdmin::new().inspect(&directory).unwrap();
+    assert!(report.on_demand);
     rt.block_on(server.shutdown());
 }

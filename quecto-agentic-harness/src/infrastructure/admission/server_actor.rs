@@ -138,7 +138,10 @@ impl Actor {
         let sleep = tokio::time::sleep_until(Instant::now().into());
         tokio::pin!(sleep);
         loop {
+            // Biased: a command already waiting (a client just connecting)
+            // is served before a timer turn that might find the broker idle.
             tokio::select! {
+                biased;
                 _ = shutdown.changed() => break,
                 command = rx.recv() => match command {
                     Some(command) => self.handle(command),
@@ -146,7 +149,13 @@ impl Actor {
                 },
                 _ = &mut sleep => {}
             }
-            let wake = self.settle();
+            let mut wake = self.settle();
+            if self.stopping == Some(AuthorityStop::Idle) && self.drain_pending(&mut rx) {
+                // Something arrived as the idle stop was decided (#2615):
+                // decide again with it served.
+                self.stopping = None;
+                wake = self.settle();
+            }
             if let Some(reason) = self.stopping {
                 // Stopped in the same turn that decided it: nothing that
                 // arrives after this decision is served or granted.
@@ -167,6 +176,17 @@ impl Actor {
         {
             tracing::warn!(?error, "admission ledger not made durable at shutdown");
         }
+    }
+
+    /// Serve every command already waiting, without waiting for more;
+    /// `true` when there was any.
+    fn drain_pending(&mut self, rx: &mut mpsc::UnboundedReceiver<Command>) -> bool {
+        let mut drained = false;
+        while let Ok(command) = rx.try_recv() {
+            self.handle(command);
+            drained = true;
+        }
+        drained
     }
 
     fn handle(&mut self, command: Command) {
@@ -314,7 +334,10 @@ impl Actor {
             Op::Inspect | Op::Reset | Op::Stop if role != Role::Admin => {
                 Err(AuthorityError::Unauthorized)
             }
-            Op::Inspect => Ok(status_body(&self.authority.inspect(now))),
+            Op::Inspect => Ok(status_body(
+                &self.authority.inspect(now),
+                matches!(self.lifetime, AuthorityLifetime::StopWhenIdle(_)),
+            )),
             Op::Reset => self.reset(now),
             Op::Stop => {
                 // Answered now; stops once the asker has gone (#2615).

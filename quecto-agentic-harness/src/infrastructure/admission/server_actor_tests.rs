@@ -182,3 +182,47 @@ fn a_requested_stop_waits_for_its_asker_to_leave() {
     actor.handle(super::Command::Closed { session: 7 });
     assert_eq!(actor.stopping, Some(AuthorityStop::Requested));
 }
+
+/// #2615 review: a client that connects as the idle stop is decided is
+/// served first, and its open connection holds the broker.
+#[test]
+fn a_connection_pending_at_the_idle_stop_keeps_the_broker_serving() {
+    use crate::domain::admission::value_objects::authority_idle::{AuthorityLifetime, IdleWatch};
+    use crate::infrastructure::admission::protocol::Role;
+    let proposal = proposal();
+    let (stopped, _watch) = tokio::sync::watch::channel(None);
+    let mut actor = Actor::new(
+        AdmissionAuthority::new(1, proposal.policy.clone(), RandomSecretSource).unwrap(),
+        memory_use_cases(),
+        Clock::starting_now(),
+        ProposalWire::from(&proposal),
+        "owner".into(),
+    )
+    .with_lifetime(
+        AuthorityLifetime::StopWhenIdle(IdleWatch::new(1).unwrap()),
+        stopped,
+    );
+    actor.settle();
+    std::thread::sleep(Duration::from_millis(5));
+    actor.settle();
+    assert_eq!(
+        actor.stopping,
+        Some(AuthorityStop::Idle),
+        "idle past its period: the stop is decided"
+    );
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (notices, _notices) = tokio::sync::mpsc::unbounded_channel();
+    let (close, _closed) = tokio::sync::oneshot::channel();
+    tx.send(super::Command::Open {
+        session: 1,
+        role: Role::Client,
+        notices,
+        close,
+    })
+    .unwrap();
+    assert!(actor.drain_pending(&mut rx));
+    actor.stopping = None;
+    actor.settle();
+    assert_eq!(actor.stopping, None, "the open connection holds it");
+    assert!(!actor.drain_pending(&mut rx), "nothing more waiting");
+}
