@@ -2129,12 +2129,13 @@
       "op": "move",
       "error": {
         "code": "rule",
-        "message": "tasks it depends on are not done yet: dep-a; it is claimed or started once each is done or archived",
+        "message": "the task depends on tasks not done yet: dep-a; it can be claimed or started once each is done or archived",
         "rule": {
           "code": "dependency_not_done",
           "tasks": [
             "dep-a"
-          ]
+          ],
+          "missing": []
         }
       }
     }

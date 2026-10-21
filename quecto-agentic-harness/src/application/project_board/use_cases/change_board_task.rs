@@ -19,7 +19,7 @@ use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::changes::Linked;
 use crate::domain::project_board::services::claims::{claim_facts, renew, take_over};
 use crate::domain::project_board::services::pull_requests::{add_pr, remove_pr};
-use crate::domain::project_board::services::transitions::{move_reads, move_task, relations_allow};
+use crate::domain::project_board::services::transitions::{move_reads, move_task};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 
@@ -167,8 +167,6 @@ fn apply(
         BoardOp::TakeOver => take_over(task, actor, now),
         BoardOp::Move(to) => {
             let reads = move_reads(task, *to, actor, now)?;
-            // The tasks it relates to may hold the move back (#2661).
-            relations_allow(task, *to, &board.tasks)?;
             let runs = match reads.runs {
                 true => owned(board_view::runs_of(board, id)?),
                 false => vec![],
@@ -177,7 +175,13 @@ fn apply(
                 true => owned(board_view::changes_of(board, id)?),
                 false => vec![],
             };
-            move_task(task, *to, actor, &runs, &changes, now)
+            // The tasks it relates to may hold the move back (#2661); a
+            // task file set aside may be a child an archive waits for.
+            if *to == crate::domain::project_board::value_objects::vocabulary::TaskStatus::Archived
+            {
+                board_view::tasks_clear(board)?;
+            }
+            move_task(task, *to, actor, (&runs, &changes), &board.tasks, now)
         }
         BoardOp::AddPr(pr) => {
             let changes = owned(board_view::all_changes(board)?);

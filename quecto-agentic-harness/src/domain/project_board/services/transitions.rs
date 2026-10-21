@@ -111,16 +111,17 @@ pub fn move_reads(
     })
 }
 
-/// `task` moved to `to` by `actor` at `now`, if the table allows it and
-/// its `runs` and `changes` (all of them, as the board holds them) let it
-/// leave. Only those [`move_reads`] names count: a caller may leave the
-/// rest empty.
+/// `task` moved to `to` by `actor` at `now`, if the table allows it, its
+/// `runs` and `changes` (all of them, as the board holds them) let it
+/// leave, and the `tasks` it relates to (every task the board holds) let
+/// it move ([`relations_allow`], #2661). Only the runs and changes
+/// [`move_reads`] names count: a caller may leave the rest empty.
 pub fn move_task(
     task: &Task,
     to: TaskStatus,
     actor: &Identity,
-    runs: &[Run],
-    changes: &[Change],
+    (runs, changes): (&[Run], &[Change]),
+    tasks: &[Task],
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
     let effect = allowed(task, to, actor, now)?;
@@ -132,6 +133,7 @@ pub fn move_task(
         return Err(BoardRuleError::ChangesLinked(linked));
     }
     may_move_with(task, runs, to)?;
+    relations_allow(task, to, tasks)?;
     let at = stamp(task, now)?;
     let mut next = task.fields().clone();
     next.status = to;
@@ -172,15 +174,17 @@ pub fn relations_allow(task: &Task, to: TaskStatus, tasks: &[Task]) -> Result<()
     };
     match to {
         Claimed => {
-            let undone: Vec<Slug> = fields
-                .depends_on
-                .iter()
-                .filter(|id| !status_of(id).is_some_and(TaskStatus::releases_dependents))
-                .cloned()
-                .collect();
-            match undone.as_slice() {
-                [] => Ok(()),
-                [_, ..] => Err(BoardRuleError::DependencyNotDone(undone)),
+            let (mut undone, mut missing) = (vec![], vec![]);
+            for id in &fields.depends_on {
+                match status_of(id) {
+                    Some(status) if status.releases_dependents() => {}
+                    Some(_) => undone.push(id.clone()),
+                    None => missing.push(id.clone()),
+                }
+            }
+            match (undone.as_slice(), missing.as_slice()) {
+                ([], []) => Ok(()),
+                (_, _) => Err(BoardRuleError::DependencyNotDone { undone, missing }),
             }
         }
         Archived => {

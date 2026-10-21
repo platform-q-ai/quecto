@@ -58,16 +58,6 @@ pub struct CompleteMergedTask {
 }
 
 impl CompleteMergedTask {
-    /// # Errors
-    /// The store writes as an invalid identity.
-    pub fn new(
-        store: Arc<dyn ProjectBoardStore>,
-        clock: Arc<dyn BoardClock>,
-        prs: Arc<dyn PullRequestStates>,
-    ) -> Result<Self, ProjectBoardError> {
-        Self::reading(store, clock, Ok(prs))
-    }
-
     /// A completion reading `prs`, or with none, `prs`'s reason: then a
     /// task that links pull requests is refused as `no_pull_request_host`,
     /// and any other is judged by the rule alone (#2658).

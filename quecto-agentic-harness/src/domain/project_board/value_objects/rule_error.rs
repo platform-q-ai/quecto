@@ -163,7 +163,12 @@ pub enum BoardRuleError {
     Superseded { by: Vec<Slug> },
     /// These tasks the task depends on are not done or archived (or not on
     /// the board): it is claimed or started only once each is (#2661).
-    DependencyNotDone(Vec<Slug>),
+    DependencyNotDone {
+        /// On the board, not done or archived.
+        undone: Vec<Slug>,
+        /// Not on the board, or set aside.
+        missing: Vec<Slug>,
+    },
     /// These child tasks of the task are held (claimed, in progress, in
     /// review or blocked): it is archived only once none is (#2661).
     ChildrenActive(Vec<Slug>),
@@ -344,7 +349,10 @@ impl fmt::Display for BoardRuleError {
                 write!(f, "a {} task cannot be taken over", status.as_str())
             }
             Self::AlreadyHolder => f.write_str("the holder renews rather than takes over"),
-            Self::NoPrs => f.write_str("the task links no pull request"),
+            Self::NoPrs => f.write_str(
+                "the task links no pull request; its holder finishes it with move(task, to done) \
+                 from review",
+            ),
             Self::PrsUnmerged(open) => write!(f, "pull requests {open:?} are not merged"),
             Self::PrsLinked(prs) => write!(
                 f,
@@ -367,13 +375,29 @@ impl fmt::Display for BoardRuleError {
                     by.join(", ")
                 )
             }
-            Self::DependencyNotDone(tasks) => {
-                let tasks: Vec<&str> = tasks.iter().map(Slug::as_str).collect();
+            Self::DependencyNotDone { undone, missing } => {
+                let named = |tasks: &[Slug]| {
+                    tasks
+                        .iter()
+                        .map(Slug::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                let held = match (undone.as_slice(), missing.as_slice()) {
+                    ([_, ..], []) => format!("tasks not done yet: {}", named(undone)),
+                    ([], [_, ..]) => {
+                        format!("tasks not on the board (or set aside): {}", named(missing))
+                    }
+                    (_, _) => format!(
+                        "tasks not done yet: {}; and on tasks not on the board (or set aside): {}",
+                        named(undone),
+                        named(missing)
+                    ),
+                };
                 write!(
                     f,
-                    "tasks it depends on are not done yet: {}; it is claimed or started once \
-                     each is done or archived",
-                    tasks.join(", ")
+                    "the task depends on {held}; it can be claimed or started once each is done \
+                     or archived"
                 )
             }
             Self::ChildrenActive(tasks) => {

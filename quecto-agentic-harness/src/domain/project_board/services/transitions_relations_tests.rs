@@ -24,10 +24,10 @@ fn a_claim_waits_for_every_dependency_done_or_archived() {
     let board = |x, y| vec![related("x", x, None, &[]), related("y", y, None, &[])];
     assert_eq!(
         relations_allow(&a, Claimed, &board(Ready, Done)),
-        Err(BoardRuleError::DependencyNotDone(vec![
-            slug("x"),
-            slug("gone")
-        ])),
+        Err(BoardRuleError::DependencyNotDone {
+            undone: vec![slug("x")],
+            missing: vec![slug("gone")],
+        }),
         "one not done, and one not on the board"
     );
     let b = related("b", Ready, None, &["x", "y"]);
@@ -41,7 +41,10 @@ fn a_claim_waits_for_every_dependency_done_or_archived() {
     for held in [InProgress, Review, Blocked, Claimed, Draft] {
         assert_eq!(
             relations_allow(&b, Claimed, &board(held, Done)),
-            Err(BoardRuleError::DependencyNotDone(vec![slug("x")])),
+            Err(BoardRuleError::DependencyNotDone {
+                undone: vec![slug("x")],
+                missing: vec![],
+            }),
             "{held:?}"
         );
     }
@@ -88,4 +91,22 @@ fn an_archive_waits_for_every_child_free_of_work() {
     assert_eq!(relations_allow(&epic, Archived, &idle), Ok(()));
     // Only an archive waits on children.
     assert_eq!(relations_allow(&epic, Ready, &board), Ok(()));
+}
+
+/// #2661 review round 1: the domain's own move asks the relations too.
+#[test]
+fn a_move_asks_the_tasks_it_relates_to() {
+    let a = related("a", Ready, None, &["x"]);
+    let board = [related("x", Ready, None, &[])];
+    let actor = crate::domain::project_board::services::fixtures_tests::person("Bob");
+    let now = crate::domain::project_board::services::fixtures_tests::at("10:00:00");
+    assert_eq!(
+        move_task(&a, Claimed, &actor, (&[], &[]), &board, &now),
+        Err(BoardRuleError::DependencyNotDone {
+            undone: vec![slug("x")],
+            missing: vec![],
+        })
+    );
+    let done = [related("x", Done, None, &[])];
+    assert!(move_task(&a, Claimed, &actor, (&[], &[]), &done, &now).is_ok());
 }

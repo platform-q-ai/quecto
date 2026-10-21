@@ -480,14 +480,15 @@ show where each stood. `quecto board end-run` takes the same fields.
 
 A ready task is claimed (`move(task, to claimed)`, or by a start) only once
 every task it depends on is done or archived, as `list_ready` lists it: otherwise
-the claim is refused (`dependency_not_done`), naming the tasks that hold it back
-in `tasks`. A dependency not on the board holds it back too.
+the claim is refused (`dependency_not_done`), naming the tasks that hold it back:
+those not done yet in `tasks`, and those not on the board (or set aside) in
+`missing`.
 
 `complete(task)` completes a task whose linked pull requests have all merged,
 reading their states from the repository's host (GitHub, or the configured
 `GH_HOST`). A task that links no pull request has nothing to read there: it is
-refused by the rule itself (`no_prs`), with or without a host, and its holder
-finishes it by moving it from review to done. Only a task that links pull
+refused by the rule itself (`no_prs`, whose message names the way on), with or
+without a host, and its holder finishes it by moving it from review to done. Only a task that links pull
 requests needs the host, and with none it is refused (`no_pull_request_host`).
 
 ## Archiving a task
@@ -508,7 +509,8 @@ as one of its runs (or, for those three, its changes) is set aside (it may be
 the open one): end the run first (Ending a run, above), so an archive never
 races a live run. A task is refused while a child task (one naming it as its
 `parent`) is claimed, in progress, in review or blocked (`children_active`,
-naming them in `tasks`): finish or release them first. An archived task
+naming them in `tasks`): finish or release them first. It is refused too while
+a task file is set aside (`set_aside`), since that may be a child of it. An archived task
 keeps its done one's resolution (`completed`), is `superseded` when others took
 it over, and otherwise has none.
 

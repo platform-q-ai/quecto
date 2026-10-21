@@ -209,10 +209,10 @@ mod a_task_gone_on_retry {
         let host = MemoryPullRequests::default();
         host.set(7, PullRequestState::Merged);
         spoiled_before_the_first_write(&store);
-        let complete = CompleteMergedTask::new(
+        let complete = CompleteMergedTask::reading(
             Arc::new(store.client()),
             SetClock::at("10:20:00"),
-            Arc::new(host),
+            Ok(Arc::new(host)),
         )
         .unwrap();
         let mut facts = OpFacts::default();

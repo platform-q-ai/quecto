@@ -140,8 +140,14 @@ fn a_task_at_the_last_spellable_second_takes_no_further_stamp() {
     let mut fields = task(Draft).into_fields();
     fields.updated = last.clone();
     let at_the_end = Task::new(fields).unwrap();
-    let moved =
-        super::super::transitions::move_task(&at_the_end, Ready, &person("Ada"), &[], &[], &last);
+    let moved = super::super::transitions::move_task(
+        &at_the_end,
+        Ready,
+        &person("Ada"),
+        (&[], &[]),
+        &[],
+        &last,
+    );
     assert!(
         matches!(moved, Err(BoardRuleError::Invalid(_))),
         "{moved:?}"

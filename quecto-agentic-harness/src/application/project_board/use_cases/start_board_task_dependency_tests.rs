@@ -49,9 +49,10 @@ fn a_task_whose_dependency_is_not_done_is_not_started() {
     let refused = starter(&store, Some(super::Launcher::launching())).execute(&confirmed(1));
     assert_eq!(
         refused,
-        Err(ProjectBoardError::Rule(BoardRuleError::DependencyNotDone(
-            vec![slug("dep")]
-        )))
+        Err(ProjectBoardError::Rule(BoardRuleError::DependencyNotDone {
+            undone: vec![slug("dep")],
+            missing: vec![],
+        }))
     );
     assert_eq!(store.writes(), writes, "nothing is written");
     for done in [TaskStatus::Done, TaskStatus::Archived] {
