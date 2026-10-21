@@ -13,6 +13,7 @@ use crate::application::admission::use_cases::{
     AdvanceAuthorityEpoch, BindScope, CompleteAdmission, DisconnectScope, DispatchAdmissions,
     RestoreAuthority, SettleAuthority,
 };
+use crate::domain::admission::value_objects::authority_idle::AuthorityStop;
 use crate::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, AdmissionLedger, GroupId, GroupPolicy, WorkloadClass,
 };
@@ -109,4 +110,75 @@ fn a_slow_failing_write_arms_the_next_probe_after_the_turn() {
         wake <= ended + Duration::from_millis(250),
         "and no later than one probe interval after it"
     );
+}
+
+fn memory_use_cases() -> AuthorityUseCases {
+    struct Memory;
+    impl AdmissionJournal for Memory {
+        fn persist(&mut self, _ledger: &AdmissionLedger) -> Result<(), JournalError> {
+            Ok(())
+        }
+        fn load(&mut self) -> Result<Option<AdmissionLedger>, JournalError> {
+            Ok(None)
+        }
+    }
+    let journal: SharedJournal = Arc::new(Mutex::new(Memory));
+    AuthorityUseCases {
+        restore: RestoreAuthority::new(journal.clone()),
+        settle: SettleAuthority::new(DispatchAdmissions::new(journal.clone())),
+        complete: CompleteAdmission::new(journal.clone()),
+        advance_epoch: AdvanceAuthorityEpoch::new(journal),
+        bind: BindScope::new(),
+        disconnect: DisconnectScope::new(),
+    }
+}
+
+/// #2615: an owner's Stop is answered first, and the authority stops once
+/// that asker has left — not in the turn that answered it (its reply would
+/// be lost with its session), and not before the asker leaves unless the
+/// grace runs out.
+#[test]
+fn a_requested_stop_waits_for_its_asker_to_leave() {
+    use crate::infrastructure::admission::protocol::{
+        Body, CAPABILITY_DIRECT, Op, PROTOCOL_VERSION, Request, Role,
+    };
+    let proposal = proposal();
+    let clock = Clock::starting_now();
+    let authority =
+        AdmissionAuthority::new(1, proposal.policy.clone(), RandomSecretSource).unwrap();
+    let mut actor = Actor::new(
+        authority,
+        memory_use_cases(),
+        clock,
+        ProposalWire::from(&proposal),
+        "owner".into(),
+    );
+    let (notices, _notices_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (close, _closed) = tokio::sync::oneshot::channel();
+    actor.handle(super::Command::Open {
+        session: 7,
+        role: Role::Admin,
+        notices,
+        close,
+    });
+    let hello = Request {
+        id: 1,
+        op: Op::Hello {
+            version: PROTOCOL_VERSION,
+            capability: CAPABILITY_DIRECT.into(),
+        },
+    };
+    assert!(matches!(actor.request(7, &hello), Some(Body::Hello { .. })));
+    let stop = Request {
+        id: 2,
+        op: Op::Stop,
+    };
+    assert_eq!(actor.request(7, &stop), Some(Body::Ok), "answered first");
+    actor.settle();
+    assert_eq!(
+        actor.stopping, None,
+        "still serving while the asker is here"
+    );
+    actor.handle(super::Command::Closed { session: 7 });
+    assert_eq!(actor.stopping, Some(AuthorityStop::Requested));
 }
