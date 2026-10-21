@@ -718,3 +718,6 @@ fn only_the_tool_front_end_answers_start_steps() {
         }
     }
 }
+
+#[path = "recording_board_tests.rs"]
+mod board;

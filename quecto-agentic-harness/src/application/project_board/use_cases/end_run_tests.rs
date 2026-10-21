@@ -8,6 +8,7 @@ use crate::application::project_board::dto::BoardOp;
 use crate::application::project_board::fold_back::tests::{plan, swarm_item};
 use crate::application::project_board::fold_back::{SwarmItemState, SwarmRunView};
 use crate::application::project_board::ports::BoardWrite;
+use crate::application::project_board::telemetry::ReportSeen;
 use crate::application::project_board::use_cases::ChangeBoardTask;
 use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, person, slug,
@@ -489,7 +490,7 @@ fn an_end_from_a_kept_board_notes_its_fold_back() {
         .execute_noted(&ending(RunEndOutcome::Succeeded), Some(&mut facts))
         .unwrap()
         .run;
-    assert_eq!(facts.swarm_report, Some(SwarmReport::Kept));
+    assert_eq!(facts.swarm_report, Some(ReportSeen::Kept));
     let folded = facts.fold_back.expect("a kept board's fold-back is noted");
     assert_eq!((folded.task, folded.run), (slug("board-store"), 1));
     assert_eq!(folded.result, Ok(FoldedBack::Folded(ended.clone())));
@@ -531,17 +532,30 @@ fn an_end_from_a_kept_board_notes_its_fold_back() {
 fn an_end_says_whether_a_board_was_kept() {
     let (store, _) = stranded();
     let mut facts = OpFacts::default();
-    ender(&store, "Ada", "10:30:00")
+    ender_keeping(&store, None)
         .execute_noted(&ending(RunEndOutcome::Stopped), Some(&mut facts))
         .unwrap();
-    assert_eq!(facts.swarm_report, Some(SwarmReport::NoneKept));
+    assert_eq!(facts.swarm_report, Some(ReportSeen::NoneKept));
     assert_eq!(facts.fold_back, None);
+    // A front end with no keeper to ask (the CLI) checked nothing.
     let (store, _) = stranded();
-    let mut lost = OpFacts::default();
+    let mut unasked = OpFacts::default();
     ender(&store, "Ada", "10:30:00")
-        .execute_noted(&ending(RunEndOutcome::Lost), Some(&mut lost))
+        .execute_noted(&ending(RunEndOutcome::Lost), Some(&mut unasked))
         .unwrap();
-    assert_eq!((lost.swarm_report, lost.fold_back), (None, None));
+    assert_eq!(
+        (unasked.swarm_report, unasked.fold_back),
+        (Some(ReportSeen::NotChecked), None)
+    );
+    // A refused end says nothing of a board.
+    let (store, _) = stranded();
+    let mut refused = OpFacts::default();
+    assert!(
+        ender(&store, "Bob", "10:30:00")
+            .execute_noted(&ending(RunEndOutcome::Stopped), Some(&mut refused))
+            .is_err()
+    );
+    assert_eq!(refused.swarm_report, None);
     let (store, _) = stranded();
     store.fail_next_write(BoardStoreError::WriteTooLarge(
         "runs/ past its bytes".into(),
@@ -557,5 +571,25 @@ fn an_end_says_whether_a_board_was_kept() {
     assert_eq!(
         (noted.attempts, noted.evidence, noted.evidence_dropped),
         (Some(2), Some(0), Some(3))
+    );
+}
+
+/// #2663 review round 1: a loss is told a kept board as every outcome is;
+/// on this base a loss folds no items, so it notes no fold-back (#2674
+/// folds a lost run's items, and the end then notes one).
+#[test]
+fn a_lost_end_with_a_kept_board_says_so() {
+    let (store, _) = stranded();
+    let mut facts = OpFacts::default();
+    let done = [SwarmItemState::Completed; 3];
+    let ended = ender_keeping(&store, Some(swarm(SwarmEnd::Succeeded, done)))
+        .execute_noted(&ending(RunEndOutcome::Lost), Some(&mut facts))
+        .unwrap()
+        .run;
+    assert_eq!(facts.swarm_report, Some(ReportSeen::Kept));
+    assert_eq!(
+        facts.fold_back.is_some(),
+        ended.fields().items.len() == 3,
+        "a fold-back is noted exactly when the run holds the items folded"
     );
 }

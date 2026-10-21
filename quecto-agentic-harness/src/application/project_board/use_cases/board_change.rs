@@ -168,12 +168,17 @@ fn shaped(
         }
     });
     if let (Some(facts), Some(before)) = (facts, races) {
-        // Noted only when the write met one, as a record tells it.
-        let met = store.lock_races().saturating_sub(before);
-        facts.lock_races = (met > 0).then_some(met);
+        note_lock_races(store, before, facts);
         facts.head = written;
     }
     result
+}
+
+/// Notes in `facts` the lock races `store` met since it counted `before`
+/// (#2663): only when it met one, as a record tells it.
+pub(super) fn note_lock_races(store: &dyn ProjectBoardStore, before: u64, facts: &mut OpFacts) {
+    let met = store.lock_races().saturating_sub(before);
+    facts.lock_races = (met > 0).then_some(met);
 }
 
 /// Whether `artifacts` are one task's change (an allowlist): that task

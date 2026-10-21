@@ -2,7 +2,6 @@
 //! board's remote, by its URL and by the id its records name.
 use super::*;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
-use crate::domain::shared::redaction::redact_url_userinfo;
 use sha2::{Digest, Sha256};
 
 impl GitBoardStore {
@@ -50,15 +49,44 @@ impl GitBoardStore {
     }
 
     /// The id a board's records name it by (#2663): the first 64 bits of
-    /// the SHA-256 of its remote's fetch `url`, userinfo left out (a token
-    /// there never changes it), as 16 hex digits. One remote, one id; the
-    /// URL itself is never recorded.
+    /// the SHA-256 of its remote's host and path ([`repository_of`]), as
+    /// 16 hex digits, so an https, ssh or `.git` spelling of one repository
+    /// gives one id, and a token in the URL never changes it. The URL
+    /// itself is never recorded.
     pub fn board_id_of(url: &str) -> Option<BoardId> {
-        let digest = Sha256::digest(redact_url_userinfo(url).as_bytes());
+        let digest = Sha256::digest(repository_of(url).as_bytes());
         let hex: String = digest[..8]
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
         BoardId::of_hex(&hex)
     }
+}
+
+/// The repository a remote's fetch `url` names, as its board id is made
+/// from it: its host in lower case and its path, the scheme and any
+/// userinfo left out, an scp-style `user@host:path` read as host and path,
+/// and a trailing `/` and `.git` dropped. A local path is its path, so
+/// trimmed.
+pub(super) fn repository_of(url: &str) -> String {
+    let (host, path) = match url.split_once("://") {
+        Some((_, rest)) => match rest.split_once('/') {
+            Some((authority, path)) => (authority, format!("/{path}")),
+            None => (rest, String::new()),
+        },
+        // `user@host:path`: a `:` before any `/`.
+        None => match url.split_once(':') {
+            Some((authority, path)) if !authority.contains('/') => {
+                (authority, format!("/{}", path.trim_start_matches('/')))
+            }
+            Some(_) | None => ("", url.to_string()),
+        },
+    };
+    let host = host.rsplit_once('@').map_or(host, |(_, host)| host);
+    let path = path.trim_end_matches('/');
+    let path = path
+        .strip_suffix(".git")
+        .unwrap_or(path)
+        .trim_end_matches('/');
+    format!("{}{path}", host.to_ascii_lowercase())
 }

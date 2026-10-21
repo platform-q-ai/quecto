@@ -268,6 +268,7 @@ const KNOWN_KINDS: &[&str] = &[
     // Whether an `end_run` folded a kept swarm board (#2663).
     "kept",
     "none_kept",
+    "not_checked",
 ];
 
 /// Whether every one of [`KNOWN_KINDS`] is shaped as a kind (checked as

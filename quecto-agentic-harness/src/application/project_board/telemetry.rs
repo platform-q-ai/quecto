@@ -7,7 +7,6 @@ use super::dto::BoardOp;
 use super::operations::{BoardRequest, Completion};
 use super::ports::{BoardHead, ProjectBoardOpLog};
 use crate::domain::project_board::value_objects::code_ref::CommitId;
-use crate::domain::project_board::value_objects::rule_error::SwarmReport;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{
     Access, BoardOpRecord, BoardStartRecord, ClaimFacts, CompletionFacts, CompletionKind,
@@ -137,8 +136,8 @@ pub struct OpFacts {
     pub lock_races: Option<u64>,
     /// The commit the write made, when it wrote (#2663).
     pub head: Option<BoardHead>,
-    /// Whether an `end_run` folded a kept swarm board (#2663).
-    pub swarm_report: Option<SwarmReport>,
+    /// Whether an `end_run` that wrote found a swarm board kept (#2663).
+    pub swarm_report: Option<ReportSeen>,
     /// An `end_run`'s fold-back, for its own `board_fold_back` record
     /// (#2667).
     pub fold_back: Option<super::start::NotedFoldBack>,
@@ -202,7 +201,7 @@ impl OpFacts {
         put(
             &mut record.swarm_report,
             self.swarm_report
-                .map(|report| StaticKind::new(report.as_str()))
+                .map(|seen| StaticKind::new(seen.as_str()))
                 .as_ref(),
         );
         put(&mut record.pause_ms, self.pause_ms.as_ref());
@@ -227,6 +226,34 @@ impl OpFacts {
             &mut record.plan_state_to,
             self.plan_state_to.as_ref().map(plan_state).as_ref(),
         );
+    }
+}
+
+/// What an `end_run` found of the swarm board its front end keeps (#2663):
+/// one kept, none kept, or no keeper to ask (the CLI).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportSeen {
+    Kept,
+    NoneKept,
+    NotChecked,
+}
+
+impl ReportSeen {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Kept => "kept",
+            Self::NoneKept => "none_kept",
+            Self::NotChecked => "not_checked",
+        }
+    }
+}
+
+/// Two passes' counts as one (a write done again smaller): their sum when
+/// either noted one, none when neither did.
+pub fn summed(one: Option<u64>, two: Option<u64>) -> Option<u64> {
+    match (one, two) {
+        (None, None) => None,
+        (one, two) => Some(one.unwrap_or(0).saturating_add(two.unwrap_or(0))),
     }
 }
 

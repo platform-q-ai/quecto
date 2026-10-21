@@ -347,7 +347,7 @@ mod facts {
                 "0123456789abcdef0123456789abcdef01234567".into(),
             )),
             swarm_report: Some(
-                crate::domain::project_board::value_objects::rule_error::SwarmReport::NoneKept,
+                crate::application::project_board::telemetry::ReportSeen::NotChecked,
             ),
             // A start's and an end's fold-back facts go to their own
             // records, never the board_op's.
@@ -363,7 +363,7 @@ mod facts {
             "status_from": "review", "status_to": "done",
             "claim": {"held_s": -3, "left_s": 60, "holder_is_writer": true},
             "attempts": 2, "races_lost": 1, "lock_races": 1, "pause_ms": 70,
-            "head": "0123456789abcdef0123456789abcdef01234567", "swarm_report": "none_kept",
+            "head": "0123456789abcdef0123456789abcdef01234567", "swarm_report": "not_checked",
             "completion": "pending", "prs_linked": 1,
             "normalised": {"description": ["crlf"]}, "plans": 4, "runs": 0,
             "plan_version": 3, "items": 7, "roles": 0,

@@ -643,3 +643,7 @@ mod writing;
 #[cfg(test)]
 #[path = "store_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "store_board_id_tests.rs"]
+mod board_id_tests;
