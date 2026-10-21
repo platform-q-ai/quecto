@@ -120,6 +120,33 @@ pub(super) fn restart_session(flags: &CliFlags, relaunch: &SessionRelaunch) -> i
     1
 }
 
+/// The startup the flags ask of the app: whether ordinary exit ends its
+/// agent, whether the session is persisted, and the session to resume
+/// (#2615).
+pub(crate) fn apply_startup_flags(app: &mut crate::shell::app::App, flags: &CliFlags) {
+    app.set_ordinary_exit_kill_owned(flags.kill_on_exit);
+    app.set_session_persisted(flags.persist);
+    if let Some(session) = &flags.resume {
+        app.send_resume_session(session);
+    }
+}
+
+/// After the app's loop: relaunch the TUI when it asked to restart the
+/// session and nothing forbids it; the exit code when it did not relaunch
+/// for want of a terminal or because a signal overtook it is the caller's.
+pub(super) fn after_exit(app: &crate::shell::app::App, flags: &CliFlags) -> Option<i32> {
+    use std::io::IsTerminal;
+    let relaunch = app.session_relaunch()?;
+    if should_relaunch(app.termination_signal(), std::io::stdin().is_terminal()) {
+        return Some(restart_session(flags, relaunch));
+    }
+    eprintln!(
+        "not restarting quecto-tui (no terminal, or it was asked to stop); start it again with `quecto-tui --resume {}`",
+        relaunch.session_key
+    );
+    None
+}
+
 #[cfg(test)]
 #[path = "cli_session_restart_tests.rs"]
 mod tests;

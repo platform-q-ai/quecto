@@ -113,7 +113,7 @@ fn resume_is_parsed_and_a_missing_value_is_ignored() {
 #[tokio::test]
 async fn a_startup_with_resume_sends_resume_session() {
     let mut h = crate::shell::app::tui_harness::TuiHarness::new().await;
-    super::super::apply_startup_flags(h.app_mut(), &parse(&["--resume", "cli:work"]));
+    super::apply_startup_flags(h.app_mut(), &parse(&["--resume", "cli:work"]));
     let sent = h.drain_commands().await;
     assert!(
         sent.iter()
@@ -121,7 +121,7 @@ async fn a_startup_with_resume_sends_resume_session() {
         "{sent:?}"
     );
     let mut h = crate::shell::app::tui_harness::TuiHarness::new().await;
-    super::super::apply_startup_flags(h.app_mut(), &parse(&[]));
+    super::apply_startup_flags(h.app_mut(), &parse(&[]));
     assert!(
         !h.drain_commands()
             .await

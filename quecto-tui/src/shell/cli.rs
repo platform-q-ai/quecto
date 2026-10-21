@@ -162,17 +162,6 @@ fn apply_workflow_defaults(flags: &mut CliFlags) {
     }
 }
 
-/// The startup the flags ask of the app: whether ordinary exit ends its
-/// agent, whether the session is persisted, and the session to resume
-/// (#2615).
-pub(crate) fn apply_startup_flags(app: &mut crate::shell::app::App, flags: &CliFlags) {
-    app.set_ordinary_exit_kill_owned(flags.kill_on_exit);
-    app.set_session_persisted(flags.persist);
-    if let Some(session) = &flags.resume {
-        app.send_resume_session(session);
-    }
-}
-
 async fn run_tui(flags: CliFlags) -> i32 {
     // What a session restart relaunches with (#2615).
     let relaunch_flags = flags.clone();
@@ -275,7 +264,7 @@ async fn run_tui(flags: CliFlags) -> i32 {
     if let Some(watch) = &child_watch {
         app.set_child_exit_watch(watch.clone());
     }
-    apply_startup_flags(&mut app, &flags);
+    session_restart::apply_startup_flags(&mut app, &flags);
     app.set_termination_stream(termination_rx);
     let exit_code = app.run().await;
     if let Some(signal) = app.termination_signal() {
@@ -289,18 +278,9 @@ async fn run_tui(flags: CliFlags) -> i32 {
     }
 
     drop(child_watch);
-    // #2615: the owned agent has ended (persisting first); a fresh TUI
-    // resuming the session adopts the broker's new policy.
-    if let Some(relaunch) = app.session_relaunch() {
-        use std::io::IsTerminal;
-        let terminal = std::io::stdin().is_terminal();
-        if session_restart::should_relaunch(app.termination_signal(), terminal) {
-            return session_restart::restart_session(&relaunch_flags, relaunch);
-        }
-        eprintln!(
-            "not restarting quecto-tui (no terminal, or it was asked to stop); start it again with `quecto-tui --resume {}`",
-            relaunch.session_key
-        );
+    // #2615: the owned agent has ended; a fresh TUI resumes the session.
+    if let Some(code) = session_restart::after_exit(&app, &relaunch_flags) {
+        return code;
     }
 
     exit_code
