@@ -409,3 +409,7 @@ mod archive_tests;
 #[cfg(test)]
 #[path = "transitions_relations_tests.rs"]
 mod relations_tests;
+
+#[cfg(test)]
+#[path = "transitions_holder_tests.rs"]
+mod holder_tests;
