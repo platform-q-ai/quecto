@@ -24,8 +24,8 @@ fn a_discard_pinned_to_an_older_read_or_a_plan_from_ahead_is_refused() {
         discard(
             DraftOf {
                 task: &task(Ready),
-                versions: &[],
-                plan: &draft
+                versions: std::slice::from_ref(&draft),
+                plan: &draft,
             },
             Some(&at("08:00:00")),
             &bob,
@@ -39,7 +39,7 @@ fn a_discard_pinned_to_an_older_read_or_a_plan_from_ahead_is_refused() {
     let read = discard(
         DraftOf {
             task: &task(Ready),
-            versions: &[],
+            versions: std::slice::from_ref(&draft),
             plan: &draft,
         },
         Some(&at("08:30:00")),
@@ -56,8 +56,8 @@ fn a_discard_pinned_to_an_older_read_or_a_plan_from_ahead_is_refused() {
         discard(
             DraftOf {
                 task: &task(Ready),
-                versions: &[],
-                plan: &draft
+                versions: std::slice::from_ref(&draft),
+                plan: &draft,
             },
             None,
             &bob,
@@ -92,7 +92,7 @@ fn a_plans_change_never_stamps_before_its_tasks_last_change() {
     let edited = edit_draft(
         DraftOf {
             task: &task,
-            versions: &[],
+            versions: std::slice::from_ref(&draft),
             plan: &draft,
         },
         content,
@@ -104,7 +104,7 @@ fn a_plans_change_never_stamps_before_its_tasks_last_change() {
     let discarded = discard(
         DraftOf {
             task: &task,
-            versions: &[],
+            versions: std::slice::from_ref(&draft),
             plan: &draft,
         },
         None,
@@ -189,7 +189,7 @@ fn a_discarded_draft_is_kept_and_only_a_draft_is_discarded() {
     let discarded = discard(
         DraftOf {
             task: &task(Ready),
-            versions: &[],
+            versions: std::slice::from_ref(&plan(2, PlanState::Draft)),
             plan: &plan(2, PlanState::Draft),
         },
         None,
@@ -206,8 +206,8 @@ fn a_discarded_draft_is_kept_and_only_a_draft_is_discarded() {
         discard(
             DraftOf {
                 task: &task(Ready),
-                versions: &[],
-                plan: &discarded
+                versions: std::slice::from_ref(&discarded),
+                plan: &discarded,
             },
             None,
             &person("Bob"),
@@ -228,7 +228,7 @@ fn an_edit_records_its_editor_and_keeps_the_proposer() {
     let edited = edit_draft(
         DraftOf {
             task: &task(TaskStatus::InProgress),
-            versions: &[],
+            versions: std::slice::from_ref(&plan(2, PlanState::Draft)),
             plan: &plan(2, PlanState::Draft),
         },
         changed,
@@ -241,4 +241,44 @@ fn an_edit_records_its_editor_and_keeps_the_proposer() {
         (&edited.fields().proposed_by, &edited.fields().edited_by),
         (&person("Ada"), &Some(person("Bob")))
     );
+}
+
+/// #2662 review round 2: an acceptance is stamped no earlier than any of
+/// the task's plans, a sibling draft changed later included.
+#[test]
+fn an_acceptance_never_stamps_before_another_plan_of_its_task() {
+    let task = task(Ready);
+    let chosen = stamped(plan(2, PlanState::Draft), "09:30:00");
+    let sibling = stamped(plan(3, PlanState::Draft), "10:00:07");
+    let versions = [plan(1, PlanState::Accepted), chosen, sibling];
+    let board = TaskPlans {
+        task: &task,
+        versions: &versions,
+        runs: &[],
+    };
+    let accepted = accept(&board, 2, None, &person("Bob"), &when(&at("10:00:00"))).unwrap();
+    assert_eq!(accepted.plan.fields().updated, at("10:00:07"));
+    assert_eq!(accepted.task.fields().updated, at("10:00:07"));
+}
+
+/// #2662 review round 2: a sibling stamped past the outside bound (a hand
+/// edit, a clock that ran ahead) never drags a new stamp after it.
+#[test]
+fn a_sibling_past_the_bound_is_left_out_of_the_floor() {
+    let task = task(Ready);
+    let future = stamped(plan(2, PlanState::Draft), "23:00:00");
+    let versions = [plan(1, PlanState::Accepted), future];
+    let bounded = Moment {
+        now: at("10:00:00"),
+        latest: Some(at("10:01:00")),
+    };
+    let proposed = propose_at(
+        &task,
+        &versions,
+        PlanContent::default(),
+        &person("Bob"),
+        &bounded,
+    )
+    .unwrap();
+    assert_eq!(proposed.fields().created, at("10:00:00"));
 }

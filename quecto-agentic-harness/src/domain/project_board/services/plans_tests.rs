@@ -87,7 +87,7 @@ fn a_finished_tasks_plans_are_settled() {
             edit_draft(
                 DraftOf {
                     task: &finished,
-                    versions: &[],
+                    versions: std::slice::from_ref(&plan(2, PlanState::Draft)),
                     plan: &plan(2, PlanState::Draft)
                 },
                 content(),
@@ -101,7 +101,7 @@ fn a_finished_tasks_plans_are_settled() {
             discard(
                 DraftOf {
                     task: &finished,
-                    versions: &[],
+                    versions: std::slice::from_ref(&plan(2, PlanState::Draft)),
                     plan: &plan(2, PlanState::Draft)
                 },
                 None,
@@ -194,7 +194,7 @@ fn only_a_draft_is_edited_and_only_by_an_edit_that_changes_something() {
     let edited = edit_draft(
         DraftOf {
             task: &held,
-            versions: &[],
+            versions: std::slice::from_ref(&draft),
             plan: &draft,
         },
         changed.clone(),
@@ -210,8 +210,8 @@ fn only_a_draft_is_edited_and_only_by_an_edit_that_changes_something() {
         edit_draft(
             DraftOf {
                 task: &held,
-                versions: &[],
-                plan: &draft
+                versions: std::slice::from_ref(&draft),
+                plan: &draft,
             },
             content(),
             None,
@@ -229,7 +229,7 @@ fn only_a_draft_is_edited_and_only_by_an_edit_that_changes_something() {
             edit_draft(
                 DraftOf {
                     task: &held,
-                    versions: &[],
+                    versions: std::slice::from_ref(&plan(2, state)),
                     plan: &plan(2, state)
                 },
                 changed.clone(),
@@ -244,8 +244,8 @@ fn only_a_draft_is_edited_and_only_by_an_edit_that_changes_something() {
         edit_draft(
             DraftOf {
                 task: &held,
-                versions: &[],
-                plan: &other_tasks(2)
+                versions: std::slice::from_ref(&other_tasks(2)),
+                plan: &other_tasks(2),
             },
             changed,
             None,
@@ -368,8 +368,8 @@ fn the_holder_decides_for_a_held_task_and_anyone_for_an_unclaimed_one() {
             discard(
                 DraftOf {
                     task: &held,
-                    versions: &[],
-                    plan: &versions[1]
+                    versions: std::slice::from_ref(&versions[1]),
+                    plan: &versions[1],
                 },
                 None,
                 &person("Bob"),
@@ -526,8 +526,8 @@ fn a_draft_edit_pinned_to_an_older_read_is_refused() {
         edit_draft(
             DraftOf {
                 task: &task(InProgress),
-                versions: &[],
-                plan: &draft
+                versions: std::slice::from_ref(&draft),
+                plan: &draft,
             },
             changed.clone(),
             Some(&at("08:00:00")),
@@ -543,8 +543,8 @@ fn a_draft_edit_pinned_to_an_older_read_is_refused() {
         edit_draft(
             DraftOf {
                 task: &task(InProgress),
-                versions: &[],
-                plan: &draft
+                versions: std::slice::from_ref(&draft),
+                plan: &draft,
             },
             changed,
             Some(&at("08:30:00")),
@@ -611,7 +611,7 @@ fn a_plan_stamped_ahead_of_the_outside_time_is_never_built_on() {
         edit_draft(
             DraftOf {
                 task: &held,
-                versions: &[],
+                versions: std::slice::from_ref(&ahead(PlanState::Draft, 2)),
                 plan: &ahead(PlanState::Draft, 2)
             },
             content(),
@@ -695,7 +695,7 @@ fn plan_text_is_taken_only_once_normalised() {
         let edited = edit_draft(
             DraftOf {
                 task: &held,
-                versions: &[],
+                versions: std::slice::from_ref(&plan(1, PlanState::Draft)),
                 plan: &plan(1, PlanState::Draft),
             },
             raw,

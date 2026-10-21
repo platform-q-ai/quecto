@@ -44,6 +44,11 @@ fn only_a_lock_on_the_tracking_ref_is_a_local_race() {
             false,
         ),
         ("fatal: unable to access the remote", false),
+        // A reason is read to the end of its own line, never into the next.
+        (
+            "error: cannot lock ref 'refs/remotes/origin/quecto/board': unable to resolve\nfatal: is at 0087cc but expected e2d505",
+            false,
+        ),
     ] {
         assert_eq!(locked_by_another_writer(said, tracking), raced, "{said}");
     }

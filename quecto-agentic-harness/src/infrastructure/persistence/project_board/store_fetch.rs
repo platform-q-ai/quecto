@@ -324,7 +324,9 @@ const LOCK_PAUSES_MS: [u64; 5] = [50, 100, 200, 400, 800];
 /// fetch): the ways a fetch loses a race on it (an allowlist).
 fn locked_by_another_writer(why: &str, tracking: &str) -> bool {
     let ours = format!("cannot lock ref '{tracking}': ");
-    why.split(&ours).skip(1).any(|reason| {
+    // Each reason is read to the end of its own line, never into the next.
+    why.split(&ours).skip(1).any(|rest| {
+        let reason = rest.split('\n').next().unwrap_or_default();
         reason.contains("but expected")
             || reason.starts_with("reference already exists")
             || (reason.starts_with("Unable to create") && reason.contains(".lock': File exists"))

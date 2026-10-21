@@ -148,11 +148,7 @@ pub fn link(
         }
     }
     // Never before the task's last change, nor any of its changes'.
-    let at = not_before(
-        task,
-        own.iter().map(|change| &change.fields().updated),
-        &when.now,
-    );
+    let at = not_before(task, change_stamps(&own, when), &when.now);
     Change::new(ChangeFields {
         task: task.fields().id.clone(),
         number: last + 1,
@@ -237,8 +233,10 @@ pub fn unlink(
         None | Some(PrState::Open | PrState::Closed) => {}
         Some(PrState::Merged(_)) => return Err(BoardRuleError::ChangeMerged(number)),
     }
-    let siblings = changes.iter().map(|change| &change.fields().updated);
-    let at = after(change, &not_before(task, siblings, &when.now))?;
+    let at = after(
+        change,
+        &not_before(task, change_stamps(changes, when), &when.now),
+    )?;
     let mut next = fields.clone();
     next.unlinked = Some((actor.clone(), at.clone()));
     next.updated = at;
@@ -390,6 +388,19 @@ fn not_ahead(changes: &[Change], when: &Moment) -> Result<(), BoardRuleError> {
             updated: change.fields().updated.clone(),
         }),
     }
+}
+
+/// When each of `changes` (the task's) last changed, within `when`'s
+/// bound: what a change is stamped no earlier than (#2662). One stamped
+/// past the bound is left out, so it never drags a new stamp ahead of it.
+fn change_stamps<'a>(
+    changes: &'a [Change],
+    when: &'a Moment,
+) -> impl Iterator<Item = &'a Timestamp> {
+    changes
+        .iter()
+        .map(|change| &change.fields().updated)
+        .filter(|updated| within_slack(updated, when.latest.as_ref()))
 }
 
 /// `now`, or a second past `change`'s last change if that is later.

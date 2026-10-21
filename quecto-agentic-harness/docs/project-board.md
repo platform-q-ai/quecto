@@ -97,10 +97,14 @@ in `attempts` and `lost`.
 
 Every change stamps what it writes with the writer's clock, or a second past the
 artifact's own `updated` if that clock reads no later, and never before its task's
-`updated`. A plan's change is stamped no earlier than any plan of its task, and a
-change's no earlier than any change of its task, so a task's own stamps, its
-plans' and its changes' never run backwards. A quick run of changes may stamp a
-second or so ahead of the wall clock.
+`updated`. A plan's change (an acceptance too) is stamped no earlier than any
+plan of its task, and a change's no earlier than any change of its task, each
+within the outside time's bound (one stamped past it, by a hand edit or a clock
+that ran ahead, is left out). So, kind by kind, a task's own stamps never run
+backwards, and neither do its plans' or its changes'; a write of the task itself
+(a move, a renewal) is stamped from the task alone, and may read earlier than a
+plan or change written just before it. A quick run of changes may stamp a second
+or so ahead of the wall clock.
 
 Board text (a title, a line of prose such as a description or a plan's approach,
 and a text cell such as a task item's title or criterion) holds every backslash as

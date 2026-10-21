@@ -97,11 +97,11 @@ pub struct Accepted {
 }
 
 /// A new draft version of `task`'s plan, after every version in
-/// `versions`, proposed by `actor` at `now`.
+/// `versions`, proposed by `actor` at `now`, with no outside bound
+/// ([`propose_at`]).
 ///
 /// # Errors
-/// A done or archived task; plans that contradict each other; no version
-/// left; or a plan its schema refuses.
+/// As [`propose_at`].
 pub fn propose(
     task: &Task,
     versions: &[Plan],
@@ -109,9 +109,30 @@ pub fn propose(
     actor: &Identity,
     now: &Timestamp,
 ) -> Result<Plan, BoardRuleError> {
+    let when = Moment {
+        now: now.clone(),
+        latest: None,
+    };
+    propose_at(task, versions, content, actor, &when)
+}
+
+/// A new draft version of `task`'s plan, after every version in
+/// `versions`, proposed by `actor` at `when`: stamped no earlier than the
+/// task or any of its plans within `when`'s bound (#2662).
+///
+/// # Errors
+/// A done or archived task; plans that contradict each other; no version
+/// left; or a plan its schema refuses.
+pub fn propose_at(
+    task: &Task,
+    versions: &[Plan],
+    content: PlanContent,
+    actor: &Identity,
+    when: &Moment,
+) -> Result<Plan, BoardRuleError> {
     open_to_plans(task)?;
     consistent(task, versions)?;
-    let now = &not_before(task, stamps_of(versions), now);
+    let now = &not_before(task, stamps_of(versions, when), &when.now);
     let last = versions
         .iter()
         .map(|plan| plan.fields().version)
@@ -165,6 +186,10 @@ pub fn edit_draft(
         versions,
         plan,
     } = of;
+    assert!(
+        versions.contains(plan),
+        "a draft is one of the task's plans as the board holds them"
+    );
     let now = &when.now;
     open_to_plans(task)?;
     of_task(task, std::slice::from_ref(plan))?;
@@ -187,7 +212,11 @@ pub fn edit_draft(
     next.team = content.team;
     // Drafts are anyone's: the last editor is recorded, the proposer kept.
     next.edited_by = Some(actor.clone());
-    restamped(next, plan, &not_before(task, stamps_of(versions), now))
+    restamped(
+        next,
+        plan,
+        &not_before(task, stamps_of(versions, when), now),
+    )
 }
 
 /// `content`'s text is as it enters the board, normalised: its approach
@@ -261,6 +290,8 @@ pub fn accept(
     for plan in std::iter::once(chosen).chain(before) {
         at = after_last(&plan.fields().updated, &at)?;
     }
+    // Never before any of the task's plans within the bound (#2662).
+    at = not_before(task, stamps_of(versions, when), &at);
     let mut named = task.fields().clone();
     named.accepted_plan = Some(version);
     let task = settle(named, &at)?;
@@ -322,6 +353,10 @@ pub fn discard(
         versions,
         plan,
     } = of;
+    assert!(
+        versions.contains(plan),
+        "a draft is one of the task's plans as the board holds them"
+    );
     let now = &when.now;
     open_to_plans(task)?;
     of_task(task, std::slice::from_ref(plan))?;
@@ -333,7 +368,7 @@ pub fn discard(
     moved(
         plan,
         PlanState::Discarded,
-        &not_before(task, stamps_of(versions), now),
+        &not_before(task, stamps_of(versions, when), now),
     )
 }
 
@@ -448,9 +483,14 @@ fn decides(task: &Task, actor: &Identity, now: &Timestamp) -> Result<(), BoardRu
 }
 
 /// When each of `versions` (the task's plans, as the board holds them)
-/// last changed: what a plan's change is stamped no earlier than.
-fn stamps_of(versions: &[Plan]) -> impl Iterator<Item = &Timestamp> {
-    versions.iter().map(|plan| &plan.fields().updated)
+/// last changed, within `when`'s bound: what a plan's change is stamped no
+/// earlier than. A plan stamped past the bound (a clock that ran ahead, or
+/// a hand edit) is left out, so it never drags a new stamp ahead of it.
+fn stamps_of<'a>(versions: &'a [Plan], when: &'a Moment) -> impl Iterator<Item = &'a Timestamp> {
+    versions
+        .iter()
+        .map(|plan| &plan.fields().updated)
+        .filter(|updated| within_slack(updated, when.latest.as_ref()))
 }
 
 fn moved(plan: &Plan, state: PlanState, now: &Timestamp) -> Result<Plan, BoardRuleError> {
