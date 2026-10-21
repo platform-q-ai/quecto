@@ -683,13 +683,21 @@ impl AdminConnection {
     }
 
     pub async fn inspect(&self) -> Result<AuthorityStatus, ClientError> {
+        self.status().await.map(|(status, _)| status)
+    }
+
+    /// The authority's state, and whether it was started on demand (it
+    /// stops itself when idle, #2615).
+    pub async fn status(&self) -> Result<(AuthorityStatus, bool), ClientError> {
         match self.inner.call(Op::Inspect).await? {
             Body::Status {
                 epoch,
                 journal_healthy,
                 live_scopes,
                 groups,
+                on_demand,
             } => status_from_body(epoch, journal_healthy, live_scopes, groups)
+                .map(|status| (status, on_demand))
                 .map_err(|e| ClientError::Protocol(format!("status: {e:?}"))),
             other => Err(ClientError::Protocol(format!(
                 "expected status, got {other:?}"

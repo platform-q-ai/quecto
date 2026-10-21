@@ -64,6 +64,9 @@ impl AuthorityServiceManager for FakeManager {
     fn restart(&self) -> Result<(), String> {
         self.record("restart")
     }
+    fn is_active(&self) -> Result<bool, String> {
+        Ok(false)
+    }
 }
 
 fn request(dry_run: bool) -> InstallServiceRequest {

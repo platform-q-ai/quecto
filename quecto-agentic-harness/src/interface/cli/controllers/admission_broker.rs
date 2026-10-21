@@ -12,8 +12,11 @@
 use std::path::PathBuf;
 
 use crate::application::admission::dto::{
-    authority::AuthorityAdminError, service::InstallServiceRequest, service::ServiceAction,
-    service::ServiceReport,
+    authority::AuthorityAdminError, authority::StandIn, service::InstallServiceRequest,
+    service::ServiceAction, service::ServiceReport,
+};
+use crate::domain::admission::value_objects::authority_idle::{
+    AUTHORITY_IDLE_STOP_MS, AuthorityLifetime, IdleWatch,
 };
 use crate::infrastructure::admission::{
     AuthorityDirectory, AuthorityServer, AuthorityUseCaseBuilder, ServerError,
@@ -28,6 +31,9 @@ struct BrokerArgs {
     directory: Option<PathBuf>,
     dry_run: bool,
     accept_missing_ledger: bool,
+    /// `run --stop-when-idle`: the lifetime of a broker started on demand
+    /// (#2615, ADR-0032). Without it `run` serves until it is stopped.
+    stop_when_idle: bool,
 }
 
 fn parse_args(args: &[String], stderr: &mut String) -> Option<BrokerArgs> {
@@ -36,6 +42,7 @@ fn parse_args(args: &[String], stderr: &mut String) -> Option<BrokerArgs> {
         directory: None,
         dry_run: false,
         accept_missing_ledger: false,
+        stop_when_idle: false,
     };
     let mut i = 0;
     while i < args.len() {
@@ -62,6 +69,10 @@ fn parse_args(args: &[String], stderr: &mut String) -> Option<BrokerArgs> {
             }
             "--accept-missing-ledger" => {
                 parsed.accept_missing_ledger = true;
+                i += 1;
+            }
+            "--stop-when-idle" => {
+                parsed.stop_when_idle = true;
                 i += 1;
             }
             other => {
@@ -238,6 +249,18 @@ fn cmd_status(
         Ok(report) => {
             stdout.push_str(&status_json(&report).to_string());
             stdout.push('\n');
+            let config = global_config_path(ctx, opts);
+            match handles.inspect.standing_in(&report, &config) {
+                Some(StandIn::UnitStopped { unit }) => stderr.push_str(&format!(
+                    "admission-broker: service unit {unit} stopped; an on-demand broker is serving {} (it stops itself after an hour idle; then `systemctl --user restart {unit}`)\n",
+                    report.directory.display()
+                )),
+                Some(StandIn::UnitElsewhere { unit }) => stderr.push_str(&format!(
+                    "admission-broker: an on-demand broker is serving {}; service unit {unit} is installed but is not stopped in its favour (check `systemctl --user status {unit}`)\n",
+                    report.directory.display()
+                )),
+                None => {}
+            }
             0
         }
         Err(AuthorityAdminError::NotRunning { directory, reason }) => {
@@ -450,6 +473,7 @@ fn status_json(
         "epoch": report.epoch,
         "journal_healthy": report.journal_healthy,
         "live_scopes": report.live_scopes,
+        "on_demand": report.on_demand,
         "groups": groups,
     })
 }
@@ -496,11 +520,18 @@ fn cmd_run(ctx: &CliContext, opts: &BrokerArgs, stdout: &mut String, stderr: &mu
             return 1;
         }
     };
+    let lifetime = match opts.stop_when_idle {
+        true => AuthorityLifetime::StopWhenIdle(
+            IdleWatch::new(AUTHORITY_IDLE_STOP_MS).expect("the idle period is positive"),
+        ),
+        false => AuthorityLifetime::AlwaysOn,
+    };
     let start = BrokerStart {
         build_use_cases: handles.authority,
         dir,
         proposal,
         accept_missing_ledger: opts.accept_missing_ledger,
+        lifetime,
     };
     runtime.block_on(run(start, stdout, stderr))
 }
@@ -513,6 +544,8 @@ pub(crate) struct BrokerStart {
     pub(crate) proposal: AdmissionRuntimeProposal,
     pub(crate) build_use_cases: AuthorityUseCaseBuilder,
     pub(crate) accept_missing_ledger: bool,
+    /// Whether it stops itself when idle (#2615).
+    pub(crate) lifetime: AuthorityLifetime,
 }
 
 async fn run(start: BrokerStart, stdout: &mut String, stderr: &mut String) -> i32 {
@@ -530,7 +563,57 @@ async fn run(start: BrokerStart, stdout: &mut String, stderr: &mut String) -> i3
             _ = sigterm.recv() => {}
         }
     };
-    run_until(start, stop, stdout, stderr).await
+    // A broker started on demand writes to its log as its stderr (#2615):
+    // keep that log within its cap for as long as it runs.
+    let log_cap = log_cap_plan(start.lifetime).and_then(|plan| {
+        match crate::infrastructure::processes::local::detached_process::own_stderr() {
+            Ok(log) => Some(tokio::spawn(keep_log_capped(log, plan))),
+            Err(error) => {
+                tracing::warn!(%error, "admission broker log cannot be capped");
+                None
+            }
+        }
+    });
+    let code = run_until(start, stop, stdout, stderr).await;
+    if let Some(task) = log_cap {
+        task.abort();
+    }
+    code
+}
+
+/// How often a broker started on demand checks its log's size.
+const LOG_CAP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How a broker keeps its log (its stderr) within bounds while it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LogCapPlan {
+    pub(crate) interval: std::time::Duration,
+    pub(crate) cap: u64,
+}
+
+/// A broker started on demand writes to its log as its stderr (#2615) and
+/// keeps it capped; an always-on broker's stderr is the service journal or
+/// a terminal, and is left alone.
+pub(crate) fn log_cap_plan(lifetime: AuthorityLifetime) -> Option<LogCapPlan> {
+    match lifetime {
+        AuthorityLifetime::StopWhenIdle(_) => Some(LogCapPlan {
+            interval: LOG_CAP_INTERVAL,
+            cap: crate::infrastructure::processes::local::detached_process::LOG_CAP_BYTES,
+        }),
+        AuthorityLifetime::AlwaysOn => None,
+    }
+}
+
+/// Keep `log` within `plan.cap`, checking every `plan.interval`.
+pub(crate) async fn keep_log_capped(log: std::fs::File, plan: LogCapPlan) {
+    use crate::infrastructure::processes::local::detached_process::cap_log;
+    let mut interval = tokio::time::interval(plan.interval);
+    loop {
+        interval.tick().await;
+        if let Err(error) = cap_log(&log, plan.cap) {
+            tracing::warn!(%error, "admission broker log could not be capped");
+        }
+    }
 }
 
 /// Serve until `stop` resolves. Separated from the signal wiring so the
@@ -546,11 +629,13 @@ pub(crate) async fn run_until(
         proposal,
         build_use_cases,
         accept_missing_ledger,
+        lifetime,
     } = start;
     let started = if accept_missing_ledger {
-        AuthorityServer::start_accepting_missing_ledger(dir, proposal, build_use_cases).await
+        AuthorityServer::start_accepting_missing_ledger(dir, proposal, build_use_cases, lifetime)
+            .await
     } else {
-        AuthorityServer::start(dir, proposal, build_use_cases).await
+        AuthorityServer::start(dir, proposal, build_use_cases, lifetime).await
     };
     let server = match started {
         Ok(server) => server,
@@ -569,9 +654,19 @@ pub(crate) async fn run_until(
         "admission authority ready: {}",
         server.directory().client_socket().display()
     );
-    stop.await;
+    let stopped_for_idle = tokio::select! {
+        () = stop => false,
+        () = server.stopped_for_idle() => true,
+    };
     server.shutdown().await;
-    stdout.push_str("admission authority stopped; outstanding work stays journaled\n");
+    match stopped_for_idle {
+        true => stdout.push_str(
+            "admission authority stopped itself: idle with no sessions, permits or leases; the next session starts it again\n",
+        ),
+        false => {
+            stdout.push_str("admission authority stopped; outstanding work stays journaled\n")
+        }
+    }
     0
 }
 

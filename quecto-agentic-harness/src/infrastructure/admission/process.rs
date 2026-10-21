@@ -214,15 +214,17 @@ async fn connect(negotiation: &Negotiation) -> Result<(AuthorityConnection, Path
             // Clients only validate; they never create authority state.
             let dir = AuthorityDirectory::existing(directory).map_err(|e| {
                 format!(
-                    "admission authority unreachable: directory {} ({e}); start `quecto admission-broker run` or remove the admission section",
+                    "admission authority unreachable: directory {} ({e}); if it was started on demand, its log is {}/broker.log",
+                    directory.display(),
                     directory.display()
                 )
             })?;
             let endpoint = dir.client_socket();
             let connection = AuthorityConnection::connect(&endpoint).await.map_err(|e| {
                 format!(
-                    "admission authority unreachable at {} ({e}); start `quecto admission-broker run` or remove the admission section",
-                    endpoint.display()
+                    "admission authority unreachable at {} ({e}); if it was started on demand, its log is {}/broker.log",
+                    endpoint.display(),
+                    directory.display()
                 )
             })?;
             let credential = connection

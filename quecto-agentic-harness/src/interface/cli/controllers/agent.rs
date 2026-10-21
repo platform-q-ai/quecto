@@ -391,7 +391,7 @@ pub(crate) fn build_agent_from_config_in(
         stderr.push_str("agent: container-config handles capability not composed\n");
         return None;
     };
-    if !admission_startup::negotiate_from_flags(&config, flags, stderr) {
+    if !admission_startup::negotiate_from_flags(&config, base_dir, selection, flags, stderr) {
         return None;
     }
     let http_client = crate::interface::shared::build_http_client();

@@ -3,7 +3,8 @@
 #![cfg(unix)]
 
 use quecto::composition::admission::{
-    start_authority, start_authority_accepting_missing_ledger, start_authority_with_frame_deadline,
+    start_authority, start_authority_accepting_missing_ledger, start_authority_stopping_when_idle,
+    start_authority_with_frame_deadline,
 };
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
@@ -1186,4 +1187,122 @@ async fn a_graceful_shutdown_checkpoints_the_served_uptime() {
         "the uptime served is durable: {at_grant} ms at grant, {at_shutdown} ms at shutdown"
     );
     std::mem::forget(permit);
+}
+
+/// #2615 (ADR-0032): an authority started on demand stops itself once it
+/// has held nothing for its idle period, and never while it holds anything:
+/// a connected root, a permit, or an uncertain lease left by a lost client.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_on_demand_authority_stops_itself_once_idle_and_never_while_it_holds_anything() {
+    const IDLE: Duration = Duration::from_millis(300);
+    /// Several idle periods: an authority still serving after this held on.
+    const HELD: Duration = Duration::from_millis(1_200);
+    let temp = tempfile::tempdir().unwrap();
+    let server = start_authority_stopping_when_idle(
+        AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
+        proposal(1, 300),
+        IDLE,
+    )
+    .await
+    .unwrap();
+    // An open connection that has not even said hello yet: the instant a
+    // root is reaching the broker, before it registers.
+    let bare = tokio::net::UnixStream::connect(server.directory().client_socket())
+        .await
+        .unwrap();
+    assert!(
+        timeout(HELD, server.stopped_for_idle()).await.is_err(),
+        "an open connection keeps the authority serving"
+    );
+    drop(bare);
+    // A connected root holding a permit.
+    let a = root(&server).await;
+    let credential = a.credential().unwrap();
+    let permit = timeout(LIMIT, a.gate("acct").unwrap().acquire())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        timeout(HELD, server.stopped_for_idle()).await.is_err(),
+        "a root holding a permit keeps the authority serving"
+    );
+    // Its client is lost mid-request: the permit is an uncertain lease
+    // (it clears only a minute after its 60 s attempt deadline).
+    drop(permit);
+    drop(a);
+    let admin = AdminConnection::connect(&server.directory().admin_socket())
+        .await
+        .unwrap();
+    timeout(LIMIT, async {
+        while admin.inspect().await.unwrap().groups[&group()].uncertain != 1 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the lost client's permit becomes an uncertain lease");
+    drop(admin);
+    assert!(
+        timeout(HELD, server.stopped_for_idle()).await.is_err(),
+        "an uncertain lease keeps the authority serving"
+    );
+    // The same capability completes it and leaves: nothing is held.
+    let again = AuthorityConnection::connect(&server.directory().client_socket())
+        .await
+        .unwrap();
+    again.bind(credential).await.unwrap();
+    again.complete(1, Feedback::Success).await.unwrap();
+    drop(again);
+    timeout(LIMIT, server.stopped_for_idle())
+        .await
+        .expect("an authority holding nothing stops itself once idle");
+    let socket = server.directory().client_socket();
+    server.shutdown().await;
+    assert!(!socket.exists(), "its sockets are removed");
+}
+
+/// An always-on authority (the systemd unit, a foreground `run`) never
+/// stops itself, however long it holds nothing.
+#[tokio::test]
+async fn an_always_on_authority_never_stops_itself() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = start_authority(
+        AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
+        proposal(1, 300),
+    )
+    .await
+    .unwrap();
+    assert!(
+        timeout(Duration::from_millis(500), server.stopped_for_idle())
+            .await
+            .is_err()
+    );
+    server.shutdown().await;
+}
+
+/// #2615: concurrent starters open the same fresh directory at once (two
+/// sessions starting the broker on demand); every one succeeds and finds it
+/// owner-only, whoever created it.
+#[test]
+fn concurrent_opens_of_a_fresh_directory_all_succeed() {
+    for round in 0..20 {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("authority");
+        let barrier = std::sync::Barrier::new(8);
+        let opened: Vec<_> = std::thread::scope(|scope| {
+            let openers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        AuthorityDirectory::open(&path).map(|_| ())
+                    })
+                })
+                .collect();
+            openers.into_iter().map(|o| o.join().unwrap()).collect()
+        });
+        for result in opened {
+            assert!(result.is_ok(), "round {round}: {result:?}");
+        }
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
 }

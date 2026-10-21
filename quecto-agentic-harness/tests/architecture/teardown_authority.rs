@@ -257,7 +257,9 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
         "arms PR_SET_PDEATHSIG (SIGTERM only, a typed choice) on a process \
          this harness spawns, and gives the board's git and gh children their \
          own session that dies with quecto (the child is signalled by the \
-         kernel when its launcher dies; nothing is sent from here)",
+         kernel when its launcher dies; nothing is sent from here); and gives \
+         the admission broker started on demand (#2615) its own session with \
+         no death signal, since every session on the host shares it",
     ),
     (
         "src/infrastructure/tools/native/bash/mod.rs",

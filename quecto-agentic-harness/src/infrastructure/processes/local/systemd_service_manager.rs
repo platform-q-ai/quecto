@@ -131,6 +131,13 @@ impl AuthorityServiceManager for SystemdUserServiceManager {
         self.run_checked(&["restart", UNIT_NAME])
     }
 
+    fn is_active(&self) -> Result<bool, String> {
+        // Exit 0 is active; every other status (3: inactive, 4: unknown
+        // unit) is not.
+        self.systemctl(&["is-active", "--quiet", UNIT_NAME])
+            .map(|output| output.status.success())
+    }
+
     fn disable_now(&self) -> Result<bool, String> {
         // `disable --now` on a not-enabled unit is not a hard failure: report
         // it as "nothing to disable" so uninstall stays idempotent.

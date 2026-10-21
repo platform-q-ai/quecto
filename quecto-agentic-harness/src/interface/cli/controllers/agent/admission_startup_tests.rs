@@ -1,5 +1,32 @@
 use super::*;
 use crate::application::admission::dto::negotiation::NegotiationPlan;
+use crate::application::admission::ports::{AuthorityLauncher, LaunchedAuthority};
+use crate::application::configuration::dto::ConfigLayers;
+use std::sync::{Arc, Mutex};
+
+/// A launcher whose authority never answers and whose launches fail,
+/// recording what it was asked to start.
+#[derive(Default)]
+struct Unstartable {
+    launches: Mutex<Vec<AuthorityLaunch>>,
+}
+
+impl AuthorityLauncher for Unstartable {
+    fn probe(&self, _directory: &Path) -> Result<(), String> {
+        Err("connection refused".into())
+    }
+
+    fn launch(&self, launch: &AuthorityLaunch) -> Result<Box<dyn LaunchedAuthority>, String> {
+        self.launches.lock().unwrap().push(launch.clone());
+        Err("fake launch refused".into())
+    }
+
+    fn pause(&self, _attempt: u32) {}
+}
+
+fn use_case() -> NegotiateAuthority {
+    NegotiateAuthority::new(Arc::new(Unstartable::default()))
+}
 
 const VALID: &str = r#"{"directory":"/tmp/quecto-authority","groups":{"g":{"capacity":1,"reserve":0,"min_interval_ms":1,"queue_capacity":1,"queue_timeout_ms":1,"attempt_timeout_ms":1,"fallback_base_ms":1,"max_cooldown_ms":1}},"aliases":{"a":"g"},"bindings":{"openai":"a"}}"#;
 const INVALID: &str = r#"{"directory":"relative","groups":{"g":{"capacity":1,"reserve":0,"min_interval_ms":1,"queue_capacity":1,"queue_timeout_ms":1,"attempt_timeout_ms":1,"fallback_base_ms":1,"max_cooldown_ms":1}},"aliases":{"a":"g"},"bindings":{"openai":"a"}}"#;
@@ -12,7 +39,7 @@ fn config(section: Option<&str>) -> Config {
 
 #[test]
 fn a_root_validates_its_section_and_a_child_inherits_whatever_it_says() {
-    let use_case = NegotiateAuthority::new();
+    let use_case = use_case();
     let context = Path::new("/tmp/child.ctx");
     // A root: a valid section is the authority to join; an invalid one stops
     // startup here, naming the error.
@@ -40,4 +67,146 @@ fn a_root_validates_its_section_and_a_child_inherits_whatever_it_says() {
             "section {section:?}"
         );
     }
+}
+
+fn layered(global: &str) -> ConfigSelection {
+    ConfigSelection::Layered(ConfigLayers {
+        global: PathBuf::from(global),
+        overlay: None,
+        overlay_origin: Default::default(),
+        legacy_local: None,
+    })
+}
+
+/// #2615: a broker started on demand serves the global config the root's
+/// section came from, absolute, with the root's base directory.
+#[test]
+fn a_launch_serves_the_global_config_the_section_came_from() {
+    let base = Path::new("/home/me/.quecto");
+    let layered = layered("/home/me/.quecto/config.json");
+    let launch = launch_request(
+        Path::new("/home/me/.quecto/admission"),
+        &ConfigOrigin {
+            base_dir: base,
+            selection: &layered,
+        },
+    );
+    assert_eq!(
+        launch,
+        AuthorityLaunch {
+            directory: "/home/me/.quecto/admission".into(),
+            config: "/home/me/.quecto/config.json".into(),
+            base_dir: base.into(),
+        }
+    );
+    let explicit = ConfigSelection::Explicit("relative/config.json".into());
+    let launch = launch_request(
+        Path::new("/a"),
+        &ConfigOrigin {
+            base_dir: Path::new("rel-base"),
+            selection: &explicit,
+        },
+    );
+    assert!(launch.config.is_absolute(), "{}", launch.config.display());
+    assert!(launch.config.ends_with("relative/config.json"));
+    assert!(
+        launch.base_dir.is_absolute(),
+        "{}",
+        launch.base_dir.display()
+    );
+}
+
+/// #2615: a root whose broker does not answer has one started on demand;
+/// when that cannot start, startup stops with the reason.
+#[test]
+fn a_root_starts_its_broker_on_demand_and_stops_when_it_cannot() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("authority");
+    let section = VALID.replace("/tmp/quecto-authority", &directory.to_string_lossy());
+    let launcher = Arc::new(Unstartable::default());
+    let use_case = NegotiateAuthority::new(launcher.clone());
+    let selection = layered("/g/config.json");
+    let origin = ConfigOrigin {
+        base_dir: temp.path(),
+        selection: &selection,
+    };
+    let mut stderr = String::new();
+    assert!(!negotiate(
+        &config(Some(&section)),
+        &origin,
+        None,
+        &use_case,
+        &mut stderr
+    ));
+    assert!(
+        stderr.starts_with("agent: admission negotiation failed: "),
+        "{stderr}"
+    );
+    assert!(stderr.contains("fake launch refused"), "{stderr}");
+    let launches = launcher.launches.lock().unwrap();
+    assert_eq!(launches.len(), 1, "one launch, then the failure is final");
+    assert_eq!(launches[0].directory, directory);
+    // Disabled starts nothing.
+    let mut stderr = String::new();
+    assert!(negotiate(
+        &config(None),
+        &origin,
+        None,
+        &use_case,
+        &mut stderr
+    ));
+    assert_eq!(launches.len(), 1);
+}
+
+/// A launcher whose broker always answers, counting the probes.
+#[derive(Default)]
+struct Answering {
+    probes: Mutex<usize>,
+}
+
+impl AuthorityLauncher for Answering {
+    fn probe(&self, _directory: &Path) -> Result<(), String> {
+        *self.probes.lock().unwrap() += 1;
+        Ok(())
+    }
+
+    fn launch(&self, _launch: &AuthorityLaunch) -> Result<Box<dyn LaunchedAuthority>, String> {
+        unreachable!("an answering broker is never launched")
+    }
+
+    fn pause(&self, _attempt: u32) {}
+}
+
+/// #2615 review: a broker that stopped for being idle in the instant this
+/// root reached it closes the registration; the root makes sure once more
+/// and registers again, and only a second failure is final.
+#[test]
+fn a_registration_closed_by_a_stopping_broker_is_retried_once() {
+    let launcher = Arc::new(Answering::default());
+    let use_case = NegotiateAuthority::new(launcher.clone());
+    let selection = layered("/g/config.json");
+    let origin = ConfigOrigin {
+        base_dir: Path::new("/g"),
+        selection: &selection,
+    };
+    let directory = Path::new("/g/admission");
+    let mut installs = 0;
+    let joined = join_root_with(directory, &origin, &use_case, &mut |negotiation| {
+        installs += 1;
+        assert!(matches!(negotiation, Negotiation::Root { .. }));
+        match installs {
+            1 => Err("admission root registration: connection closed".into()),
+            _ => Ok(()),
+        }
+    });
+    assert_eq!(joined, Ok(()));
+    assert_eq!(installs, 2);
+    assert_eq!(*launcher.probes.lock().unwrap(), 2, "made sure again");
+    let mut installs = 0;
+    let joined = join_root_with(directory, &origin, &use_case, &mut |_| {
+        installs += 1;
+        Err(format!("refused {installs}"))
+    });
+    assert_eq!(joined, Err("refused 2".into()), "the last failure is final");
+    assert_eq!(installs, 2);
 }

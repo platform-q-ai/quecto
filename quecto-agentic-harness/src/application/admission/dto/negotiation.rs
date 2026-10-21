@@ -26,3 +26,13 @@ pub struct NegotiationInputs {
     /// The `--admission-context` sidecar path, when this is a child.
     pub inherited_context: Option<PathBuf>,
 }
+
+/// How the authority came to be reachable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorityAvailability {
+    /// A broker was already answering.
+    AlreadyRunning,
+    /// This process started one on demand (or lost the start to another
+    /// starter) and it now answers.
+    StartedOnDemand,
+}

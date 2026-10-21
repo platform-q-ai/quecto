@@ -3,7 +3,10 @@
 Shared inference admission bounds outbound provider attempts across cooperating
 sessions and subagents for one user on one host. It is **disabled by default**:
 omitting `admission` leaves inference unbounded by this broker. When configured,
-an unreachable authority is an error, never an unbounded fallback.
+a root session whose broker does not answer starts it on demand (it runs
+detached, logs to `<directory>/broker.log`, and stops itself after an hour
+holding nothing); a broker that can be neither reached nor started is an error,
+never an unbounded fallback.
 
 ## Configuration reference
 
@@ -120,7 +123,7 @@ broker you address. Every output names the directory it addressed.
 quecto admission-broker status
 ```
 
-Expected: `{"directory":"/home/me/.quecto/admission","epoch":1,"journal_healthy":true,"live_scopes":0,"groups":{"shared":{"active":0,"queued":0,"uncertain":0,"cooldown_until_ms":0,"unavailable":false}}}`, exit 0 (`epoch` grows by one per `reset`; `live_scopes` counts registered sessions). Then `systemctl --user status quecto-admission-broker.service` → `active (running)`. Optionally (one paid model call, for an operator at a terminal rather than from inside a session) a fresh `quecto agent --no-session -m "Reply with exactly OK"` prints `OK`, and `status` shows `live_scopes` back to 0 after it exits. In a session, `get_state.admission` carries `directory`, `epoch`, `connected: true`, `authorityStatus: "connected"`; the TUI footer shows the broker health.
+Expected: `{"directory":"/home/me/.quecto/admission","epoch":1,"journal_healthy":true,"live_scopes":0,"on_demand":false,"groups":{"shared":{"active":0,"queued":0,"uncertain":0,"cooldown_until_ms":0,"unavailable":false}}}`, exit 0 (`epoch` grows by one per `reset`; `live_scopes` counts registered sessions). Then `systemctl --user status quecto-admission-broker.service` → `active (running)`. Optionally (one paid model call, for an operator at a terminal rather than from inside a session) a fresh `quecto agent --no-session -m "Reply with exactly OK"` prints `OK`, and `status` shows `live_scopes` back to 0 after it exits. In a session, `get_state.admission` carries `directory`, `epoch`, `connected: true`, `authorityStatus: "connected"`; the TUI footer shows the broker health.
 
 ## Rollback
 
@@ -143,7 +146,9 @@ This order keeps sessions admitted until they are restarted; the uninstall stops
 | `… path must be shorter than SUN_LEN` | the admission directory path is too long for a Unix socket | set `admission.directory` to a short absolute path outside the base dir's ancestors, reinstall |
 | `another admission authority owns …/authority.lock`, exit 3 (service not restarted: `RestartPreventExitStatus=3`) | a foreground `run` or an old service holds the lock | stop it, then `systemctl --user restart quecto-admission-broker.service` |
 | `install-service` → `systemctl` errors | no systemd user session (container, ssh without lingering) | `loginctl enable-linger $USER`, or supervise `quecto admission-broker run --config <abs>` yourself |
-| a new agent exits with ``admission negotiation failed: admission authority unreachable at …/client/admission.sock … start `quecto admission-broker run` or remove the admission section`` | section present, broker down | start the service, or roll back |
+| a new agent exits with `admission negotiation failed: the admission broker exited (…) before it answered; see …/broker.log` or `… did not answer (…)` | the broker started on demand could not serve | read `<directory>/broker.log`, fix the cause, start the agent again |
+| a new agent exits with `admission negotiation failed: admission authority unreachable at …/client/admission.sock (…); if it was started on demand, its log is …/broker.log` | the broker answered the start-up probe, then went away before this agent registered | read `<directory>/broker.log` (a service-managed broker logs to `journalctl --user -u quecto-admission-broker.service`), start the agent again |
+| `status` says ``service unit quecto-admission-broker.service stopped; an on-demand broker is serving …`` | a session started a broker before the service did; the service exited 3 and is not restarted | once that broker stops (an hour idle, or SIGTERM), `systemctl --user restart quecto-admission-broker.service` |
 | a session reports "restart required" | a root's own section changed on live reload, or the broker came back with a different policy | restart that session (never a child: children inherit) |
 | `journal_healthy: false` | the journal file is unwritable or corrupt | fix permissions/storage under the directory; never delete the journal to clear a queue |
 

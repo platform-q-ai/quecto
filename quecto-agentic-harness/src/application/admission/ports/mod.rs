@@ -67,4 +67,48 @@ pub trait AuthorityServiceManager: Send + Sync {
     fn disable_now(&self) -> Result<bool, String>;
     /// `systemctl --user restart <unit>`: pick up a rewritten unit.
     fn restart(&self) -> Result<(), String>;
+    /// `systemctl --user is-active <unit>`: whether its broker is running
+    /// (#2615); a stopped, failed or unknown unit is `Ok(false)`.
+    fn is_active(&self) -> Result<bool, String>;
+}
+
+/// What starting a broker on demand needs (#2615): the directory it must
+/// serve, the global config whose `admission` section it serves, and the
+/// base directory that config resolves against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorityLaunch {
+    pub directory: PathBuf,
+    pub config: PathBuf,
+    pub base_dir: PathBuf,
+}
+
+/// How a broker this process launched is doing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaunchState {
+    /// Still running: starting, or serving.
+    Running,
+    /// It exited Busy: another broker holds the directory's singleton lock.
+    LostRace,
+    /// It exited for any other reason, which names where to look.
+    Failed { reason: String },
+}
+
+/// Start the authority on demand (#2615, ADR-0032): probe its client
+/// socket, launch a detached broker, and pause between probes. The
+/// singleton lock settles concurrent launches; the adapter never decides
+/// whether to launch, only how.
+pub trait AuthorityLauncher: Send + Sync {
+    /// `Ok` when a broker accepts connections at `directory`'s client
+    /// socket; otherwise why not.
+    fn probe(&self, directory: &Path) -> Result<(), String>;
+    /// Launch a detached broker serving `launch`, stopping itself when idle.
+    fn launch(&self, launch: &AuthorityLaunch) -> Result<Box<dyn LaunchedAuthority>, String>;
+    /// Wait before probe `attempt` (0-based): the bounded, jittered backoff.
+    fn pause(&self, attempt: u32);
+}
+
+/// A broker this process launched.
+pub trait LaunchedAuthority: Send {
+    /// How it is doing now.
+    fn state(&mut self) -> LaunchState;
 }

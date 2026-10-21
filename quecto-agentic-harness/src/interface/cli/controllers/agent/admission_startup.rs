@@ -3,20 +3,31 @@
 //! `NegotiateAuthority` use case's decision; a child inherits its parent's
 //! authority unconditionally (#2023). The interface observes the inputs
 //! (does a section resolve to a directory, is a context present), asks the
-//! use case, then performs the plan through the infrastructure binding.
-use std::path::Path;
+//! use case, then performs the plan through the infrastructure binding. A
+//! root first has the use case make sure a broker answers, starting one on
+//! demand (#2615, ADR-0032).
+use std::path::{Path, PathBuf};
 
-use crate::application::admission::dto::{
-    negotiation::NegotiationInputs, negotiation::NegotiationPlan,
-};
+use crate::application::admission::dto::negotiation::{NegotiationInputs, NegotiationPlan};
+use crate::application::admission::ports::AuthorityLaunch;
 use crate::application::admission::use_cases::NegotiateAuthority;
+use crate::application::configuration::dto::ConfigSelection;
 use crate::infrastructure::admission::{Negotiation, process};
 use crate::infrastructure::config::Config;
+
+/// Where this process's configuration came from, for a broker started on
+/// demand to serve the same `admission` section (#2615).
+pub(super) struct ConfigOrigin<'a> {
+    pub(super) base_dir: &'a Path,
+    pub(super) selection: &'a ConfigSelection,
+}
 
 /// Build the composed negotiation use case from the agent flags and run it
 /// (#2024 S3). Keeps `agent.rs` free of the capability-not-composed plumbing.
 pub(super) fn negotiate_from_flags(
     config: &Config,
+    base_dir: &Path,
+    selection: &ConfigSelection,
     flags: &super::AgentFlags,
     stderr: &mut String,
 ) -> bool {
@@ -27,6 +38,10 @@ pub(super) fn negotiate_from_flags(
     let handles = build_admission();
     negotiate(
         config,
+        &ConfigOrigin {
+            base_dir,
+            selection,
+        },
         flags.admission_context.as_deref(),
         &handles.negotiate,
         stderr,
@@ -57,8 +72,32 @@ pub(super) fn plan(
     }))
 }
 
+/// What a broker started on demand for `directory` serves: the global
+/// config this process's `admission` section comes from (an explicit
+/// `--config`, else `<base_dir>/config.json`; the section is global-only),
+/// made absolute because the broker runs from `/`.
+pub(super) fn launch_request(directory: &Path, origin: &ConfigOrigin<'_>) -> AuthorityLaunch {
+    let config = match origin.selection {
+        ConfigSelection::Explicit(path) => path.clone(),
+        ConfigSelection::Layered(layers) => layers.global.clone(),
+    };
+    AuthorityLaunch {
+        directory: directory.to_path_buf(),
+        config: absolute(config),
+        base_dir: absolute(origin.base_dir.to_path_buf()),
+    }
+}
+
+fn absolute(path: PathBuf) -> PathBuf {
+    match path.is_absolute() {
+        true => path,
+        false => std::path::absolute(&path).unwrap_or(path),
+    }
+}
+
 pub(super) fn negotiate(
     config: &Config,
+    origin: &ConfigOrigin<'_>,
     admission_context: Option<&Path>,
     negotiate_use_case: &NegotiateAuthority,
     stderr: &mut String,
@@ -70,18 +109,60 @@ pub(super) fn negotiate(
             return false;
         }
     };
-    let negotiation = match plan {
+    let outcome = match plan {
         NegotiationPlan::Disabled => return true,
-        NegotiationPlan::Root { directory } => Negotiation::Root { directory },
-        NegotiationPlan::Child { context } => Negotiation::Child { context },
+        NegotiationPlan::Root { directory } => join_root(&directory, origin, negotiate_use_case),
+        NegotiationPlan::Child { context } => {
+            process::install(Negotiation::Child { context }).map(drop)
+        }
     };
-    match process::install(negotiation) {
-        Ok(_) => true,
+    match outcome {
+        Ok(()) => true,
         Err(error) => {
             stderr.push_str(&format!("agent: admission negotiation failed: {error}\n"));
             false
         }
     }
+}
+
+/// A root makes sure a broker answers, then registers there. A broker that
+/// stopped itself for being idle in the instant this root reached it
+/// (#2615) closes the registration; the root then makes sure once more,
+/// starting a fresh one, and registers again. Any other failure is final
+/// on the second attempt as well.
+fn join_root(
+    directory: &Path,
+    origin: &ConfigOrigin<'_>,
+    negotiate_use_case: &NegotiateAuthority,
+) -> Result<(), String> {
+    join_root_with(directory, origin, negotiate_use_case, &mut |negotiation| {
+        process::install(negotiation).map(drop)
+    })
+}
+
+/// How many times a root makes sure and registers: once, and once more for
+/// a broker that stopped in the instant it was reached.
+const JOIN_ATTEMPTS: usize = 2;
+
+/// [`join_root`] with the binding's install injected (tests).
+fn join_root_with(
+    directory: &Path,
+    origin: &ConfigOrigin<'_>,
+    negotiate_use_case: &NegotiateAuthority,
+    install: &mut dyn FnMut(Negotiation) -> Result<(), String>,
+) -> Result<(), String> {
+    let launch = launch_request(directory, origin);
+    let mut last = String::new();
+    for _ in 0..JOIN_ATTEMPTS {
+        negotiate_use_case.ensure_running(&launch)?;
+        match install(Negotiation::Root {
+            directory: directory.to_path_buf(),
+        }) {
+            Ok(()) => return Ok(()),
+            Err(error) => last = error,
+        }
+    }
+    Err(last)
 }
 
 /// Bounded orderly exit of the process's admission binding (no-op when disabled).

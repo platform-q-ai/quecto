@@ -38,6 +38,8 @@ mod audit_sink;
 mod auth_clock;
 #[path = "contracts/authority_admin.rs"]
 mod authority_admin;
+#[path = "contracts/authority_launcher.rs"]
+mod authority_launcher;
 #[path = "contracts/authority_service_manager.rs"]
 mod authority_service_manager;
 #[path = "contracts/authorization_callback.rs"]
@@ -186,6 +188,8 @@ mod hosted_swarm_run_observation;
 mod id_source;
 #[path = "contracts/kept_environments.rs"]
 mod kept_environments;
+#[path = "contracts/launched_authority.rs"]
+mod launched_authority;
 #[path = "contracts/llm_provider.rs"]
 mod llm_provider;
 #[path = "contracts/loaded_catalogue_inputs.rs"]
