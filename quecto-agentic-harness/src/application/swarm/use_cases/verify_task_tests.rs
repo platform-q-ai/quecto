@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use super::VerifyTask;
 use crate::application::swarm::dto::{TaskTransition, VerifyTaskRequest};
-use crate::application::swarm::ports::board_files::CheckoutHistory;
+use crate::application::swarm::ports::board_files::{Ancestry, CheckoutHistory};
 use crate::application::swarm::test_support::{
     BoardState, MemoryBoard, SteppingClock, StoredFile, member_row, running_board, stored_task,
 };
@@ -12,11 +12,15 @@ use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };
 
-/// A checkout's history: the (ancestor, descendant) pairs it confirms, and
-/// every question it was asked.
+/// What a test does while the history is asked: another member's op.
+type During = Box<dyn Fn() + Send + Sync>;
+
+/// A checkout's history: the (ancestor, descendant) pairs it confirms,
+/// every question it was asked, and what happens on the board meanwhile.
 struct History {
     confirmed: Vec<(&'static str, &'static str)>,
-    asked: Mutex<Vec<(String, String)>>,
+    asked: Mutex<Vec<(Vec<String>, String)>>,
+    during: Option<During>,
 }
 
 impl History {
@@ -24,6 +28,7 @@ impl History {
         Arc::new(Self {
             confirmed: confirmed.to_vec(),
             asked: Mutex::new(Vec::new()),
+            during: None,
         })
     }
 
@@ -31,18 +36,35 @@ impl History {
         Self::of(&[])
     }
 
-    fn asked(&self) -> Vec<(String, String)> {
+    fn while_asked(confirmed: &[(&'static str, &'static str)], during: During) -> Arc<Self> {
+        Arc::new(Self {
+            confirmed: confirmed.to_vec(),
+            asked: Mutex::new(Vec::new()),
+            during: Some(during),
+        })
+    }
+
+    fn asked(&self) -> Vec<(Vec<String>, String)> {
         self.asked.lock().unwrap().clone()
     }
 }
 
 impl CheckoutHistory for History {
-    fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
+    fn ancestry(&self, ancestors: &[String], descendant: &str) -> Ancestry {
         self.asked
             .lock()
             .unwrap()
-            .push((ancestor.to_owned(), descendant.to_owned()));
-        self.confirmed.contains(&(ancestor, descendant))
+            .push((ancestors.to_vec(), descendant.to_owned()));
+        if let Some(during) = &self.during {
+            during();
+        }
+        match ancestors
+            .iter()
+            .all(|ancestor| self.confirmed.contains(&(ancestor.as_str(), descendant)))
+        {
+            true => Ancestry::Confirmed,
+            false => Ancestry::NotAncestor,
+        }
     }
 }
 
@@ -283,7 +305,10 @@ fn submitted_evidence_is_carried_to_a_descendant_commit() {
         {"artifact": "e2", "revision": COMMIT},
     ]);
     assert_eq!(change.task.get("evidence"), Some(&carried));
-    assert_eq!(history.asked(), [(BASE.to_owned(), COMMIT.to_owned())]);
+    assert_eq!(
+        history.asked(),
+        [(vec![BASE.to_owned()], COMMIT.to_owned())]
+    );
     let state = board.snapshot();
     assert_eq!(state.tasks[0].text("status"), Some("completed"));
     assert_eq!(state.tasks[0].get("evidence"), Some(&carried));
@@ -407,4 +432,72 @@ fn completed_work_is_not_carried() {
         board.snapshot().tasks[0].get("evidence"),
         Some(&json!([{"artifact": "e0", "revision": BASE}]))
     );
+}
+
+/// Another member's change to the board.
+type Change = fn(&mut BoardState);
+
+/// #2691 review M1: git is asked with no transaction open, and the carry
+/// is written only over the submission the history was asked about. A
+/// worker that releases, or resubmits, while git runs leaves its change in
+/// place (were git asked inside a transaction, its commit would overwrite
+/// the change), and the verification is refused as stale.
+#[test]
+fn a_submission_changed_while_git_runs_is_not_carried() {
+    let changes: [(&str, Change); 3] = [
+        ("released", |state| {
+            state.tasks[0].set("status", json!("ready"));
+        }),
+        ("reclaimed", |state| {
+            state.tasks[0].set("token", json!("newer"));
+        }),
+        ("resubmitted", |state| {
+            state.tasks[0].set("evidence", json!([{"artifact": "other", "revision": BASE}]));
+        }),
+    ];
+    for (name, change) in changes {
+        let board = MemoryBoard::with(submitted_at(&[BASE]));
+        let during = board.clone();
+        let history = History::while_asked(
+            &[(BASE, COMMIT)],
+            Box::new(move || change(&mut during.state.lock().unwrap())),
+        );
+        let service = VerifyTask::new(board.clone(), SteppingClock::fixed(50.0), history.clone());
+        let refusal = service
+            .execute(verify("parent", json!(1), "stored-token", json!(COMMIT)))
+            .unwrap_err();
+        assert!(
+            matches!(
+                refusal.kind(),
+                RefusalKind::StaleRevision | RefusalKind::StaleToken
+            ),
+            "{name}: {refusal:?}"
+        );
+        assert_eq!(history.asked().len(), 1, "{name}");
+        let mut expected = submitted_at(&[BASE]);
+        change(&mut expected);
+        let state = board.snapshot();
+        assert_eq!(state.tasks[0], expected.tasks[0], "{name}");
+        assert!(state.events.is_empty(), "{name}");
+    }
+}
+
+/// A carry runs two operations, each its gate and its work, and asks git
+/// between them: four transactions, the history asked after the second.
+#[test]
+fn git_is_asked_between_the_two_operations() {
+    let board = MemoryBoard::with(submitted_at(&[BASE]));
+    let during = board.clone();
+    let opened = Arc::new(Mutex::new(Vec::new()));
+    let seen = opened.clone();
+    let history = History::while_asked(
+        &[(BASE, COMMIT)],
+        Box::new(move || seen.lock().unwrap().push(during.transactions().len())),
+    );
+    let service = VerifyTask::new(board.clone(), SteppingClock::fixed(50.0), history);
+    service
+        .execute(verify("parent", json!(1), "stored-token", json!(COMMIT)))
+        .unwrap();
+    assert_eq!(*opened.lock().unwrap(), [2]);
+    assert_eq!(board.transactions().len(), 4);
 }

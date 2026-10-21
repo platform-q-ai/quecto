@@ -8,7 +8,9 @@ use crate::application::swarm::dto::{
     TaskChange, TaskRow, TaskTransition, TaskUpdate, VerifyTaskRequest,
 };
 use crate::application::swarm::ports::{
-    board_files::CheckoutHistory, board_repository::BoardRepository, lifecycle::Clock,
+    board_files::{Ancestry, CheckoutHistory},
+    board_repository::BoardRepository,
+    lifecycle::Clock,
 };
 use crate::application::swarm::services::board_operation::{detail, operation};
 use crate::application::swarm::services::board_tasks::{changed, read_task};
@@ -36,12 +38,37 @@ use crate::domain::swarm::{
 /// ancestor of `revision`: the evidence is stored at `revision`, and the
 /// event adds `carried_from` (the earlier commits) and `previous_evidence`
 /// (the submission as made). Anything else stays `stale evidence
-/// revision`. Only the coordinator verifies, so only it carries evidence;
-/// the worker's submission stays immutable to the worker.
+/// revision`; the history traces why it declined. Only the
+/// coordinator verifies, so only it carries evidence; the worker's
+/// submission stays immutable to the worker.
+///
+/// git is never asked inside a transaction (#2691 review M1): the first
+/// operation finds the carry and writes nothing, the history is asked
+/// with no transaction open, and a second operation writes the carry only
+/// if the claim token, the `submitted` status and the stored evidence are
+/// still what the first found; otherwise `stale evidence revision`.
 pub struct VerifyTask {
     repository: Arc<dyn BoardRepository>,
     clock: Arc<dyn Clock + Send + Sync>,
     history: Arc<dyn CheckoutHistory>,
+}
+
+/// A carry the first operation found: the submission's evidence as it
+/// read it, and that evidence carried to the verified commit.
+struct CarryPlan {
+    previous: Value,
+    carry: EvidenceCarry,
+}
+
+/// What one operation of a verification did: verified (or found verified
+/// work), or found a carry to ask the history about, writing nothing.
+enum Verified {
+    Done(TaskChange),
+    Carry(CarryPlan),
+}
+
+fn stale() -> BoardError {
+    BoardError::new(RefusalKind::StaleRevision, "stale evidence revision")
 }
 
 impl VerifyTask {
@@ -57,37 +84,37 @@ impl VerifyTask {
         }
     }
 
-    /// The carry of a submission's stale evidence to `revision` (#2687),
-    /// with the evidence as submitted, when the policy admits it and the
-    /// checkout's history confirms every earlier commit; otherwise
-    /// `stale`, the refusal it answers.
-    fn carry(
-        &self,
-        task: &TaskRow,
-        revision: &Value,
-        stale: BoardError,
-    ) -> Result<(EvidenceCarry, Value), BoardError> {
-        let submitted = task.text("status") == Some("submitted");
-        let stored = task.get("evidence");
-        let carry = stored.and_then(|evidence| evidence_carry(evidence, revision));
-        match (submitted, stale.kind(), stored, carry, revision.as_str()) {
-            (true, RefusalKind::StaleRevision, Some(stored), Some(carry), Some(target))
-                if carry
-                    .sources
-                    .iter()
-                    .all(|source| self.history.is_ancestor(source, target)) =>
-            {
-                Ok((carry, stored.clone()))
-            }
-            _ => Err(stale),
-        }
-    }
-
     /// # Errors
     /// An authorisation or budget refusal, `unknown task`, `stale claim or
     /// work not submitted`, `stale evidence revision`, stored evidence
     /// without revisions, or the store's.
     pub fn execute(&self, request: VerifyTaskRequest) -> Result<TaskChange, BoardError> {
+        let plan = match self.verify(&request, None)? {
+            Verified::Done(change) => return Ok(change),
+            Verified::Carry(plan) => plan,
+        };
+        let target = request
+            .revision
+            .as_str()
+            .expect("a carry is found only for a full commit id revision");
+        // The history traces why it declines; the refusal is the stale one.
+        if self.history.ancestry(&plan.carry.sources, target) != Ancestry::Confirmed {
+            return Err(stale());
+        }
+        match self.verify(&request, Some(&plan))? {
+            Verified::Done(change) => Ok(change),
+            Verified::Carry(_) => unreachable!("a confirmed carry is written or refused"),
+        }
+    }
+
+    /// One operation of a verification. Without `confirmed`, a carry found
+    /// is answered unwritten; with it, the carry is written only when the
+    /// stored evidence is still the evidence `confirmed` was found over.
+    fn verify(
+        &self,
+        request: &VerifyTaskRequest,
+        confirmed: Option<&CarryPlan>,
+    ) -> Result<Verified, BoardError> {
         let actor = request.actor.as_str();
         let coordinating = Access {
             active: true,
@@ -114,19 +141,30 @@ impl VerifyTask {
                 };
                 let carried = match current_revision(&task, &request.revision) {
                     Ok(()) => None,
-                    Err(stale) => Some(self.carry(&task, &request.revision, stale)?),
+                    Err(refusal) => {
+                        let found = carry(&task, &request.revision, refusal)?;
+                        match confirmed {
+                            None => return Ok(Verified::Carry(found)),
+                            Some(plan) if python_equal(&found.previous, &plan.previous) => {
+                                Some(found)
+                            }
+                            // The submission changed since the history was
+                            // asked about it.
+                            Some(_) => return Err(stale()),
+                        }
+                    }
                 };
                 if status == Some("completed") {
                     assert!(carried.is_none(), "only submitted work is carried");
-                    return Ok(TaskChange {
+                    return Ok(Verified::Done(TaskChange {
                         task,
                         transition: TaskTransition::Unchanged,
-                    });
+                    }));
                 }
                 let (task_id, revision) = (request.task_id.clone(), request.revision.clone());
                 let verified = match carried {
                     None => detail([("task", task_id), ("revision", revision)]),
-                    Some((carry, previous)) => {
+                    Some(CarryPlan { previous, carry }) => {
                         transaction.replace_task_evidence(&request.task_id, &carry.evidence)?;
                         detail([
                             ("task", task_id),
@@ -139,9 +177,26 @@ impl VerifyTask {
                 transaction.update_task_status(&request.task_id, &TaskUpdate::Complete)?;
                 transaction.delete_claim_files(&request.task_id, &request.token)?;
                 transaction.event(actor, self.clock.now_seconds(), "verified", &verified)?;
-                changed(transaction, &request.task_id, "completed")
+                changed(transaction, &request.task_id, "completed").map(Verified::Done)
             },
         )
+    }
+}
+
+/// The carry of a submission's stale evidence to `revision` (#2687), with
+/// the evidence as submitted, when the policy admits it: submitted work,
+/// a stale revision, and full commit ids throughout. Otherwise `refusal`,
+/// the one it answers.
+fn carry(task: &TaskRow, revision: &Value, refusal: BoardError) -> Result<CarryPlan, BoardError> {
+    let submitted = task.text("status") == Some("submitted");
+    let stored = task.get("evidence");
+    let found = stored.and_then(|evidence| evidence_carry(evidence, revision));
+    match (submitted, refusal.kind(), stored, found) {
+        (true, RefusalKind::StaleRevision, Some(stored), Some(carry)) => Ok(CarryPlan {
+            previous: stored.clone(),
+            carry,
+        }),
+        _ => Err(refusal),
     }
 }
 
@@ -169,10 +224,7 @@ fn current_revision(task: &TaskRow, revision: &Value) -> Result<(), BoardError> 
         if python_equal(stored, revision) {
             continue;
         }
-        return Err(BoardError::new(
-            RefusalKind::StaleRevision,
-            "stale evidence revision",
-        ));
+        return Err(stale());
     }
     Ok(())
 }
