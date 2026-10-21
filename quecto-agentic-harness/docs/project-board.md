@@ -504,6 +504,15 @@ coordinator's teardown and `end_run` has lost its board, and one that no longer
 holds the coordinator as its subagent (with its label) when the box is torn
 down keeps none.
 
+A board is kept once the coordinator's teardown has ended its workers, and
+each worker's confirmed death blocks the items it held ("worker death
+confirmed; coordinator recovery required", or its abrupt-exit form). That
+blocker is the teardown's, not the item's (#2685): an item blocked by it is
+folded back as it stood before, in review when it holds the evidence its
+submission wrote (only a submission writes an item's evidence, and a
+submitted item is never blocked by its worker), else doing. An item blocked
+for any other reason is folded back blocked.
+
 A run ends as `succeeded` only when every task item of its plan is done there:
 otherwise the end is refused (`items_not_done`, a rule refusal naming the
 `run`, the `items` not done and the `report`) and nothing is written, so the

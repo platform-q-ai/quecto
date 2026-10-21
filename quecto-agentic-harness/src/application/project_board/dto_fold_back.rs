@@ -8,6 +8,7 @@ use crate::domain::project_board::value_objects::telemetry::{
 };
 use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutcome};
 use crate::domain::swarm::entities::records::{RunState, TaskState};
+use crate::domain::swarm::value_objects::lifecycle::MemberExit;
 
 /// What came of a fold-back.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,6 +163,23 @@ impl SwarmItemState {
             Self::Claimed => 2,
             Self::Submitted => 3,
             Self::Completed => 4,
+        }
+    }
+
+    /// Where an item read in this state stood before a member's confirmed
+    /// death blocked it (#2685), when `blocker` is the text such a death
+    /// writes ([`MemberExit::of_blocker`]): a board is kept only once its
+    /// coordinator's teardown has ended its workers, so that blocker is the
+    /// teardown's, not the item's. It stood submitted when it holds
+    /// `evidence` (only a submission writes an item's evidence, and a
+    /// submitted item is never blocked by its worker), else claimed. Any
+    /// other state or blocker is read as it is.
+    pub fn before_death(self, blocker: Option<&str>, evidence: bool) -> Self {
+        match (self, blocker.and_then(MemberExit::of_blocker), evidence) {
+            (Self::Blocked, Some(_), true) => Self::Submitted,
+            (Self::Blocked, Some(_), false) => Self::Claimed,
+            (Self::Blocked, None, _)
+            | (Self::Ready | Self::Claimed | Self::Submitted | Self::Completed, _, _) => self,
         }
     }
 
