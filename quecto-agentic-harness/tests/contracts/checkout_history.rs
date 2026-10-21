@@ -245,3 +245,60 @@ fn command_scope_configuration_reaches_git() {
         Ancestry::NotAncestor
     );
 }
+
+/// #2691 round-2 L2: the deadline is one for the whole question, not one
+/// per commit. Each call of this git answers "yes" after 200 ms; with two
+/// commits to ask about and a 300 ms deadline, the second call is ended at
+/// the deadline. A deadline per commit would let both finish.
+#[test]
+fn the_deadline_covers_every_commit_asked_about() {
+    let fake = fake_git("sleep 0.2\nexit 0");
+    let checkout = tempfile::tempdir().unwrap();
+    let history = GitCheckoutHistory::with_environment(
+        checkout.path(),
+        [(OsString::from("PATH"), with_system_path(fake.path()))],
+        Duration::from_millis(300),
+    );
+    let started = Instant::now();
+    assert_eq!(
+        history.ancestry(&ids(&[BASE, BASE]), COMMIT),
+        Ancestry::TimedOut
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
+    // One commit fits within the deadline.
+    assert_eq!(history.ancestry(&ids(&[BASE]), COMMIT), Ancestry::Confirmed);
+}
+
+/// #2691 round-2 L3: a declined carry is traced with its reason.
+#[test]
+fn a_declined_carry_is_traced_with_its_reason() {
+    let fake = fake_git("exit 1");
+    let checkout = tempfile::tempdir().unwrap();
+    let history = GitCheckoutHistory::with_environment(
+        checkout.path(),
+        [(OsString::from("PATH"), with_system_path(fake.path()))],
+        Duration::from_secs(10),
+    );
+    let mut answer = None;
+    let traced =
+        quecto::infrastructure::test_support::tracing_capture::traced(tracing::Level::INFO, || {
+            answer = Some(history.ancestry(&ids(&[BASE]), COMMIT))
+        });
+    assert_eq!(answer, Some(Ancestry::NotAncestor));
+    assert!(
+        traced.contains("swarm evidence carry declined")
+            && traced.contains("reason=\"not_ancestor\""),
+        "{traced}"
+    );
+    let confirmed = fake_git("exit 0");
+    let history = GitCheckoutHistory::with_environment(
+        checkout.path(),
+        [(OsString::from("PATH"), with_system_path(confirmed.path()))],
+        Duration::from_secs(10),
+    );
+    let traced =
+        quecto::infrastructure::test_support::tracing_capture::traced(tracing::Level::INFO, || {
+            assert_eq!(history.ancestry(&ids(&[BASE]), COMMIT), Ancestry::Confirmed)
+        });
+    assert!(!traced.contains("carry declined"), "{traced}");
+}
