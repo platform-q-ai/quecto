@@ -141,3 +141,29 @@ fn left_boards_are_evicted_before_ended_ones() {
         "a left board never evicts an ended one"
     );
 }
+
+/// Round 3 (#2674): of two left boards in a full store, the older goes
+/// first.
+#[test]
+fn the_oldest_left_board_goes_first() {
+    let kept = KeptSwarmBoards::default();
+    kept.keep_left("s1", "board-old-run-1", board("running", 0));
+    kept.keep_left("s1", "board-young-run-1", board("paused", 1));
+    for member in 0..MAX_KEPT - 2 {
+        kept.keep(
+            "s1",
+            &format!("board-e{member}-run-1"),
+            board("succeeded", 2),
+        );
+    }
+    kept.keep("s1", "board-last-run-1", board("succeeded", 3));
+    assert_eq!(
+        kept.left_view("s1", "board-old-run-1"),
+        None,
+        "the older left board went"
+    );
+    assert!(
+        kept.left_view("s1", "board-young-run-1").is_some(),
+        "the younger stays"
+    );
+}
