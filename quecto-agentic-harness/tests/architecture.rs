@@ -6651,6 +6651,9 @@ fn catalogue_defaults_mapping_is_pure_and_implements_both_ports() {
 const ENVIRONMENT_PORTS: &[&str] = &[
     "EnvironmentProcessCommands",
     "HostedSwarmRunObservation",
+    // Where a succeeded board run's completion went, judged on its
+    // owner's kill (#2666): an undelivered run keeps its box.
+    "CompletionDeliveryCheck",
     // The hosted board the parent socket's board view reads (#2478).
     "HostedSwarmBoard",
     // The same store read synchronously for the restore and the collector

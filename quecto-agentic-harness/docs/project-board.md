@@ -465,11 +465,18 @@ once more without it, as a fold-back is.
 
 A run ends as `succeeded` only over work that left the swarm's container
 (#2666): every commit the evidence of its recorded task items names must be on
-the board's remote, reached by one of its branches or tags. A revision names a
-commit when it is a full commit id (40 or 64 hex digits) or a prefix of at least
-12 hex digits; evidence that names none (an artifact's digest, a red-test
-bundle, a branch or tag name, `working tree`) is accepted unchecked, so a done
-item whose evidence names no commit does not refuse the success. Otherwise the
+the board's remote, reached by one of its branches or tags. A revision's commit
+is its one whitespace-separated word that is wholly hex digits, 7 or more,
+backticks trimmed (`<sha>`, `` `<sha>` ``, `commit <sha>`, `<sha> (main)`), read
+in lower case, so the same commit in two cases is asked about once; a revision
+with no such word, or two, names none. Only a full commit id of the
+repository's format (40 hex digits; 64 in a SHA-256 repository) or a prefix of
+at least 12 is checked: a 64-digit digest in a SHA-1 repository, a 7 to 11 digit
+short id, and evidence that names no commit (an artifact's digest, a red-test
+bundle, a branch or tag name, `working tree`) are accepted unchecked, so a done
+item whose evidence names no checkable commit does not refuse the success. The
+answer of a success recorded from a kept board gives `unchecked`: how many of
+its evidence revisions went unchecked, so a pass with nothing checked shows. Otherwise the
 end is refused (`not_pushed`, a rule refusal naming the `run` and how many
 commits, `revisions`, are not there) and nothing is written, so the board never
 shows a succeeded run over a commit made in the container and torn down with
@@ -490,9 +497,18 @@ succeeded, to push those commits as they are to a branch on the repository's
 remote, naming that branch and its head (evidence it deliberately does not
 push, such as a red-test bundle, names the bundle, not a commit); and the
 `start` answer's steps ask the parent, before it closes a run that succeeded,
-to make sure every such commit is on the remote. If a refused end's commits can
-still be pushed, push them and call `end_run` again; if they went with the
-container, end the run as `failed`. Commits are judged against the board's own
+to make sure every such commit is on a branch or tag of the board's remote. And
+the owner's kill of a board run's coordinator whose run ended succeeded keeps
+its environment (retained, as an unfinished run's is; `kill_container` removes
+it) while the commit the run completed at (`completed at <revision>`) is not on
+the board's remote, or that cannot be told (the board, the completion or the
+remote cannot be read), with the reason "board run succeeded at <revision>,
+which is on no branch or tag of the board's remote: environment kept so its work
+can be pushed from its workspace; kill_container to remove it once pushed": the
+work survives, and can be fetched from the retained workspace and pushed. The
+board's remote here is the `origin` of the harness's working directory. If a
+refused end's commits can still be pushed, push them and call `end_run` again;
+if they went with the container, end the run as `failed`. Commits are judged against the board's own
 remote only: a run whose container cloned another repository (a container
 config naming another URL) is refused until its commits are on the board's
 remote too, and is otherwise ended as `stopped` or `failed`. A stop, a failure

@@ -44,11 +44,13 @@ pub const REFUSED: &str = "If start is refused for any other reason, say why in 
 /// The step added to the prompt's (#2666 round 1): a succeeded run's
 /// commits are confirmed on the remote before its coordinator's container
 /// can go, as `end_run` refuses a success over any that is not.
-pub const PUSH_STEP: &str = "If the run succeeded, before you close it make sure every commit its \
-     evidence names is on the repository's remote: have the coordinator push any that is not, then \
-     check (git fetch, then git branch -r --contains <commit>). end_run refuses \"succeeded\" \
-     (\"not_pushed\") while one is not, and killing the coordinator takes its container and any \
-     unpushed commit with it.";
+pub const PUSH_STEP: &str = "If the run succeeded, before you close it make sure every commit its evidence names is \
+     on a branch or tag of the board's remote (git fetch <remote>, then git branch -r \
+     --contains <commit>, or git ls-remote <remote>): have the coordinator push any that is \
+     not. end_run refuses \"succeeded\" (\"not_pushed\") while one is not. If the container \
+     cannot push, killing the coordinator keeps its environment while the run's completion \
+     commit is not on that remote: fetch the commit from the retained workspace, push it, \
+     and then remove the environment with kill_container.";
 
 /// The steps for running run `run` of task `task`, once it has started.
 pub fn running(task: &Slug, run: u32) -> String {

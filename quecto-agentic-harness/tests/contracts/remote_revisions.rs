@@ -98,6 +98,7 @@ fn a_revision_is_on_the_remote_only_when_a_branch_or_tag_there_reaches_it() {
         Vec::<String>::new(),
         "a tag reaches it now"
     );
+    assert_eq!(alice.commit_id_hex_len(), Ok(40), "a SHA-1 repository");
 }
 
 #[test]
