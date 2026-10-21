@@ -179,13 +179,16 @@ impl EndRun {
                 (Some(_), None) => ReportSeen::NoneKept,
             });
         }
-        // A kept swarm board folded onto the run: its own fold-back record
-        // (#2667), as a fold-back's, whatever the outcome, once the run
-        // written holds the items folded from it.
+        // A kept swarm board folded onto the run (the end says so: `items`
+        // holds what it folded): its own fold-back record (#2667).
         if let (Some(facts), Some(started), Some(items), Some(_), Ok([BoardArtifact::Run(run)])) =
             (facts, started, items, &report, written.as_deref())
-            && run.fields().items == items.items
         {
+            assert_eq!(
+                run.fields().items,
+                items.items,
+                "the run holds the items folded onto it"
+            );
             facts.fold_back = Some(NotedFoldBack {
                 task: id.clone(),
                 run: number,
@@ -272,10 +275,11 @@ impl EndRun {
                 let runs = board_view::runs_of(board, id)?;
                 let plans = board_view::plans_of(board, id)?;
                 let (run, plan) = run_and_plan(&runs, &plans, number)?;
-                // This attempt's items from the board its swarm left, for
-                // every outcome (#2663): never an earlier attempt's.
-                *kept = report.map(|view| run_items(plan, view, &*self.cells, evidence));
-                let mapped = kept.as_ref();
+                // This attempt's items from the board its swarm left: never
+                // an earlier attempt's.
+                *kept = None;
+                let mapped = report.map(|view| run_items(plan, view, &*self.cells, evidence));
+                let mapped = mapped.as_ref();
                 let held = |end: HeldEnd, swarm: SwarmEnd| {
                     let reported = match (report, mapped) {
                         // What the swarm's board showed as it ended.
@@ -303,12 +307,18 @@ impl EndRun {
                     };
                     end_held(task, (run, plan), end, reported, actor, &when.now)
                 };
-                let ended = match request.outcome {
-                    RunEndOutcome::Succeeded => held(HeldEnd::Succeeded, SwarmEnd::Succeeded)?,
-                    RunEndOutcome::Stopped => held(HeldEnd::Stopped, SwarmEnd::Cancelled)?,
-                    RunEndOutcome::Failed => held(HeldEnd::Failed, SwarmEnd::Failed)?,
-                    RunEndOutcome::Lost => end_lost(task, run, actor, &when.now)?,
+                // Whether the end folds the kept board's items onto the run
+                // (#2667), said by its outcome: a held end does; a loss
+                // records no items here.
+                let (ended, folded) = match request.outcome {
+                    RunEndOutcome::Succeeded => {
+                        (held(HeldEnd::Succeeded, SwarmEnd::Succeeded)?, true)
+                    }
+                    RunEndOutcome::Stopped => (held(HeldEnd::Stopped, SwarmEnd::Cancelled)?, true),
+                    RunEndOutcome::Failed => (held(HeldEnd::Failed, SwarmEnd::Failed)?, true),
+                    RunEndOutcome::Lost => (end_lost(task, run, actor, &when.now)?, false),
                 };
+                *kept = mapped.filter(|_| folded).cloned();
                 Ok(vec![BoardArtifact::Run(ended)])
             },
         );

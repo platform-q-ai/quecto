@@ -49,12 +49,14 @@ impl GitBoardStore {
     }
 
     /// The id a board's records name it by (#2663): the first 64 bits of
-    /// the SHA-256 of its remote's host and path ([`repository_of`]), as
-    /// 16 hex digits, so an https, ssh or `.git` spelling of one repository
-    /// gives one id, and a token in the URL never changes it. The URL
-    /// itself is never recorded.
-    pub fn board_id_of(url: &str) -> Option<BoardId> {
-        let digest = Sha256::digest(repository_of(url).as_bytes());
+    /// the SHA-256 of its remote's host and path ([`repository_of`], a
+    /// local remote resolved from `repo`, the clone's directory), as 16 hex
+    /// digits, so an https, ssh or `.git` spelling of one repository gives
+    /// one id, and a token in the URL never changes it. The URL itself is
+    /// never recorded. The id is opaque, not secret: anyone who knows a
+    /// repository can compute its id.
+    pub fn board_id_of(url: &str, repo: &std::path::Path) -> Option<BoardId> {
+        let digest = Sha256::digest(repository_of(url, repo).as_bytes());
         let hex: String = digest[..8]
             .iter()
             .map(|byte| format!("{byte:02x}"))
@@ -64,11 +66,12 @@ impl GitBoardStore {
 }
 
 /// The repository a remote's fetch `url` names, as its board id is made
-/// from it: its host in lower case and its path, the scheme and any
-/// userinfo left out, an scp-style `user@host:path` read as host and path,
-/// and a trailing `/` and `.git` dropped. A local path is its path, so
-/// trimmed.
-pub(super) fn repository_of(url: &str) -> String {
+/// from it: its host in lower case (a default port, 22, 80, 443 or 9418,
+/// left out) and its path (its case kept), the scheme and any userinfo
+/// left out, an scp-style `user@host:path` read as host and path, and a
+/// trailing `/` and `.git` dropped. A local path is the canonical absolute
+/// path it names from `repo`, the clone's directory, so trimmed.
+pub(super) fn repository_of(url: &str, repo: &std::path::Path) -> String {
     let (host, path) = match url.split_once("://") {
         Some((_, rest)) => match rest.split_once('/') {
             Some((authority, path)) => (authority, format!("/{path}")),
@@ -79,14 +82,26 @@ pub(super) fn repository_of(url: &str) -> String {
             Some((authority, path)) if !authority.contains('/') => {
                 (authority, format!("/{}", path.trim_start_matches('/')))
             }
-            Some(_) | None => ("", url.to_string()),
+            Some(_) | None => ("", local_path(url, repo)),
         },
     };
     let host = host.rsplit_once('@').map_or(host, |(_, host)| host);
+    let host = [":22", ":80", ":443", ":9418"]
+        .iter()
+        .find_map(|port| host.strip_suffix(port))
+        .unwrap_or(host);
     let path = path.trim_end_matches('/');
     let path = path
         .strip_suffix(".git")
         .unwrap_or(path)
         .trim_end_matches('/');
     format!("{}{path}", host.to_ascii_lowercase())
+}
+
+/// A local remote's path as an absolute one, resolved from `repo` (the
+/// clone's directory) when relative, and canonical when it exists.
+fn local_path(path: &str, repo: &std::path::Path) -> String {
+    let joined = repo.join(path);
+    let resolved = std::fs::canonicalize(&joined).unwrap_or(joined);
+    resolved.to_string_lossy().into_owned()
 }
