@@ -163,7 +163,12 @@ former Python `board.<method>` of the same name, with the same arguments (as
 named JSON fields, with the same defaults) and the same JSON result, except
 where Python answered `null`: an op that changes a task answers the task's row
 as it now stands, and every other op answers what it changed, so no op answers
-a bare `null` (#2394). Otherwise only the calling syntax changed,
+a bare `null` (#2394). `verify_task` also departs from Python on purpose
+for evidence named by full commit ids: where Python refused evidence at an
+earlier commit as `stale evidence revision`, the Rust board carries it to
+the verified commit when git confirms the ancestry (#2687, see
+[Verification](#verification-stopping-and-progress)); evidence at any other
+revision is refused as Python refused it. Otherwise only the calling syntax changed,
 `{"op":"claim","task_item_id":3}`. `swarm_board_ops.rs`
 (`BOARD_OPS`) is the one table of them; the tool schema and the dispatcher's
 argument binding are rendered from and held to it.
@@ -397,6 +402,36 @@ cannot verify the replacement. A submitted task cannot be changed to blocked. On
 tasks with `verify_task` (`task_id`, the claim `token`, `revision`), accept
 evidence using `evidence` (`criterion`, `artifact`, `revision`, `kind`,
 `passed`), and `complete` (`revision`).
+Workers may not commit, so a worker submits evidence at the commit its
+uncommitted change sits on, and the coordinator commits that change. The
+coordinator then verifies at its own commit: when the submission's evidence
+names an earlier commit, `verify_task` carries that evidence forward to the
+verified `revision` instead of refusing it as stale (#2687). It does so only
+for submitted work under the current claim token, only when the verified
+revision and every revision in the evidence are full commit ids, and only
+when git confirms that each earlier commit is an ancestor of the verified
+one in the board's checkout (`git merge-base --is-ancestor`). The
+evidence is then stored at the verified revision, and the `verified` event
+adds `carried_from` (the earlier commits) and `previous_evidence` (the
+submission as the worker made it). Anything else is refused as `stale
+evidence revision`, as before. The worker never has to release, reclaim and
+resubmit the same evidence, and it still cannot change a submission. The
+board does not check what the commit contains: the coordinator, as the
+evidence gate, commits only the work it accepted. git is asked with no
+board transaction open, under one 10-second deadline for the whole
+question, so a slow git never holds the board's lock; the carry is then
+written only if the claim token, the `submitted` status and the stored
+evidence are still those git was asked about, and is refused as `stale
+evidence revision` otherwise. When git declines, the process trace
+(`swarm evidence carry declined`) names why: `not_ancestor`, `git_failed`
+(no repository, an unknown commit, a refused `safe.directory`), `timeout`
+or `not_full_id`; evidence whose revisions are not all full commit ids is
+never asked about, and its refusal is the stale one as before. git inherits
+only `PATH`, `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`,
+`GIT_CONFIG_NOSYSTEM`, `GIT_CEILING_DIRECTORIES` and command-scope
+configuration (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`,
+`GIT_CONFIG_VALUE_<n>`, where a container may set `safe.directory`), never
+a `GIT_DIR` or `GIT_WORK_TREE`.
 A worker's `evidence` call records an unaccepted submission. A coordinator
 accepts or rejects it on the reported command results and the required
 independent/human review, judged against the criteria, and rejects with reasons
