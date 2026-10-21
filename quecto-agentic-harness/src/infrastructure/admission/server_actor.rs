@@ -103,15 +103,21 @@ impl Actor {
         tokio::pin!(sleep);
         loop {
             tokio::select! {
-                _ = shutdown.changed() => return,
+                _ = shutdown.changed() => break,
                 command = rx.recv() => match command {
                     Some(command) => self.handle(command),
-                    None => return,
+                    None => break,
                 },
                 _ = &mut sleep => {}
             }
             let wake = self.settle();
             sleep.as_mut().reset(wake.into());
+        }
+        // The last turn: lease bounds are durable as they stand, so the
+        // uptime already served is not lost to a restart (#2664).
+        let now = self.clock.now_ms();
+        if let Err(error) = self.use_cases.settle.last_turn(&mut self.authority, now) {
+            tracing::warn!(?error, "admission ledger not checkpointed at shutdown");
         }
     }
 

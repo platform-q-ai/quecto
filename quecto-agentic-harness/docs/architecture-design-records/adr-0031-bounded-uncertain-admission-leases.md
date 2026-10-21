@@ -35,9 +35,12 @@ lease is acknowledged and frees nothing a second time.
 The durable ledger records each outstanding attempt's remaining time to that
 bound (an additive, optional field; the format number is unchanged). A restart
 turns outstanding work into orphans that clear when their remaining time has
-passed on the new clock, so downtime only lengthens a lease; an attempt whose
-owner was still connected at the last write counts its margin from that write
-at the earliest. An entry without
+passed on the new clock; an attempt whose owner was still connected at the
+last write counts its margin from that write at the earliest. The ledger is
+written when a lease or orphan clears on time and when the authority stops
+gracefully, besides every grant, completion and reset, so a graceful restart
+lengthens a lease only by its downtime; after a crash the uptime since the
+last write is served again. An entry without
 a recorded bound (written before this decision) or with one beyond the group's
 attempt timeout plus the margin is bounded by the attempt timeout plus the
 margin from the restart.
@@ -53,7 +56,8 @@ the plain queue-timeout reason so older clients still read a queue timeout.
 ## Consequences
 
 One killed client blocks its group for at most its attempt timeout plus the
-margin, not until a reset. A provider that keeps computing after the local
+margin after its grant, or, for a client lost after its deadline, the margin
+after it was lost; never until a reset. A provider that keeps computing after the local
 transport is gone can briefly exceed the configured concurrency after the
 lease clears; ADR-0026 already excludes that remote work from the bound.
 Process-identity (pid) tracking of owners was rejected: the broker would have

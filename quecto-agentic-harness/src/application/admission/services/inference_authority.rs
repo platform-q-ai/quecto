@@ -49,6 +49,9 @@ pub struct AdmissionAuthority<S> {
     detached: BTreeSet<ScopeId>,
     groups: Vec<GroupId>,
     journal_healthy: bool,
+    /// Outstanding attempts in the last durable ledger: occupancy that left
+    /// without a write since (a cleared lease, #2664) is checkpointed.
+    durable_outstanding: usize,
 }
 
 impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
@@ -84,6 +87,7 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
             detached: BTreeSet::new(),
             groups,
             journal_healthy: true,
+            durable_outstanding: 0,
         }
     }
 
@@ -115,6 +119,21 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
     /// The journal's last outcome, recorded by the use case that wrote it.
     pub(in crate::application::admission) fn record_journal(&mut self, healthy: bool) {
         self.journal_healthy = healthy;
+    }
+
+    /// The ledger the journal accepted: how many attempts it holds.
+    pub(in crate::application::admission) fn record_durable(&mut self, ledger: &AdmissionLedger) {
+        self.durable_outstanding = ledger.outstanding.len();
+    }
+
+    /// Whether occupancy left since the last durable ledger without a write
+    /// of its own (#2664: a lease or orphan cleared on time), so the journal
+    /// must not bring it back after a restart.
+    pub(in crate::application::admission) fn checkpoint_due(
+        &mut self,
+        now: u64,
+    ) -> Result<bool, AuthorityError> {
+        Ok(self.service.ledger(now)?.outstanding.len() < self.durable_outstanding)
     }
 
     /// The current ledger, for a use case to make durable.

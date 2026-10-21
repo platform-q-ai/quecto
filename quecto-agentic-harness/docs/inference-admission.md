@@ -260,7 +260,8 @@ nothing but the pre-created `client/` mountpoint, which rootless Podman with
   the lost client's scope is then released.
 - An authority restart keeps the epoch and turns outstanding work into
   orphaned uncertain occupancy; it never restarts with an empty ledger. The
-  ledger records each attempt's remaining time to its bound, so an orphan
+  ledger records each attempt's remaining time to its bound (written also
+  when a lease clears and when the broker stops gracefully), so an orphan
   clears when that time has passed after the restart (a ledger written before
   #2664 bounds it by `attempt_timeout_ms` plus 60 s). Roots reconnect and
   re-register; children fail closed and are respawned.

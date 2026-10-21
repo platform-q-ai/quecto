@@ -1156,3 +1156,34 @@ async fn a_replayed_queued_acquire_keeps_the_first_waiter() {
     assert!(matches!(granted.body, Body::Granted { .. }));
     server.shutdown().await;
 }
+
+/// #2664 review: a graceful shutdown checkpoints the ledger, so the remaining
+/// lease bounds count the uptime already served and a restart lengthens them
+/// only by its downtime.
+#[tokio::test]
+async fn a_graceful_shutdown_checkpoints_the_served_uptime() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
+    let server = start_authority(dir.clone(), proposal(1, 60_000))
+        .await
+        .unwrap();
+    let client = root(&server).await;
+    let permit = timeout(LIMIT, client.gate("acct").unwrap().acquire())
+        .await
+        .unwrap()
+        .unwrap();
+    let remaining = |ledger: AdmissionLedger| {
+        ledger.outstanding[0]
+            .release_remaining_ms
+            .expect("a bound is recorded")
+    };
+    let at_grant = remaining(FileJournal::new(&dir).load().unwrap().unwrap());
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    server.shutdown().await;
+    let at_shutdown = remaining(FileJournal::new(&dir).load().unwrap().unwrap());
+    assert!(
+        at_shutdown + 50 <= at_grant,
+        "the uptime served is durable: {at_grant} ms at grant, {at_shutdown} ms at shutdown"
+    );
+    std::mem::forget(permit);
+}

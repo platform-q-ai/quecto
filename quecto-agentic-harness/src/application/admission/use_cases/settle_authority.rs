@@ -20,6 +20,16 @@ impl SettleAuthority {
         Self { dispatch }
     }
 
+    /// The authority's last turn as it stops: its ledger made durable with
+    /// the lease bounds as they stand now (#2664).
+    pub fn last_turn<S: AdmissionSecretSource>(
+        &self,
+        authority: &mut AdmissionAuthority<S>,
+        now: u64,
+    ) -> Result<(), AuthorityError> {
+        self.dispatch.checkpoint(authority, now)
+    }
+
     /// Settle the authority at `now` for the requests still `waiting` for an
     /// answer. A waiter that observes `Cancelled` while the journal is
     /// unhealthy was withdrawn by dispatch, not cancelled by its client (a
