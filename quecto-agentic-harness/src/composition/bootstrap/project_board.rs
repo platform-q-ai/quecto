@@ -187,6 +187,20 @@ fn build_with_warnings(
     })
 }
 
+/// The revisions the board of the repository at `repo` holds on its
+/// `origin` (#2666 round 2), read as the board's own store reads them:
+/// what the teardown asks of a succeeded board run's completion. Or why
+/// there are none here (no repository, no `origin`).
+///
+/// # Errors
+/// git cannot run at `repo`, or it has no `origin`.
+pub fn board_remote_revisions(repo: &Path) -> Result<Arc<dyn RemoteRevisions>, String> {
+    let vars = GitEnvironment::allowlisted(std::env::vars_os());
+    let git = Git::reader(repo, vars).map_err(|error| format!("git cannot run here: {error}"))?;
+    let store = GitBoardStore::new(git, "origin").map_err(|error| store_reason(&error))?;
+    Ok(Arc::new(store))
+}
+
 /// Pull request states of the remote at `url`, read with `gh` when it is
 /// on GitHub or the configured enterprise host (`GH_HOST` in `vars`); or
 /// why none are.

@@ -5,6 +5,7 @@ use super::PortFuture;
 use crate::application::environments::dto::HostedBoardRevision;
 use crate::application::environments::dto::SwarmBoardSnapshot;
 use crate::domain::environments::entities::environment_registry::EnvironmentRecord;
+use crate::domain::environments::services::environment_retention::CompletionDelivery;
 use crate::domain::environments::services::environment_retention::CoordinatorLoss;
 use crate::domain::environments::services::environment_retention::HostedSwarmRun;
 use crate::domain::environments::services::environment_retention::SwarmRunObservation;
@@ -69,6 +70,23 @@ pub trait EndedSwarmBoards: Send + Sync {
     /// success. Never fails the teardown: one it cannot keep whole (a run
     /// that is neither running nor paused, items left out) is not kept.
     fn keep_left(&self, session: &str, label: &str, board: SwarmBoardSnapshot);
+}
+
+/// Where the work of a succeeded swarm run went, read as its owner's kill
+/// tears its box down (#2666 round 2): whether the commit its completion
+/// names is on the board's remote. Blocking reads run inline, as the
+/// teardown's scripts do.
+pub trait CompletionDeliveryCheck: Send + Sync {
+    /// For the run of member `label`, whose board as it left is `board`
+    /// (`None`: it could not be read): `NotJudged` for a member that is no
+    /// board run's coordinator, or a completion that names no commit;
+    /// `Unknown` when the board, its completion or the remote cannot be
+    /// read.
+    fn delivery<'a>(
+        &'a self,
+        label: &'a str,
+        board: Option<&'a SwarmBoardSnapshot>,
+    ) -> PortFuture<'a, CompletionDelivery>;
 }
 
 /// The swarm run a checkout hosts, read synchronously and without a

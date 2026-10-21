@@ -287,6 +287,66 @@ fn status_name(status: RunStatus) -> &'static str {
     }
 }
 
+/// Where the work a succeeded board run completed at went, read as its
+/// owner's kill tears its box down (#2666 round 2): its completion commit
+/// on the board's remote, or not, or not known.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionDelivery {
+    /// Nothing to judge: no board run's coordinator, or a completion that
+    /// names no commit.
+    NotJudged,
+    OnRemote,
+    NotOnRemote {
+        revision: String,
+    },
+    /// Whether it is there could not be told, and why.
+    Unknown {
+        why: String,
+    },
+}
+
+/// Whether the teardown of `observed` in `mode` judges where its run's
+/// completion went: the owner's kill (`OwnerEnd`) of a created run that
+/// ended succeeded (an allowlist). Any other end, or run, is torn down or
+/// kept as before.
+pub fn judges_delivery(mode: MemberFinalizeMode, observed: &SwarmRunObservation) -> bool {
+    match (mode, observed) {
+        (MemberFinalizeMode::OwnerEnd, SwarmRunObservation::Run(hosted)) => {
+            hosted.created() && hosted.status == RunStatus::Succeeded
+        }
+        (
+            MemberFinalizeMode::OwnerEnd
+            | MemberFinalizeMode::Exit
+            | MemberFinalizeMode::ParentKill
+            | MemberFinalizeMode::OwnerTeardown
+            | MemberFinalizeMode::LaunchRollback
+            | MemberFinalizeMode::LaunchRollbackOwned,
+            _,
+        ) => false,
+    }
+}
+
+/// The `metadata.retained` reason an environment is kept for, when
+/// `delivery` keeps it (#1924's machinery): a succeeded run whose
+/// completion commit is not on the board's remote, or not known to be
+/// (fail safe), keeps its box so the work can be pushed from its
+/// workspace. `None`: nothing keeps it.
+pub fn undelivered_reason(delivery: &CompletionDelivery) -> Option<String> {
+    match delivery {
+        CompletionDelivery::NotJudged | CompletionDelivery::OnRemote => None,
+        CompletionDelivery::NotOnRemote { revision } => Some(format!(
+            "board run succeeded at {revision}, which is on no branch or tag of the board's \
+             remote: environment kept so its work can be pushed from its workspace; \
+             kill_container to remove it once pushed"
+        )),
+        CompletionDelivery::Unknown { why } => Some(format!(
+            "board run succeeded, but whether its completion commit is on the board's remote \
+             could not be checked ({why}): environment kept so its work can be pushed from its \
+             workspace; kill_container to remove it once pushed"
+        )),
+    }
+}
+
 /// Which board of a hosted swarm run is kept as its member leaves, before
 /// any teardown (#2481 S4c follow-up, #2674): an ended run's whole board;
 /// or, when its owner ended the member on purpose while the run was still

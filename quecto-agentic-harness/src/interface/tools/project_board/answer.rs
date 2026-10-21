@@ -265,6 +265,10 @@ pub fn outcome(
             // Whether this front end could see the run's swarm still
             // running; one that could not says what that leaves its caller.
             fields.insert("liveness".into(), json!(ended.liveness.as_str()));
+            // A success's evidence revisions the push rule did not check.
+            if let Some(unchecked) = ended.unchecked {
+                fields.insert("unchecked".into(), json!(unchecked));
+            }
             match ended.liveness {
                 LivenessCheck::Checked => {}
                 LivenessCheck::NotChecked => {

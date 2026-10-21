@@ -208,40 +208,69 @@ pub fn run_items(
     folded
 }
 
-/// The shortest prefix of a commit id the push rule takes as naming one
-/// (#2666 round 1): a shorter run of hex digits may be a word or a digest.
+/// The shortest prefix of a commit id the push rule checks (#2666 round
+/// 1): a shorter run of hex digits may be a word or a digest.
 pub const MIN_COMMIT_PREFIX: usize = 12;
 
-/// Whether `revision` names a commit as the push rule reads it: a full id
-/// (40 or 64 hex digits) or a prefix of at least [`MIN_COMMIT_PREFIX`],
-/// in either case (an allowlist). Anything else (an artifact's digest
-/// shorter than that, a bundle, a branch or tag name) names none.
-pub fn names_commit(revision: &str) -> bool {
-    (MIN_COMMIT_PREFIX..=64).contains(&revision.len())
-        && revision.bytes().all(|b| b.is_ascii_hexdigit())
+/// The shortest run of hex digits read as a commit id at all: git's own
+/// abbreviation. One of 7 to 11 is counted, but not checked.
+pub const MIN_COMMIT_TOKEN: usize = 7;
+
+/// The commit id `revision` names, in lower case (round 2): the one
+/// whitespace-separated word of it, backticks trimmed, that is wholly
+/// hex digits, at least [`MIN_COMMIT_TOKEN`] of them (`abc…`, `` `abc…` ``,
+/// `commit abc…`, `abc… (main)`). None when no word is, or more than one
+/// is: no id is guessed.
+pub fn commit_token(revision: &str) -> Option<String> {
+    let mut hex = revision
+        .split_whitespace()
+        .map(|word| word.trim_matches('`'))
+        .filter(|word| {
+            word.len() >= MIN_COMMIT_TOKEN && word.bytes().all(|b| b.is_ascii_hexdigit())
+        });
+    match (hex.next(), hex.next()) {
+        (Some(token), None) => Some(token.to_ascii_lowercase()),
+        (Some(_), Some(_)) | (None, _) => None,
+    }
 }
 
-/// Every commit ([`names_commit`]) the evidence of the swarm items
-/// `plan`'s task items stand for names (as [`run_items`] matches them),
-/// once each, as the swarm gave it, in the plan's order: what a run
-/// recorded from `view` claims as its work, which the push rule checks
-/// (#2666). Evidence that names no commit is not among them, nor is an
-/// extra item's, which is never recorded.
-pub fn evidence_revisions(plan: &Plan, view: &SwarmRunView) -> Vec<String> {
-    let mut revisions: Vec<String> = Vec::new();
-    let named = plan
+/// Whether commit token `id` is checked by the push rule in a repository
+/// whose full ids are `id_len` hex digits (40 SHA-1, 64 SHA-256): a full
+/// id or a prefix of at least [`MIN_COMMIT_PREFIX`]. Longer than a full
+/// id (a SHA-256 digest in a SHA-1 repository) or shorter is not.
+pub fn checks_commit(id: &str, id_len: usize) -> bool {
+    (MIN_COMMIT_PREFIX..=id_len).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// What the evidence of a run's recorded task items names (#2666): each
+/// commit token once (by [`commit_token`], so case-insensitively), in the
+/// plan's order, and how many entries name none.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EvidenceRevisions {
+    pub ids: Vec<String>,
+    pub unnamed: usize,
+}
+
+/// What the evidence of the swarm items `plan`'s task items stand for (as
+/// [`run_items`] matches them) names: what a run recorded from `view`
+/// claims as its work, which the push rule checks. An extra item's
+/// evidence is never recorded, so it is not among it.
+pub fn evidence_revisions(plan: &Plan, view: &SwarmRunView) -> EvidenceRevisions {
+    let mut named = EvidenceRevisions::default();
+    let entries = plan
         .fields()
         .items
         .iter()
         .filter_map(|item| matched(item, view))
         .flat_map(|(_, swarm)| swarm.evidence.iter());
-    for entry in named.filter(|entry| names_commit(&entry.revision)) {
-        match revisions.contains(&entry.revision) {
-            true => {}
-            false => revisions.push(entry.revision.clone()),
+    for entry in entries {
+        match commit_token(&entry.revision) {
+            Some(id) if named.ids.contains(&id) => {}
+            Some(id) => named.ids.push(id),
+            None => named.unnamed += 1,
         }
     }
-    revisions
+    named
 }
 
 /// The swarm item plan item `item` stands for, by its place in the view:

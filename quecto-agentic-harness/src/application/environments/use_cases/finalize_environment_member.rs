@@ -13,13 +13,16 @@ use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, KillClaim,
 };
 use crate::domain::environments::services::environment_retention::{
-    BoardKept, MemberFinalizeMode, SwarmRunObservation, board_kept, ends_plain_environment,
-    loss_reason, retains_environment, retention_reason, unrecorded_loss_reason,
+    BoardKept, CompletionDelivery, MemberFinalizeMode, SwarmRunObservation, board_kept,
+    ends_plain_environment, judges_delivery, loss_reason, retains_environment, retention_reason,
+    undelivered_reason, unrecorded_loss_reason,
 };
 
+use crate::application::environments::dto::SwarmBoardSnapshot;
 use crate::application::environments::ports::{
-    hosted_swarm::EndedSwarmBoards, hosted_swarm::HostedSwarmBoard,
-    hosted_swarm::HostedSwarmRunObservation, process::EnvironmentProcessCommands,
+    hosted_swarm::CompletionDeliveryCheck, hosted_swarm::EndedSwarmBoards,
+    hosted_swarm::HostedSwarmBoard, hosted_swarm::HostedSwarmRunObservation,
+    process::EnvironmentProcessCommands,
 };
 
 pub struct FinalizeEnvironmentMember {
@@ -29,6 +32,9 @@ pub struct FinalizeEnvironmentMember {
     /// Where a created swarm run's board is read and kept as its member
     /// leaves, before any teardown; `None`: none is kept.
     ended: Option<(Arc<dyn HostedSwarmBoard>, Arc<dyn EndedSwarmBoards>)>,
+    /// Where a succeeded run's completion went, judged on its owner's kill
+    /// (#2666 round 2); `None`: not judged.
+    delivery: Option<Arc<dyn CompletionDeliveryCheck>>,
 }
 
 impl FinalizeEnvironmentMember {
@@ -42,6 +48,19 @@ impl FinalizeEnvironmentMember {
             commands,
             hosted,
             ended: None,
+            delivery: None,
+        }
+    }
+
+    /// This use case, keeping the environment of a succeeded run its owner
+    /// kills while `check` finds its completion commit not on the board's
+    /// remote, or cannot tell (#2666 round 2): the work survives in its
+    /// workspace, to be pushed from there.
+    #[must_use]
+    pub fn checking_delivery(self, check: Arc<dyn CompletionDeliveryCheck>) -> Self {
+        Self {
+            delivery: Some(check),
+            ..self
         }
     }
 
@@ -105,9 +124,11 @@ impl FinalizeEnvironmentMember {
         } else {
             SwarmRunObservation::NoStore
         };
-        // An ended run's board is kept before anything can tear it down;
-        // one still running or paused only on its owner's word, as far as
-        // it got (#2674): it may yet change, so nothing else keeps it.
+        // An ended run's board is kept before anything can tear it down:
+        // one still running or paused may yet change, and is not.
+        // One still running or paused is kept only on its owner's word,
+        // as far as it got (#2674): it may yet change, so nothing else
+        // keeps it.
         let kept = match (&observed, label) {
             (SwarmRunObservation::Run(hosted), Some(label)) => {
                 board_kept(mode, hosted).map(|kept| (label, kept))
@@ -120,9 +141,10 @@ impl FinalizeEnvironmentMember {
                 _,
             ) => None,
         };
-        if let Some((label, kept)) = kept {
-            self.keep_board(&record, label, kept).await;
-        }
+        let board = match kept {
+            Some((label, kept)) => self.keep_board(&record, label, kept).await,
+            None => None,
+        };
         if retains_environment(mode, &observed) {
             // `None`: the owner closed the run between the observation and
             // the loss record (#2070) — the swarm is over, the kill runs.
@@ -130,6 +152,17 @@ impl FinalizeEnvironmentMember {
                 self.registry.retain(claim, &reason);
                 return;
             }
+        }
+
+        // #2666 round 2: a succeeded run its owner kills keeps its box
+        // while its completion commit is not on the board's remote, or
+        // cannot be told to be: the work survives, to be pushed from it.
+        if let Some(reason) = self
+            .undelivered(mode, &observed, label, board.as_ref())
+            .await
+        {
+            self.registry.retain(claim, &reason);
+            return;
         }
 
         // #2206: on the owner's word a plain container child's box has
@@ -161,21 +194,53 @@ impl FinalizeEnvironmentMember {
     /// Keeps the board `record` hosts under this session and `label`, when
     /// this use case keeps boards: best effort, as a board that cannot be
     /// read is logged and the teardown goes on.
-    async fn keep_board(&self, record: &EnvironmentRecord, label: &str, which: BoardKept) {
-        let Some((boards, kept)) = &self.ended else {
-            return;
-        };
+    /// It returns the board read, when one was.
+    async fn keep_board(
+        &self,
+        record: &EnvironmentRecord,
+        label: &str,
+        which: BoardKept,
+    ) -> Option<SwarmBoardSnapshot> {
+        let (boards, kept) = self.ended.as_ref()?;
         let session = self.registry.session();
-        match (boards.board(record).await, which) {
-            (Ok(Some(board)), BoardKept::Ended) => kept.keep(session, label, board),
-            (Ok(Some(board)), BoardKept::Left) => kept.keep_left(session, label, board),
-            (Ok(None), _) => {}
-            (Err(error), _) => tracing::warn!(
-                environment = %record.environment_ref,
-                %error,
-                "the ended swarm's board could not be kept"
-            ),
+        match boards.board(record).await {
+            Ok(Some(board)) => {
+                match which {
+                    BoardKept::Ended => kept.keep(session, label, board.clone()),
+                    BoardKept::Left => kept.keep_left(session, label, board.clone()),
+                }
+                Some(board)
+            }
+            Ok(None) => None,
+            Err(error) => {
+                tracing::warn!(
+                    environment = %record.environment_ref,
+                    %error,
+                    "the ended swarm's board could not be kept"
+                );
+                None
+            }
         }
+    }
+
+    /// Why the environment of `observed` is kept for its run's completion
+    /// (#2666 round 2), when the teardown judges it and finds it not on
+    /// the board's remote, or cannot tell.
+    async fn undelivered(
+        &self,
+        mode: MemberFinalizeMode,
+        observed: &SwarmRunObservation,
+        label: Option<&str>,
+        board: Option<&SwarmBoardSnapshot>,
+    ) -> Option<String> {
+        let (Some(check), Some(label)) = (&self.delivery, label) else {
+            return None;
+        };
+        let delivery = match judges_delivery(mode, observed) {
+            true => check.delivery(label, board).await,
+            false => CompletionDelivery::NotJudged,
+        };
+        undelivered_reason(&delivery)
     }
 
     /// The cleanup that ends `record`: the environment's own retained

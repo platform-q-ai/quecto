@@ -32,7 +32,9 @@ use crate::infrastructure::processes::containers::environment_process::ScriptEnv
 use crate::infrastructure::processes::containers::preflight::ScriptPreflight;
 use crate::infrastructure::processes::containers::script_inventory::ScriptInventory;
 pub use crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControl;
-use crate::infrastructure::tools::agents::coordinator_launch::KeptSwarmBoards;
+use crate::infrastructure::tools::agents::coordinator_launch::{
+    KeptSwarmBoards, RemoteCompletionDelivery,
+};
 use crate::infrastructure::tools::agents::environment_commands::{
     HostedStoreObservation, ScriptEnvironmentCommands,
 };
@@ -93,6 +95,14 @@ pub fn build_member_finalizer(environments: EnvironmentRegistry) -> FinalizeEnvi
         Arc::new(hosted_store_observation()),
     )
     .keeping_ended_boards(Arc::new(hosted_store_observation()), kept_swarm_boards())
+    // A succeeded board run its owner kills keeps its box while its
+    // completion commit is not on the board's remote (#2666 round 2): the
+    // board of the harness's working directory, as the board tool's.
+    .checking_delivery(Arc::new(RemoteCompletionDelivery::new(
+        std::env::current_dir()
+            .map_err(|error| format!("no working directory: {error}"))
+            .and_then(|repo| super::bootstrap::project_board::board_remote_revisions(&repo)),
+    )))
 }
 
 /// The one store of ended runs' boards composition hands both the

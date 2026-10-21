@@ -78,6 +78,20 @@ impl RemoteRevisions for GitBoardStore {
         );
         Ok(missing)
     }
+
+    fn commit_id_hex_len(&self) -> Result<usize, BoardStoreError> {
+        let format = self
+            .git
+            .text(&["rev-parse", "--show-object-format"], None)
+            .map_err(unavailable)?;
+        match format.as_str() {
+            "sha1" => Ok(40),
+            "sha256" => Ok(64),
+            other => Err(BoardStoreError::Unavailable(format!(
+                "unknown object format {other:?}"
+            ))),
+        }
+    }
 }
 
 impl GitBoardStore {

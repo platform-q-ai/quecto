@@ -47,7 +47,7 @@ use crate::application::project_board::dto::{
 };
 use crate::application::project_board::dto::{SwarmEnd, SwarmRunView};
 use crate::application::project_board::fold_back::{
-    Evidence, cost_of, evidence_revisions, run_items,
+    Evidence, EvidenceRevisions, checks_commit, cost_of, evidence_revisions, run_items,
 };
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardStoreError, BoardTextCells, ProjectBoardStore, RemoteRevisions,
@@ -212,10 +212,22 @@ impl EndRun {
                     }
                     (None, _) | (_, None) => RunReport::Unreported,
                 };
+                // How many evidence revisions a success left unchecked, so a
+                // silent pass shows (#2666 round 2).
+                let unchecked = match (request.outcome, &asked) {
+                    (RunEndOutcome::Succeeded, Some((_, Ok(judged)))) => {
+                        Some(u64::try_from(judged.unchecked).unwrap_or(u64::MAX))
+                    }
+                    (RunEndOutcome::Succeeded, Some((_, Err(_))) | None)
+                    | (RunEndOutcome::Stopped | RunEndOutcome::Failed | RunEndOutcome::Lost, _) => {
+                        None
+                    }
+                };
                 Ok(EndedRun {
                     run: run.clone(),
                     liveness,
                     report,
+                    unchecked,
                 })
             }
             other => panic!("an end_run writes its run alone, not {other:?}"),
@@ -373,40 +385,72 @@ impl EndRun {
         let _ahead = self.ended(request, report, (Evidence::Kept, asked), &board, &when);
     }
 
-    /// How many of `revisions` the board's remote does not hold: asked
-    /// once (none when there are none), the answer (or why there is none)
-    /// kept in `asked` for a later attempt or pass at the same revisions.
+    /// How many of the commits `evidence` names the board's remote does
+    /// not hold, and how many of its revisions went unchecked (naming no
+    /// commit, or one too short or too long to check: [`checks_commit`]):
+    /// asked once (the remote not at all when no commit is named), the
+    /// answer (or why there is none) kept in `asked` for a later attempt
+    /// or pass at the same evidence.
     fn unpushed(
         &self,
-        revisions: Vec<String>,
+        evidence: EvidenceRevisions,
         asked: &mut Asked,
     ) -> Result<usize, ProjectBoardError> {
         if let Some((kept, answer)) = asked.as_ref() {
-            if *kept == revisions {
-                return answer.clone();
+            if *kept == evidence {
+                return answer.clone().map(|judged| judged.unpushed);
             }
         }
-        let answer = match revisions.as_slice() {
-            [] => Ok(0),
-            [_, ..] => match self.revisions.not_on_remote(&revisions) {
-                Ok(missing) => {
-                    assert!(
-                        missing.iter().all(|revision| revisions.contains(revision)),
-                        "the remote answers only for the revisions asked"
-                    );
-                    Ok(missing.len())
-                }
-                Err(error) => Err(ProjectBoardError::Store(error)),
-            },
+        let answer = self.judged(&evidence);
+        *asked = Some((evidence, answer.clone()));
+        answer.map(|judged| judged.unpushed)
+    }
+
+    /// `evidence` as the remote judges it.
+    fn judged(&self, evidence: &EvidenceRevisions) -> Result<Judged, ProjectBoardError> {
+        let id_len = match evidence.ids.as_slice() {
+            [] => {
+                return Ok(Judged {
+                    unpushed: 0,
+                    unchecked: evidence.unnamed,
+                });
+            }
+            [_, ..] => self.revisions.commit_id_hex_len()?,
         };
-        *asked = Some((revisions, answer.clone()));
-        answer
+        let (checked, short): (Vec<String>, Vec<String>) = evidence
+            .ids
+            .iter()
+            .cloned()
+            .partition(|id| checks_commit(id, id_len));
+        let unchecked = evidence.unnamed + short.len();
+        let unpushed = match checked.as_slice() {
+            [] => 0,
+            [_, ..] => {
+                let missing = self.revisions.not_on_remote(&checked)?;
+                assert!(
+                    missing.iter().all(|revision| checked.contains(revision)),
+                    "the remote answers only for the revisions asked"
+                );
+                missing.len()
+            }
+        };
+        Ok(Judged {
+            unpushed,
+            unchecked,
+        })
     }
 }
 
-/// The revisions the remote was asked about, and how many it did not
-/// hold or why it could not tell.
-type Asked = Option<(Vec<String>, Result<usize, ProjectBoardError>)>;
+/// How the remote judged a success's evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Judged {
+    unpushed: usize,
+    unchecked: usize,
+}
+
+/// The evidence the remote was asked about, and how it judged it or why
+/// it could not.
+type Asked = Option<(EvidenceRevisions, Result<Judged, ProjectBoardError>)>;
 
 #[cfg(test)]
 #[path = "end_run_tests.rs"]
