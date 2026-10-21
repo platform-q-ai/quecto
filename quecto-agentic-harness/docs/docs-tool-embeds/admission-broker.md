@@ -147,7 +147,7 @@ This order keeps sessions admitted until they are restarted; the uninstall stops
 | a session reports "restart required" | a root's own section changed on live reload, or the broker came back with a different policy | restart that session (never a child: children inherit) |
 | `journal_healthy: false` | the journal file is unwritable or corrupt | fix permissions/storage under the directory; never delete the journal to clear a queue |
 
-Recovery from a stuck or uncertain group is `quecto admission-broker reset` → `{"directory":…,"epoch":N}` plus a stderr warning; roots keep running, children are respawned — see below.
+Recovery from a stuck or uncertain group is `quecto admission-broker reset` → `{"directory":…,"epoch":N}` plus a stderr warning; roots keep running, children are respawned — see below. An uncertain group also clears by itself 60 s after the later of the lost attempt's deadline and the loss of its client, so a reset is only needed to clear it sooner.
 
 ## Recovery: reset and broker restart (what each process does, what you see)
 
@@ -285,6 +285,11 @@ broker's clock domain, not Unix wall time; prefer session cooldown
   run remotely. A surviving session reconnecting with the same capability and
   completing its attempt can clear uncertainty. Closing a socket does not
   cancel remote computation; an attempt timeout is not proof of remote completion.
+  The quarantine still ends by itself 60 s after the later of the attempt's
+  deadline and the loss of its client, and
+  a queued request that times out meanwhile says ``… is held by N uncertain
+  lease(s) …; it clears by itself in about S s, or `quecto admission-broker
+  reset` clears it now …``.
 - `unavailable` can mean provider cooldown advice exceeded `max_cooldown_ms`;
   treat this as a provider incident. Ordinary cooldown requires waiting, not reset.
 

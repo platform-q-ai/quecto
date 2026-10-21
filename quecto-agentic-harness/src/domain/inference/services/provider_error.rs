@@ -573,13 +573,25 @@ fn classify_keyword_paths(lowered: &str) -> ProviderErrorClass {
     }
 }
 
+/// A status read from a status position: after an `http`, `status` or `code`
+/// marker, never inside a URL (#2653). An `http://host` span is a URL, so a
+/// connect failure to `http://100.83.173.59` does not read the first octet
+/// as HTTP status 100.
 fn extract_http_status(lowered: &str) -> Option<u16> {
+    let urls = url_spans(lowered);
+    let outside_urls = |at: usize| urls.iter().all(|span| !span.contains(&at));
     for marker in ["http", "status", "code"] {
         let mut search_from = 0;
         while let Some(rel) = lowered[search_from..].find(marker) {
-            let idx = search_from + rel + marker.len();
-            if let Some(code) = parse_status_near(&lowered[idx..]) {
-                return Some(code);
+            let start = search_from + rel;
+            let idx = start + marker.len();
+            // Only a marker outside every URL is a status position. One
+            // outside cannot reach a URL's digits: only separators may follow
+            // it, and a URL starts with `http`.
+            if outside_urls(start) {
+                if let Some(code) = parse_status_near(&lowered[idx..]) {
+                    return Some(code);
+                }
             }
             search_from = idx;
         }
@@ -587,21 +599,84 @@ fn extract_http_status(lowered: &str) -> Option<u16> {
     None
 }
 
+/// The byte ranges of the `http://` and `https://` URLs in `lowered`. A URL
+/// runs to the first whitespace, quote, bracket, brace, angle bracket, comma
+/// or semicolon, so a status glued after it (`…/v1,status: 429`) stays
+/// outside. A bracketed IPv6 host (`http://[fd00::1]:8080/…`) is part of the
+/// URL, so its brackets do not end it.
+fn url_spans(lowered: &str) -> Vec<std::ops::Range<usize>> {
+    let ends_url = |c: char| {
+        c.is_ascii_whitespace()
+            || matches!(
+                c,
+                '"' | '\'' | '`' | '(' | ')' | '<' | '>' | '[' | ']' | '{' | '}' | ',' | ';'
+            )
+    };
+    let mut spans = Vec::new();
+    let mut search_from = 0;
+    while let Some(rel) = lowered[search_from..].find("http") {
+        let start = search_from + rel;
+        let rest = &lowered[start..];
+        let Some(scheme) = ["http://", "https://"]
+            .into_iter()
+            .find(|scheme| rest.starts_with(scheme))
+        else {
+            search_from = start + "http".len();
+            continue;
+        };
+        let after_scheme = start + scheme.len();
+        // A bracketed IPv6 literal (hex digits, `:`, `.`, then an optional
+        // `%` zone of RFC 6874 unreserved characters, e.g. `%25eth0`) is part
+        // of the host; any other bracketed text is not a host.
+        let host = match lowered[after_scheme..].strip_prefix('[') {
+            Some(ipv6) => ipv6
+                .find(']')
+                .filter(|&close| is_ipv6_literal(&ipv6[..close]))
+                .map_or(0, |close| close + 2),
+            None => 0,
+        };
+        let body = &lowered[after_scheme + host..];
+        let end = after_scheme + host + body.find(ends_url).unwrap_or(body.len());
+        spans.push(start..end);
+        search_from = end;
+    }
+    spans
+}
+
+/// Whether `literal`, the text between a URL's `[` and `]`, is an IPv6
+/// address: hex digits, `:` and `.`, then an optional `%` zone whose
+/// characters are RFC 6874 unreserved (alphanumerics, `-`, `.`, `_`, `~`).
+fn is_ipv6_literal(literal: &str) -> bool {
+    let (address, zone) = match literal.split_once('%') {
+        Some((address, zone)) => (address, zone),
+        None => (literal, ""),
+    };
+    let address_byte = |b: &u8| b.is_ascii_hexdigit() || matches!(b, b':' | b'.');
+    let zone_byte = |b: &u8| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~');
+    !address.is_empty()
+        && address.as_bytes().iter().all(address_byte)
+        && zone.as_bytes().iter().all(zone_byte)
+}
+
+/// A three-digit status in 100–599 after optional separators. Any other
+/// character first, or a longer digit run, is no status.
 fn parse_status_near(s: &str) -> Option<u16> {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
         if b.is_ascii_digit() {
-            if i + 2 >= bytes.len()
-                || !bytes[i + 1].is_ascii_digit()
-                || !bytes[i + 2].is_ascii_digit()
+            let digits = &bytes[i..];
+            if digits.len() < 3
+                || !digits[1].is_ascii_digit()
+                || !digits[2].is_ascii_digit()
+                || digits.get(3).is_some_and(u8::is_ascii_digit)
             {
                 return None;
             }
-            let code = ((bytes[i] - b'0') as u16) * 100
-                + ((bytes[i + 1] - b'0') as u16) * 10
-                + ((bytes[i + 2] - b'0') as u16);
+            let code = ((digits[0] - b'0') as u16) * 100
+                + ((digits[1] - b'0') as u16) * 10
+                + ((digits[2] - b'0') as u16);
             return (100..=599).contains(&code).then_some(code);
         }
         if !(b.is_ascii_whitespace() || b == b':' || b == b'=' || b == b'-' || b == b'/') {
@@ -618,3 +693,6 @@ mod refusal_tests;
 #[cfg(test)]
 #[path = "provider_error_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "provider_error_url_tests.rs"]
+mod url_tests;

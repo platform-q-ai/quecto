@@ -29,6 +29,9 @@ impl BindScope {
         if supersedes {
             authority.disconnect(credential.scope, now)?;
         }
+        // Bound again: the scope is live, so work that clears never
+        // releases it (#2664).
+        authority.attach(credential.scope);
         Ok(high_water.saturating_add(1))
     }
 }

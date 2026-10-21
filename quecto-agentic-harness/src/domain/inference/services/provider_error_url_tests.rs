@@ -1,0 +1,175 @@
+//! #2653: a status is read only from a status position, never from inside a
+//! URL, so a connect failure to an IP-address endpoint whose first octet has
+//! three digits is `Network` (retried) with no status, not `Unknown` with 100.
+
+use super::*;
+
+fn provider(message: &str) -> DomainError {
+    DomainError::Provider(message.to_string())
+}
+
+#[test]
+fn a_connect_failure_to_an_ip_address_endpoint_is_network_with_no_status() {
+    for message in [
+        // The message from the issue (a Tailscale `100.x` endpoint).
+        "provider error: HTTP error: error sending request for url \
+         (http://100.83.173.59:8888/v1/chat/completions): client error (Connect): \
+         tcp connect error: deadline has elapsed",
+        "HTTP error: error sending request for url \
+         (http://192.168.1.5:8080/v1/chat/completions): client error (Connect): \
+         tcp connect error: Connection refused (os error 111)",
+        "HTTP error: error sending request for url (https://172.16.0.4/v1/chat/completions)",
+    ] {
+        let error = provider(message);
+        assert_eq!(
+            classify_provider_error(&error),
+            ProviderErrorClass::Network,
+            "{message}"
+        );
+        assert_eq!(provider_http_status(&error), None, "{message}");
+    }
+}
+
+#[test]
+fn a_real_status_is_still_read_beside_an_ip_address_url() {
+    let body = "HTTP 503 Service Unavailable: {\"error\":{\"message\":\"overloaded\"}}";
+    assert_eq!(
+        classify_provider_error(&provider(body)),
+        ProviderErrorClass::Server
+    );
+    assert_eq!(provider_http_status(&provider(body)), Some(503));
+    for message in [
+        "HTTP 503 from http://192.168.1.5:8080/v1/chat/completions: upstream overloaded",
+        "request to http://100.83.173.59:8888/v1/chat/completions failed: HTTP 503",
+        "request to http://100.83.173.59:8888/status/200 failed with status: 503",
+    ] {
+        let error = provider(message);
+        assert_eq!(provider_http_status(&error), Some(503), "{message}");
+        assert_eq!(
+            classify_provider_error(&error),
+            ProviderErrorClass::Server,
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn a_status_is_exactly_three_digits() {
+    for message in ["status 1000 items", "HTTP 5034 weirdness", "code: 4290"] {
+        assert_eq!(provider_http_status(&provider(message)), None, "{message}");
+    }
+}
+
+/// Review round 1: an `https://` URL is a URL too, and its path is no status.
+#[test]
+fn an_https_url_path_is_no_status() {
+    let error = provider("connect error https://10.0.0.1/status/200");
+    assert_eq!(provider_http_status(&error), None);
+    assert_eq!(classify_provider_error(&error), ProviderErrorClass::Network);
+}
+
+/// Review round 1: a URL ends at a bracket, brace, comma or semicolon, so a
+/// status glued after it is still read.
+#[test]
+fn a_status_glued_after_a_url_is_read() {
+    for message in [
+        "url (http://10.0.0.1/v1)status: 503",
+        "error sending request for url http://10.0.0.1/v1/chat/completions,status: 503",
+        "error sending request for url http://10.0.0.1/v1/chat/completions;status=503",
+        "{\"url\":http://10.0.0.1/v1}status:503",
+    ] {
+        assert_eq!(
+            provider_http_status(&provider(message)),
+            Some(503),
+            "{message}"
+        );
+    }
+}
+
+/// Review round 1: a bracketed IPv6 host is part of its URL, so a status-like
+/// path after it is still no status.
+#[test]
+fn an_ipv6_url_is_protected_whole() {
+    let error = provider(
+        "error sending request for url (http://[fd00::1]:8080/status/200): connection refused",
+    );
+    assert_eq!(provider_http_status(&error), None);
+    assert_eq!(classify_provider_error(&error), ProviderErrorClass::Network);
+}
+
+/// Review round 2: every URL in a message is skipped, not only the first, so
+/// a redirect or proxy error naming two URLs reads no status from either.
+#[test]
+fn a_message_naming_two_urls_reads_no_status_from_either() {
+    let error = provider(
+        "error following redirect from https://api.example.com/v1/chat/completions to \
+         http://100.83.173.59:8888/v1/chat/completions: tcp connect error: connection refused",
+    );
+    assert_eq!(provider_http_status(&error), None);
+    assert_eq!(classify_provider_error(&error), ProviderErrorClass::Network);
+}
+
+/// Review round 2: only an IPv6 literal opens a bracketed host; an unclosed
+/// or non-address bracket ends the URL, so a status after it is still read.
+#[test]
+fn a_bracket_that_is_not_an_ipv6_host_ends_the_url() {
+    for message in [
+        "error sending request for url http://[ status 503 [retry]",
+        "error sending request for url http://[x] status 503",
+    ] {
+        assert_eq!(
+            provider_http_status(&provider(message)),
+            Some(503),
+            "{message}"
+        );
+    }
+}
+
+/// Review round 2: a double quote ends a URL.
+#[test]
+fn a_status_glued_after_a_quoted_url_is_read() {
+    assert_eq!(
+        provider_http_status(&provider("\"http://10.0.0.1/v1\"status:503")),
+        Some(503)
+    );
+}
+
+/// Review round 3: a single quote and a backtick end a URL too.
+#[test]
+fn a_status_glued_after_a_quote_or_backtick_url_is_read() {
+    for message in [
+        "'http://10.0.0.1/v1'status:503",
+        "`http://10.0.0.1/v1`status:503",
+    ] {
+        assert_eq!(
+            provider_http_status(&provider(message)),
+            Some(503),
+            "{message}"
+        );
+    }
+}
+
+/// Review round 3: empty brackets are no IPv6 host, so they end the URL.
+#[test]
+fn empty_brackets_are_not_a_host() {
+    assert_eq!(
+        provider_http_status(&provider("url http://[]status 503")),
+        Some(503)
+    );
+}
+
+/// Review round 3: an IPv6 host with a zone (`%25eth0`, RFC 6874) is part of
+/// its URL, so its path is no status; a non-zone character after `%` is not.
+#[test]
+fn an_ipv6_host_with_a_zone_is_part_of_its_url() {
+    let error = provider(
+        "error sending request for url (http://[fe80::1%25eth0]:8080/status/200): connection refused",
+    );
+    assert_eq!(provider_http_status(&error), None);
+    assert_eq!(classify_provider_error(&error), ProviderErrorClass::Network);
+    assert_eq!(
+        provider_http_status(&provider("url http://[::1%x status 503]")),
+        Some(503),
+        "a space is no zone character"
+    );
+}
