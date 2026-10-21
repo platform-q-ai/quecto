@@ -565,7 +565,8 @@ can be pushed from its checkout <path>; kill_container <ref> to remove it once
 pushed". The work survives, and can be fetched from that checkout and pushed.
 The kill's own answer says so (#2681): beside `result` and `killed` it carries
 `"kept": [{"environment": "<ref>", "reason": "<the reason above>"}]` for each
-environment its teardown kept, and `quecto container ls` shows the same reason
+environment its teardown kept (each reason redacted and clipped to 400
+characters, at most 20 listed, `omitted_kept` counting the rest), and `quecto container ls` shows the same reason
 (a `note: <ref> retained: <reason>` line on stderr, the `retained` field of
 `--json`). The board's remote
 is the `origin` of the repository the session's board tool works on. Only that

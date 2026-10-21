@@ -199,7 +199,10 @@ Two session-level `agent_cmd` commands expose it (use `agent_id: "*"`):
   kill leaves it — left nothing (#2684, the restore's own rule): its
   record is forgotten, no script runs and no board is judged, and the kill
   says so (the JSON result adds `"nothing_left": true`; `quecto container
-  kill` prints `nothing left of stopped <ref>`). "Gone" is the runtime's own word: the
+  kill` prints `nothing left of stopped <ref>`). That holds for a script set
+  that retained no `cleanup` too: such a box that left nothing is forgotten
+  the same way, and only one that may have left something is refused for
+  `quecto container gc`. "Gone" is the runtime's own word: the
   shipped Docker/Podman `inspect.sh` reports `dead` only when the runtime
   says the container does not exist ("no such container"/"no such
   object", naming it) or that its state is `exited`/`dead`/`stopped`, and fails —
