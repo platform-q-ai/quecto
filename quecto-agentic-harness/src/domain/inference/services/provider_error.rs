@@ -625,15 +625,13 @@ fn url_spans(lowered: &str) -> Vec<std::ops::Range<usize>> {
             continue;
         };
         let after_scheme = start + scheme.len();
-        // A bracketed IPv6 literal (hex digits, `:`, `.`, `%` zone) is part
+        // A bracketed IPv6 literal (hex digits, `:`, `.`, then an optional
+        // `%` zone of RFC 6874 unreserved characters, e.g. `%25eth0`) is part
         // of the host; any other bracketed text is not a host.
-        let ipv6_byte = |b: u8| b.is_ascii_hexdigit() || matches!(b, b':' | b'.' | b'%');
         let host = match lowered[after_scheme..].strip_prefix('[') {
             Some(ipv6) => ipv6
                 .find(']')
-                .filter(|&close| {
-                    close > 0 && ipv6.as_bytes()[..close].iter().all(|&b| ipv6_byte(b))
-                })
+                .filter(|&close| is_ipv6_literal(&ipv6[..close]))
                 .map_or(0, |close| close + 2),
             None => 0,
         };
@@ -643,6 +641,21 @@ fn url_spans(lowered: &str) -> Vec<std::ops::Range<usize>> {
         search_from = end;
     }
     spans
+}
+
+/// Whether `literal`, the text between a URL's `[` and `]`, is an IPv6
+/// address: hex digits, `:` and `.`, then an optional `%` zone whose
+/// characters are RFC 6874 unreserved (alphanumerics, `-`, `.`, `_`, `~`).
+fn is_ipv6_literal(literal: &str) -> bool {
+    let (address, zone) = match literal.split_once('%') {
+        Some((address, zone)) => (address, zone),
+        None => (literal, ""),
+    };
+    let address_byte = |b: &u8| b.is_ascii_hexdigit() || matches!(b, b':' | b'.');
+    let zone_byte = |b: &u8| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~');
+    !address.is_empty()
+        && address.as_bytes().iter().all(address_byte)
+        && zone.as_bytes().iter().all(zone_byte)
 }
 
 /// A three-digit status in 100–599 after optional separators. Any other

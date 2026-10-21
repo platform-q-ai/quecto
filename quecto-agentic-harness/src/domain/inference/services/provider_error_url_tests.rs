@@ -133,3 +133,43 @@ fn a_status_glued_after_a_quoted_url_is_read() {
         Some(503)
     );
 }
+
+/// Review round 3: a single quote and a backtick end a URL too.
+#[test]
+fn a_status_glued_after_a_quote_or_backtick_url_is_read() {
+    for message in [
+        "'http://10.0.0.1/v1'status:503",
+        "`http://10.0.0.1/v1`status:503",
+    ] {
+        assert_eq!(
+            provider_http_status(&provider(message)),
+            Some(503),
+            "{message}"
+        );
+    }
+}
+
+/// Review round 3: empty brackets are no IPv6 host, so they end the URL.
+#[test]
+fn empty_brackets_are_not_a_host() {
+    assert_eq!(
+        provider_http_status(&provider("url http://[]status 503")),
+        Some(503)
+    );
+}
+
+/// Review round 3: an IPv6 host with a zone (`%25eth0`, RFC 6874) is part of
+/// its URL, so its path is no status; a non-zone character after `%` is not.
+#[test]
+fn an_ipv6_host_with_a_zone_is_part_of_its_url() {
+    let error = provider(
+        "error sending request for url (http://[fe80::1%25eth0]:8080/status/200): connection refused",
+    );
+    assert_eq!(provider_http_status(&error), None);
+    assert_eq!(classify_provider_error(&error), ProviderErrorClass::Network);
+    assert_eq!(
+        provider_http_status(&provider("url http://[::1%x status 503]")),
+        Some(503),
+        "a space is no zone character"
+    );
+}
