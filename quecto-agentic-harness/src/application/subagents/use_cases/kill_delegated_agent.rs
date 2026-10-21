@@ -323,3 +323,7 @@ fn subtree(lineage: &LineageSnapshot, target: &DelegatedAgentIdentity) -> Vec<Ag
 #[cfg(test)]
 #[path = "kill_delegated_agent_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "kill_delegated_agent_kept_tests.rs"]
+mod kept_tests;
