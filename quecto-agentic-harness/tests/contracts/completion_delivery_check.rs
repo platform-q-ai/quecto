@@ -46,9 +46,9 @@ impl RemoteRevisions for Opened {
             .lock()
             .unwrap()
             .push((self.0.clone(), revisions.to_vec()));
-        match self.0.as_str() {
-            "down" => Err(BoardStoreError::Unavailable("the remote is down".into())),
-            "missing" => Ok(revisions.to_vec()),
+        match self.0.split('-').next() {
+            Some("down") => Err(BoardStoreError::Unavailable("the remote is down".into())),
+            Some("missing") => Ok(revisions.to_vec()),
             _ => Ok(vec![]),
         }
     }
@@ -60,10 +60,36 @@ impl RemoteRevisions for Opened {
 
 fn open(repo: &Path) -> Result<Arc<dyn RemoteRevisions>, String> {
     let name = repo.file_name().unwrap().to_str().unwrap().to_owned();
-    match name.as_str() {
-        "absent" => Err("no origin here".into()),
+    match name.split('-').next() {
+        Some("absent") => Err("no origin here".into()),
+        Some("flaky") => {
+            let mut opens = flaky_opens().lock().unwrap();
+            *opens += 1;
+            match *opens {
+                1 => Err("not reachable yet".into()),
+                _ => Ok(Arc::new(Opened(name))),
+            }
+        }
         _ => Ok(Arc::new(Opened(name))),
     }
+}
+
+/// How many times a `flaky` repository was opened: its first open fails.
+fn flaky_opens() -> &'static Mutex<usize> {
+    static OPENS: OnceLock<Mutex<usize>> = OnceLock::new();
+    OPENS.get_or_init(Mutex::default)
+}
+
+/// The revisions `repo`'s remote was asked about, in order.
+fn asks_of(repo: &str) -> Vec<Vec<String>> {
+    remote()
+        .asked
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(asked, _)| asked == repo)
+        .map(|(_, revisions)| revisions.clone())
+        .collect()
 }
 
 fn board(reason: Option<&str>) -> SwarmBoardSnapshot {
@@ -86,9 +112,10 @@ fn at(revision: &str) -> String {
 #[test]
 fn a_completion_commit_is_on_the_remote_or_not() {
     assert_eq!(
-        judged("cd-1", "fine", Some(&at(SHA))),
+        judged("cd-1", "fine-1", Some(&at(SHA))),
         CompletionDelivery::OnRemote
     );
+    assert_eq!(asks_of("fine-1"), [vec![SHA.to_owned()]], "asked once");
     assert_eq!(
         judged(
             "cd-2",
@@ -112,6 +139,8 @@ fn a_completion_commit_is_read_out_of_the_words_around_it() {
         format!("{SHA} (a fix)"),
         format!("`{SHA}`."),
         format!("commit {SHA}, be cafe"),
+        format!("{SHA} on 20261021"),
+        format!("owner/repo@{SHA}"),
     ] {
         assert_eq!(
             judged("cd-3", "missing", Some(&at(&reason))),
@@ -125,7 +154,7 @@ fn a_completion_commit_is_read_out_of_the_words_around_it() {
 
 #[test]
 fn only_a_board_runs_completion_is_judged() {
-    register_board_repository("cd-4", Path::new("/repos/missing"));
+    register_board_repository("cd-4", Path::new("/repos/missing-4"));
     let check = RemoteCompletionDelivery::new(open);
     assert_eq!(
         futures::executor::block_on(check.delivery(
@@ -135,6 +164,7 @@ fn only_a_board_runs_completion_is_judged() {
         )),
         CompletionDelivery::NotJudged
     );
+    assert!(asks_of("missing-4").is_empty(), "never asked");
 }
 
 /// What cannot be read, and a completion naming no commit the push rule
@@ -183,4 +213,27 @@ fn an_unknown_completion_says_why_in_words() {
         CompletionDelivery::Unknown { why } => assert_eq!(why, "the remote is down"),
         other => panic!("{other:?}"),
     }
+}
+
+/// Round 4: a repository whose remote could not be opened is tried again
+/// on the next judgement, not remembered as failed.
+#[test]
+fn a_remote_that_could_not_be_opened_is_tried_again() {
+    register_board_repository("cd-14", Path::new("/repos/flaky-14"));
+    let check = RemoteCompletionDelivery::new(open);
+    let judge = || {
+        futures::executor::block_on(check.delivery(
+            "cd-14",
+            "board-a-run-1",
+            Some(&board(Some(&at(SHA)))),
+        ))
+    };
+    assert!(
+        matches!(judge(), CompletionDelivery::Unknown { .. }),
+        "first open fails"
+    );
+    assert_eq!(judge(), CompletionDelivery::OnRemote, "opened on the next");
+    assert_eq!(*flaky_opens().lock().unwrap(), 2);
+    assert_eq!(judge(), CompletionDelivery::OnRemote);
+    assert_eq!(*flaky_opens().lock().unwrap(), 2, "kept once opened");
 }

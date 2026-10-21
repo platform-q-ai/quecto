@@ -476,10 +476,12 @@ once more without it, as a fold-back is.
 A run ends as `succeeded` only over work that left the swarm's container
 (#2666): every commit the evidence of its recorded task items names must be on
 the board's remote, reached by one of its branches or tags. A revision's commit
-is its one whitespace-separated word that is wholly hex digits, 7 or more,
-backticks trimmed (`<sha>`, `` `<sha>` ``, `commit <sha>`, `<sha> (main)`), read
-in lower case, so the same commit in two cases is asked about once; a revision
-with no such word, or two, names none. Only a full commit id of the
+is its one word (split at whitespace, `@` and `/`, surrounding punctuation
+trimmed) that is wholly hex digits, 7 or more (`<sha>`, `` `<sha>`. ``, `commit
+<sha>`, `<sha> (main)`, `owner/repo@<sha>`), or, when several are, the one of
+them with 12 or more (`<sha> on 20261021`), read in lower case, so the same
+commit in two cases is asked about once; a revision with none, or with two of 12
+or more, names none. Only a full commit id of the
 repository's format (40 hex digits; 64 in a SHA-256 repository) or a prefix of
 at least 12 is checked: a 64-digit digest in a SHA-1 repository, a 7 to 11 digit
 short id, and evidence that names no commit (an artifact's digest, a red-test

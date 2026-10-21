@@ -11,22 +11,36 @@ pub const MIN_COMMIT_TOKEN: usize = 7;
 /// of hex digits may be a word or a digest.
 pub const MIN_COMMIT_PREFIX: usize = 12;
 
-/// The commit id `revision` names, in lower case: the one
-/// whitespace-separated word of it that, its surrounding punctuation
-/// trimmed (backticks, quotes, brackets, a full stop, a comma), is wholly
-/// hex digits, at least [`MIN_COMMIT_TOKEN`] of them (`abc…`,
-/// `` `abc…`. ``, `commit abc…`, `abc… (main)`, `abc… added fib`). None
-/// when no word is, or more than one is: no id is guessed.
+/// The commit id `revision` names, in lower case: of its words (split at
+/// whitespace, `@` and `/`, each word's surrounding punctuation trimmed:
+/// backticks, quotes, brackets, a full stop, a comma), the one that is
+/// wholly hex digits, at least [`MIN_COMMIT_TOKEN`] of them (`abc…`,
+/// `` `abc…`. ``, `commit abc…`, `abc… (main)`, `abc… added fib`,
+/// `owner/repo@abc…`); or, when several are, the one of them that has at
+/// least [`MIN_COMMIT_PREFIX`] (`abc… on 20261021`). None when no word
+/// is, or more than one long one is: no id is guessed.
 pub fn commit_token(revision: &str) -> Option<String> {
-    let mut hex = revision
-        .split_whitespace()
+    let hex: Vec<&str> = revision
+        .split(|c: char| c.is_whitespace() || c == '@' || c == '/')
         .map(|word| word.trim_matches(|c: char| !c.is_ascii_alphanumeric()))
         .filter(|word| {
             word.len() >= MIN_COMMIT_TOKEN && word.bytes().all(|b| b.is_ascii_hexdigit())
-        });
-    match (hex.next(), hex.next()) {
-        (Some(token), None) => Some(token.to_ascii_lowercase()),
-        (Some(_), Some(_)) | (None, _) => None,
+        })
+        .collect();
+    match hex.as_slice() {
+        [token] => Some(token.to_ascii_lowercase()),
+        [] => None,
+        [_, _, ..] => {
+            let long: Vec<&str> = hex
+                .iter()
+                .copied()
+                .filter(|word| word.len() >= MIN_COMMIT_PREFIX)
+                .collect();
+            match long.as_slice() {
+                [token] => Some(token.to_ascii_lowercase()),
+                [] | [_, _, ..] => None,
+            }
+        }
     }
 }
 
