@@ -276,3 +276,58 @@ fn a_client_cannot_stop_the_authority() {
     actor.settle();
     assert_eq!(actor.stopping, None, "still serving");
 }
+
+/// #2615 review round 2: the real run loop, a client connecting in the
+/// instant an idle stop was decided: the drain serves it, so the broker
+/// neither stops nor signals that it did.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn run_serves_a_connection_arriving_as_the_idle_stop_is_decided() {
+    use crate::domain::admission::value_objects::authority_idle::{AuthorityLifetime, IdleWatch};
+    use crate::infrastructure::admission::protocol::Role;
+    let proposal = proposal();
+    let (stopped_tx, stopped) = tokio::sync::watch::channel(None);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (shutdown_tx, shutdown) = tokio::sync::watch::channel(false);
+    let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut actor = Actor::new(
+        AdmissionAuthority::new(1, proposal.policy.clone(), RandomSecretSource).unwrap(),
+        memory_use_cases(),
+        Clock::starting_now(),
+        ProposalWire::from(&proposal),
+        "owner".into(),
+    )
+    .with_lifetime(
+        AuthorityLifetime::StopWhenIdle(IdleWatch::new(20).unwrap()),
+        stopped_tx,
+    );
+    let (notices, _notices) = tokio::sync::mpsc::unbounded_channel();
+    let (close, _closed) = tokio::sync::oneshot::channel();
+    let mut pending = Some(super::Command::Open {
+        session: 9,
+        role: Role::Client,
+        notices,
+        close,
+    });
+    let hook_tx = tx.clone();
+    let hook_connected = connected.clone();
+    actor.on_idle_stop_decided = Some(Box::new(move || {
+        if let Some(open) = pending.take() {
+            hook_tx.send(open).unwrap();
+            hook_connected.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }));
+    let running = tokio::spawn(actor.run(rx, shutdown));
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(
+        connected.load(std::sync::atomic::Ordering::SeqCst),
+        "the idle stop was decided and the client connected in it"
+    );
+    assert_eq!(*stopped.borrow(), None, "the broker never signalled a stop");
+    assert!(!running.is_finished(), "it serves the connection on");
+    shutdown_tx.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), running)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(tx);
+}

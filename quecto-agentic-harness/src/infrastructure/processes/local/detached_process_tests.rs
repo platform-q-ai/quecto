@@ -39,6 +39,7 @@ fn command(dir: &Path, tail: &str, tether: Tether) -> DetachedCommand {
         log: dir.join("detached.log"),
         tether,
         scope: Scope::None,
+        ran_marker: "args:".into(),
     }
 }
 
@@ -138,6 +139,7 @@ fn a_program_that_cannot_start_says_so() {
         log: temp.path().join("detached.log"),
         tether: Tether::Detached,
         scope: Scope::None,
+        ran_marker: "args:".into(),
     })
     .unwrap_err();
     assert!(error.contains("cannot start"), "{error}");
@@ -148,49 +150,74 @@ fn a_program_that_cannot_start_says_so() {
         log: temp.path().join("no/such/dir/detached.log"),
         tether: Tether::Detached,
         scope: Scope::None,
+        ran_marker: "args:".into(),
     })
     .unwrap_err();
     assert!(error.contains("detached.log"), "{error}");
 }
 
-/// A stand-in `systemd-run`: it records that it ran (and how), refuses when
-/// `refuse` is set, and otherwise execs the program after `--`, as
-/// `systemd-run --scope` does.
-fn runner(dir: &Path, refuse: bool) -> PathBuf {
+/// How a stand-in `systemd-run` behaves.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Runner {
+    /// Runs the program after `--` in place, as `systemd-run --scope` does.
+    Execs,
+    /// No user manager: every call fails.
+    Refuses,
+    /// The probe hangs past its bound.
+    Slow,
+    /// The probe passes, but starting the real program fails before exec.
+    FailsToExec,
+}
+
+/// A stand-in `systemd-run` that records every call in `runner.log`.
+fn runner(dir: &Path, behaviour: Runner) -> PathBuf {
     let path = dir.join("systemd-run");
+    let before_exec = match behaviour {
+        Runner::Execs => ":",
+        Runner::Refuses => "exit 1",
+        Runner::Slow => "[ \"$last\" = true ] && sleep 6",
+        Runner::FailsToExec => {
+            "[ \"$last\" = true ] || { echo 'Failed to start transient scope unit: Access denied' >&2; exit 1; }"
+        }
+    };
     write_executable(
         &path,
         format!(
             "#!/bin/sh\n\
              echo \"runner: $*\" >> '{marks}'\n\
-             {refuse}\n\
+             for last; do :; done\n\
+             {before_exec}\n\
              while [ \"$1\" != \"--\" ]; do shift; done\n\
              shift\n\
              exec \"$@\"\n",
             marks = dir.join("runner.log").display(),
-            refuse = if refuse { "exit 1" } else { ":" },
         ),
     );
     path
 }
 
-fn with_scope(dir: &Path, scope: Scope) -> DetachedCommand {
+fn with_scope(dir: &Path, scope: Scope, tail: &str, tether: Tether) -> DetachedCommand {
     DetachedCommand {
         scope,
         // The runner and `true` are found on this PATH.
         env: vec![("PATH".into(), "/usr/bin:/bin".into())],
-        ..command(dir, "exit 3", Tether::Detached)
+        ..command(dir, tail, tether)
     }
+}
+
+fn marks(dir: &Path) -> String {
+    std::fs::read_to_string(dir.join("runner.log")).unwrap_or_default()
 }
 
 #[test]
 fn a_reachable_user_manager_starts_it_in_a_transient_scope() {
     let temp = tempfile::tempdir().unwrap();
-    let scope = Scope::SystemdRun(runner(temp.path(), false));
-    let mut process = spawn_detached(&with_scope(temp.path(), scope)).unwrap();
+    let scope = Scope::SystemdRun(runner(temp.path(), Runner::Execs));
+    let mut process =
+        spawn_detached(&with_scope(temp.path(), scope, "exit 3", Tether::Detached)).unwrap();
     assert_eq!(process.started(), Started::InScope);
     assert_eq!(exited(&mut process).unwrap().code(), Some(3));
-    let marks = std::fs::read_to_string(temp.path().join("runner.log")).unwrap();
+    let marks = marks(temp.path());
     assert!(
         marks.contains("runner: --user --scope --quiet --collect -- true\n"),
         "probed first: {marks}"
@@ -207,25 +234,102 @@ fn a_reachable_user_manager_starts_it_in_a_transient_scope() {
 
 #[test]
 fn without_a_user_manager_it_starts_plainly() {
-    for (case, scope) in [("refused", Some(true)), ("absent", None)] {
+    for (case, behaviour) in [("refused", Some(Runner::Refuses)), ("absent", None)] {
         let temp = tempfile::tempdir().unwrap();
-        let runner = match scope {
-            Some(refuse) => runner(temp.path(), refuse),
+        let runner = match behaviour {
+            Some(behaviour) => runner(temp.path(), behaviour),
             None => temp.path().join("no-systemd-run"),
         };
-        let mut process =
-            spawn_detached(&with_scope(temp.path(), Scope::SystemdRun(runner))).unwrap();
+        let mut process = spawn_detached(&with_scope(
+            temp.path(),
+            Scope::SystemdRun(runner),
+            "exit 3",
+            Tether::Detached,
+        ))
+        .unwrap();
         assert_eq!(process.started(), Started::Plain, "{case}");
         assert_eq!(exited(&mut process).unwrap().code(), Some(3), "{case}");
         let log = log(temp.path());
         assert!(log.contains("args: one two\n"), "{case}: {log}");
-        let marks = std::fs::read_to_string(temp.path().join("runner.log")).unwrap_or_default();
         assert_eq!(
-            marks.lines().count(),
-            usize::from(scope.is_some()),
+            marks(temp.path()).lines().count(),
+            usize::from(behaviour.is_some()),
             "{case}: only probed"
         );
     }
+}
+
+/// #2615 review round 2: a probe past its bound is no user manager: the
+/// program starts plainly, and runs.
+#[test]
+fn a_probe_past_its_bound_starts_it_plainly() {
+    let temp = tempfile::tempdir().unwrap();
+    let scope = Scope::SystemdRun(runner(temp.path(), Runner::Slow));
+    let started = Instant::now();
+    let mut process = spawn_detached(&with_scope(
+        temp.path(),
+        scope,
+        "exec sleep 30",
+        Tether::DiesWithLaunchingThread,
+    ))
+    .unwrap();
+    assert!(
+        started.elapsed() >= SCOPE_PROBE_BOUND,
+        "waited out the bound"
+    );
+    assert_eq!(process.started(), Started::Plain);
+    assert_eq!(process.exit(), None, "the program runs");
+    assert_eq!(marks(temp.path()).lines().count(), 1, "only probed");
+}
+
+/// #2615 review round 2: the runner answers its probe but fails to start
+/// the program: the program is started plainly once.
+#[test]
+fn a_runner_that_fails_before_exec_falls_back_to_a_plain_start() {
+    let temp = tempfile::tempdir().unwrap();
+    let scope = Scope::SystemdRun(runner(temp.path(), Runner::FailsToExec));
+    let mut process =
+        spawn_detached(&with_scope(temp.path(), scope, "exit 3", Tether::Detached)).unwrap();
+    assert_eq!(process.started(), Started::Plain);
+    assert_eq!(exited(&mut process).unwrap().code(), Some(3));
+    let log = log(temp.path());
+    assert!(
+        log.contains("Failed to start transient scope unit"),
+        "{log}"
+    );
+    assert!(
+        log.contains("args: one two\n"),
+        "then started plainly: {log}"
+    );
+    assert_eq!(marks(temp.path()).lines().count(), 2, "probe, failed start");
+}
+
+/// A program that runs and fails through the runner is not retried.
+#[test]
+fn a_program_that_ran_and_failed_is_not_restarted_plainly() {
+    let temp = tempfile::tempdir().unwrap();
+    let scope = Scope::SystemdRun(runner(temp.path(), Runner::Execs));
+    let mut process =
+        spawn_detached(&with_scope(temp.path(), scope, "exit 1", Tether::Detached)).unwrap();
+    assert_eq!(process.started(), Started::InScope);
+    assert_eq!(exited(&mut process).unwrap().code(), Some(1));
+    assert_eq!(
+        log(temp.path()).matches("args: one two").count(),
+        1,
+        "ran once"
+    );
+}
+
+/// A runner that cannot be started is named, not the program.
+#[test]
+fn a_runner_that_cannot_start_is_named() {
+    let temp = tempfile::tempdir().unwrap();
+    let missing = temp.path().join("gone-runner");
+    let mut command = command(temp.path(), "exit 3", Tether::Detached);
+    command.program = temp.path().join("detached.sh");
+    let error = start(&command, Some(&missing)).err().unwrap();
+    assert!(error.contains("gone-runner"), "{error}");
+    assert!(!error.contains("detached.sh"), "{error}");
 }
 
 /// #2615 review: a log is kept within its cap while its writer runs, and a

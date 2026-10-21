@@ -68,28 +68,79 @@ pub struct DetachedCommand {
     pub log: PathBuf,
     pub tether: Tether,
     pub scope: Scope,
+    /// Text the program writes to its log whenever it runs at all: its
+    /// absence after a failed start through the runner means the runner
+    /// failed, and the program is started plainly instead.
+    pub ran_marker: String,
 }
 
 /// Start `command` detached.
 ///
+/// Through the scope runner when one answers; if the runner then fails
+/// before the program ran (it exits unsuccessfully within
+/// [`RUNNER_SETTLE`] and the log gained nothing naming the program's
+/// [`DetachedCommand::ran_marker`]), the program is started plainly once.
+///
 /// # Errors
 /// The log cannot be opened, or the process cannot be started.
 pub fn spawn_detached(command: &DetachedCommand) -> Result<DetachedProcess, String> {
+    let scoped = match &command.scope {
+        Scope::SystemdRun(runner) if scope_available(runner, &command.env) => Some(runner),
+        Scope::SystemdRun(_) | Scope::None => None,
+    };
+    let Some(runner) = scoped else {
+        return start(command, None);
+    };
+    let before = std::fs::metadata(&command.log).map_or(0, |meta| meta.len());
+    let mut process = start(command, Some(runner))?;
+    match runner_failed(&mut process, &command.log, before, &command.ran_marker) {
+        true => {
+            drop(process);
+            start(command, None)
+        }
+        false => Ok(process),
+    }
+}
+
+/// How long a start through the scope runner is watched for the runner
+/// failing before it exec'd the program.
+pub const RUNNER_SETTLE: Duration = Duration::from_millis(300);
+
+/// Whether a start through the runner ended, unsuccessfully, within
+/// [`RUNNER_SETTLE`], with no sign in the log (past `before`) that the
+/// program itself ran.
+fn runner_failed(process: &mut DetachedProcess, log: &Path, before: u64, marker: &str) -> bool {
+    let deadline = Instant::now() + RUNNER_SETTLE;
+    let exit = loop {
+        match process.exit() {
+            Some(exit) => break exit,
+            None if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            None => return false,
+        }
+    };
+    if exit.as_ref().is_ok_and(ExitStatus::success) {
+        return false;
+    }
+    let written = std::fs::read(log).unwrap_or_default();
+    let since = written
+        .get(usize::try_from(before).unwrap_or(usize::MAX)..)
+        .unwrap_or(&[]);
+    !String::from_utf8_lossy(since).contains(marker)
+}
+
+/// One start: through `runner` into a transient scope, or plainly.
+fn start(command: &DetachedCommand, runner: Option<&PathBuf>) -> Result<DetachedProcess, String> {
     let log = open_log(&command.log)?;
     let log_err = log
         .try_clone()
         .map_err(|error| format!("log {}: {error}", command.log.display()))?;
-    let started = match &command.scope {
-        Scope::SystemdRun(runner) if scope_available(runner, &command.env) => Started::InScope,
-        Scope::SystemdRun(_) | Scope::None => Started::Plain,
-    };
-    let mut process = match (started, &command.scope) {
-        (Started::InScope, Scope::SystemdRun(runner)) => {
+    let (mut process, started) = match runner {
+        Some(runner) => {
             let mut process = Command::new(runner);
             process.args(SCOPE_ARGS).arg(&command.program);
-            process
+            (process, Started::InScope)
         }
-        _ => Command::new(&command.program),
+        None => (Command::new(&command.program), Started::Plain),
     };
     process
         .args(&command.args)
@@ -104,9 +155,11 @@ pub fn spawn_detached(command: &DetachedCommand) -> Result<DetachedProcess, Stri
         #[cfg(any(test, feature = "test-support"))]
         Tether::DiesWithLaunchingThread => own_session_dying_with_us(&mut process),
     }
+    // A runner that cannot start is named, not the program it would run.
+    let starting = runner.unwrap_or(&command.program);
     let child = process
         .spawn()
-        .map_err(|error| format!("cannot start {}: {error}", command.program.display()))?;
+        .map_err(|error| format!("cannot start {}: {error}", starting.display()))?;
     Ok(DetachedProcess {
         child: Some(child),
         exited: None,
@@ -180,15 +233,17 @@ pub fn cap_log(log: &File, cap: u64) -> std::io::Result<bool> {
     }
 }
 
-/// [`cap_log`] on this process's own stderr: what a detached process whose
-/// stderr is its log calls periodically.
+/// This process's own stderr as a file: what a detached process whose
+/// stderr is its log keeps capped with [`cap_log`].
 ///
 /// # Errors
-/// Stderr cannot be duplicated, or its size read or set.
-pub fn cap_own_stderr_log(cap: u64) -> std::io::Result<bool> {
+/// Stderr cannot be duplicated.
+pub fn own_stderr() -> std::io::Result<File> {
     use std::os::fd::AsFd;
-    let stderr = std::io::stderr().as_fd().try_clone_to_owned()?;
-    cap_log(&File::from(stderr), cap)
+    std::io::stderr()
+        .as_fd()
+        .try_clone_to_owned()
+        .map(File::from)
 }
 
 /// How a detached process ended.

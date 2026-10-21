@@ -63,3 +63,14 @@ impl std::fmt::Display for AuthorityAdminError {
         }
     }
 }
+
+/// How an on-demand broker relates to the installed service unit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StandIn {
+    /// The unit serves this directory's config but is stopped: the
+    /// on-demand broker stands in for it until it stops.
+    UnitStopped { unit: String },
+    /// The unit is installed but does not stand stopped for this directory
+    /// (another config, or its state could not be read as stopped).
+    UnitElsewhere { unit: String },
+}
