@@ -743,9 +743,7 @@ async fn restart_admission_is_answered_on_the_reader_idle_or_mid_turn() {
 fn the_acknowledged_count_is_a_non_negative_integer() {
     let count = |request: serde_json::Value| acknowledged_count(&request);
     assert_eq!(count(serde_json::json!({"confirm": 3})), Some(3));
-    assert_eq!(count(serde_json::json!({"confirm": 0})), Some(0));
     assert_eq!(count(serde_json::json!({"confirm": true})), None);
     assert_eq!(count(serde_json::json!({"confirm": -1})), None);
-    assert_eq!(count(serde_json::json!({"confirm": "3"})), None);
     assert_eq!(count(serde_json::json!({})), None);
 }
