@@ -65,7 +65,7 @@ fn a_write_names_its_board_and_the_commit_it_made() {
 /// board as from the clone itself.
 #[test]
 fn a_relative_remote_names_one_board_from_any_directory_of_the_clone() {
-    let (_dir, work) = repository();
+    let (dir, work) = repository();
     let git = |args: &[&str]| {
         let done = std::process::Command::new("git")
             .args(args)
@@ -85,5 +85,11 @@ fn a_relative_remote_names_one_board_from_any_directory_of_the_clone() {
             .board
             .unwrap()
     };
-    assert_eq!(board_of(&work), board_of(&sub));
+    let relative = board_of(&work);
+    assert_eq!(relative, board_of(&sub));
+    // From the work tree, not its git directory: `../remote.git` is the
+    // remote the absolute URL names.
+    let absolute = dir.path().join("remote.git");
+    git(&["remote", "set-url", "origin", absolute.to_str().unwrap()]);
+    assert_eq!(relative, board_of(&work), "the work tree's ../remote.git");
 }

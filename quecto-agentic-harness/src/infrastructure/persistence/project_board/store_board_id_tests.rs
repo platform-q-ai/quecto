@@ -69,7 +69,7 @@ fn a_relative_local_remote_is_resolved_from_its_clone() {
         id("github.com/o/r", &one),
         id("https://github.com/o/r", &one)
     );
-    // A `file://` remote is the same local path.
-    let url = format!("file://{}", absolute.display());
+    // A `file://` remote is the same local path, resolved as one.
+    let url = format!("file://{}/b/clone/../../a/board.git", dir.path().display());
     assert_eq!(id(&url, &two), id("../board.git", &one));
 }
