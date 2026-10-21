@@ -5,6 +5,8 @@ use crate::infrastructure::tools::agents::{
     subagent_registry,
 };
 use crate::infrastructure::tools::swarm::{swarm_bridge, swarm_lifecycle};
+use crate::interface::tools::project_board::{site::BoardSite, tool::BoardTool};
+use std::sync::Arc;
 
 /// Entrypoint policy selector for the shared tool runtime/catalogue builder.
 ///
@@ -190,9 +192,8 @@ pub(crate) struct ToolRuntimeBuild {
     pub subagent_registry: Option<subagent_registry::SubagentRegistry>,
     /// The harness lifecycle cell the spawn tool admits against (#1938).
     pub harness_lifecycle: Option<harness_lifecycle::SharedHarnessLifecycle>,
-    /// The parent's `board` tool, which ends the runs its starts left open
-    /// as the session ends (#2655); `None` when it has none.
-    pub board_tool: Option<std::sync::Arc<crate::interface::tools::project_board::tool::BoardTool>>,
+    /// The parent's `board` tool: it ends the runs left open (#2655).
+    pub board_tool: Option<Arc<BoardTool>>,
     /// The environment control slot (#2070) the dispatch loop hands the
     /// teardown, for the emptied `retained` environments an owner exit ends.
     pub environment_control: Option<agent_cmd_containers::EnvironmentControlSlot>,
@@ -405,21 +406,12 @@ pub(crate) fn build_tool_runtime(
             &agent_control.agent_cmd_tool,
             &agent_control.subagent_registry,
         );
-        let board = std::sync::Arc::new(
-            crate::interface::tools::project_board::tool::BoardTool::new(
-                crate::interface::tools::project_board::site::BoardSite::agent(
-                    board_repo,
-                    build,
-                    std::sync::Arc::new(launcher),
-                    &agent_control.environment_registry,
-                ),
-            ),
-        );
-        register_bundled_native_tools_with_scope(
-            &mut registry,
-            build_project_board_tool_extension(std::sync::Arc::clone(&board) as _),
-            Some(ProfileAvailabilityScope::Parent),
-        );
+        let environments = &agent_control.environment_registry;
+        let site = BoardSite::agent(board_repo, build, Arc::new(launcher), environments);
+        let board = Arc::new(BoardTool::new(site));
+        let extension = build_project_board_tool_extension(Arc::clone(&board) as _);
+        let scope = Some(ProfileAvailabilityScope::Parent);
+        register_bundled_native_tools_with_scope(&mut registry, extension, scope);
         board_tool = Some(board);
     }
     let subagent_registry_for_protocol = agent_control.subagent_registry;
