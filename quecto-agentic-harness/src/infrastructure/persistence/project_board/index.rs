@@ -558,7 +558,7 @@ fn not_indexed(path: &str, object: &str) -> IndexError {
     IndexError::Store(BoardStoreError::FolderSetAside {
         why: format!(
             "the board index names set-aside task files only for now, and {path} is set aside: \
-             to list the board again, remove it with clear_set_aside(path \"{path}\", object \
+             to list the board again, discard it with clear_set_aside(path \"{path}\", object \
              \"{object}\"), or move `quecto/board` back to the commit before that edit"
         ),
         path: path.to_string(),

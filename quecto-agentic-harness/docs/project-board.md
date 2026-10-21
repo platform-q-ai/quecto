@@ -40,7 +40,7 @@ Listings are unavailable (`folder_set_aside`) while a file set aside outside
 tasks alone for now. `show` reads the store itself, so it still answers then (see
 below). Every refusal over a file set aside (`set_aside`, `artifact_set_aside`,
 `set_aside_file`, `folder_set_aside`) names the file's `path` and `object` and,
-in its message, the way out: mend the file, or remove it with
+in its message, the way out: mend the file, or discard it with
 `clear_set_aside(path, object)`, which discards the file's content.
 
 `quecto board --remote <name>` naming a remote the clone does not have answers

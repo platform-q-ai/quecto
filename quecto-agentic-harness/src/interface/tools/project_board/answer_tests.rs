@@ -505,7 +505,7 @@ fn a_set_aside_file_is_named_by_its_raw_path_and_object() {
         named.to_string(),
         format!(
             "the file \"tasks/Not A Slug.json\" is set aside as unreadable and its task is \
-             unknown; mend it, or remove it with clear_set_aside(path \"tasks/Not A Slug.json\", \
+             unknown; mend it, or discard it with clear_set_aside(path \"tasks/Not A Slug.json\", \
              object \"{object}\")"
         )
     );
@@ -571,7 +571,7 @@ fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
             "task": "t",
             "path": "tasks/t.md",
             "object": "c".repeat(40),
-            "message": "task t is set aside as unreadable; mend its file, or remove it with \
+            "message": "task t is set aside as unreadable; mend its file, or discard it with \
                         clear_set_aside(path \"tasks/t.md\", object \"cccccccccccccccccccccccccccccccccccccccc\")",
         })
     );
@@ -603,7 +603,7 @@ fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
                 "object": "c".repeat(40),
                 "message": format!(
                     "{kind} {number} of task t is set aside as unreadable; mend its file, or \
-                     remove it with clear_set_aside(path \"{path}\", object \"{}\")",
+                     discard it with clear_set_aside(path \"{path}\", object \"{}\")",
                     "c".repeat(40)
                 ),
             }),
@@ -618,7 +618,7 @@ fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
             "discussion": "d",
             "path": "discussions/d.md",
             "object": "c".repeat(40),
-            "message": "discussion d is set aside as unreadable; mend its file, or remove it with \
+            "message": "discussion d is set aside as unreadable; mend its file, or discard it with \
                         clear_set_aside(path \"discussions/d.md\", object \
                         \"cccccccccccccccccccccccccccccccccccccccc\")",
         })

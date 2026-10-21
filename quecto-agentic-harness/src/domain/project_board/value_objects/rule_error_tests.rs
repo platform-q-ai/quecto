@@ -29,6 +29,11 @@ fn a_status_is_named_with_its_article() {
             BoardRuleError::NotTakeable(TaskStatus::Archived),
             "an archived task cannot be taken over",
         ),
+        (
+            BoardRuleError::NotHolderExpired,
+            "only the claim's holder may do this, and the task's claim has expired: take the \
+             task over first with take_over(task)",
+        ),
     ] {
         assert_eq!(refusal.to_string(), said);
     }

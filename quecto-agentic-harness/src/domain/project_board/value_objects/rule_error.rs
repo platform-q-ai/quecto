@@ -215,7 +215,7 @@ impl fmt::Display for BoardRuleError {
             }
             Self::NotHolder => f.write_str("only the claim's holder may do this"),
             Self::NotHolderExpired => f.write_str(
-                "only the claim's holder may do this, and its claim has expired: take the task \
+                "only the claim's holder may do this, and the task's claim has expired: take the task \
                  over first with take_over(task)",
             ),
             Self::NoClaim => f.write_str("the task has no claim"),
