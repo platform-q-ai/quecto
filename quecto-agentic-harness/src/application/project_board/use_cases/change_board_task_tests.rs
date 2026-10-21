@@ -719,13 +719,22 @@ fn an_archive_waits_while_a_task_file_is_set_aside() {
             .execute(&slug("epic"), &BoardOp::Move(TaskStatus::Archived)),
         Err(set_aside_task("kid"))
     );
-    // The move's own rules answer first (#2661 review round 2).
-    seed(&store, held_by_ada(TaskStatus::InProgress));
+    // The move's own rules answer first (#2661 review round 2): a ready
+    // task, which the table lets anyone archive, with a child at work is
+    // refused as children_active, never as the file set aside.
+    seed(&store, fields("a"));
+    seed(
+        &store,
+        TaskFields {
+            id: slug("child"),
+            parent: Some(slug("a")),
+            ..held_by_ada(TaskStatus::InProgress)
+        },
+    );
     assert_eq!(
         change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived)),
-        Err(ProjectBoardError::Rule(BoardRuleError::NotAllowed {
-            from: TaskStatus::InProgress,
-            to: TaskStatus::Archived,
-        }))
+        Err(ProjectBoardError::Rule(BoardRuleError::ChildrenActive(
+            vec![slug("child")]
+        )))
     );
 }
