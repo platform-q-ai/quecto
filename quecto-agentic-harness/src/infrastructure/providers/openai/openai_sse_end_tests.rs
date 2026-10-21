@@ -11,7 +11,7 @@ use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
 use crate::domain::shared::error::DomainError;
-use crate::infrastructure::providers::routing::provider_factory::stream_idle_tests::{
+use crate::infrastructure::providers::routing::vendor_stream_bounds_idle_tests::{
     Vendor, request, traced,
 };
 use crate::infrastructure::providers::transport::stream_idle::tests::{LIVE, bounded, servers};

@@ -1,68 +1,10 @@
 //! Behaviour-preserving efficiency cleanups for issue #996.
 //!
-//! These tests pin the observable behaviour that must survive the per-call
-//! waste / duplication cleanups, and drive the two genuinely new/changed
-//! surfaces (the consolidated usage parser and the dead `auth_method` config
-//! field removal).
+//! These tests drive the consolidated usage parser. The item 2 preview and
+//! truncation guards and the item 10 `ProviderEntry` test live beside their
+//! modules (#2679).
 
 #![cfg(test)]
-
-use crate::application::agent_turn::context::context_pruning::truncate_utf8_safe;
-use crate::domain::audit::content_preview;
-use crate::infrastructure::tools::native::truncate::truncate_line;
-
-// ---------------------------------------------------------------------------
-// Item 2 — bounded preview builders (char_indices().nth). These are pure
-// regression guards: the refactor must preserve exact output on ASCII, long
-// ASCII, and multibyte input, and must never split a UTF-8 character.
-// ---------------------------------------------------------------------------
-
-#[test]
-fn content_preview_bounds_and_multibyte() {
-    // Short ASCII: returned verbatim.
-    assert_eq!(content_preview("hello", 100), "hello");
-    // Exactly at the limit: verbatim (no ellipsis).
-    let five = "abcde";
-    assert_eq!(content_preview(five, 5), "abcde");
-    // Long ASCII: truncated to max_chars total including the "..." suffix.
-    let long = "a".repeat(500);
-    let out = content_preview(&long, 100);
-    assert_eq!(out.chars().count(), 100);
-    assert!(out.ends_with("..."));
-    assert_eq!(&out[..97], &"a".repeat(97));
-    // Multibyte: must cut on a char boundary, never mid-codepoint. The kept
-    // prefix must be exactly 97 intact 'é' chars followed by the ellipsis — a
-    // mid-codepoint cut could not reconstruct to whole 'é' characters.
-    let mb = "é".repeat(500); // 2 bytes each
-    let out = content_preview(&mb, 100);
-    assert_eq!(out.chars().count(), 100);
-    assert_eq!(out, format!("{}...", "é".repeat(97)));
-}
-
-#[test]
-fn truncate_utf8_safe_bounds_and_multibyte() {
-    assert_eq!(truncate_utf8_safe("hi", 10).as_ref(), "hi");
-    let mb = "汉".repeat(200); // 3 bytes each
-    let out = truncate_utf8_safe(&mb, 60);
-    assert_eq!(out.chars().count(), 60);
-    // Whole-codepoint proof: 57 intact 3-byte chars plus the ellipsis. A
-    // mid-codepoint cut could not reconstruct this exact string.
-    assert_eq!(out.as_ref(), format!("{}...", "汉".repeat(57)));
-}
-
-#[test]
-fn truncate_line_bounds_and_multibyte() {
-    let (out, trunc) = truncate_line("short", 500);
-    assert_eq!(out, "short");
-    assert!(!trunc);
-
-    let mb = "ω".repeat(1000);
-    let (out, trunc) = truncate_line(&mb, 500);
-    assert!(trunc);
-    assert!(out.ends_with("... [truncated]"));
-    // 500 kept chars + the suffix.
-    assert_eq!(out.chars().count(), 500 + "... [truncated]".chars().count());
-}
 
 // ---------------------------------------------------------------------------
 // Item 8 — consolidated UsageInfo parser. The five near-identical JSON usage
@@ -99,33 +41,6 @@ fn consolidated_codex_usage_parser() {
     assert_eq!(u.completion_tokens, 40);
     assert_eq!(u.cache_read_tokens, Some(30));
     assert_eq!(u.context_tokens, Some(100));
-}
-
-// ---------------------------------------------------------------------------
-// Item 10 — dead `auth_method` config fields removed. Old configs that still
-// carry the key must continue to load (serde ignores unknown keys), and the
-// field must no longer be part of the struct's public surface.
-// ---------------------------------------------------------------------------
-
-#[test]
-fn provider_entry_loads_ignoring_dead_auth_method() {
-    use crate::infrastructure::config::ProviderEntry;
-    // A legacy config blob that still carries the removed `auth_method` key.
-    let json =
-        r#"{ "api_key": "sk-x", "api_base": "https://example.test", "auth_method": "api_key" }"#;
-    let entry: ProviderEntry = serde_json::from_str(json).expect("legacy config must still load");
-    assert_eq!(entry.api_key, "sk-x");
-    assert_eq!(entry.api_base, "https://example.test");
-    // The removal itself is enforced at COMPILE time, not by the asserts above
-    // (those passed before the change too, since `auth_method` used to be a
-    // known field). This exhaustive struct literal fails to build if the field
-    // is reintroduced.
-    let _explicit = ProviderEntry {
-        stream_limits: Default::default(),
-        api_key: "k".into(),
-        api_base: "b".into(),
-        disable_codex_routing: false,
-    };
 }
 
 // ---------------------------------------------------------------------------

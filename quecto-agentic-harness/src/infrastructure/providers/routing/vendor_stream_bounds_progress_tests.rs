@@ -5,20 +5,20 @@
 //! Real sockets, so short bounds in real time.
 use std::time::Duration;
 
-use super::stream_idle_tests::{Vendor, assembled, codex_chat, incremental};
-use super::transport::stream_idle::StreamIdle;
-use super::transport::stream_idle::tests::{LIVE, servers};
+use super::vendor_stream_bounds_idle_tests::{Vendor, assembled, codex_chat, incremental};
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
 use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
+use crate::infrastructure::providers::transport::stream_idle::StreamIdle;
+use crate::infrastructure::providers::transport::stream_idle::tests::{LIVE, servers};
 
 /// The progress bound: well under the idle bound, well over the gaps.
 const PROGRESS: Duration = Duration::from_millis(500);
 /// The gap between events: fast enough that the events a stall needs
-/// ([`super::transport::stream_idle::PROGRESS_EVENTS`]) come within the bound.
+/// ([`crate::infrastructure::providers::transport::stream_idle::PROGRESS_EVENTS`]) come within the bound.
 const EVERY: Duration = Duration::from_millis(1);
 
 /// The vendor's event that carries no output, sent again and again.
@@ -37,7 +37,7 @@ fn bounds() -> StreamIdle {
 }
 
 fn stalled_message() -> String {
-    super::transport::stream_idle::Idle::no_output(PROGRESS).to_string()
+    crate::infrastructure::providers::transport::stream_idle::Idle::no_output(PROGRESS).to_string()
 }
 
 #[tokio::test]
@@ -107,8 +107,8 @@ async fn output_among_the_events_keeps_a_reply_going() {
             crate::domain::conversation::value_objects::message::Message::system("sys"),
             crate::domain::conversation::value_objects::message::Message::user("hi"),
         ];
-        let trace = super::stream_idle_tests::traced();
-        let request = super::stream_idle_tests::request(&messages, &trace);
+        let trace = super::vendor_stream_bounds_idle_tests::traced();
+        let request = super::vendor_stream_bounds_idle_tests::request(&messages, &trace);
         let mut rx = provider.chat_stream_incremental(request).await;
         let reading = async {
             while let Some(event) = rx.recv().await {
@@ -135,8 +135,8 @@ async fn pings_alone_are_not_cut_by_the_progress_bound() {
             crate::domain::conversation::value_objects::message::Message::system("sys"),
             crate::domain::conversation::value_objects::message::Message::user("hi"),
         ];
-        let trace = super::stream_idle_tests::traced();
-        let request = super::stream_idle_tests::request(&messages, &trace);
+        let trace = super::vendor_stream_bounds_idle_tests::traced();
+        let request = super::vendor_stream_bounds_idle_tests::request(&messages, &trace);
         let mut rx = provider.chat_stream_incremental(request).await;
         let reading = async {
             while let Some(event) = rx.recv().await {

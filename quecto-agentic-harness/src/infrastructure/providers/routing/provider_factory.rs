@@ -568,27 +568,3 @@ mod cov_tests;
 #[cfg(test)]
 #[path = "provider_factory_attempt_observation_tests.rs"]
 mod attempt_observation_tests;
-
-#[cfg(test)]
-#[path = "provider_factory_stream_idle_tests.rs"]
-pub(crate) mod stream_idle_tests;
-
-#[cfg(test)]
-#[path = "provider_factory_stream_progress_tests.rs"]
-mod stream_progress_tests;
-
-#[cfg(test)]
-#[path = "provider_factory_output_cap_tests.rs"]
-mod output_cap_tests;
-
-#[cfg(test)]
-#[path = "provider_factory_output_cap_eof_tests.rs"]
-mod output_cap_eof_tests;
-
-#[cfg(test)]
-#[path = "provider_factory_stream_end_2249_tests.rs"]
-mod stream_end_2249_tests;
-
-#[cfg(test)]
-#[path = "provider_factory_tool_schema_tests.rs"]
-mod tool_schema_tests;

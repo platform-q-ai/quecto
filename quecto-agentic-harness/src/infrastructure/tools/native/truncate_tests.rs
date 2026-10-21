@@ -291,3 +291,18 @@ fn format_size_megabytes() {
     assert_eq!(format_size(1048576), "1.0MB");
     assert_eq!(format_size(1572864), "1.5MB");
 }
+
+// #996 item 2: a bounded line never splits a UTF-8 character.
+#[test]
+fn truncate_line_bounds_and_multibyte() {
+    let (out, trunc) = truncate_line("short", 500);
+    assert_eq!(out, "short");
+    assert!(!trunc);
+
+    let mb = "ω".repeat(1000);
+    let (out, trunc) = truncate_line(&mb, 500);
+    assert!(trunc);
+    assert!(out.ends_with("... [truncated]"));
+    // 500 kept chars + the suffix.
+    assert_eq!(out.chars().count(), 500 + "... [truncated]".chars().count());
+}

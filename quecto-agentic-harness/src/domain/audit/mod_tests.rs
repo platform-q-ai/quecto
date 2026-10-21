@@ -593,3 +593,26 @@ fn a_context_pruned_record_names_the_watermark_fallback() {
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"watermark_fallback\":true"), "{json}");
 }
+
+// #996 item 2: a bounded preview never splits a UTF-8 character.
+#[test]
+fn content_preview_bounds_and_multibyte() {
+    // Short ASCII: returned verbatim.
+    assert_eq!(content_preview("hello", 100), "hello");
+    // Exactly at the limit: verbatim (no ellipsis).
+    let five = "abcde";
+    assert_eq!(content_preview(five, 5), "abcde");
+    // Long ASCII: truncated to max_chars total including the "..." suffix.
+    let long = "a".repeat(500);
+    let out = content_preview(&long, 100);
+    assert_eq!(out.chars().count(), 100);
+    assert!(out.ends_with("..."));
+    assert_eq!(&out[..97], &"a".repeat(97));
+    // Multibyte: must cut on a char boundary, never mid-codepoint. The kept
+    // prefix must be exactly 97 intact 'é' chars followed by the ellipsis — a
+    // mid-codepoint cut could not reconstruct to whole 'é' characters.
+    let mb = "é".repeat(500); // 2 bytes each
+    let out = content_preview(&mb, 100);
+    assert_eq!(out.chars().count(), 100);
+    assert_eq!(out, format!("{}...", "é".repeat(97)));
+}
