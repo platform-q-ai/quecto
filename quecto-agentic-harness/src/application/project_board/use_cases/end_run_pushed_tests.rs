@@ -24,16 +24,29 @@ fn ender_asking(
     .unwrap()
 }
 
-/// A swarm that did every item, item `store`'s evidence at `def456`, and
-/// an extra item no plan item takes, at `0ff0ff`.
+/// A commit by a 12-digit prefix, and one by its full id.
+const ABC: &str = "abc123abc123";
+const DEF: &str = "def456def456def456def456def456def456def4";
+
+/// A swarm that did every item: `api` and `docs` at commit [`ABC`],
+/// `store` at [`DEF`] and at a bundle (no commit); and an extra item no
+/// plan item takes, at a commit of its own.
 fn done_at_two_revisions() -> SwarmRunView {
     let mut done = swarm(SwarmEnd::Succeeded, [SwarmItemState::Completed; 3]);
-    done.items[1].evidence[0].revision = "def456".into();
+    done.items[0].evidence[0].revision = ABC.into();
+    done.items[1].evidence[0].revision = DEF.into();
+    done.items[1].evidence.push(
+        crate::application::project_board::fold_back::SwarmEvidence {
+            artifact: "red-tests.bundle".into(),
+            revision: "red-tests.bundle".into(),
+        },
+    );
+    done.items[2].evidence[0].revision = ABC.into();
     done.items.push(swarm_item(
         "extra: Not in the plan",
         SwarmItemState::Completed,
         None,
-        &[("notes.md", "0ff0ff")],
+        &[("notes.md", "0ff0ff0ff0ff")],
     ));
     done
 }
@@ -42,7 +55,7 @@ fn done_at_two_revisions() -> SwarmRunView {
 fn a_success_over_evidence_never_pushed_is_refused_and_nothing_written() {
     let (store, _) = stranded();
     let writes = store.writes();
-    let remote = Remote::missing(&["def456"]);
+    let remote = Remote::missing(&[DEF]);
     let refused = ender_asking(&store, Some(done_at_two_revisions()), Arc::clone(&remote))
         .execute(&ending(RunEndOutcome::Succeeded));
     assert_eq!(
@@ -54,8 +67,9 @@ fn a_success_over_evidence_never_pushed_is_refused_and_nothing_written() {
     );
     assert_eq!(
         remote.asks(),
-        [vec!["abc123".to_string(), "def456".to_string()]],
-        "once, each revision the recorded items' evidence names, never an extra item's"
+        [vec![ABC.to_string(), DEF.to_string()]],
+        "once, each commit the recorded items' evidence names: never a bundle, nor an \
+         extra item's"
     );
     assert_eq!(store.writes(), writes, "nothing written");
     assert_eq!(run_1(&store).fields().outcome, None, "the run stays open");
@@ -134,4 +148,76 @@ fn only_a_success_with_evidence_asks_the_remote() {
         "{refused:?}"
     );
     assert!(remote.asks().is_empty(), "no revision to ask about");
+}
+
+/// Round 1 (#2670): every other rule judges an end first, so a remote that
+/// cannot be read hides no undone item, and an end refused anyway never
+/// waits on the network.
+#[test]
+fn every_other_rule_is_judged_before_the_remote_is_asked() {
+    let (store, _) = stranded();
+    let mut short = done_at_two_revisions();
+    short.items[1].state = SwarmItemState::Submitted;
+    let remote = Remote::down();
+    assert_eq!(
+        ender_asking(&store, Some(short), Arc::clone(&remote))
+            .execute(&ending(RunEndOutcome::Succeeded)),
+        Err(ProjectBoardError::Rule(BoardRuleError::ItemsNotDone {
+            run: 1,
+            items: vec![slug("store")],
+            report: SwarmReport::Kept,
+        }))
+    );
+    let bob = EndRun::new(
+        Arc::new(store.client_as(person("Bob"))),
+        SetClock::at("10:30:00"),
+        Arc::new(MarkdownTextCells),
+        Arc::clone(&remote) as Arc<dyn RemoteRevisions>,
+        None,
+        Some(Arc::new(Kept(std::sync::Mutex::new(Some(
+            done_at_two_revisions(),
+        ))))),
+    )
+    .unwrap();
+    assert_eq!(
+        bob.execute(&ending(RunEndOutcome::Succeeded)),
+        Err(ProjectBoardError::Rule(BoardRuleError::NotHolder))
+    );
+    assert!(remote.asks().is_empty(), "never asked: {:?}", remote.asks());
+}
+
+/// Round 1 (#2670): evidence that names no commit (a digest, a bundle, a
+/// branch) is not checked, so a run whose items name none succeeds
+/// without asking the remote.
+#[test]
+fn a_success_whose_evidence_names_no_commit_is_recorded_unchecked() {
+    let (store, _) = stranded();
+    let remote = Remote::down();
+    let unnamed = swarm(SwarmEnd::Succeeded, [SwarmItemState::Completed; 3]);
+    let ended = ender_asking(&store, Some(unnamed), Arc::clone(&remote))
+        .execute(&ending(RunEndOutcome::Succeeded))
+        .unwrap();
+    assert_eq!(ended.run.fields().outcome, Some(RunOutcome::Succeeded));
+    assert!(remote.asks().is_empty());
+}
+
+/// A commit is named by its full id or a prefix of 12 hex digits or more,
+/// in either case; anything else names none.
+#[test]
+fn a_commit_is_named_by_twelve_hex_digits_or_more() {
+    use crate::application::project_board::fold_back::names_commit;
+    for named in [ABC, DEF, &DEF.to_uppercase(), &"e".repeat(64)] {
+        assert!(names_commit(named), "{named}");
+    }
+    for unnamed in [
+        "abc123abc12",
+        &"e".repeat(65),
+        "red-tests.bundle",
+        "main",
+        "sha256:abc123abc123",
+        "",
+        "abc123abc12g",
+    ] {
+        assert!(!names_commit(unnamed), "{unnamed}");
+    }
 }

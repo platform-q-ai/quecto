@@ -614,7 +614,7 @@ pub trait SwarmRunReports: Send + Sync {
 
 /// Port: which revisions a run's swarm named in its evidence the board's
 /// remote holds (#2666): a revision is on the remote when it names a
-/// commit (by its full id, or a prefix of at least 7 hex digits) that one
+/// commit (by its full id, or a prefix of at least 12 hex digits) that one
 /// of the remote's branches or tags reaches. A revision a swarm committed
 /// in its container and never pushed is not, nor is any text that names
 /// no commit. Blocking: it reads the remote.

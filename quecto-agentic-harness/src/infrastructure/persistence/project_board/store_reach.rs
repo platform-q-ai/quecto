@@ -1,26 +1,27 @@
 //! Which revisions the board's remote holds (#2666): what a run's end
 //! judges a success by. A revision is held when it names a commit (its
-//! full id, or a prefix of at least [`MIN_PREFIX`] hex digits) that one
+//! full id, or a prefix of at least 12 hex digits) that one
 //! of the remote's branches or tags reaches. The remote's tips are listed
-//! (`ls-remote`), those this clone lacks are fetched by id (no ref, tag or
-//! `FETCH_HEAD` moves), and each commit is walked against them here. A
-//! commit this clone does not hold once every tip's history is here is
-//! reached by none. Text that names no commit is never held, and asks
+//! (`ls-remote`), each commit is walked first against the tips this clone
+//! holds, and only when they do not reach it are the tips it lacks
+//! fetched by id (no ref, tag or `FETCH_HEAD` moves) and it is walked
+//! again. A commit this clone does not hold once every tip's history is
+//! here is reached by none. Text that names no commit is never held, and asks
 //! nothing of the remote. A shallow clone's walk stops at its boundary, so
 //! a commit past it reads as not held: a success is then refused, never
 //! recorded wrongly.
 use super::*;
 use crate::application::project_board::ports::RemoteRevisions;
 
-/// The shortest prefix of a commit id taken as naming one, as git's own
-/// default abbreviation.
-const MIN_PREFIX: usize = 7;
-
 /// The most a listing of the remote's branches and tags takes.
 const MAX_TIP_LISTING: usize = 16 * 1024 * 1024;
 
+/// The shortest prefix of a commit id taken as naming one, as the port
+/// reads one (the push rule's own bound).
+const MIN_PREFIX: usize = 12;
+
 /// `revision` as the commit id, or prefix of one, it spells, in lower
-/// case: 7 to 64 hex digits (an allowlist), and nothing else.
+/// case: 12 to 64 hex digits (an allowlist), and nothing else.
 fn commit_named(revision: &str) -> Option<String> {
     let hex = revision.bytes().all(|b| b.is_ascii_hexdigit());
     let long_enough = (MIN_PREFIX..=64).contains(&revision.len());
@@ -40,9 +41,24 @@ impl RemoteRevisions for GitBoardStore {
             [] => {}
             [_, ..] => {
                 let tips = self.remote_tips()?;
+                // The tips this clone holds first: a fetch only for what
+                // they do not reach (round 1, #2670).
+                let local = self.tip_commits(&tips)?;
                 for (at, commit) in &named {
-                    if self.reached(commit, &tips)? {
+                    if self.reached(commit, &local)? {
                         held.insert(*at);
+                    }
+                }
+                let (_, unreached): (Vec<_>, Vec<_>) =
+                    named.iter().partition(|(at, _)| held.contains(at));
+                let lacking = self.lacking(&tips)?;
+                if let ([_, ..], [_, ..]) = (unreached.as_slice(), lacking.as_slice()) {
+                    self.fetch_ids(&lacking)?;
+                    let fetched = self.tip_commits(&tips)?;
+                    for (at, commit) in unreached {
+                        if self.reached(commit, &fetched)? {
+                            held.insert(*at);
+                        }
                     }
                 }
             }
@@ -65,12 +81,10 @@ impl RemoteRevisions for GitBoardStore {
 }
 
 impl GitBoardStore {
-    /// The commits the remote's branches and tags point at (an annotated
-    /// tag's commit), each held here once this returns: what the remote
-    /// holds is what these reach.
+    /// The objects the remote's branches and tags point at, once each.
     ///
     /// # Errors
-    /// The remote cannot be listed or fetched from, or git fails.
+    /// The remote cannot be listed, or git fails.
     fn remote_tips(&self) -> Result<Vec<String>, BoardStoreError> {
         let args = [
             "ls-remote",
@@ -94,20 +108,25 @@ impl GitBoardStore {
             .collect::<Result<_, _>>()?;
         tips.sort_unstable();
         tips.dedup();
-        let lacking: Vec<&String> = tips
+        Ok(tips)
+    }
+
+    /// Those of `tips` this clone does not hold.
+    fn lacking<'t>(&self, tips: &'t [String]) -> Result<Vec<&'t String>, BoardStoreError> {
+        Ok(tips
             .iter()
             .zip(self.batch_check(tips.iter().map(String::as_str))?)
             .filter_map(|(tip, found)| match found {
                 Some(_) => None,
                 None => Some(tip),
             })
-            .collect();
-        match lacking.as_slice() {
-            [] => {}
-            [_, ..] => self.fetch_ids(&lacking)?,
-        }
-        // Each tip as the commit it points at; one that points at no
-        // commit (a tag of a tree, say) reaches none.
+            .collect())
+    }
+
+    /// The commits those of `tips` this clone holds point at (an annotated
+    /// tag's commit); one that points at no commit (a tag of a tree, say)
+    /// reaches none.
+    fn tip_commits(&self, tips: &[String]) -> Result<Vec<String>, BoardStoreError> {
         let peeled: Vec<String> = tips.iter().map(|tip| format!("{tip}^{{commit}}")).collect();
         let commits = self.batch_check(peeled.iter().map(String::as_str))?;
         Ok(commits.into_iter().flatten().collect())

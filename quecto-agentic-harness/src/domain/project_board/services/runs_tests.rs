@@ -705,9 +705,9 @@ fn a_run_ends_as_succeeded_only_when_its_evidence_is_on_the_remote() {
             revisions: 2
         }
         .to_string(),
-        "run 1 cannot end as succeeded: 2 revision(s) its evidence names are on no branch or \
-         tag of the board's remote, so its work has not left the swarm's container; push the \
-         run's branch and call end_run again, or, if the work is gone, end it as \"failed\" \
+        "run 1 cannot end as succeeded: 2 commit(s) its evidence names are on no branch or \
+         tag of the board's remote, so its work has not left the swarm's container; push them \
+         and call end_run again, or, if they went with the container, end it as \"failed\" \
          and tell the user"
     );
 }

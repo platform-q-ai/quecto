@@ -208,11 +208,25 @@ pub fn run_items(
     folded
 }
 
-/// Every revision the evidence of the swarm items `plan`'s task items
-/// stand for names (as [`run_items`] matches them), once each, as the
-/// swarm gave it, in the plan's order: what a run recorded from `view`
-/// claims as its work (#2666). An extra item no plan item takes is never
-/// recorded, so its evidence is not among them.
+/// The shortest prefix of a commit id the push rule takes as naming one
+/// (#2666 round 1): a shorter run of hex digits may be a word or a digest.
+pub const MIN_COMMIT_PREFIX: usize = 12;
+
+/// Whether `revision` names a commit as the push rule reads it: a full id
+/// (40 or 64 hex digits) or a prefix of at least [`MIN_COMMIT_PREFIX`],
+/// in either case (an allowlist). Anything else (an artifact's digest
+/// shorter than that, a bundle, a branch or tag name) names none.
+pub fn names_commit(revision: &str) -> bool {
+    (MIN_COMMIT_PREFIX..=64).contains(&revision.len())
+        && revision.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Every commit ([`names_commit`]) the evidence of the swarm items
+/// `plan`'s task items stand for names (as [`run_items`] matches them),
+/// once each, as the swarm gave it, in the plan's order: what a run
+/// recorded from `view` claims as its work, which the push rule checks
+/// (#2666). Evidence that names no commit is not among them, nor is an
+/// extra item's, which is never recorded.
 pub fn evidence_revisions(plan: &Plan, view: &SwarmRunView) -> Vec<String> {
     let mut revisions: Vec<String> = Vec::new();
     let named = plan
@@ -221,7 +235,7 @@ pub fn evidence_revisions(plan: &Plan, view: &SwarmRunView) -> Vec<String> {
         .iter()
         .filter_map(|item| matched(item, view))
         .flat_map(|(_, swarm)| swarm.evidence.iter());
-    for entry in named {
+    for entry in named.filter(|entry| names_commit(&entry.revision)) {
         match revisions.contains(&entry.revision) {
             true => {}
             false => revisions.push(entry.revision.clone()),
