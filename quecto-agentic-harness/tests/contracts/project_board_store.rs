@@ -106,6 +106,19 @@ pub fn check_write_and_read((alice, bob): Clients) {
     );
 }
 
+/// A store's lock races (#2663) only ever grow, and two stores in clones
+/// of their own, writing in turn, meet none: no other writer shares
+/// either's tracking ref.
+pub fn check_lock_races((alice, bob): Clients) {
+    assert_eq!((alice.lock_races(), bob.lock_races()), (0, 0));
+    alice.bootstrap().unwrap();
+    let head = alice.read().unwrap().head;
+    let moved = written(alice.write_tasks(&head, &[task("a", "One")], "board: add a"));
+    written(bob.write_tasks(&moved, &[task("b", "Two")], "board: add b"));
+    tasks(&*alice);
+    assert_eq!((alice.lock_races(), bob.lock_races()), (0, 0));
+}
+
 /// A write of tasks identical to the board's is still a change: it
 /// answers `Written` and moves the head (a git commit always has a new
 /// id), so a writer can always tell its write landed.
@@ -445,6 +458,11 @@ fn memory() -> (MemoryBoardStore, Clients) {
 #[test]
 fn the_memory_store_bootstraps_once() {
     check_bootstrap(memory().1);
+}
+
+#[test]
+fn the_memory_store_counts_no_lock_race() {
+    check_lock_races(memory().1);
 }
 
 #[test]

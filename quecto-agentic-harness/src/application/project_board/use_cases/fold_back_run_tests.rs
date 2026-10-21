@@ -50,6 +50,7 @@ fn started() -> (MemoryBoardStore, Task, Run) {
     let (task, run) = start(
         &ready,
         &[],
+        &[],
         Some(&accepted),
         &person("Ada"),
         &at("10:00:00"),
@@ -460,7 +461,10 @@ fn a_noted_fold_back_tells_kinds_and_counts_and_an_unnoted_one_nothing() {
             cost_tokens: Some(52_000),
             attempts: Some(1),
             lost: Some(0),
+            lock_races: None,
             bytes: Some(bytes),
+            // A memory board's head is no commit id.
+            head: None,
         }
     );
     // A run already ended notes only its write's attempts.

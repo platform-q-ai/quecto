@@ -79,10 +79,10 @@ fn a_task_is_claimed_worked_linked_and_completed_when_its_pr_merges() {
     );
     let host = MemoryPullRequests::default();
     host.set(7, PullRequestState::Merged);
-    let system = CompleteMergedTask::new(
+    let system = CompleteMergedTask::reading(
         Arc::new(store.client_as(person("Bob"))),
         SetClock::at("10:20:00"),
-        Arc::new(host),
+        Ok(Arc::new(host)),
     )
     .unwrap();
     let done = system.execute(&a).unwrap();
@@ -323,10 +323,10 @@ fn a_store_with_an_invalid_writer_is_refused_when_built() {
         Err(ProjectBoardError::InvalidWriter(_))
     ));
     assert!(matches!(
-        CompleteMergedTask::new(
+        CompleteMergedTask::reading(
             invalid(),
             SetClock::at("10:00:00"),
-            Arc::new(MemoryPullRequests::default())
+            Ok(Arc::new(MemoryPullRequests::default())),
         ),
         Err(ProjectBoardError::InvalidWriter(_))
     ));
@@ -706,5 +706,38 @@ fn anyone_archives_a_reviewed_task_whose_run_ended_and_claim_lapsed() {
     assert_eq!(
         (archived.status, archived.claim, archived.updated),
         (TaskStatus::Archived, None, at("14:00:00"))
+    );
+}
+
+/// #2661 review round 1: an archive waits while a task file is set aside,
+/// as it may be a child still being worked on.
+#[test]
+fn an_archive_waits_while_a_task_file_is_set_aside() {
+    let store = board();
+    seed(&store, fields("epic"));
+    seed(&store, fields("kid"));
+    store.quarantine("kid", "malformed");
+    assert_eq!(
+        change(&store, "Ada", "10:00:00")
+            .execute(&slug("epic"), &BoardOp::Move(TaskStatus::Archived)),
+        Err(set_aside_task("kid"))
+    );
+    // The move's own rules answer first (#2661 review round 2): a ready
+    // task, which the table lets anyone archive, with a child at work is
+    // refused as children_active, never as the file set aside.
+    seed(&store, fields("a"));
+    seed(
+        &store,
+        TaskFields {
+            id: slug("child"),
+            parent: Some(slug("a")),
+            ..held_by_ada(TaskStatus::InProgress)
+        },
+    );
+    assert_eq!(
+        change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived)),
+        Err(ProjectBoardError::Rule(BoardRuleError::ChildrenActive(
+            vec![slug("child")]
+        )))
     );
 }

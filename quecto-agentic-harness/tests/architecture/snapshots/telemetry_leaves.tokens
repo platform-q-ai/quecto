@@ -151,6 +151,8 @@ const KNOWN_KINDS : & [
 "not_draft" ,
 "no_edit" ,
 "superseded" ,
+"dependency_not_done" ,
+"children_active" ,
 "issue_shared" ,
 "issue_is_pr" ,
 "own_pr_referenced" ,
@@ -211,6 +213,9 @@ const KNOWN_KINDS : & [
 "request" ,
 "other" ,
 "remote" ,
+"kept" ,
+"none_kept" ,
+"not_checked" ,
 ] ;
 const fn all_shaped (  ) -> bool { let mut at = 0 ; while at < KNOWN_KINDS . len (  ) { if ! kind_shaped ( KNOWN_KINDS [
 at
@@ -223,4 +228,10 @@ all_shaped (
 impl StaticKind { pub const OTHER : Self = Self ( "other"  ) ; pub fn new ( kind : & str  ) -> Self { KNOWN_KINDS . iter (  ) . find ( | known | * * known == kind  ) . map_or ( Self :: OTHER , | known | Self ( known  )  )  } pub fn as_str ( self  ) -> & 'static str { self . 0  }  }
 # [ derive ( Debug , Clone , PartialEq , Eq , Serialize  )  ] # [ serde ( transparent  )  ] pub struct TaskRef ( Redacted  ) ;
 impl TaskRef { pub fn of ( slug : & Slug  ) -> Self { let redacted = Redacted :: new ( slug . as_str (  )  ) ; let capped : String = redacted . chars (  ) . take ( MAX_TASK_REF_CHARS  ) . collect (  ) ; Self ( Redacted :: new ( & capped  )  )  } pub fn as_str ( & self  ) -> & str { self . 0 . as_str (  )  }  }
+const BOARD_ID_HEX : usize = 16 ;
+# [ derive ( Debug , Clone , PartialEq , Eq , Serialize  )  ] # [ serde ( transparent  )  ] pub struct BoardId ( String  ) ;
+impl BoardId { pub fn of_hex ( hex : & str  ) -> Option < Self > { let shaped = hex . len (  ) == BOARD_ID_HEX && hex . bytes (  ) . all ( | b | matches ! (
+b ,
+b'0' ..= b'9' | b'a' ..= b'f'
+)  ) ; shaped . then ( | | Self ( hex . to_string (  )  )  )  } pub fn as_str ( & self  ) -> & str { & self . 0  }  }
 # [ cfg ( test  )  ] # [ path = "leaves_tests.rs"  ] mod tests ;

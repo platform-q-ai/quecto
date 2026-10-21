@@ -42,6 +42,10 @@ fn a_change_that_lost_once_tells_two_attempts_and_the_task_it_built_on() {
         attempts: Some(2),
         lost: Some(1),
         pause_ms: Some(40),
+        // The commit the write made (#2663).
+        head: Some(crate::application::project_board::ports::BoardHead(
+            "r4".into(),
+        )),
         ..OpFacts::default()
     };
     assert_eq!(facts, want);
@@ -209,10 +213,10 @@ mod a_task_gone_on_retry {
         let host = MemoryPullRequests::default();
         host.set(7, PullRequestState::Merged);
         spoiled_before_the_first_write(&store);
-        let complete = CompleteMergedTask::new(
+        let complete = CompleteMergedTask::reading(
             Arc::new(store.client()),
             SetClock::at("10:20:00"),
-            Arc::new(host),
+            Ok(Arc::new(host)),
         )
         .unwrap();
         let mut facts = OpFacts::default();

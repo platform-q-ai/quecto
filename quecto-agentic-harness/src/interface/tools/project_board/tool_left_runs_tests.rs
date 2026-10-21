@@ -43,9 +43,16 @@ fn board() -> &'static MemoryBoardStore {
         let now =
             crate::application::project_board::ports::BoardClock::now(&SystemBoardClock::default())
                 .unwrap();
-        let (task, run) = start(&task, &[], Some(&plan), &super::end_run_tests::ada(), &now)
-            .unwrap()
-            .into_writes();
+        let (task, run) = start(
+            &task,
+            &[],
+            &[],
+            Some(&plan),
+            &super::end_run_tests::ada(),
+            &now,
+        )
+        .unwrap()
+        .into_writes();
         let head = store.read().unwrap().head;
         let seed = [
             BoardArtifact::Task(task),
@@ -106,7 +113,10 @@ fn left_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHandl
         },
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
-    Ok(ProjectBoardHandles { operations })
+    Ok(ProjectBoardHandles {
+        operations,
+        board: None,
+    })
 }
 
 #[test]
@@ -175,7 +185,7 @@ fn bobs_board() -> &'static MemoryBoardStore {
             name: "Bob".into(),
             email: "bob@example.com".into(),
         };
-        let (task, run) = start(&task, &[], Some(&plan), &bob, &now)
+        let (task, run) = start(&task, &[], &[], Some(&plan), &bob, &now)
             .unwrap()
             .into_writes();
         let head = store.read().unwrap().head;
@@ -207,7 +217,10 @@ fn bobs(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, Bu
         },
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
-    Ok(ProjectBoardHandles { operations })
+    Ok(ProjectBoardHandles {
+        operations,
+        board: None,
+    })
 }
 
 /// Round 1 (#2674): an end the board's rules refuse says so, naming the

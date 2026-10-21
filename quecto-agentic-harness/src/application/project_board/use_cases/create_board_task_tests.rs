@@ -586,3 +586,67 @@ fn a_task_pointing_at_itself_is_refused_as_such() {
         "{own_parent:?}"
     );
 }
+
+/// A store whose writes each meet `per_write` lock races, as a clone
+/// shared with other writers' fetches does.
+struct Racing {
+    store: MemoryBoardStore,
+    races: std::sync::atomic::AtomicU64,
+    per_write: u64,
+}
+
+impl ProjectBoardStore for Racing {
+    fn read(
+        &self,
+    ) -> Result<crate::application::project_board::ports::BoardSnapshot, BoardStoreError> {
+        self.store.client().read()
+    }
+    fn write(
+        &self,
+        expected: &crate::application::project_board::ports::BoardHead,
+        artifacts: &[BoardArtifact],
+        message: &str,
+    ) -> Result<crate::application::project_board::ports::BoardWrite, BoardStoreError> {
+        self.races
+            .fetch_add(self.per_write, std::sync::atomic::Ordering::SeqCst);
+        self.store.client().write(expected, artifacts, message)
+    }
+    fn clear_set_aside(
+        &self,
+        expected: &crate::application::project_board::ports::BoardHead,
+        clear: &crate::application::project_board::ports::SetAsideClear,
+        message: &str,
+    ) -> Result<crate::application::project_board::ports::BoardWrite, BoardStoreError> {
+        self.store
+            .client()
+            .clear_set_aside(expected, clear, message)
+    }
+    fn bootstrap(
+        &self,
+    ) -> Result<crate::application::project_board::ports::BoardBootstrap, BoardStoreError> {
+        self.store.client().bootstrap()
+    }
+    fn writer(&self) -> crate::domain::project_board::entities::claim::Identity {
+        self.store.client().writer()
+    }
+    fn lock_races(&self) -> u64 {
+        self.races.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// #2663 review round 1: a write notes the lock races its store met during
+/// it, never the ones met before.
+#[test]
+fn a_write_notes_the_lock_races_its_store_met() {
+    let racing = Racing {
+        store: board(),
+        races: std::sync::atomic::AtomicU64::new(5),
+        per_write: 2,
+    };
+    let creator = CreateBoardTask::new(Arc::new(racing), SetClock::at("10:00:00")).unwrap();
+    let mut facts = crate::application::project_board::telemetry::OpFacts::default();
+    creator
+        .execute_noted(&new_task("a"), Some(&mut facts))
+        .unwrap();
+    assert_eq!(facts.lock_races, Some(2));
+}

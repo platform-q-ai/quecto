@@ -134,7 +134,10 @@ fn summarised_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, 
     let written = store.write(&head, &artifacts, "board: seed");
     assert!(matches!(written, Ok(BoardWrite::Written(_))), "{written:?}");
     store.quarantine_key(ArtifactKey::Run(slug("c"), 1), "runs/c.1.md", "malformed");
-    Ok(ProjectBoardHandles { operations })
+    Ok(ProjectBoardHandles {
+        operations,
+        board: None,
+    })
 }
 
 fn environment() -> ProjectBoardEnvironment {

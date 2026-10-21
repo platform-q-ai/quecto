@@ -123,6 +123,10 @@ fn accepting_names_the_draft_and_supersedes_the_plan_accepted_before() {
         plan_version: Some(2),
         plan_state_from: Some(PlanState::Draft),
         plan_state_to: Some(PlanState::Accepted),
+        // The commit the write made (#2663).
+        head: Some(crate::application::project_board::ports::BoardHead(
+            "r3".into(),
+        )),
         ..OpFacts::default()
     };
     assert_eq!(facts, want);

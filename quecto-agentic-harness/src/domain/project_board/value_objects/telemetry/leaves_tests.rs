@@ -60,3 +60,22 @@ fn a_retired_kind_stays_known() {
         assert_eq!(StaticKind::new(retired).as_str(), retired);
     }
 }
+
+/// #2663: a board id is 16 lowercase hex digits, and nothing else.
+#[test]
+fn a_board_id_holds_only_its_hex() {
+    assert_eq!(
+        BoardId::of_hex("0123456789abcdef").map(|id| id.as_str().to_string()),
+        Some("0123456789abcdef".to_string())
+    );
+    for refused in [
+        "",
+        "0123456789abcde",
+        "0123456789abcdef0",
+        "0123456789ABCDEF",
+        "0123456789abcdeg",
+        "https://x.example",
+    ] {
+        assert_eq!(BoardId::of_hex(refused), None, "{refused:?}");
+    }
+}

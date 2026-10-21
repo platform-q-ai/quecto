@@ -23,7 +23,7 @@ use crate::application::project_board::operations::{
     BoardOutcome, BoardRequest, Completion, ListSummaries,
 };
 use crate::application::project_board::ports::{FoldBackOutcome, FoldBackRecorder};
-use crate::application::project_board::start::StartFacts;
+use crate::application::project_board::start::{NotedFoldBack, StartFacts};
 use crate::application::project_board::telemetry::{
     BoardRecording, OpFacts, access_of, op_kind, pr_of, task_of,
 };
@@ -32,7 +32,7 @@ use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::telemetry::{
-    Access, BoardOpRecord, BoardStartRecord, Client, CompletionKind, FaultKind, FrontEnd,
+    Access, BoardId, BoardOpRecord, BoardStartRecord, Client, CompletionKind, FaultKind, FrontEnd,
     ListingCounts, OpKind, OpOutcome, RequestFault, StaticKind, TaskRef,
 };
 
@@ -68,6 +68,9 @@ struct Open {
     record: BoardOpRecord,
     /// What a start saw, for its own `board_start` record (S4c).
     start: Option<StartFacts>,
+    /// An `end_run`'s fold-back, for its own `board_fold_back` record
+    /// (#2667).
+    fold_back: Option<NotedFoldBack>,
 }
 
 impl BoardCall {
@@ -94,11 +97,13 @@ impl BoardCall {
             recording,
             started,
             start: None,
+            fold_back: None,
             record: BoardOpRecord {
                 op: OpKind::Unknown,
                 front_end,
                 client,
                 access: Access::Read,
+                board: None,
                 outcome: OpOutcome::Ok,
                 fault: None,
                 task: None,
@@ -118,7 +123,9 @@ impl BoardCall {
                 status_to: None,
                 claim: None,
                 attempts: None,
-                lost: None,
+                races_lost: None,
+                lock_races: None,
+                swarm_report: None,
                 pause_ms: None,
                 completion: None,
                 normalised: None,
@@ -194,7 +201,14 @@ impl BoardCall {
         let result = operations.execute_noted_with(request, Some(&mut facts), summaries);
         facts.fill(&mut open.record);
         open.start = facts.start.take();
+        open.fold_back = facts.fold_back.take();
         result
+    }
+
+    /// The request reached the board `board` (#2663): each of its records
+    /// names it.
+    pub fn on_board(&mut self, board: Option<&BoardId>) {
+        self.note(|record| record.board = board.cloned());
     }
 
     /// What `build` builds (the board's operations), timed while recorded.
@@ -262,7 +276,10 @@ impl BoardCall {
                 BoardOutcome::Started(_) => None,
             };
             record.outcome = OpOutcome::Ok;
-            record.head = head.and_then(|head| CommitId::parse(&head.0).ok());
+            // A write's own commit is its use case's to note (#2663).
+            if let Some(head) = head {
+                record.head = CommitId::parse(&head.0).ok();
+            }
             // A failed completion's code and rule, as the answer spells them.
             if let (
                 BoardOutcome::Changed {
@@ -290,6 +307,7 @@ impl BoardCall {
             started,
             mut record,
             start,
+            fold_back,
         }) = self.open.take()
         else {
             return;
@@ -306,19 +324,21 @@ impl BoardCall {
         record.duration_us = micros(started.elapsed());
         let undo = start.as_ref().and_then(|facts| facts.fold_back.clone());
         let start = start.and_then(|facts| start_record(&record, facts));
+        let board = record.board.clone();
         recording.record(record);
         if let Some(start) = start {
             recording.record_start(start);
         }
-        // A start's undo folded its run back: that fold-back's own record.
-        if let Some(undo) = undo {
-            super::fold_back_call::FoldBackCall::new(Arc::clone(&recording)).record(
+        // A start's undo, or an `end_run`, folded its run back: that
+        // fold-back's own record.
+        for folded in [undo, fold_back].into_iter().flatten() {
+            super::fold_back_call::FoldBackCall::new(Arc::clone(&recording), board.clone()).record(
                 FoldBackOutcome {
-                    task: &undo.task,
-                    run: undo.run,
-                    result: &undo.result,
-                    facts: &undo.facts,
-                    elapsed: undo.elapsed,
+                    task: &folded.task,
+                    run: folded.run,
+                    result: &folded.result,
+                    facts: &folded.facts,
+                    elapsed: folded.elapsed,
                 },
             );
         }
@@ -343,6 +363,7 @@ impl Drop for BoardCall {
             started,
             mut record,
             start: _,
+            fold_back: _,
         }) = self.open.take()
         {
             match std::thread::panicking() {
@@ -507,6 +528,8 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         | R::NotDraft(..)
         | R::NoEdit
         | R::Superseded { .. }
+        | R::DependencyNotDone { .. }
+        | R::ChildrenActive(..)
         | R::IssueShared { .. }
         | R::IssueIsPr { .. }
         | R::OwnPrReferenced { .. } => None,
@@ -537,6 +560,7 @@ fn start_record(record: &BoardOpRecord, facts: StartFacts) -> Option<BoardStartR
     let task = record.task.clone()?;
     debug_assert_eq!(record.op, OpKind::Start, "only a start notes start facts");
     Some(BoardStartRecord {
+        board: record.board.clone(),
         task,
         client: record.client,
         outcome: record.outcome.clone(),

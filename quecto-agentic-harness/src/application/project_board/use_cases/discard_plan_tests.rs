@@ -64,6 +64,10 @@ fn a_discarded_draft_is_kept_and_written_alone() {
         plan_version: Some(1),
         plan_state_from: Some(PlanState::Draft),
         plan_state_to: Some(PlanState::Discarded),
+        // The commit the write made (#2663).
+        head: Some(crate::application::project_board::ports::BoardHead(
+            "r3".into(),
+        )),
         ..OpFacts::default()
     };
     assert_eq!(facts, want);

@@ -146,7 +146,7 @@ fn ready_counts_an_archived_dependency_as_satisfied() {
             &before,
             TaskStatus::Archived,
             &ada,
-            &[],
+            (&[], &[]),
             &[],
             &at("09:00:00"),
         )

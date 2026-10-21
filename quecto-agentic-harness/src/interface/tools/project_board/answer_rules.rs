@@ -70,6 +70,8 @@ pub fn rule_code(rule: &BoardRuleError) -> &'static str {
         R::NotDraft(..) => "not_draft",
         R::NoEdit => "no_edit",
         R::Superseded { .. } => "superseded",
+        R::DependencyNotDone { .. } => "dependency_not_done",
+        R::ChildrenActive(..) => "children_active",
         R::IssueShared { .. } => "issue_shared",
         R::IssueIsPr { .. } => "issue_is_pr",
         R::OwnPrReferenced { .. } => "own_pr_referenced",
@@ -183,6 +185,15 @@ fn rule_fields(rule: &BoardRuleError) -> Map<String, Value> {
         R::Superseded { by } => {
             let by: Vec<&str> = by.iter().map(Slug::as_str).collect();
             object!({"by": by})
+        }
+        R::DependencyNotDone { undone, missing } => {
+            let undone: Vec<&str> = undone.iter().map(Slug::as_str).collect();
+            let missing: Vec<&str> = missing.iter().map(Slug::as_str).collect();
+            object!({"tasks": undone, "missing": missing})
+        }
+        R::ChildrenActive(tasks) => {
+            let tasks: Vec<&str> = tasks.iter().map(Slug::as_str).collect();
+            object!({"tasks": tasks})
         }
         R::IssueShared { issue, tasks } => object!({
             "issue": issue,

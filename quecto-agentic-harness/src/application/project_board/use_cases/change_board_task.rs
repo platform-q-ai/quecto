@@ -22,6 +22,7 @@ use crate::domain::project_board::services::pull_requests::{add_pr, remove_pr};
 use crate::domain::project_board::services::transitions::{move_reads, move_task};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
+use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
 pub struct ChangeBoardTask {
     store: Arc<dyn ProjectBoardStore>,
@@ -176,7 +177,14 @@ fn apply(
                 true => owned(board_view::changes_of(board, id)?),
                 false => vec![],
             };
-            move_task(task, *to, actor, &runs, &changes, now)
+            // The tasks it relates to may hold the move back (#2661).
+            let moved = move_task(task, *to, actor, (&runs, &changes), &board.tasks, now)?;
+            // Once the rules allow it, a task file set aside may still be a
+            // child an archive waits for.
+            if *to == TaskStatus::Archived {
+                board_view::tasks_clear(board)?;
+            }
+            Ok(moved)
         }
         BoardOp::AddPr(pr) => {
             let changes = owned(board_view::all_changes(board)?);

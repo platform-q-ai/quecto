@@ -110,10 +110,12 @@ pub fn is_live(claim: &Claim, now: &Timestamp) -> bool {
 /// What a change by `writer` at `now` finds of `task`'s claim (epic
 /// #2481 T4), `None` when it holds none: how long it has been held and
 /// has left, and whether the writer holds it ([`Identity::is`]); never
-/// who does.
+/// who does. A claim's `since` is a [`stamp`], which may run a second or
+/// more past the wall clock, so a `now` before it finds the claim held
+/// for no time, never less (#2662).
 pub fn claim_facts(task: &Task, writer: &Identity, now: &Timestamp) -> Option<ClaimFacts> {
     task.fields().claim.as_ref().map(|claim| ClaimFacts {
-        held_s: now.seconds_since(&claim.since),
+        held_s: now.seconds_since(&claim.since).max(0),
         left_s: claim.expires.seconds_since(now),
         holder_is_writer: claim.holder.is(writer),
     })
@@ -148,6 +150,28 @@ pub fn within_slack(updated: &Timestamp, latest: Option<&Timestamp>) -> bool {
 /// A task stamped at the last moment the board can spell.
 pub(super) fn stamp(task: &Task, now: &Timestamp) -> Result<Timestamp, BoardRuleError> {
     after_last(&task.fields().updated, now)
+}
+
+/// The time a change to another artifact of `task` (a plan, say) builds
+/// on: the caller's `now`, or, if the caller's clock reads earlier, the
+/// latest of the task's own `updated` and `stamps` (every artifact of the
+/// task of the kind changed, as the board holds them), so no artifact of
+/// one task is stamped before the task's last change or a sibling's, and
+/// stamps never run backwards on one task (#2662).
+pub(super) fn not_before<'a>(
+    task: &Task,
+    stamps: impl IntoIterator<Item = &'a Timestamp>,
+    now: &Timestamp,
+) -> Timestamp {
+    let floor = stamps
+        .into_iter()
+        .fold(&task.fields().updated, |latest, stamp| latest.max(stamp));
+    let at = now.max(floor).clone();
+    assert!(
+        at >= task.fields().updated,
+        "a task's stamps never run backwards"
+    );
+    at
 }
 
 /// When a change to an artifact last changed at `updated` happens: `now`,

@@ -104,6 +104,10 @@ fn build_with_warnings(
         .remote_url()
         .map_err(|error| unavailable(store_reason(&error)))?;
     let clock: Arc<dyn BoardClock> = Arc::new(ReferencedBoardClock::for_remote(&url));
+    // A relative remote is the clone's top level's, as git resolves it.
+    let top_level = store
+        .top_level()
+        .unwrap_or_else(|_| environment.repo.clone());
     let index = BoardIndex::of(&store).map_err(|error| {
         unavailable(format!(
             "the board index's directory cannot be named: {error}"
@@ -120,12 +124,8 @@ fn build_with_warnings(
     let built = |error: crate::application::project_board::dto::ProjectBoardError| {
         unavailable(error.to_string())
     };
-    let complete = match prs {
-        Ok(prs) => Ok(
-            CompleteMergedTask::new(Arc::clone(&store), Arc::clone(&clock), prs).map_err(built)?,
-        ),
-        Err(why) => Err(why),
-    };
+    let complete =
+        CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs).map_err(built)?;
     let parts = BoardOperationParts {
         bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
         create: CreateBoardTask::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
@@ -186,6 +186,7 @@ fn build_with_warnings(
     };
     Ok(ProjectBoardHandles {
         operations: RunBoardOperation::new(parts),
+        board: GitBoardStore::board_id_of(&url, &top_level),
     })
 }
 
@@ -374,3 +375,7 @@ mod tests;
 #[cfg(test)]
 #[path = "project_board_wiring_tests.rs"]
 mod wiring_tests;
+
+#[cfg(test)]
+#[path = "project_board_telemetry_tests.rs"]
+mod telemetry_tests;

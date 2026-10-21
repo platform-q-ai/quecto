@@ -156,6 +156,15 @@ pub fn naming(board: &BoardSnapshot, id: &Slug) -> Result<Option<IdUser>, Projec
     Ok(named)
 }
 
+/// No task file is set aside (#2661): an archive waits, as one may be a
+/// child of the task archived.
+///
+/// # Errors
+/// The least task a set-aside file names.
+pub(super) fn tasks_clear(board: &BoardSnapshot) -> Result<(), ProjectBoardError> {
+    clear_of(board, |key| matches!(key, ArtifactKey::Task(_)))
+}
+
 /// Refuses with the least key in scope that a set-aside file names, so a
 /// refusal is the same however the store orders the files.
 fn clear_of(

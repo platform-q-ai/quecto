@@ -24,9 +24,10 @@ use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardStoreError, BoardTextCells, FoldBackOutcome, FoldBackRecorder,
     ProjectBoardStore,
 };
-use crate::application::project_board::telemetry::{OpFacts, counted};
+use crate::application::project_board::telemetry::{OpFacts, counted, summed};
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::services::runs::{fold_back, run_and_plan};
+use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::RunOutcomeKind;
@@ -128,11 +129,11 @@ impl FoldBackRun {
             let mut again = facts.as_ref().map(|_| OpFacts::default());
             passed = self.pass(id, number, view, Evidence::Left, again.as_mut());
             if let (Some(write), Some(again)) = (write.as_mut(), again) {
-                let sum = |one: Option<u64>, two: Option<u64>| {
-                    Some(one.unwrap_or(0).saturating_add(two.unwrap_or(0)))
-                };
-                write.attempts = sum(write.attempts, again.attempts);
-                write.lost = sum(write.lost, again.lost);
+                write.attempts = summed(write.attempts, again.attempts);
+                write.lost = summed(write.lost, again.lost);
+                write.lock_races = summed(write.lock_races, again.lock_races);
+                assert!(write.attempts.is_some(), "a noted write notes its attempts");
+                write.head = again.head;
             }
         }
         let (result, items) = match passed {
@@ -194,6 +195,8 @@ fn noted(
     let write = write.unwrap_or_default();
     facts.attempts = write.attempts;
     facts.lost = write.lost;
+    facts.lock_races = write.lock_races;
+    facts.head = write.head.and_then(|head| CommitId::parse(&head.0).ok());
     if let (Ok(FoldedBack::Folded(run)), Some(items)) = (&result, items) {
         let fields = run.fields();
         facts.run_outcome = fields.outcome.map(RunOutcomeKind::of);

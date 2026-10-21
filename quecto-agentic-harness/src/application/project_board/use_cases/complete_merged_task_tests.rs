@@ -39,10 +39,10 @@ fn seeded(prs: &[u64]) -> MemoryBoardStore {
 
 /// The system's completion, run by Bob's machine, reading `host`.
 fn complete(store: &MemoryBoardStore, host: &MemoryPullRequests) -> CompleteMergedTask {
-    CompleteMergedTask::new(
+    CompleteMergedTask::reading(
         Arc::new(store.client_as(person("Bob"))),
         SetClock::at("10:00:00"),
-        Arc::new(host.clone()),
+        Ok(Arc::new(host.clone())),
     )
     .unwrap()
 }
@@ -299,10 +299,10 @@ fn a_lost_write_does_not_restart_the_budget() {
             .write_tasks(&head, &[other], "another writer")
             .unwrap();
     });
-    let completion = CompleteMergedTask::new(
+    let completion = CompleteMergedTask::reading(
         Arc::new(store.client_as(person("Bob"))),
         clock.clone(),
-        Arc::new(host.clone()),
+        Ok(Arc::new(host.clone())),
     )
     .unwrap()
     .with_read_budget(std::time::Duration::from_secs(30));
