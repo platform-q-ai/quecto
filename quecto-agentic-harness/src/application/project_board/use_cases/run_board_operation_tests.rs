@@ -279,6 +279,9 @@ mod noted {
     ) -> (Result<BoardOutcome, ProjectBoardError>, OpFacts) {
         let mut facts = OpFacts::default();
         let result = ops.execute_noted(request, Some(&mut facts));
+        // A write's commit is the board's (#2663), told apart in its own
+        // test (`a_write_notes_its_commit_and_no_lock_race`).
+        facts.head = None;
         (result, facts)
     }
 
@@ -288,6 +291,29 @@ mod noted {
             lost: Some(0),
             ..facts
         }
+    }
+
+    /// #2663: a write notes the commit it made, and how many lock races
+    /// its fetches met (none, in memory); a refused one notes no commit.
+    #[test]
+    fn a_write_notes_its_commit_and_no_lock_race() {
+        let store = MemoryBoardStore::default();
+        let ops = operations(&store, SetClock::at("10:00:00"), no_host());
+        ops.execute(&BoardRequest::Bootstrap).unwrap();
+        let mut facts = OpFacts::default();
+        ops.execute_noted(&ready_task("a"), Some(&mut facts))
+            .unwrap();
+        let head = store.read().unwrap().head;
+        assert_eq!(
+            (facts.head, facts.lock_races, facts.attempts),
+            (Some(head), None, Some(1))
+        );
+        let mut refused = OpFacts::default();
+        assert!(
+            ops.execute_noted(&ready_task("a"), Some(&mut refused))
+                .is_err()
+        );
+        assert_eq!((refused.head, refused.lock_races), (None, None));
     }
 
     #[test]
@@ -379,13 +405,13 @@ mod noted {
             prs_linked,
             prs_pending,
             completion_attempts: None,
-            completion_lost: None,
+            completion_races_lost: None,
             completion_pause_ms: None,
         };
         // After a link, the completion's own write: one attempt, none lost.
         let written_once_more = |facts: CompletionFacts| CompletionFacts {
             completion_attempts: Some(1),
-            completion_lost: Some(0),
+            completion_races_lost: Some(0),
             ..facts
         };
         let (_, linked) = noted(&ops, &BoardRequest::Change(a.clone(), BoardOp::AddPr(8)));
@@ -485,7 +511,7 @@ mod noted {
             (
                 completion.completion,
                 completion.completion_attempts,
-                completion.completion_lost,
+                completion.completion_races_lost,
                 completion.completion_pause_ms
             ),
             (CompletionKind::Done, Some(2), Some(1), Some(25))

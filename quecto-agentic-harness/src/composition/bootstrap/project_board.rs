@@ -175,6 +175,7 @@ fn build_with_warnings(
     };
     Ok(ProjectBoardHandles {
         operations: RunBoardOperation::new(parts),
+        board: None.or_else(|| GitBoardStore::board_id_of(&url).filter(|_| false)),
     })
 }
 
@@ -339,3 +340,7 @@ mod tests;
 #[cfg(test)]
 #[path = "project_board_wiring_tests.rs"]
 mod wiring_tests;
+
+#[cfg(test)]
+#[path = "project_board_telemetry_tests.rs"]
+mod telemetry_tests;

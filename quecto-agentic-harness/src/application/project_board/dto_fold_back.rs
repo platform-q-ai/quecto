@@ -2,6 +2,7 @@
 //! `board_fold_back` record; and the ended swarm's board it folds back
 //! from, as the run reports port answers it (#2481 S4c follow-up).
 use crate::domain::project_board::entities::run::Run;
+use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::telemetry::{
     FoldBackRecord, ItemCounts, RunOutcomeKind,
 };
@@ -33,8 +34,13 @@ pub struct FoldBackFacts {
     /// The write's attempts, and how many lost the race.
     pub attempts: Option<u64>,
     pub lost: Option<u64>,
+    /// How many times its fetches found the tracking ref locked by
+    /// another writer in the same clone (#2663).
+    pub lock_races: Option<u64>,
     /// The UTF-8 bytes of the folded run's text.
     pub bytes: Option<u64>,
+    /// The commit it wrote (#2663).
+    pub head: Option<CommitId>,
 }
 
 impl FoldBackFacts {
@@ -44,6 +50,7 @@ impl FoldBackFacts {
         let FoldBackRecord {
             task: _,
             run: _,
+            board: _,
             outcome: _,
             run_outcome,
             items,
@@ -53,8 +60,10 @@ impl FoldBackFacts {
             evidence_dropped,
             cost_tokens,
             attempts,
-            lost,
+            races_lost,
+            lock_races,
             bytes,
+            head,
             duration_us: _,
         } = record;
         let facts = [
@@ -64,7 +73,8 @@ impl FoldBackFacts {
             (evidence_dropped, self.evidence_dropped),
             (cost_tokens, self.cost_tokens),
             (attempts, self.attempts),
-            (lost, self.lost),
+            (races_lost, self.lost),
+            (lock_races, self.lock_races),
             (bytes, self.bytes),
         ];
         for (field, fact) in facts {
@@ -72,6 +82,7 @@ impl FoldBackFacts {
         }
         *run_outcome = self.run_outcome.or(*run_outcome);
         *items = self.items.or(*items);
+        *head = self.head.clone().or(head.take());
     }
 }
 

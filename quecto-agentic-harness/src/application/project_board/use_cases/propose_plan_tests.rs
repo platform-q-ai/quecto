@@ -101,6 +101,10 @@ fn crlf_in_the_approach_is_normalised_and_noted() {
         plan_version: Some(1),
         items: Some(2),
         roles: Some(1),
+        // The commit the write made (#2663).
+        head: Some(crate::application::project_board::ports::BoardHead(
+            "r3".into(),
+        )),
         ..OpFacts::default()
     };
     assert_eq!(facts, want);

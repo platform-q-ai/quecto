@@ -145,7 +145,11 @@ fn shaped(
     facts: Option<&mut OpFacts>,
     mut change: impl FnMut(&BoardSnapshot, &When) -> Result<Vec<BoardArtifact>, ProjectBoardError>,
 ) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
-    retried(clock, facts, || {
+    let mut facts = facts;
+    // The store's count before this change, so its own races are told.
+    let races = facts.as_ref().map(|_| store.lock_races());
+    let mut written = None;
+    let result = retried(clock, facts.as_deref_mut(), || {
         let snapshot = store.read()?;
         let when = checked_now(clock)?;
         let artifacts = change(&snapshot, &when)?;
@@ -156,12 +160,19 @@ fn shaped(
                     head, snapshot.head,
                     "a write the board holds moves its head"
                 );
+                written = Some(head);
                 Ok(Attempt::Done(artifacts))
             }
             BoardWrite::Lost => Ok(Attempt::Lost),
             BoardWrite::Refused(reason) => Err(ProjectBoardError::Refused(reason)),
         }
-    })
+    });
+    if let (Some(facts), Some(before)) = (facts, races) {
+        // Noted only when the write met one, as a record tells it.
+        let _ = (store.lock_races().saturating_sub(before), written);
+        facts.lock_races = None;
+    }
+    result
 }
 
 /// Whether `artifacts` are one task's change (an allowlist): that task

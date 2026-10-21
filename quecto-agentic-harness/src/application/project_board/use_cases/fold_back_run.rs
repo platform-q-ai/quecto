@@ -27,6 +27,7 @@ use crate::application::project_board::ports::{
 use crate::application::project_board::telemetry::{OpFacts, counted};
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::services::runs::{fold_back, run_and_plan};
+use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::RunOutcomeKind;
@@ -133,6 +134,8 @@ impl FoldBackRun {
                 };
                 write.attempts = sum(write.attempts, again.attempts);
                 write.lost = sum(write.lost, again.lost);
+                write.lock_races = sum(write.lock_races, again.lock_races);
+                write.head = again.head;
             }
         }
         let (result, items) = match passed {
@@ -194,6 +197,8 @@ fn noted(
     let write = write.unwrap_or_default();
     facts.attempts = write.attempts;
     facts.lost = write.lost;
+    facts.lock_races = write.lock_races;
+    facts.head = write.head.and_then(|head| CommitId::parse(&head.0).ok());
     if let (Ok(FoldedBack::Folded(run)), Some(items)) = (&result, items) {
         let fields = run.fields();
         facts.run_outcome = fields.outcome.map(RunOutcomeKind::of);

@@ -474,3 +474,88 @@ fn a_front_end_that_sees_no_swarm_ends_the_run_unchecked() {
     assert_eq!(LivenessCheck::NotChecked.as_str(), "not_checked");
     assert_eq!(LivenessCheck::Checked.as_str(), "checked");
 }
+
+/// #2663 and #2667: an end that folds the board its swarm left says so,
+/// and notes that fold-back for its own `board_fold_back` record: how the
+/// run ended, its items by state, what was left out and its cost.
+#[test]
+fn an_end_from_a_kept_board_notes_its_fold_back() {
+    use crate::application::project_board::dto::FoldedBack;
+    use crate::domain::project_board::value_objects::telemetry::{ItemCounts, RunOutcomeKind};
+    let (store, _) = stranded();
+    let mut facts = OpFacts::default();
+    let done = [SwarmItemState::Completed; 3];
+    let ended = ender_keeping(&store, Some(swarm(SwarmEnd::Succeeded, done)))
+        .execute_noted(&ending(RunEndOutcome::Succeeded), Some(&mut facts))
+        .unwrap()
+        .run;
+    assert_eq!(facts.swarm_report, Some(SwarmReport::Kept));
+    let folded = facts.fold_back.expect("a kept board's fold-back is noted");
+    assert_eq!((folded.task, folded.run), (slug("board-store"), 1));
+    assert_eq!(folded.result, Ok(FoldedBack::Folded(ended.clone())));
+    let noted = folded.facts;
+    assert_eq!(noted.run_outcome, Some(RunOutcomeKind::Succeeded));
+    assert_eq!(
+        noted.items,
+        Some(ItemCounts {
+            todo: 0,
+            doing: 0,
+            review: 0,
+            done: 3,
+            blocked: 0
+        })
+    );
+    assert_eq!(
+        (
+            noted.unmatched,
+            noted.extra,
+            noted.evidence,
+            noted.evidence_dropped
+        ),
+        (Some(0), Some(0), Some(3), Some(0))
+    );
+    assert_eq!(
+        (noted.cost_tokens, noted.attempts, noted.lost),
+        (Some(52_000), Some(1), Some(0))
+    );
+    assert_eq!(
+        noted.bytes,
+        Some(u64::try_from(ended.fields().text_bytes()).unwrap())
+    );
+}
+
+/// #2663: an end with no board kept says so and notes no fold-back, nor
+/// does a loss, which folds nothing; an end past the board's bytes notes
+/// both passes and the evidence it dropped.
+#[test]
+fn an_end_says_whether_a_board_was_kept() {
+    let (store, _) = stranded();
+    let mut facts = OpFacts::default();
+    ender(&store, "Ada", "10:30:00")
+        .execute_noted(&ending(RunEndOutcome::Stopped), Some(&mut facts))
+        .unwrap();
+    assert_eq!(facts.swarm_report, Some(SwarmReport::NoneKept));
+    assert_eq!(facts.fold_back, None);
+    let (store, _) = stranded();
+    let mut lost = OpFacts::default();
+    ender(&store, "Ada", "10:30:00")
+        .execute_noted(&ending(RunEndOutcome::Lost), Some(&mut lost))
+        .unwrap();
+    assert_eq!((lost.swarm_report, lost.fold_back), (None, None));
+    let (store, _) = stranded();
+    store.fail_next_write(BoardStoreError::WriteTooLarge(
+        "runs/ past its bytes".into(),
+    ));
+    let mut large = OpFacts::default();
+    ender_keeping(
+        &store,
+        Some(swarm(SwarmEnd::Succeeded, [SwarmItemState::Completed; 3])),
+    )
+    .execute_noted(&ending(RunEndOutcome::Succeeded), Some(&mut large))
+    .unwrap();
+    let noted = large.fold_back.expect("noted").facts;
+    assert_eq!(
+        (noted.attempts, noted.evidence, noted.evidence_dropped),
+        (Some(2), Some(0), Some(3))
+    );
+}

@@ -111,7 +111,10 @@ fn launching_board(
             .map(|swarms| swarms as Arc<dyn crate::application::project_board::ports::RunLiveness>),
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
-    Ok(ProjectBoardHandles { operations })
+    Ok(ProjectBoardHandles {
+        operations,
+        board: None,
+    })
 }
 
 /// A launcher that launches every coordinator it is asked to.

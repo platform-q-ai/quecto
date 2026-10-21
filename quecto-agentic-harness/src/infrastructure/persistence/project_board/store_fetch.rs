@@ -195,7 +195,11 @@ impl GitBoardStore {
             match self.fetching(&config, &options, filter, None) {
                 Ok(_) => break,
                 Err(why) if locked_by_another_writer(&why, &tracking) => match pauses.next() {
-                    Some(ms) => std::thread::sleep(std::time::Duration::from_millis(*ms)),
+                    Some(ms) => {
+                        // Counted for the write's record (#2663).
+                        let _ = &self.lock_races;
+                        std::thread::sleep(std::time::Duration::from_millis(*ms));
+                    }
                     None => return Err(BoardStoreError::Unavailable(why)),
                 },
                 Err(why) => return Err(BoardStoreError::Unavailable(why)),

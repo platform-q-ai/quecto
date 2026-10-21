@@ -2,9 +2,9 @@
 //! clones of one bare remote, each its own client.
 use super::project_board_store::{
     Clients, check_bootstrap, check_bootstrap_race, check_carried_set_aside, check_clear_set_aside,
-    check_committed_as_writer, check_compare_and_swap, check_invalid_writes, check_quarantine,
-    check_refused, check_unchanged_write, check_write_after_lost_and_refused, check_write_and_read,
-    check_write_before_bootstrap, check_writer,
+    check_committed_as_writer, check_compare_and_swap, check_invalid_writes, check_lock_races,
+    check_quarantine, check_refused, check_unchanged_write, check_write_after_lost_and_refused,
+    check_write_and_read, check_write_before_bootstrap, check_writer,
 };
 use quecto::domain::project_board::entities::claim::Identity;
 use quecto::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
@@ -223,6 +223,11 @@ impl Remote {
 #[test]
 fn the_git_store_bootstraps_once() {
     check_bootstrap(Remote::new().clients());
+}
+
+#[test]
+fn the_git_store_counts_lock_races_only_when_it_meets_one() {
+    check_lock_races(Remote::new().clients());
 }
 
 #[test]

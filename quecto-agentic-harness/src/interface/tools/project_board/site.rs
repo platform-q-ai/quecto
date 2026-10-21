@@ -15,6 +15,7 @@ use super::{read, run_recorded_with, summaries_refusal};
 use crate::application::project_board::operations::ListSummaries;
 use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness};
 use crate::application::project_board::use_cases::RunBoardOperation;
+use crate::domain::project_board::value_objects::telemetry::BoardId;
 
 /// What a request does with the board.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +61,9 @@ pub type Launcher = std::sync::Arc<dyn SessionSwarms>;
 /// The board's operations, built by composition.
 pub struct ProjectBoardHandles {
     pub operations: RunBoardOperation,
+    /// The board's id for its records (#2663): `None` where its remote
+    /// gives none.
+    pub board: Option<BoardId>,
 }
 
 /// Why composition could not build the board's operations.
@@ -183,7 +187,10 @@ pub fn answer_with(
     };
     match call.built(|| build(&environment)) {
         // The one entry point every front end's request goes through.
-        Ok(handles) => run_recorded_with(&handles.operations, text, summaries, call),
+        Ok(handles) => {
+            call.on_board(None);
+            run_recorded_with(&handles.operations, text, summaries, call)
+        }
         Err(BuildError::NoCommitter(why)) => {
             call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::NoCommitter, &why)
         }

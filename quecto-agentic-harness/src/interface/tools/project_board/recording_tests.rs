@@ -533,10 +533,12 @@ fn a_call_records_what_its_use_case_saw() {
         (
             lines[0]["status_to"].clone(),
             lines[0]["attempts"].clone(),
-            lines[0]["lost"].clone()
+            lines[0]["races_lost"].clone()
         ),
         (json!("ready"), json!(1), json!(0))
     );
+    // #2663: the race counter is `races_lost`, never a run's `lost`.
+    assert_eq!(lines[0].get("lost"), None, "{}", lines[0]);
     assert_eq!(
         (
             lines[1]["status_from"].clone(),

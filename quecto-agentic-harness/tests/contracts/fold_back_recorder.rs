@@ -22,7 +22,7 @@ fn each_outcome_is_one_fold_back_line_of_codes_and_counts() {
     let base = tempfile::tempdir().unwrap();
     let log = AuditLog::open_sync(base.path(), "cli:recorder").unwrap();
     let recording = session_board_recording_decided(true, &log).expect("a recording while on");
-    let recorder = FoldBackCall::new(Arc::new(recording));
+    let recorder = FoldBackCall::new(Arc::new(recording), None);
     let task = Slug::parse("board-store").unwrap();
     let facts = FoldBackFacts {
         run_outcome: Some(RunOutcomeKind::Succeeded),

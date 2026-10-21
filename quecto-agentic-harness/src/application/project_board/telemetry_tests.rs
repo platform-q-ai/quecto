@@ -30,6 +30,7 @@ fn record() -> BoardOpRecord {
         front_end: FrontEnd::Tool,
         client: Client::Agent,
         access: Access::Read,
+        board: None,
         outcome: OpOutcome::Ok,
         fault: None,
         task: None,
@@ -49,7 +50,9 @@ fn record() -> BoardOpRecord {
         status_to: None,
         claim: None,
         attempts: None,
-        lost: None,
+        races_lost: None,
+        lock_races: None,
+        swarm_report: None,
         pause_ms: None,
         completion: None,
         normalised: None,
@@ -259,7 +262,7 @@ mod facts {
             prs_linked: 1,
             prs_pending: None,
             completion_attempts: None,
-            completion_lost: None,
+            completion_races_lost: None,
             completion_pause_ms: None,
         }
     }
@@ -271,7 +274,7 @@ mod facts {
             status_to: Some(StaticKind::new("claimed")),
             claim: Some(claim(1)),
             attempts: Some(1),
-            lost: Some(0),
+            races_lost: Some(0),
             pause_ms: Some(5),
             completion: Some(completion(CompletionKind::Done)),
             normalised: Some(Normalised {
@@ -301,7 +304,7 @@ mod facts {
         let want = BoardOpRecord {
             status_from: Some(StaticKind::new("in_progress")),
             attempts: Some(3),
-            lost: Some(2),
+            races_lost: Some(2),
             ..filled()
         };
         assert_eq!(record, want);
@@ -338,8 +341,18 @@ mod facts {
             run_outcome: Some(
                 crate::domain::project_board::value_objects::vocabulary::RunOutcome::Lost,
             ),
-            // A start's facts go to its own record, never the board_op's.
+            // #2663: a write's lock races, its commit and its swarm report.
+            lock_races: Some(1),
+            head: Some(crate::application::project_board::ports::BoardHead(
+                "0123456789abcdef0123456789abcdef01234567".into(),
+            )),
+            swarm_report: Some(
+                crate::domain::project_board::value_objects::rule_error::SwarmReport::NoneKept,
+            ),
+            // A start's and an end's fold-back facts go to their own
+            // records, never the board_op's.
             start: Some(Default::default()),
+            fold_back: None,
         };
         let mut record = record();
         facts.fill(&mut record);
@@ -349,7 +362,8 @@ mod facts {
             "outcome": "ok", "result_bytes": 0, "duration_us": 1,
             "status_from": "review", "status_to": "done",
             "claim": {"held_s": -3, "left_s": 60, "holder_is_writer": true},
-            "attempts": 2, "lost": 1, "pause_ms": 70,
+            "attempts": 2, "races_lost": 1, "lock_races": 1, "pause_ms": 70,
+            "head": "0123456789abcdef0123456789abcdef01234567", "swarm_report": "none_kept",
             "completion": "pending", "prs_linked": 1,
             "normalised": {"description": ["crlf"]}, "plans": 4, "runs": 0,
             "plan_version": 3, "items": 7, "roles": 0,
@@ -372,7 +386,7 @@ mod facts {
                 prs_linked: 3,
                 prs_pending: Some(2),
                 completion_attempts: None,
-                completion_lost: None,
+                completion_races_lost: None,
                 completion_pause_ms: None,
             }
         );
@@ -386,6 +400,7 @@ mod facts {
 mod fold_back_facts {
     use super::*;
     use crate::application::project_board::dto::FoldBackFacts;
+    use crate::domain::project_board::value_objects::code_ref::CommitId;
     use crate::domain::project_board::value_objects::telemetry::{
         ItemCounts, RunOutcomeKind, TaskRef,
     };
@@ -394,6 +409,7 @@ mod fold_back_facts {
         FoldBackRecord {
             task: TaskRef::of(&Slug::parse("board-store").unwrap()),
             run: 1,
+            board: None,
             outcome: OpOutcome::Ok,
             run_outcome: None,
             items: None,
@@ -403,8 +419,10 @@ mod fold_back_facts {
             evidence_dropped: None,
             cost_tokens: None,
             attempts: Some(9),
-            lost: None,
+            races_lost: None,
+            lock_races: None,
             bytes: None,
+            head: None,
             duration_us: 5,
         }
     }
@@ -431,7 +449,9 @@ mod fold_back_facts {
             cost_tokens: Some(5),
             attempts: Some(6),
             lost: Some(7),
+            lock_races: Some(9),
             bytes: Some(8),
+            head: CommitId::parse("0123456789abcdef0123456789abcdef01234567").ok(),
         };
         facts.fill(&mut record);
         let expected = FoldBackRecord {
@@ -443,8 +463,10 @@ mod fold_back_facts {
             evidence_dropped: Some(4),
             cost_tokens: Some(5),
             attempts: Some(6),
-            lost: Some(7),
+            races_lost: Some(7),
+            lock_races: Some(9),
             bytes: Some(8),
+            head: CommitId::parse("0123456789abcdef0123456789abcdef01234567").ok(),
             ..bare()
         };
         assert_eq!(record, expected);

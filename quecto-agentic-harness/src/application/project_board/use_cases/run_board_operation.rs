@@ -157,7 +157,7 @@ impl RunBoardOperation {
                     let own = own.unwrap_or_default();
                     facts.completion = Some(CompletionFacts {
                         completion_attempts: own.attempts,
-                        completion_lost: own.lost,
+                        completion_races_lost: own.lost,
                         completion_pause_ms: own.pause_ms,
                         ..completion_facts_of(completion, task.fields().prs.len())
                     });

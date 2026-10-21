@@ -41,7 +41,7 @@ use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardTextCells, CoordinatorLaunch, CoordinatorRequest,
     LaunchRefused, ProjectBoardStore, RunLiveness,
 };
-use crate::application::project_board::start::{StartFacts, StartedTask, UndoFoldBack};
+use crate::application::project_board::start::{NotedFoldBack, StartFacts, StartedTask};
 use crate::application::project_board::swarm_brief::{
     BriefRefusal, MAX_BRIEF_BYTES, SwarmBrief, brief_of, render,
 };
@@ -385,7 +385,7 @@ impl StartBoardTask {
     /// Run `run` of task `id` folded back as failed, as a swarm that
     /// reported nothing: where that left it, and the fold-back, timed and
     /// with its facts when `noting`.
-    fn folded_back(&self, id: &Slug, run: u32, noting: bool) -> (RunAfterUndo, UndoFoldBack) {
+    fn folded_back(&self, id: &Slug, run: u32, noting: bool) -> (RunAfterUndo, NotedFoldBack) {
         let failed = SwarmRunView {
             end: SwarmEnd::Failed,
             items: vec![],
@@ -401,7 +401,7 @@ impl StartBoardTask {
             Ok(FoldedBack::Ended(_)) => RunAfterUndo::EndedAlready,
             Err(_) => RunAfterUndo::Open,
         };
-        let undo = UndoFoldBack {
+        let undo = NotedFoldBack {
             task: id.clone(),
             run,
             result: folded,

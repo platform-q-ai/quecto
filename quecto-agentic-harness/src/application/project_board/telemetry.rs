@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use super::dto::BoardOp;
 use super::operations::{BoardRequest, Completion};
-use super::ports::ProjectBoardOpLog;
+use super::ports::{BoardHead, ProjectBoardOpLog};
+use crate::domain::project_board::value_objects::code_ref::CommitId;
+use crate::domain::project_board::value_objects::rule_error::SwarmReport;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{
     Access, BoardOpRecord, BoardStartRecord, ClaimFacts, CompletionFacts, CompletionKind,
@@ -130,6 +132,16 @@ pub struct OpFacts {
     /// The attempts the write began, and how many lost the race.
     pub attempts: Option<u64>,
     pub lost: Option<u64>,
+    /// How many times the write's fetches found the board's tracking ref
+    /// locked by another writer in the same clone (#2663).
+    pub lock_races: Option<u64>,
+    /// The commit the write made, when it wrote (#2663).
+    pub head: Option<BoardHead>,
+    /// Whether an `end_run` folded a kept swarm board (#2663).
+    pub swarm_report: Option<SwarmReport>,
+    /// An `end_run`'s fold-back, for its own `board_fold_back` record
+    /// (#2667).
+    pub fold_back: Option<super::start::NotedFoldBack>,
     /// The time the write paused between attempts, when it did.
     pub pause_ms: Option<u64>,
     /// What came of completing the task.
@@ -178,7 +190,21 @@ impl OpFacts {
         );
         put(&mut record.claim, self.claim.as_ref());
         put(&mut record.attempts, self.attempts.as_ref());
-        put(&mut record.lost, self.lost.as_ref());
+        put(&mut record.races_lost, self.lost.as_ref());
+        put(&mut record.lock_races, self.lock_races.as_ref());
+        put(
+            &mut record.head,
+            self.head
+                .as_ref()
+                .and_then(|head| CommitId::parse(&head.0).ok())
+                .as_ref(),
+        );
+        put(
+            &mut record.swarm_report,
+            self.swarm_report
+                .map(|report| StaticKind::new(report.as_str()))
+                .as_ref(),
+        );
         put(&mut record.pause_ms, self.pause_ms.as_ref());
         put(&mut record.completion, self.completion.as_ref());
         put(&mut record.normalised, self.normalised.as_ref());
@@ -226,7 +252,7 @@ pub fn completion_facts(
         prs_linked: count(linked),
         prs_pending: pending.map(count),
         completion_attempts: None,
-        completion_lost: None,
+        completion_races_lost: None,
         completion_pause_ms: None,
     }
 }

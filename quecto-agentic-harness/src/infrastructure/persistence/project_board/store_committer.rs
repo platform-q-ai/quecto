@@ -1,5 +1,9 @@
-//! Who committed a board commit, read back exactly as recorded.
+//! Who committed a board commit, read back exactly as recorded; and the
+//! board's remote, by its URL and by the id its records name.
 use super::*;
+use crate::domain::project_board::value_objects::telemetry::BoardId;
+use crate::domain::shared::redaction::redact_url_userinfo;
+use sha2::{Digest, Sha256};
 
 impl GitBoardStore {
     /// The committer of `commit`, exactly as recorded, fetching the board
@@ -43,5 +47,18 @@ impl GitBoardStore {
         self.git
             .text(&["remote", "get-url", "--", self.remote.as_str()], None)
             .map_err(unavailable)
+    }
+
+    /// The id a board's records name it by (#2663): the first 64 bits of
+    /// the SHA-256 of its remote's fetch `url`, userinfo left out (a token
+    /// there never changes it), as 16 hex digits. One remote, one id; the
+    /// URL itself is never recorded.
+    pub fn board_id_of(url: &str) -> Option<BoardId> {
+        let digest = Sha256::digest(redact_url_userinfo(url).as_bytes());
+        let hex: String = digest[..8]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        BoardId::of_hex(&hex)
     }
 }
