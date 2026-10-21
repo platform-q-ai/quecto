@@ -668,6 +668,16 @@ impl Drop for AdminConnection {
     }
 }
 
+/// What `status` reads from the admin socket (#2615).
+#[derive(Debug, Clone)]
+pub struct AdminStatus {
+    pub status: AuthorityStatus,
+    /// Started on demand: it stops itself when idle.
+    pub on_demand: bool,
+    /// This run of the authority.
+    pub instance: u64,
+}
+
 impl AdminConnection {
     pub async fn connect(path: &Path) -> Result<Self, ClientError> {
         let (inner, io) = open(path, PROTOCOL_VERSION).await?;
@@ -683,12 +693,12 @@ impl AdminConnection {
     }
 
     pub async fn inspect(&self) -> Result<AuthorityStatus, ClientError> {
-        self.status().await.map(|(status, _)| status)
+        self.status().await.map(|status| status.status)
     }
 
     /// The authority's state, and whether it was started on demand (it
     /// stops itself when idle, #2615).
-    pub async fn status(&self) -> Result<(AuthorityStatus, bool), ClientError> {
+    pub async fn status(&self) -> Result<AdminStatus, ClientError> {
         match self.inner.call(Op::Inspect).await? {
             Body::Status {
                 epoch,
@@ -696,8 +706,13 @@ impl AdminConnection {
                 live_scopes,
                 groups,
                 on_demand,
+                instance,
             } => status_from_body(epoch, journal_healthy, live_scopes, groups)
-                .map(|status| (status, on_demand))
+                .map(|status| AdminStatus {
+                    status,
+                    on_demand,
+                    instance,
+                })
                 .map_err(|e| ClientError::Protocol(format!("status: {e:?}"))),
             other => Err(ClientError::Protocol(format!(
                 "expected status, got {other:?}"

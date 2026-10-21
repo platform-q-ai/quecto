@@ -50,9 +50,13 @@ pub struct AdmissionView {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdmissionRestartView {
-    /// `service_restarted`, `restarted` or `started`.
+    /// `service_restarted`, `restarted`, `started`, or `unconfirmed`.
     #[serde(default)]
     pub outcome: Option<String>,
+    /// With `unconfirmed`: how many other sessions or sub-agents share the
+    /// broker.
+    #[serde(default)]
+    pub shared_with: Option<u64>,
     #[serde(default)]
     pub authority_status: Option<String>,
 }
@@ -111,8 +115,8 @@ pub fn parse_admission(
 
 /// The broker-health badge for the footer (#2024 S3, #2615): the health
 /// (`admission ✓ connected`, `admission ⟳ reconnecting`, `admission ✗
-/// unavailable`) and, while this session has attempts waiting, the queue
-/// depth (`· 2 queued`). `None` for a status this TUI does not know.
+/// unavailable`) and, while this session has attempts waiting, its own queue
+/// depth (`· 2 queued here`). `None` for a status this TUI does not know.
 pub fn authority_badge(status: &str, waiting: u64) -> Option<String> {
     let health = match status {
         "connected" => "✓ connected",
@@ -122,7 +126,7 @@ pub fn authority_badge(status: &str, waiting: u64) -> Option<String> {
     };
     Some(match waiting {
         0 => format!("admission {health}"),
-        queued => format!("admission {health} · {queued} queued"),
+        queued => format!("admission {health} · {queued} queued here"),
     })
 }
 

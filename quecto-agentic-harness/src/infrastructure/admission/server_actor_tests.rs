@@ -226,3 +226,53 @@ fn a_connection_pending_at_the_idle_stop_keeps_the_broker_serving() {
     assert_eq!(actor.stopping, None, "the open connection holds it");
     assert!(!actor.drain_pending(&mut rx), "nothing more waiting");
 }
+
+/// #2615 review: only the owner's admin socket may stop the authority; a
+/// client's Stop is refused and the authority keeps serving.
+#[test]
+fn a_client_cannot_stop_the_authority() {
+    use crate::infrastructure::admission::protocol::{
+        Body, CAPABILITY_DIRECT, ErrorCode, Op, PROTOCOL_VERSION, Request, Role,
+    };
+    let proposal = proposal();
+    let mut actor = Actor::new(
+        AdmissionAuthority::new(1, proposal.policy.clone(), RandomSecretSource).unwrap(),
+        memory_use_cases(),
+        Clock::starting_now(),
+        ProposalWire::from(&proposal),
+        "owner".into(),
+    );
+    let (notices, _notices_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (close, _closed) = tokio::sync::oneshot::channel();
+    actor.handle(super::Command::Open {
+        session: 3,
+        role: Role::Client,
+        notices,
+        close,
+    });
+    let hello = Request {
+        id: 1,
+        op: Op::Hello {
+            version: PROTOCOL_VERSION,
+            capability: CAPABILITY_DIRECT.into(),
+        },
+    };
+    assert!(matches!(actor.request(3, &hello), Some(Body::Hello { .. })));
+    let stop = Request {
+        id: 2,
+        op: Op::Stop,
+    };
+    assert!(
+        matches!(
+            actor.request(3, &stop),
+            Some(Body::Error {
+                code: ErrorCode::Unauthorized,
+                ..
+            })
+        ),
+        "a client's Stop is refused"
+    );
+    actor.handle(super::Command::Closed { session: 3 });
+    actor.settle();
+    assert_eq!(actor.stopping, None, "still serving");
+}

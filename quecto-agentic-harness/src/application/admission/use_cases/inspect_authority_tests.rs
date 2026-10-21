@@ -51,12 +51,16 @@ impl AuthorityServiceManager for Manager {
     fn restart(&self) -> Result<(), String> {
         unreachable!()
     }
+    fn is_active(&self) -> Result<bool, String> {
+        Ok(false)
+    }
 }
 
 fn report(on_demand: bool) -> AuthorityReport {
     AuthorityReport {
         directory: PathBuf::from("/home/me/.quecto/admission"),
         on_demand,
+        instance: 1,
         epoch: 1,
         journal_healthy: true,
         live_scopes: 0,

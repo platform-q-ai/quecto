@@ -42,6 +42,9 @@ pub(crate) struct ConnectionState {
     /// The broker health the agent last reported (#2615): an activity-only
     /// event carries none, so the badge keeps it while its queue depth moves.
     pub(crate) admission_authority: Option<String>,
+    /// Until when a second `/admission restart` confirms restarting a broker
+    /// others share (#2615).
+    pub(crate) admission_restart_confirm_until: Option<tokio::time::Instant>,
     /// The spinner message this module last wrote, so a tool message set by
     /// someone else is never clobbered when the wait ends.
     pub(crate) admission_spinner_message: Option<String>,
@@ -161,6 +164,7 @@ impl ConnectionState {
             admission_unversioned_clears: Default::default(),
             admission_view: None,
             admission_authority: None,
+            admission_restart_confirm_until: None,
             admission_spinner_message: None,
             running_tools: Default::default(),
             agent_connected: true,

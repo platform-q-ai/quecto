@@ -459,7 +459,7 @@ async fn a_pushed_event_with_an_authority_status_moves_the_health_badge() {
     app.handle_event(event(None, waiting(2)));
     assert_eq!(
         app.ac().master_session.footer.admission_health(),
-        Some("admission ✗ unavailable · 1 queued")
+        Some("admission ✗ unavailable · 1 queued here")
     );
     app.handle_event(event(None, with_status("connected", 5)));
     assert_eq!(

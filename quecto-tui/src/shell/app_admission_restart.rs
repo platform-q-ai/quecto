@@ -8,6 +8,8 @@ use super::super::*;
 /// The correlation id of a restart request.
 const RESTART_ID: &str = "admission-restart";
 pub(in crate::shell::app) const ADMISSION_USAGE: &str = "Usage: /admission restart";
+/// How long a restart that others share waits for its confirmation.
+const CONFIRM_WITHIN: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl App {
     /// `/admission [args]`: `restart` restarts the broker; nothing shows the
@@ -15,8 +17,15 @@ impl App {
     pub(in crate::shell::app) fn handle_admission_command(&mut self, args: &str) {
         match args.trim() {
             "restart" => {
+                let now = tokio::time::Instant::now();
+                let confirm = self
+                    .ac_mut()
+                    .admission_restart_confirm_until
+                    .take()
+                    .is_some_and(|until| now <= until);
                 if self.send_command(Command::RestartAdmission {
                     id: Some(RESTART_ID.to_string()),
+                    confirm,
                 }) {
                     self.notify("Restarting the admission broker…", NotifyLevel::Info);
                 }
@@ -59,6 +68,18 @@ impl App {
             data.as_ref(),
             &crate::components::ansi::sanitize_control,
         );
+        if view.outcome.as_deref() == Some("unconfirmed") {
+            let others = view.shared_with.unwrap_or(0);
+            self.ac_mut().admission_restart_confirm_until =
+                Some(tokio::time::Instant::now() + CONFIRM_WITHIN);
+            self.notify(
+                &format!(
+                    "The admission broker is shared with {others} other session(s) or sub-agent(s). Restarting it fails their sub-agents (respawn them) and their in-flight requests once. Run /admission restart again within a minute to confirm."
+                ),
+                NotifyLevel::Warning,
+            );
+            return;
+        }
         let done = match view.outcome.as_deref() {
             Some("service_restarted") => "Admission broker service restarted",
             Some("started") => "Admission broker started",

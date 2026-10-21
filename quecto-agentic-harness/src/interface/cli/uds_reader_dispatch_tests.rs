@@ -664,3 +664,75 @@ async fn a_full_channel_wake_rides_a_pending_message_or_leaves_the_slot_empty() 
         "the rider kept, folded"
     );
 }
+
+/// #2615 review: `restart_admission` is answered on the reader task, its
+/// reply correlated by id, whether the agent is idle or mid-turn (the
+/// dispatch queue held by the running turn, its cancel armed and untouched).
+#[tokio::test]
+async fn restart_admission_is_answered_on_the_reader_idle_or_mid_turn() {
+    for mid_turn in [false, true] {
+        let registry = super::super::uds_ext_protocol::new_client_tool_registry();
+        let (writer, mut replies) = tokio::sync::mpsc::channel(4);
+        super::super::uds_ext_protocol::register_client_writer(&registry, 1, writer);
+        let (commands, mut received) = tokio::sync::mpsc::channel(1);
+        if mid_turn {
+            commands
+                .send(ClientMessage::Command(ClientCommand {
+                    line: "the running turn".into(),
+                    client_id: 1,
+                    admitted: None,
+                }))
+                .await
+                .unwrap();
+        }
+        let session =
+            crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
+        let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
+        let cancel = std::sync::Arc::new(std::sync::Mutex::new(
+            super::super::uds_cancel::CancelSlot::Armed(cancel_tx),
+        ));
+        let control = super::super::uds_cancel::TurnControl::default();
+        let delivered = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            dispatch(ReaderDispatchCtx {
+                line: r#"{"type":"restart_admission","id":"adm-7"}"#.into(),
+                cancel_handle: &cancel,
+                turn_control: &control,
+                session: &session,
+                registry: &registry,
+                subagent_registry: &None,
+                fleet: None,
+                client_id: 1,
+                cmd_tx: &commands,
+            }),
+        )
+        .await
+        .expect("never waits behind the queue");
+        assert!(delivered);
+        let line = tokio::time::timeout(std::time::Duration::from_secs(5), replies.recv())
+            .await
+            .expect("answered")
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(reply["type"], "response", "{reply}");
+        assert_eq!(reply["command"], "restart_admission", "{reply}");
+        assert_eq!(reply["id"], "adm-7", "{reply}");
+        assert_eq!(reply["success"], false, "{reply}");
+        assert_eq!(
+            reply["error"], "admission is not configured for this session",
+            "{reply}"
+        );
+        // Never queued to dispatch, never cancelling the turn.
+        let queued = match mid_turn {
+            true => 1,
+            false => 0,
+        };
+        let mut seen = 0;
+        while received.try_recv().is_ok() {
+            seen += 1;
+        }
+        assert_eq!(seen, queued, "mid_turn {mid_turn}");
+        assert!(cancel_rx.try_recv().is_err(), "the turn was not cancelled");
+        assert!(!control.is_steer_pending());
+    }
+}

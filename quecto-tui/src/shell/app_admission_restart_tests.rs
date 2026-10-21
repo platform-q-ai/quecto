@@ -109,7 +109,7 @@ async fn the_badge_shows_health_and_this_sessions_queue_depth() {
     })));
     let footer = h.master_footer_text();
     assert!(
-        footer.contains("admission ✓ connected · 2 queued"),
+        footer.contains("admission ✓ connected · 2 queued here"),
         "{footer}"
     );
     // An activity-only event (no status) moves the depth, keeps the health.
@@ -124,7 +124,88 @@ async fn the_badge_shows_health_and_this_sessions_queue_depth() {
     })));
     let footer = h.master_footer_text();
     assert!(
-        footer.contains("admission ✗ unavailable · 1 queued"),
+        footer.contains("admission ✗ unavailable · 1 queued here"),
         "{footer}"
     );
+}
+
+/// #2615 review: a restart others share is confirmed by a second
+/// `/admission restart` within a minute, and a confirmation is used once.
+#[tokio::test]
+async fn a_shared_restart_is_confirmed_by_running_it_again() {
+    let mut h = TuiHarness::new().await;
+    h.submit("/admission restart");
+    let first = h.drain_commands().await;
+    assert!(
+        first
+            .iter()
+            .any(|c| c.contains("restart_admission") && !c.contains("confirm")),
+        "{first:?}"
+    );
+    h.event_line(&response_line(
+        true,
+        serde_json::json!({"outcome": "unconfirmed", "sharedWith": 3}),
+        None,
+    ));
+    assert_eq!(
+        h.notification_messages().last().map(String::as_str),
+        Some(
+            "The admission broker is shared with 3 other session(s) or sub-agent(s). Restarting it fails their sub-agents (respawn them) and their in-flight requests once. Run /admission restart again within a minute to confirm."
+        )
+    );
+    h.submit("/admission restart");
+    let confirmed = h.drain_commands().await;
+    assert!(
+        confirmed
+            .iter()
+            .any(|c| c.contains("restart_admission") && c.contains(r#""confirm":true"#)),
+        "{confirmed:?}"
+    );
+    h.submit("/admission restart");
+    let again = h.drain_commands().await;
+    assert!(
+        again
+            .iter()
+            .any(|c| c.contains("restart_admission") && !c.contains("confirm")),
+        "a confirmation is used once: {again:?}"
+    );
+}
+
+/// #2615 review: a cleared admission view forgets the broker's health, so
+/// a later activity-only event shows no stale badge.
+#[tokio::test]
+async fn a_cleared_view_forgets_the_brokers_health() {
+    let mut h = TuiHarness::new().await;
+    h.event_line(&admission_line(serde_json::json!({
+        "waiting": 0, "revision": 1, "authorityStatus": "connected"
+    })));
+    assert!(h.master_footer_text().contains("admission ✓ connected"));
+    h.app_mut().clear_master_admission();
+    h.event_line(&admission_line(
+        serde_json::json!({"waiting": 1, "revision": 2}),
+    ));
+    let footer = h.master_footer_text();
+    assert!(!footer.contains("admission ✓"), "{footer}");
+}
+
+/// #2615 review: on a narrow line the model keeps its place and the badge
+/// yields.
+#[tokio::test]
+async fn the_model_outranks_the_badge_on_a_narrow_line() {
+    use crate::components::component::Component;
+    let mut footer = crate::components::footer::Footer::new();
+    footer.set_model("anthropic/claude-sonnet-4-5");
+    footer.set_admission_health(Some("admission ✓ connected · 2 queued here".into()));
+    let render = |footer: &mut crate::components::footer::Footer, width| {
+        crate::components::ansi::strip_ansi(&footer.render(width).join("\n"))
+    };
+    let narrow = render(&mut footer, 60);
+    assert!(narrow.contains("anthropic/claude-sonnet-4-5"), "{narrow}");
+    assert!(!narrow.contains("admission ✓"), "{narrow}");
+    let wide = render(&mut footer, 200);
+    assert!(
+        wide.contains("admission ✓ connected · 2 queued here"),
+        "{wide}"
+    );
+    assert!(wide.contains("anthropic/claude-sonnet-4-5"), "{wide}");
 }

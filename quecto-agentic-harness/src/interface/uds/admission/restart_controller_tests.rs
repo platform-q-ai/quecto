@@ -123,6 +123,9 @@ impl AuthorityServiceManager for NoUnit {
     fn restart(&self) -> Result<(), String> {
         unreachable!("no unit serves this broker")
     }
+    fn is_active(&self) -> Result<bool, String> {
+        Ok(false)
+    }
 }
 
 fn runtime() -> tokio::runtime::Runtime {
@@ -179,7 +182,7 @@ fn a_root_restarts_its_broker_and_rejoins_it() {
         base_dir: temp.path().to_path_buf(),
     });
     assert!(root.connected());
-    let data = respond(Some(&restart_over(&launcher, binding))).unwrap();
+    let data = respond(Some(&restart_over(&launcher, binding)), false).unwrap();
     assert_eq!(
         data,
         serde_json::json!({"outcome": "restarted", "authorityStatus": "connected"})
@@ -191,12 +194,12 @@ fn a_root_restarts_its_broker_and_rejoins_it() {
 #[test]
 fn a_session_without_admission_or_a_child_cannot_restart_the_broker() {
     assert_eq!(
-        respond(None),
+        respond(None, false),
         Err("admission is not configured for this session".into())
     );
     let launcher = in_process();
     assert_eq!(
-        respond(Some(&restart_over(&launcher, slot()))),
+        respond(Some(&restart_over(&launcher, slot())), false),
         Err("admission is not configured for this session".into())
     );
     let temp = tempfile::tempdir().unwrap();
@@ -215,11 +218,46 @@ fn a_session_without_admission_or_a_child_cannot_restart_the_broker() {
     let child = slot();
     install_in(child, Negotiation::Child { context }).unwrap();
     assert_eq!(
-        respond(Some(&restart_over(&launcher, child))),
+        respond(Some(&restart_over(&launcher, child)), false),
         Err(
             "a child session cannot restart the shared admission broker; its root session can"
                 .into()
         )
     );
     assert_eq!(*launcher.launches.lock().unwrap(), 0, "nothing started");
+}
+
+/// #2615 review: a broker another scope shares (here this root's own
+/// sub-agent) is restarted only once confirmed.
+#[test]
+fn a_shared_broker_is_restarted_only_once_confirmed() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("authority");
+    let launcher = in_process();
+    serve(&launcher.runtime, &directory);
+    let binding = slot();
+    let root = install_in(
+        binding,
+        Negotiation::Root {
+            directory: directory.clone(),
+        },
+    )
+    .unwrap();
+    root.remember_launch(AuthorityLaunch {
+        directory: directory.clone(),
+        config: temp.path().join("config.json"),
+        base_dir: temp.path().to_path_buf(),
+    });
+    let _child = launcher.runtime.block_on(root.register_child()).unwrap();
+    let restart = restart_over(&launcher, binding);
+    assert_eq!(
+        respond(Some(&restart), false),
+        Ok(serde_json::json!({"outcome": "unconfirmed", "sharedWith": 1}))
+    );
+    assert_eq!(*launcher.launches.lock().unwrap(), 0, "nothing restarted");
+    assert_eq!(
+        respond(Some(&restart), true),
+        Ok(serde_json::json!({"outcome": "restarted", "authorityStatus": "connected"}))
+    );
+    assert_eq!(*launcher.launches.lock().unwrap(), 1);
 }
