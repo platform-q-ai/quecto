@@ -71,6 +71,7 @@ mod swarm_board_diff_tasks;
 mod swarm_board_diff_usage;
 mod swarm_board_diff_wakes;
 mod swarm_board_diff_wire;
+mod swarm_board_evidence_carry;
 mod swarm_board_goldens;
 mod swarm_board_legacy;
 mod swarm_board_mixed;

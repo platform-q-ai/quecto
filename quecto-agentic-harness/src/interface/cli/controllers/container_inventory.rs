@@ -128,9 +128,34 @@ pub(crate) fn cmd_ls(
                 present_table(&shown, all, records.len(), stdout);
             }
             present_restore_notes(&handles, stderr);
+            // #2681: why each listed retained environment is kept, in its
+            // teardown's own words, on one line; one this restore retained
+            // for that reason is said by its own note below.
+            for record in &shown {
+                // Said already only when the restore retained it now for
+                // this very reason (an older build's relabel names its
+                // own, so the teardown's is still said).
+                let said = |reason: &str| {
+                    handles
+                        .restore
+                        .retained
+                        .iter()
+                        .any(|(environment_ref, said)| {
+                            *environment_ref == record.environment_ref && said == reason
+                        })
+                };
+                if let Some(reason) = record.retained_reason().filter(|reason| !said(reason)) {
+                    stderr.push_str(&format!(
+                        "note: {} retained: {}\n",
+                        record.environment_ref,
+                        one_line(reason)
+                    ));
+                }
+            }
             for (environment_ref, reason) in &handles.restore.retained {
                 stderr.push_str(&format!(
-                    "note: {environment_ref} retained at restore: {reason}\n"
+                    "note: {environment_ref} retained at restore: {}\n",
+                    one_line(reason)
                 ));
             }
             for (environment_ref, reason) in &handles.restore.unverified {
@@ -148,6 +173,15 @@ pub(crate) fn cmd_ls(
         }
         Err(error) => fail(stderr, &error),
     }
+}
+
+/// `text` on one line: every control character (a line break, an escape)
+/// shown as a space, so a reason read from the registry can neither break
+/// the note's line nor drive the terminal.
+fn one_line(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 // ─── ls --json ───────────────────────────────────────────────────────────────
@@ -204,6 +238,9 @@ pub(super) struct LsJsonEnvironment {
     /// Why the restore could not verify it against the runtime, when it
     /// could not (the stderr note's reason).
     pub unverified: Option<String>,
+    /// Why a `retained` environment is kept, as its teardown recorded it
+    /// (#2681); `null` for any other.
+    pub retained: Option<String>,
 }
 
 impl LsJsonEnvironment {
@@ -225,6 +262,7 @@ impl LsJsonEnvironment {
             created_at: record.created_at,
             age_s: record.created_at.map(|at| now.saturating_sub(at)),
             unverified,
+            retained: record.retained_reason().map(str::to_owned),
         }
     }
 }
@@ -483,13 +521,23 @@ pub(crate) fn cmd_kill(
     let outcome = end_environment(ctx, args, stderr);
     match outcome {
         Ok(killed) => {
+            debug_assert!(
+                !killed.nothing_left || killed.removed_stopped,
+                "nothing left is a removal of a stopped environment"
+            );
             let name = killed
                 .record
                 .name
                 .as_deref()
                 .map(|name| format!(" ({name})"))
                 .unwrap_or_default();
-            let line = if killed.removed_stopped {
+            let line = if killed.nothing_left {
+                // #2684: it had left nothing; its record alone went.
+                format!(
+                    "nothing left of stopped {}{name}: its container and state directory were already gone; its record is forgotten\n",
+                    killed.record.environment_ref
+                )
+            } else if killed.removed_stopped {
                 // #2206: a stopped environment's leftovers went.
                 format!(
                     "removed stopped {}{name}: its container and state directory are gone and its record is forgotten\n",

@@ -124,11 +124,7 @@ fn intercept_admission_restart(ctx: &ReaderDispatchCtx<'_>) -> bool {
         .get("id")
         .and_then(|id| id.as_str())
         .map(str::to_owned);
-    // The count of other sessions and sub-agents the user acknowledged.
-    let confirm = value
-        .get("confirm")
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|count| usize::try_from(count).ok());
+    let confirm = acknowledged_count(&value);
     let (clients, client_id) = (ctx.registry.clone(), ctx.client_id);
     tokio::spawn(async move {
         let answered = tokio::task::spawn_blocking(move || respond(registered(), confirm)).await;
@@ -145,6 +141,15 @@ fn intercept_admission_restart(ctx: &ReaderDispatchCtx<'_>) -> bool {
         super::uds_busy_subagents::write_event(&clients, client_id, id, COMMAND, &event).await;
     });
     true
+}
+
+/// The count of other sessions and sub-agents a `restart_admission`
+/// request acknowledged (`confirm`): a non-negative integer, else none.
+fn acknowledged_count(request: &serde_json::Value) -> Option<usize> {
+    request
+        .get("confirm")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|count| usize::try_from(count).ok())
 }
 
 fn mark_steer_and_cancel(ctx: &ReaderDispatchCtx<'_>) {

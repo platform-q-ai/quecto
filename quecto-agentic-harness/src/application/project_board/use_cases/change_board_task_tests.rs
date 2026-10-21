@@ -18,7 +18,7 @@ use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::test_support::memory_pull_requests::MemoryPullRequests;
 use std::sync::Arc;
 
-fn seed(store: &MemoryBoardStore, fields: TaskFields) {
+pub(super) fn seed(store: &MemoryBoardStore, fields: TaskFields) {
     let task = Task::new(TaskFields {
         created: at("08:00:00"),
         updated: at("09:10:00"),
@@ -29,7 +29,7 @@ fn seed(store: &MemoryBoardStore, fields: TaskFields) {
     store.write_tasks(&head, &[task], "seed").unwrap();
 }
 
-fn held_by_ada(status: TaskStatus) -> TaskFields {
+pub(super) fn held_by_ada(status: TaskStatus) -> TaskFields {
     let claim = Claim {
         holder: person("Ada"),
         since: at("09:00:00"),
@@ -43,7 +43,7 @@ fn held_by_ada(status: TaskStatus) -> TaskFields {
 }
 
 /// The change use case over `store`, writing as `who`.
-fn change(store: &MemoryBoardStore, who: &str, time: &str) -> ChangeBoardTask {
+pub(super) fn change(store: &MemoryBoardStore, who: &str, time: &str) -> ChangeBoardTask {
     ChangeBoardTask::new(Arc::new(store.client_as(person(who))), SetClock::at(time)).unwrap()
 }
 

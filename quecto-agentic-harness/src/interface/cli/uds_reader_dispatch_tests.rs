@@ -736,3 +736,14 @@ async fn restart_admission_is_answered_on_the_reader_idle_or_mid_turn() {
         assert!(!control.is_steer_pending());
     }
 }
+
+/// #2615 review round 3: `confirm` is the acknowledged count, a
+/// non-negative integer; anything else confirms nothing.
+#[test]
+fn the_acknowledged_count_is_a_non_negative_integer() {
+    let count = |request: serde_json::Value| acknowledged_count(&request);
+    assert_eq!(count(serde_json::json!({"confirm": 3})), Some(3));
+    assert_eq!(count(serde_json::json!({"confirm": true})), None);
+    assert_eq!(count(serde_json::json!({"confirm": -1})), None);
+    assert_eq!(count(serde_json::json!({})), None);
+}

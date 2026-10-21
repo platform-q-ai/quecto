@@ -156,7 +156,7 @@ fn a_broker_that_never_answers_fails_within_the_bound() {
         admin.reset(&directory).map(drop),
     ] {
         assert!(
-            matches!(result, Err(AuthorityAdminError::Failed { ref reason, .. }) if reason.contains("no answer")),
+            matches!(result, Err(AuthorityAdminError::Unanswered { ref directory, .. }) if *directory == tmp.path().join("authority")),
             "{result:?}"
         );
     }

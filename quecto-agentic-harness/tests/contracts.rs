@@ -1,6 +1,11 @@
 //! Contract test binary: aggregates every `tests/contracts/{port}.rs` so
 //! `cargo test --test contracts` runs the full port-contract suite.
 
+/// Serialises every contract that sets git's variables (`GIT_DIR`,
+/// `GIT_WORK_TREE`, ...) in this process's environment, which every test
+/// in this binary shares (#2691 review L2).
+pub(crate) static GIT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[path = "contracts/admission_client.rs"]
 mod admission_client;
 #[path = "contracts/admission_dispatcher.rs"]
@@ -97,6 +102,8 @@ mod catalogue_consumers;
 mod catalogue_inputs_loader;
 #[path = "contracts/catalogue_source.rs"]
 mod catalogue_source;
+#[path = "contracts/checkout_history.rs"]
+mod checkout_history;
 #[path = "contracts/checkout_paths.rs"]
 mod checkout_paths;
 #[path = "contracts/completion_delivery_check.rs"]
@@ -181,6 +188,8 @@ mod hosted_swarm_run_inspection;
 mod hosted_swarm_run_observation;
 #[path = "contracts/id_source.rs"]
 mod id_source;
+#[path = "contracts/kept_environments.rs"]
+mod kept_environments;
 #[path = "contracts/launched_authority.rs"]
 mod launched_authority;
 #[path = "contracts/llm_provider.rs"]

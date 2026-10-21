@@ -245,6 +245,8 @@ pub struct KillDelegatedAgentOutcome {
     pub result: TerminationResult,
     /// The target and every descendant removed with it, target first.
     pub removed: Vec<AgentUuid>,
+    /// The environments their teardown kept (#2681), each with why.
+    pub kept: Vec<super::ports::kept_environments::KeptEnvironment>,
 }
 
 /// Every refusal leaves the registry as it was: it happens before any

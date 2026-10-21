@@ -8,7 +8,7 @@ use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::Resolution;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
-use super::claims::{held_by, held_live_by, is_live, new_claim, settle, stamp};
+use super::claims::{held_by, held_live_by, held_or_lapsed_by, is_live, new_claim, settle, stamp};
 use super::runs::{holds_moves_to, lost_at, may_move_with, open_of};
 use std::collections::BTreeSet;
 
@@ -226,7 +226,7 @@ fn allowed(
             held_live_by(task, actor, now)?;
         }
         Actor::Releaser => {
-            held_by(task, actor)?;
+            held_or_lapsed_by(task, actor, now)?;
         }
         Actor::HolderWhileLive => {
             if task
@@ -409,3 +409,7 @@ mod archive_tests;
 #[cfg(test)]
 #[path = "transitions_relations_tests.rs"]
 mod relations_tests;
+
+#[cfg(test)]
+#[path = "transitions_holder_tests.rs"]
+mod holder_tests;

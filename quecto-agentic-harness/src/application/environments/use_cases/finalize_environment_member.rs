@@ -240,8 +240,8 @@ impl FinalizeEnvironmentMember {
             true => check.delivery(self.registry.session(), label, board).await,
             false => CompletionDelivery::NotJudged,
         };
-        let workspace = record.workspace_path.display().to_string();
-        undelivered_reason(&delivery, &record.environment_ref, &workspace)
+        let checkout = record.checkout().display().to_string();
+        undelivered_reason(&delivery, &record.environment_ref, &checkout)
     }
 
     /// The cleanup that ends `record`: the environment's own retained

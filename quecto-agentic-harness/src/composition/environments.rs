@@ -136,12 +136,15 @@ pub fn build_environment_control(
             environments.clone(),
             Arc::new(HostedStoreObservation::new(supervisor_board())),
         )),
-        kill: Arc::new(KillEnvironment::new(
-            environments,
-            member_shutdown,
-            Arc::new(ScriptEnvironmentCommands::default()),
-            Arc::new(hosted_store_observation()),
-        )),
+        kill: Arc::new(
+            KillEnvironment::new(
+                environments,
+                member_shutdown,
+                Arc::new(ScriptEnvironmentCommands::default()),
+                Arc::new(hosted_store_observation()),
+            )
+            .judging_leftovers(build_environment_process()),
+        ),
     }
 }
 
@@ -314,12 +317,15 @@ pub fn build_container_inventory(
         build_restore_registry(base_dir).restore("cli", mode, OvertakenAudience::Fleet);
     ContainerInventoryHandles {
         list: Arc::new(ListEnvironmentsQuery::new(registry.clone())),
-        kill: Arc::new(KillEnvironment::new(
-            registry.clone(),
-            Arc::new(NoReachableMembers),
-            Arc::new(ScriptEnvironmentCommands::default()),
-            Arc::new(hosted_store_observation()),
-        )),
+        kill: Arc::new(
+            KillEnvironment::new(
+                registry.clone(),
+                Arc::new(NoReachableMembers),
+                Arc::new(ScriptEnvironmentCommands::default()),
+                Arc::new(hosted_store_observation()),
+            )
+            .judging_leftovers(build_environment_process()),
+        ),
         gc: Arc::new(GcOrphanedEnvironments::new(
             registry,
             build_container_config_lookup(base_dir, Some(selection.clone())),

@@ -38,6 +38,8 @@ struct Host {
     wedged: bool,
     /// `systemctl restart` leaves the old broker serving.
     restart_noop: bool,
+    /// The broker answers its status with an error.
+    status_fails: bool,
     calls: Vec<String>,
 }
 
@@ -92,9 +94,15 @@ impl AuthorityAdmin for Admin {
     fn inspect(&self, directory: &Path) -> Result<AuthorityReport, AuthorityAdminError> {
         let host = self.0.lock().unwrap();
         if host.wedged {
+            return Err(AuthorityAdminError::Unanswered {
+                directory: directory.to_path_buf(),
+                bound_secs: 5,
+            });
+        }
+        if host.status_fails {
             return Err(AuthorityAdminError::Failed {
                 directory: directory.to_path_buf(),
-                reason: "no answer within 5 s (is the broker stopped?)".into(),
+                reason: "protocol violation".into(),
             });
         }
         match host.serving {
@@ -395,7 +403,7 @@ fn a_broker_that_does_not_answer_is_not_taken_for_none() {
     assert_eq!(
         error,
         RestartError::Restart(
-            "the admission broker at /home/me/.quecto/admission does not answer its owner (no answer within 5 s (is the broker stopped?)); stop it (`fuser -k -TERM /home/me/.quecto/admission/authority.lock`) and restart again"
+            "the admission broker at /home/me/.quecto/admission does not answer its owner (admission broker at /home/me/.quecto/admission answered nothing within 5 s (is it stopped?)); stop it (`fuser -k -TERM /home/me/.quecto/admission/authority.lock`) and restart again"
                 .into()
         )
     );
@@ -652,4 +660,46 @@ fn one_restart_runs_at_a_time() {
         .expect("a later restart runs again");
     release.send(()).unwrap();
     assert_ne!(again.join().unwrap(), Err(RestartError::InProgress));
+}
+
+/// #2615 review round 3: a wedged broker with its unit installed but
+/// inactive is refused; the unit is never restarted around it.
+#[test]
+fn a_wedged_broker_with_an_inactive_unit_is_refused() {
+    let host = host(|host| {
+        host.unit_installed = our_unit();
+        host.start(true);
+        host.wedged = true;
+    });
+    let error = root_restart(&host, None).unwrap_err();
+    assert!(
+        matches!(&error, RestartError::Restart(reason) if reason.contains("fuser -k -TERM")),
+        "{error:?}"
+    );
+    assert!(
+        !calls(&host).iter().any(|call| call == "systemctl restart"),
+        "{:?}",
+        calls(&host)
+    );
+}
+
+/// #2615 review round 3: a broker whose status fails (but answers) is not
+/// restarted around, and its sharing is not skipped: nothing is touched.
+#[test]
+fn a_failing_status_refuses_and_touches_nothing() {
+    let host = host(|host| {
+        host.unit_installed = our_unit();
+        host.start(false);
+        host.unit_active = true;
+        host.status_fails = true;
+        host.live_scopes = 3;
+    });
+    assert_eq!(
+        root_restart(&host, None),
+        Err(RestartError::Restart(
+            "the admission broker at /home/me/.quecto/admission could not report who shares it (protocol violation); nothing was restarted"
+                .into()
+        ))
+    );
+    assert!(calls(&host).is_empty(), "{:?}", calls(&host));
 }

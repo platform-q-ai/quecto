@@ -84,11 +84,19 @@ impl RestartAuthority {
         let running = match self.admin.inspect(&launch.directory) {
             Ok(report) => Some(report),
             Err(AuthorityAdminError::NotRunning { .. }) => None,
-            Err(AuthorityAdminError::Failed { reason, .. }) => {
+            // Only a broker that answers nothing at all (stopped, wedged) is
+            // restarted around, and only by its unit.
+            Err(unanswered @ AuthorityAdminError::Unanswered { .. }) => {
                 return self
-                    .restart_unanswering(&launch, &reason)
+                    .restart_unanswering(&launch, &unanswered.to_string())
                     .map_err(RestartError::Restart)
                     .and_then(|outcome| self.rejoin(outcome));
+            }
+            Err(AuthorityAdminError::Failed { reason, .. }) => {
+                return Err(RestartError::Restart(format!(
+                    "the admission broker at {} could not report who shares it ({reason}); nothing was restarted",
+                    launch.directory.display()
+                )));
             }
         };
         // This root is one live scope; every other is a session or a
