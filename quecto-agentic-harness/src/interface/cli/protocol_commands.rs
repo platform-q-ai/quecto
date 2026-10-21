@@ -363,9 +363,10 @@ pub enum AgentCommand {
     RestartAdmission {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
-        /// Confirms restarting a broker other sessions or sub-agents share.
-        #[serde(default)]
-        confirm: bool,
+        /// Confirms restarting a broker shared with up to this many other
+        /// sessions or sub-agents (the count the user acknowledged).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        confirm: Option<u64>,
     },
     GetMessage {
         #[serde(skip_serializing_if = "Option::is_none")]

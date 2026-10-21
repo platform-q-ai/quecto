@@ -46,8 +46,8 @@ pub(crate) struct ConnectionState {
     /// changed policy (#2615).
     pub(crate) admission_restart_required: bool,
     /// Until when a second `/admission restart` confirms restarting a broker
-    /// others share (#2615).
-    pub(crate) admission_restart_confirm_until: Option<tokio::time::Instant>,
+    /// shared with the acknowledged count of others (#2615).
+    pub(crate) admission_restart_confirm_until: Option<(tokio::time::Instant, u64)>,
     /// The spinner message this module last wrote, so a tool message set by
     /// someone else is never clobbered when the wait ends.
     pub(crate) admission_spinner_message: Option<String>,

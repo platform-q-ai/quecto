@@ -82,6 +82,10 @@ pub(super) struct Actor {
     /// asker has its answer and has gone, or at this deadline (#2615), so
     /// the answer is never lost to the stop it asked for.
     stop_requested: Option<(u64, u64)>,
+    /// Tests: runs when a turn has decided an idle stop, before the
+    /// waiting commands are drained (a client connecting in that instant).
+    #[cfg(test)]
+    on_idle_stop_decided: Option<Box<dyn FnMut() + Send>>,
 }
 
 /// How long a requested stop waits for its asker to take the answer and
@@ -124,6 +128,8 @@ impl Actor {
             stopped: None,
             stopping: None,
             stop_requested: None,
+            #[cfg(test)]
+            on_idle_stop_decided: None,
         }
     }
 
@@ -161,6 +167,12 @@ impl Actor {
                 _ = &mut sleep => {}
             }
             let mut wake = self.settle();
+            #[cfg(test)]
+            if self.stopping == Some(AuthorityStop::Idle) {
+                if let Some(hook) = self.on_idle_stop_decided.as_mut() {
+                    hook();
+                }
+            }
             if self.stopping == Some(AuthorityStop::Idle) && self.drain_pending(&mut rx) {
                 // Something arrived as the idle stop was decided (#2615):
                 // decide again with it served.

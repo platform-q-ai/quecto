@@ -34,6 +34,10 @@ struct Host {
     stop_refused: bool,
     stop_ignored: bool,
     unit_never_serves: bool,
+    /// The broker accepts but never answers its owner (SIGSTOP).
+    wedged: bool,
+    /// `systemctl restart` leaves the old broker serving.
+    restart_noop: bool,
     calls: Vec<String>,
 }
 
@@ -87,6 +91,12 @@ impl AuthorityLauncher for Launcher {
 impl AuthorityAdmin for Admin {
     fn inspect(&self, directory: &Path) -> Result<AuthorityReport, AuthorityAdminError> {
         let host = self.0.lock().unwrap();
+        if host.wedged {
+            return Err(AuthorityAdminError::Failed {
+                directory: directory.to_path_buf(),
+                reason: "no answer within 5 s (is the broker stopped?)".into(),
+            });
+        }
         match host.serving {
             Some(broker) => Ok(AuthorityReport {
                 directory: directory.to_path_buf(),
@@ -156,9 +166,15 @@ impl AuthorityServiceManager for Manager {
     fn restart(&self) -> Result<(), String> {
         let mut host = self.0.lock().unwrap();
         host.calls.push("systemctl restart".into());
-        // Restarting the unit stops its own broker first.
+        if host.restart_noop {
+            return Ok(());
+        }
+        // Restarting the unit stops its own broker (never another's) first.
         if host.unit_active {
-            host.serving = None;
+            host.wedged = false;
+            if host.serving.is_some_and(|broker| !broker.on_demand) {
+                host.serving = None;
+            }
         }
         match (host.serving, host.unit_never_serves) {
             // The lock is held by another broker: the unit exits Busy.
@@ -228,7 +244,7 @@ fn use_case(
     )
 }
 
-fn root_restart(host: &Shared, confirmed: bool) -> Result<Restart, RestartError> {
+fn root_restart(host: &Shared, confirmed: Option<usize>) -> Result<Restart, RestartError> {
     use_case(host, Some(JoinedAuthority::Root(launch())), Ok(())).execute(confirmed)
 }
 
@@ -261,7 +277,7 @@ fn the_active_unit_serving_this_config_restarts_its_broker() {
         host.unit_active = true;
     });
     assert_eq!(
-        root_restart(&host, false),
+        root_restart(&host, None),
         done(RestartOutcome::ServiceRestarted)
     );
     assert_eq!(
@@ -286,7 +302,7 @@ fn an_on_demand_broker_standing_in_for_the_unit_is_stopped_before_the_unit_start
         host.start(true);
     });
     assert_eq!(
-        root_restart(&host, false),
+        root_restart(&host, None),
         done(RestartOutcome::ServiceRestarted)
     );
     assert_eq!(calls(&host), ["stop", "systemctl restart", "rejoin"]);
@@ -295,25 +311,110 @@ fn an_on_demand_broker_standing_in_for_the_unit_is_stopped_before_the_unit_start
     assert_eq!(host.serving.map(|b| b.on_demand), Some(false));
 }
 
+/// #2615 review round 2: a unit that does not serve after its starts
+/// leaves a broker started on demand serving, not none.
 #[test]
-fn a_unit_that_never_serves_anew_is_reported_not_claimed() {
+fn a_unit_that_never_serves_falls_back_to_a_broker_started_on_demand() {
     let host = host(|host| {
         host.unit_installed = our_unit();
         host.unit_never_serves = true;
         host.start(true);
     });
-    let error = root_restart(&host, false).unwrap_err();
+    assert_eq!(root_restart(&host, None), done(RestartOutcome::Restarted));
+    assert_eq!(
+        calls(&host),
+        [
+            "stop",
+            "systemctl restart",
+            "systemctl restart",
+            "launch",
+            "rejoin"
+        ]
+    );
+    assert_eq!(
+        host.lock().unwrap().serving.map(|b| b.on_demand),
+        Some(true)
+    );
+}
+
+/// #2615 review round 2: a restart that leaves the old broker answering is
+/// reported, never claimed.
+#[test]
+fn the_old_broker_answering_on_is_not_a_restart() {
+    let host = host(|host| {
+        host.unit_installed = our_unit();
+        host.start(false);
+        host.unit_active = true;
+        host.restart_noop = true;
+    });
+    let error = root_restart(&host, None).unwrap_err();
     assert_eq!(
         error,
         RestartError::Restart(
-            "quecto-admission-broker.service was restarted but no new broker answered at /home/me/.quecto/admission"
+            "quecto-admission-broker.service was restarted but no new broker answered at /home/me/.quecto/admission, nor did one started on demand"
                 .into()
         )
     );
     assert_eq!(
-        calls(&host),
-        ["stop", "systemctl restart", "systemctl restart"]
+        host.lock().unwrap().serving.unwrap().instance,
+        1,
+        "the old one"
     );
+}
+
+/// #2615 review round 2: an on-demand broker serving while the unit reads
+/// active is still stopped first; the unit is not "restarted" around it.
+#[test]
+fn an_on_demand_broker_is_stopped_even_when_the_unit_reads_active() {
+    let host = host(|host| {
+        host.unit_installed = our_unit();
+        host.start(true);
+        host.unit_active = true;
+    });
+    assert_eq!(
+        root_restart(&host, None),
+        done(RestartOutcome::ServiceRestarted)
+    );
+    assert_eq!(calls(&host), ["stop", "systemctl restart", "rejoin"]);
+    assert_eq!(
+        host.lock().unwrap().serving.map(|b| b.on_demand),
+        Some(false)
+    );
+}
+
+/// #2615 review round 2: a broker that does not answer its owner is not
+/// taken for "nothing running": only an active unit restarts around it;
+/// otherwise the restart is refused, naming how to stop it.
+#[test]
+fn a_broker_that_does_not_answer_is_not_taken_for_none() {
+    let refused = host(|host| {
+        host.start(true);
+        host.wedged = true;
+    });
+    let error = root_restart(&refused, None).unwrap_err();
+    assert_eq!(
+        error,
+        RestartError::Restart(
+            "the admission broker at /home/me/.quecto/admission does not answer its owner (no answer within 5 s (is the broker stopped?)); stop it (`fuser -k -TERM /home/me/.quecto/admission/authority.lock`) and restart again"
+                .into()
+        )
+    );
+    assert!(
+        calls(&refused).is_empty(),
+        "nothing launched: {:?}",
+        calls(&refused)
+    );
+    let unit = host(|host| {
+        host.unit_installed = our_unit();
+        host.start(false);
+        host.unit_active = true;
+        host.wedged = true;
+    });
+    assert_eq!(
+        root_restart(&unit, None),
+        done(RestartOutcome::ServiceRestarted)
+    );
+    assert_eq!(calls(&unit), ["systemctl restart", "rejoin"]);
 }
 
 #[test]
@@ -321,7 +422,7 @@ fn a_running_broker_without_a_unit_is_stopped_and_started_on_demand() {
     let host = host(|host| {
         host.start(true);
     });
-    assert_eq!(root_restart(&host, false), done(RestartOutcome::Restarted));
+    assert_eq!(root_restart(&host, None), done(RestartOutcome::Restarted));
     assert_eq!(calls(&host), ["stop", "launch", "rejoin"]);
     assert_eq!(host.lock().unwrap().serving.unwrap().instance, 2);
 }
@@ -332,7 +433,7 @@ fn a_unit_for_another_config_is_not_this_brokers_manager() {
         host.unit_installed = Some(unit_for("/elsewhere/config.json"));
         host.start(false);
     });
-    assert_eq!(root_restart(&host, false), done(RestartOutcome::Restarted));
+    assert_eq!(root_restart(&host, None), done(RestartOutcome::Restarted));
     assert_eq!(calls(&host), ["stop", "launch", "rejoin"]);
 }
 
@@ -354,7 +455,7 @@ fn only_the_exact_exec_start_line_is_this_brokers_unit() {
 #[test]
 fn a_broker_that_was_not_running_is_started() {
     let host = host(|_| {});
-    assert_eq!(root_restart(&host, false), done(RestartOutcome::Started));
+    assert_eq!(root_restart(&host, None), done(RestartOutcome::Started));
     assert_eq!(calls(&host), ["launch", "rejoin"], "nothing to stop");
 }
 
@@ -364,7 +465,7 @@ fn a_refused_stop_or_a_broker_that_never_stops_is_reported() {
         host.start(true);
         host.stop_refused = true;
     });
-    let error = format!("{:?}", root_restart(&refused, false).unwrap_err());
+    let error = format!("{:?}", root_restart(&refused, None).unwrap_err());
     assert!(error.contains("unauthorized"), "{error}");
     assert_eq!(
         calls(&refused),
@@ -375,7 +476,7 @@ fn a_refused_stop_or_a_broker_that_never_stops_is_reported() {
         host.start(true);
         host.stop_ignored = true;
     });
-    let error = format!("{:?}", root_restart(&stuck, false).unwrap_err());
+    let error = format!("{:?}", root_restart(&stuck, None).unwrap_err());
     assert!(error.contains("did not stop"), "{error}");
     assert_eq!(calls(&stuck), ["stop"]);
 }
@@ -389,7 +490,7 @@ fn a_shared_broker_restarts_only_once_confirmed() {
         host.live_scopes = 4;
     });
     assert_eq!(
-        root_restart(&host, false),
+        root_restart(&host, None),
         Ok(Restart::Unconfirmed { others: 3 })
     );
     assert!(
@@ -397,7 +498,16 @@ fn a_shared_broker_restarts_only_once_confirmed() {
         "nothing touched: {:?}",
         calls(&host)
     );
-    assert_eq!(root_restart(&host, true), done(RestartOutcome::Restarted));
+    assert_eq!(
+        root_restart(&host, Some(2)),
+        Ok(Restart::Unconfirmed { others: 3 }),
+        "acknowledged fewer than are registered now"
+    );
+    assert!(calls(&host).is_empty());
+    assert_eq!(
+        root_restart(&host, Some(3)),
+        done(RestartOutcome::Restarted)
+    );
 }
 
 #[test]
@@ -406,11 +516,11 @@ fn only_a_root_restarts_the_broker() {
         host.start(true);
     });
     assert_eq!(
-        use_case(&host, None, Ok(())).execute(true),
+        use_case(&host, None, Ok(())).execute(Some(usize::MAX)),
         Err(RestartError::NotConfigured)
     );
     assert_eq!(
-        use_case(&host, Some(JoinedAuthority::Child), Ok(())).execute(true),
+        use_case(&host, Some(JoinedAuthority::Child), Ok(())).execute(Some(usize::MAX)),
         Err(RestartError::Child)
     );
     assert!(
@@ -428,7 +538,7 @@ fn a_broker_back_that_the_session_cannot_rejoin_says_both() {
         Some(JoinedAuthority::Root(launch())),
         Err(RejoinRefusal::Failed("connection refused".into())),
     )
-    .execute(false);
+    .execute(None);
     assert_eq!(
         outcome,
         Err(RestartError::Rejoin {
@@ -449,7 +559,7 @@ fn a_broker_back_with_another_policy_asks_for_a_session_restart() {
         Some(JoinedAuthority::Root(launch())),
         Err(RejoinRefusal::PolicyChanged),
     )
-    .execute(false);
+    .execute(None);
     assert_eq!(
         outcome,
         Ok(Restart::Done(RestartReport {
@@ -524,18 +634,18 @@ fn one_restart_runs_at_a_time() {
     ));
     let first = std::thread::spawn({
         let use_case = use_case.clone();
-        move || use_case.execute(false)
+        move || use_case.execute(None)
     });
     entered
         .recv_timeout(HOLD)
         .expect("the first restart reached its inspect");
-    assert_eq!(use_case.execute(false), Err(RestartError::InProgress));
+    assert_eq!(use_case.execute(None), Err(RestartError::InProgress));
     release.send(()).unwrap();
     let _ = first.join().unwrap();
     // Released either way: a later restart runs again.
     let again = std::thread::spawn({
         let use_case = use_case.clone();
-        move || use_case.execute(false)
+        move || use_case.execute(None)
     });
     entered
         .recv_timeout(HOLD)

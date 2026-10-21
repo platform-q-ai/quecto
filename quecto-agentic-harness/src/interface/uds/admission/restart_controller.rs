@@ -31,12 +31,12 @@ pub fn registered() -> Option<&'static RestartAuthority> {
     REGISTERED.get().map(Arc::as_ref)
 }
 
-/// Restart the broker and rejoin it (`confirm`: the restart of a broker
-/// other sessions share was confirmed): the response data, or the error
-/// text.
+/// Restart the broker and rejoin it (`confirm`: how many other sessions or
+/// sub-agents the user acknowledged sharing the broker): the response
+/// data, or the error text.
 pub fn respond(
     use_case: Option<&RestartAuthority>,
-    confirm: bool,
+    confirm: Option<usize>,
 ) -> Result<serde_json::Value, String> {
     let Some(use_case) = use_case else {
         return Err(NOT_CONFIGURED.into());

@@ -197,7 +197,7 @@ fn a_root_restarts_its_broker_and_rejoins_it() {
         base_dir: temp.path().to_path_buf(),
     });
     assert!(root.connected());
-    let data = respond(Some(&restart_over(&launcher, binding)), false).unwrap();
+    let data = respond(Some(&restart_over(&launcher, binding)), None).unwrap();
     assert_eq!(
         data,
         serde_json::json!({"outcome": "restarted", "authorityStatus": "connected"})
@@ -209,12 +209,12 @@ fn a_root_restarts_its_broker_and_rejoins_it() {
 #[test]
 fn a_session_without_admission_or_a_child_cannot_restart_the_broker() {
     assert_eq!(
-        respond(None, false),
+        respond(None, None),
         Err("admission is not configured for this session".into())
     );
     let launcher = in_process();
     assert_eq!(
-        respond(Some(&restart_over(&launcher, slot())), false),
+        respond(Some(&restart_over(&launcher, slot())), None),
         Err("admission is not configured for this session".into())
     );
     let temp = tempfile::tempdir().unwrap();
@@ -233,7 +233,7 @@ fn a_session_without_admission_or_a_child_cannot_restart_the_broker() {
     let child = slot();
     install_in(child, Negotiation::Child { context }).unwrap();
     assert_eq!(
-        respond(Some(&restart_over(&launcher, child)), false),
+        respond(Some(&restart_over(&launcher, child)), None),
         Err(
             "a child session cannot restart the shared admission broker; its root session can"
                 .into()
@@ -266,12 +266,12 @@ fn a_shared_broker_is_restarted_only_once_confirmed() {
     let _child = launcher.runtime.block_on(root.register_child()).unwrap();
     let restart = restart_over(&launcher, binding);
     assert_eq!(
-        respond(Some(&restart), false),
+        respond(Some(&restart), None),
         Ok(serde_json::json!({"outcome": "unconfirmed", "sharedWith": 1}))
     );
     assert_eq!(*launcher.launches.lock().unwrap(), 0, "nothing restarted");
     assert_eq!(
-        respond(Some(&restart), true),
+        respond(Some(&restart), Some(1)),
         Ok(serde_json::json!({"outcome": "restarted", "authorityStatus": "connected"}))
     );
     assert_eq!(*launcher.launches.lock().unwrap(), 1);
@@ -303,7 +303,7 @@ fn a_restart_onto_a_changed_policy_asks_for_a_session_restart() {
         config: temp.path().join("config.json"),
         base_dir: temp.path().to_path_buf(),
     });
-    let data = respond(Some(&restart_over(&launcher, binding)), false).unwrap();
+    let data = respond(Some(&restart_over(&launcher, binding)), None).unwrap();
     assert_eq!(
         data,
         serde_json::json!({

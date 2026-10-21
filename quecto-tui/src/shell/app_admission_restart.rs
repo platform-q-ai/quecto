@@ -118,7 +118,8 @@ impl App {
                     .ac_mut()
                     .admission_restart_confirm_until
                     .take()
-                    .is_some_and(|until| now <= until);
+                    .filter(|(until, _)| now <= *until)
+                    .map(|(_, others)| others);
                 if self.send_command(Command::RestartAdmission {
                     id: Some(RESTART_ID.to_string()),
                     confirm,
@@ -167,7 +168,7 @@ impl App {
         if view.outcome.as_deref() == Some("unconfirmed") {
             let others = view.shared_with.unwrap_or(0);
             self.ac_mut().admission_restart_confirm_until =
-                Some(tokio::time::Instant::now() + CONFIRM_WITHIN);
+                Some((tokio::time::Instant::now() + CONFIRM_WITHIN, others));
             self.notify(
                 &format!(
                     "The admission broker is shared with {others} other session(s) or sub-agent(s). Restarting it fails their sub-agents (respawn them) and their in-flight requests once. Run /admission restart again within a minute to confirm."
@@ -179,7 +180,17 @@ impl App {
         let done = match view.outcome.as_deref() {
             Some("service_restarted") => "Admission broker service restarted",
             Some("started") => "Admission broker started",
-            _ => "Admission broker restarted",
+            Some("restarted") => "Admission broker restarted",
+            other => {
+                self.notify(
+                    &format!(
+                        "The admission broker answered the restart with an unknown outcome ({}); check /admission",
+                        other.unwrap_or("none")
+                    ),
+                    NotifyLevel::Warning,
+                );
+                return;
+            }
         };
         if view.session_restart_required {
             self.restart_session_for_policy(done);

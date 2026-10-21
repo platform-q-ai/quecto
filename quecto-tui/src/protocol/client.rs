@@ -214,9 +214,10 @@ pub enum Command {
     RestartAdmission {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
-        /// Confirms restarting a broker other sessions or sub-agents share.
-        #[serde(skip_serializing_if = "std::ops::Not::not")]
-        confirm: bool,
+        /// Confirms restarting a broker shared with up to this many other
+        /// sessions or sub-agents (the count the user was shown).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        confirm: Option<u64>,
     },
     /// Pull committed ledger messages after `sinceRev` for `epoch` (#1194 PR2).
     Sync {

@@ -157,8 +157,9 @@ uncertain and restart-orphaned ones included. It never stops while it holds
 anything. It prints `admission authority stopped itself: idle with no
 sessions, permits or leases; the next session starts it again` to its log and
 exits 0; the next root starts a fresh one, which reads the current policy.
-To stop it sooner, send it SIGTERM (`pkill -TERM -f 'admission-broker run
---stop-when-idle'`); like any broker it keeps outstanding work journaled.
+To stop it sooner, send SIGTERM to the process holding that directory's lock
+(`fuser -k -TERM <directory>/authority.lock`); this stops only that
+directory's broker, and like any broker it keeps outstanding work journaled.
 `quecto admission-broker status` reports `"on_demand": true` for it.
 
 An agent from a newer `quecto` than the running broker can fail to join it
@@ -179,7 +180,9 @@ service exits 3 (`Busy`) and, by `RestartPreventExitStatus=3`, stays stopped;
 `status` then says ``service unit quecto-admission-broker.service stopped; an
 on-demand broker is serving …``. Once that broker has stopped (idle, or
 SIGTERM), `systemctl --user restart quecto-admission-broker.service` brings the
-service back.
+service back. (It says so only when the unit runs the broker for this config
+and is inactive; otherwise it says the unit is installed but not stopped in
+the on-demand broker's favour.)
 
 ### Restarting it from a session
 
@@ -199,7 +202,12 @@ A restart interrupts everyone sharing the broker: every live sub-agent (of any
 session) fails closed and must be respawned, and other sessions' in-flight
 requests fail once before they reconnect. So when other sessions or sub-agents
 are registered, the first `/admission restart` names how many and restarts
-nothing; running it again within a minute confirms it.
+nothing; running it again within a minute confirms it for that many (if more
+have joined since, it asks again). If the installed unit does not serve after
+being started twice, a broker started on demand serves instead. A broker that
+does not answer its owner (stopped with SIGSTOP, say) is never taken for "not
+running": only an active unit is restarted around it; otherwise the restart
+is refused with ``stop it (`fuser -k -TERM <directory>/authority.lock`)``.
 
 The TUI footer shows the broker's health beside the model:
 `admission ✓ connected`, `admission ⟳ reconnecting` or
@@ -486,7 +494,7 @@ If it fails:
 | `another admission authority owns …/authority.lock`, exit 3 (not restarted: `RestartPreventExitStatus=3`) | a foreground `run` or an old service holds the lock | stop it, `systemctl --user restart quecto-admission-broker.service` |
 | `install-service` → `systemctl` errors | no systemd user session | `loginctl enable-linger $USER`, or supervise `run --config <abs>` yourself |
 | an agent exits with `admission negotiation failed: the admission broker exited (…) before it answered; see …/broker.log` or `… did not answer (…)` | the broker started on demand could not serve (bad config, ledger refused, directory too long) | read `<directory>/broker.log`, fix the cause, start the agent again |
-| an agent exits with `admission negotiation failed: admission authority unreachable at …/client/admission.sock (…); its broker's log is …/broker.log` | the broker answered the start-up probe, then went away before this agent registered | read `<directory>/broker.log`; start the agent again |
+| an agent exits with `admission negotiation failed: admission authority unreachable at …/client/admission.sock (…); if it was started on demand, its log is …/broker.log` | the broker answered the start-up probe, then went away before this agent registered | read `<directory>/broker.log` (a service-managed broker logs to `journalctl --user -u quecto-admission-broker.service`); start the agent again |
 | a session reports "restart required" | its own section changed on live reload, or the broker came back with a different policy | in the TUI, `/admission restart` (restarts this session, and the broker unless it already serves the new policy); otherwise restart that session (never a child: children inherit) |
 | `journal_healthy: false` | the journal is unwritable or corrupt | fix permissions/storage; never delete the journal to clear a queue |
 

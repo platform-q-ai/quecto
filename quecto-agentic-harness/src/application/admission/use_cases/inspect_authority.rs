@@ -6,8 +6,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use super::install_authority_service::unit_serves_config;
 use crate::application::admission::dto::{
-    authority::AuthorityAdminError, authority::AuthorityReport,
+    authority::AuthorityAdminError, authority::AuthorityReport, authority::StandIn,
 };
 use crate::application::admission::ports::{AuthorityAdmin, AuthorityServiceManager, UnitStatus};
 
@@ -25,16 +26,26 @@ impl InspectAuthority {
         self.admin.inspect(directory)
     }
 
-    /// The installed service unit a broker started on demand stands in for
-    /// (#2615): a session started first, so the unit lost the singleton lock
-    /// and, not restarted on a Busy exit, stays stopped until restarted.
-    /// `None` when the unit is not installed, cannot be read, or the broker
-    /// serving is not one started on demand.
-    pub fn stood_down_unit(&self, report: &AuthorityReport) -> Option<String> {
-        match (report.on_demand, self.manager.unit_status()) {
-            (true, Ok(UnitStatus::Present { .. })) => Some(self.manager.unit_name()),
-            _ => None,
+    /// What an installed service unit has to do with a broker started on
+    /// demand serving `report`'s directory (#2615), for the global config
+    /// at `config` that `status` addressed. `None` when no unit is
+    /// installed, it cannot be read, or the broker serving is not one
+    /// started on demand.
+    pub fn standing_in(&self, report: &AuthorityReport, config: &Path) -> Option<StandIn> {
+        let UnitStatus::Present { contents } = self.manager.unit_status().ok()? else {
+            return None;
+        };
+        if !report.on_demand {
+            return None;
         }
+        let unit = self.manager.unit_name();
+        let serves_this = unit_serves_config(&contents, config);
+        Some(match (serves_this, self.manager.is_active()) {
+            // A session started first, so the unit lost the singleton lock
+            // and, not restarted on a Busy exit, stays stopped.
+            (true, Ok(false)) => StandIn::UnitStopped { unit },
+            _ => StandIn::UnitElsewhere { unit },
+        })
     }
 }
 
