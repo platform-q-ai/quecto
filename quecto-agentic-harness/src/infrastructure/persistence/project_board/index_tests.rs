@@ -377,6 +377,8 @@ fn other_kinds_index_but_a_set_aside_one_is_refused_until_s12() {
                 &refused,
                 Err(IndexError::Store(BoardStoreError::FolderSetAside(why)))
                     if why.contains(path) && why.contains("move `quecto/board` back")
+                        // #2659: and the way out that keeps the board.
+                        && why.contains("clear_set_aside")
             ),
             "{path}: {refused:?}"
         );

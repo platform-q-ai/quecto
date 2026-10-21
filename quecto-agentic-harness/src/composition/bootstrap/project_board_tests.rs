@@ -679,3 +679,38 @@ fn a_composed_start_asks_whether_its_coordinator_still_runs() {
         "{started}"
     );
 }
+
+/// #2659: a remote the clone does not have is the caller's mistake, not
+/// a store that cannot be reached: answered as an invalid request naming
+/// the `remote` field.
+#[test]
+fn a_remote_the_clone_lacks_is_an_invalid_request() {
+    let (_dir, work) = repository();
+    let mut missing = environment(&work, Access::Read);
+    missing.remote = "nope".into();
+    assert!(
+        !matches!(
+            build_project_board_handles(&missing),
+            Err(BuildError::Unavailable(_))
+        ),
+        "a missing remote is no store unavailable"
+    );
+    let site = crate::interface::tools::project_board::site::BoardSite {
+        repo: work.clone(),
+        remote: "nope".into(),
+        build: Some(build_project_board_handles),
+        launcher: None,
+        swarm_session: None,
+    };
+    let answer = crate::interface::tools::project_board::site::answer(
+        &site,
+        r#"{"op": "list"}"#,
+        None,
+        &mut crate::interface::tools::project_board::recording::BoardCall::unrecorded(),
+    );
+    assert_eq!(
+        (&answer["error"]["code"], &answer["error"]["field"]),
+        (&json!("invalid_request"), &json!("remote")),
+        "{answer}"
+    );
+}

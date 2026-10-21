@@ -209,3 +209,20 @@ fn claim_facts_count_from_its_start_to_its_expiry() {
         None
     );
 }
+
+/// #2659: another's claim that has expired is refused with the way on:
+/// take it over first.
+#[test]
+fn another_on_an_expired_claim_is_told_to_take_it_over() {
+    let held = task(InProgress);
+    let lapsed = held_live_by(&held, &person("Bob"), &at("14:00:00"));
+    assert!(
+        lapsed
+            .as_ref()
+            .is_err_and(|refused| refused.to_string().contains("take_over(task)")),
+        "{lapsed:?}"
+    );
+    // While it is live, there is no way on for anyone else.
+    let live = held_live_by(&held, &person("Bob"), &at("10:00:00"));
+    assert_eq!(live.map(|_| ()), Err(BoardRuleError::NotHolder));
+}

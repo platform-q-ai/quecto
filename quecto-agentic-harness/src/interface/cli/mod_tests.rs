@@ -412,3 +412,27 @@ fn a_linked_worktree_reports_and_applies_the_main_worktrees_overlay() {
     );
     assert!(!layout.linked.join(".quecto").exists(), "nothing is copied");
 }
+
+/// #2660: `quecto help` lists every op `quecto board` takes, in its
+/// command-line spelling.
+#[test]
+fn help_lists_every_board_op_the_command_line_takes() {
+    let help = run_with_output(args("help"), &CliContext::default());
+    for op in [
+        "bootstrap",
+        "list-ready",
+        "list-takeable",
+        "update-draft",
+        "take-over",
+        "link-pr",
+        "unlink-pr",
+        "clear-set-aside",
+        "propose-plan",
+        "edit-plan",
+        "accept-plan",
+        "discard-plan",
+        "end-run",
+    ] {
+        assert!(help.stdout.contains(op), "{op} missing:\n{}", help.stdout);
+    }
+}

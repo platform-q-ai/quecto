@@ -396,3 +396,20 @@ fn a_named_plan_version_is_refused_while_a_file_that_may_hold_it_is_set_aside() 
         )))
     );
 }
+
+/// #2659: a refusal over a file set aside names the way out,
+/// `clear_set_aside`.
+#[test]
+fn a_set_aside_refusal_names_clear_set_aside() {
+    let task = ProjectBoardError::Quarantined {
+        key: ArtifactKey::Task(Slug::parse("a").unwrap()),
+        path: "tasks/a.md".into(),
+    };
+    let file = ProjectBoardError::SetAsideFile {
+        path: "tasks/x.md".into(),
+        object: "0123456789abcdef0123456789abcdef01234567".into(),
+    };
+    for refusal in [task, file] {
+        assert!(refusal.to_string().contains("clear_set_aside"), "{refusal}");
+    }
+}

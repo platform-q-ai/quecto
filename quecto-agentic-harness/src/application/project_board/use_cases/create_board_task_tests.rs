@@ -558,3 +558,28 @@ fn a_create_waits_while_a_file_that_may_name_its_id_is_set_aside() {
         );
     }
 }
+
+/// #2659: a task depending on itself, or its own parent, is refused by
+/// the schema's own words, never as a task missing from the board.
+#[test]
+fn a_task_pointing_at_itself_is_refused_as_such() {
+    let store = board();
+    let on_itself = create(&store, SetClock::at("10:00:00")).execute(&NewBoardTask {
+        depends_on: vec![slug("a")],
+        ..new_task("a")
+    });
+    assert!(
+        matches!(&on_itself, Err(ProjectBoardError::Invalid(schema))
+            if schema.to_string().contains("a task does not depend on itself")),
+        "{on_itself:?}"
+    );
+    let own_parent = create(&store, SetClock::at("10:00:00")).execute(&NewBoardTask {
+        parent: Some(slug("a")),
+        ..new_task("a")
+    });
+    assert!(
+        matches!(&own_parent, Err(ProjectBoardError::Invalid(schema))
+            if schema.to_string().contains("a task is not its own parent")),
+        "{own_parent:?}"
+    );
+}

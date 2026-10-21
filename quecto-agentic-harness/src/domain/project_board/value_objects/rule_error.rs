@@ -389,3 +389,7 @@ impl fmt::Display for BoardRuleError {
 }
 
 impl std::error::Error for BoardRuleError {}
+
+#[cfg(test)]
+#[path = "rule_error_tests.rs"]
+mod tests;
