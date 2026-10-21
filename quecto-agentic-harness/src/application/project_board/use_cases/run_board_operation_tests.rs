@@ -412,9 +412,9 @@ mod noted {
         };
         let (_, linked) = noted(&ops, &BoardRequest::Change(a.clone(), BoardOp::AddPr(8)));
         // Claimed at 10:00:01 (a stamp a second past the create), read at
-        // 10:00:00 by this set clock.
+        // 10:00:00 by this set clock: held for no time, never less (#2662).
         let claim = ClaimFacts {
-            held_s: -1,
+            held_s: 0,
             left_s: 7201,
             holder_is_writer: true,
         };

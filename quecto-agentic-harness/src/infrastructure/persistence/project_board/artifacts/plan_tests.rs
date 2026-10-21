@@ -693,3 +693,54 @@ fn an_approach_with_chat_spaces_is_held_once_normalised() {
         ))
     );
 }
+
+/// #2668: a task item's title and criteria, and the approach (a line
+/// opening with them, and a list item), of awkward characters (a
+/// backslash before punctuation or at the end, an escaped pipe, a code
+/// span holding either) are written, read back as themselves, and shown by
+/// both readers of the oracle as written: the codec escapes, never
+/// refuses, a backslash.
+#[test]
+fn awkward_titles_and_criteria_round_trip() {
+    let pieces = [
+        "x", "\\", "\\\\", "|", "\\|", "\\*", "*", "C:\\temp", "`a\\|b`", "\\`c`", "!", "\\.",
+    ];
+    let mut checked = 0;
+    for first in pieces {
+        for second in pieces {
+            for third in pieces {
+                let text = format!("x {first}{second} {third}");
+                let fields = PlanFields {
+                    approach: format!("{first}{second} {third} x\n\n- {text}"),
+                    items: vec![item("store", &text, &[&text, "plain"], &[])],
+                    team: None,
+                    ..example()
+                };
+                let plan = Plan::new(fields).unwrap_or_else(|error| panic!("{text:?}: {error:?}"));
+                let file =
+                    encode::<PlanCodec>(&plan).unwrap_or_else(|error| panic!("{text:?}: {error}"));
+                assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(plan), "{text:?}");
+                read_by_the_oracle(&file);
+                checked += 1;
+            }
+        }
+    }
+    assert_eq!(checked, pieces.len().pow(3));
+}
+
+/// #2668's report: `x \\ y` (two backslashes) as a criterion.
+#[test]
+fn a_criterion_of_two_backslashes_is_written_escaped() {
+    let fields = PlanFields {
+        items: vec![item("store", "Store", &["x \\\\ y", "a \\| b"], &[])],
+        team: None,
+        ..example()
+    };
+    let plan = Plan::new(fields).unwrap();
+    let file = encode::<PlanCodec>(&plan).unwrap();
+    // Only a backslash a reader would take for an escape is doubled: the
+    // first, before a backslash; the second, before a space, is kept.
+    assert!(file.contains("| store | x \\\\\\ y |"), "{file}");
+    assert!(file.contains("| store | a \\\\\\| b |"), "{file}");
+    assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(plan));
+}
