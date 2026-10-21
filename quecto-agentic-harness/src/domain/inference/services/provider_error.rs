@@ -579,16 +579,16 @@ fn classify_keyword_paths(lowered: &str) -> ProviderErrorClass {
 /// as HTTP status 100.
 fn extract_http_status(lowered: &str) -> Option<u16> {
     let urls = url_spans(lowered);
-    let in_url = |at: usize| urls.iter().any(|span| span.contains(&at));
+    let outside_urls = |at: usize| urls.iter().all(|span| !span.contains(&at));
     for marker in ["http", "status", "code"] {
         let mut search_from = 0;
         while let Some(rel) = lowered[search_from..].find(marker) {
             let start = search_from + rel;
             let idx = start + marker.len();
-            // A marker inside a URL is part of it. One outside cannot reach
-            // a URL's digits: only separators may follow it, and a URL starts
-            // with `http`.
-            if !in_url(start) {
+            // Only a marker outside every URL is a status position. One
+            // outside cannot reach a URL's digits: only separators may follow
+            // it, and a URL starts with `http`.
+            if outside_urls(start) {
                 if let Some(code) = parse_status_near(&lowered[idx..]) {
                     return Some(code);
                 }
@@ -599,11 +599,18 @@ fn extract_http_status(lowered: &str) -> Option<u16> {
     None
 }
 
-/// The byte ranges of the `http://` and `https://` URLs in `lowered`, each
-/// running to the first whitespace, quote, bracket or angle bracket.
+/// The byte ranges of the `http://` and `https://` URLs in `lowered`. A URL
+/// runs to the first whitespace, quote, bracket, brace, angle bracket, comma
+/// or semicolon, so a status glued after it (`…/v1,status: 429`) stays
+/// outside. A bracketed IPv6 host (`http://[fd00::1]:8080/…`) is part of the
+/// URL, so its brackets do not end it.
 fn url_spans(lowered: &str) -> Vec<std::ops::Range<usize>> {
     let ends_url = |c: char| {
-        c.is_ascii_whitespace() || matches!(c, '"' | '\'' | '`' | '(' | ')' | '<' | '>' | '[' | ']')
+        c.is_ascii_whitespace()
+            || matches!(
+                c,
+                '"' | '\'' | '`' | '(' | ')' | '<' | '>' | '[' | ']' | '{' | '}' | ',' | ';'
+            )
     };
     let mut spans = Vec::new();
     let mut search_from = 0;
@@ -617,8 +624,13 @@ fn url_spans(lowered: &str) -> Vec<std::ops::Range<usize>> {
             search_from = start + "http".len();
             continue;
         };
-        let body = &rest[scheme.len()..];
-        let end = start + scheme.len() + body.find(ends_url).unwrap_or(body.len());
+        let after_scheme = start + scheme.len();
+        let host = match lowered[after_scheme..].strip_prefix('[') {
+            Some(ipv6) => ipv6.find(']').map_or(0, |close| close + 2),
+            None => 0,
+        };
+        let body = &lowered[after_scheme + host..];
+        let end = after_scheme + host + body.find(ends_url).unwrap_or(body.len());
         spans.push(start..end);
         search_from = end;
     }

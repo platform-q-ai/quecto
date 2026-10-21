@@ -59,3 +59,40 @@ fn a_status_is_exactly_three_digits() {
         assert_eq!(provider_http_status(&provider(message)), None, "{message}");
     }
 }
+
+/// Review round 1: an `https://` URL is a URL too, and its path is no status.
+#[test]
+fn an_https_url_path_is_no_status() {
+    let error = provider("connect error https://10.0.0.1/status/200");
+    assert_eq!(provider_http_status(&error), None);
+    assert_eq!(classify_provider_error(&error), ProviderErrorClass::Network);
+}
+
+/// Review round 1: a URL ends at a bracket, brace, comma or semicolon, so a
+/// status glued after it is still read.
+#[test]
+fn a_status_glued_after_a_url_is_read() {
+    for message in [
+        "url (http://10.0.0.1/v1)status: 503",
+        "error sending request for url http://10.0.0.1/v1/chat/completions,status: 503",
+        "error sending request for url http://10.0.0.1/v1/chat/completions;status=503",
+        "{\"url\":http://10.0.0.1/v1}status:503",
+    ] {
+        assert_eq!(
+            provider_http_status(&provider(message)),
+            Some(503),
+            "{message}"
+        );
+    }
+}
+
+/// Review round 1: a bracketed IPv6 host is part of its URL, so a status-like
+/// path after it is still no status.
+#[test]
+fn an_ipv6_url_is_protected_whole() {
+    let error = provider(
+        "error sending request for url (http://[fd00::1]:8080/status/200): connection refused",
+    );
+    assert_eq!(provider_http_status(&error), None);
+    assert_eq!(classify_provider_error(&error), ProviderErrorClass::Network);
+}
