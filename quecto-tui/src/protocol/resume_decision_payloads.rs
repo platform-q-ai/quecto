@@ -71,7 +71,8 @@ pub struct ResumeRefusal {
     /// Shell command that opens quecto in the session's folder, when the
     /// harness could spell one that reads the way it runs.
     pub command: Option<String>,
-    /// What to type there (`/resume <key>`): `quecto-tui` takes no session flag.
+    /// The same resume typed inside an open quecto (`/resume <key>`); the
+    /// command already resumes it (`quecto-tui --resume`, #2615).
     pub resume: Option<String>,
 }
 

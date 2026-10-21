@@ -54,6 +54,9 @@ pub struct RestartReport {
     pub outcome: RestartOutcome,
     /// The session's link health after rejoining.
     pub health: String,
+    /// The broker publishes a different policy than the one this session
+    /// composed against, so the session itself must restart to adopt it.
+    pub session_restart_required: bool,
 }
 
 /// Why `/admission restart` did not complete (#2615).

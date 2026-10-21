@@ -76,6 +76,15 @@ pub struct AdmissionSnapshot {
         rename = "authorityStatus"
     )]
     pub authority_status: Option<String>,
+    /// `true` when the broker came back publishing a different policy than
+    /// the one this session composed against (#2615): only a session restart
+    /// adopts it. Absent otherwise.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "restartRequired"
+    )]
+    pub restart_required: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

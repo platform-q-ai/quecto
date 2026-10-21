@@ -42,12 +42,13 @@ pub(super) fn refusal_event(
 
 fn decision_json(decision: &ResumeDecision, code: &str) -> serde_json::Value {
     let path = decision.execution_dir.as_deref().map(display_path);
-    // `quecto-tui` takes no session flag: `command` gets the user there, `resume`
-    // is what to type inside — for the one kind going there resumes, and only
-    // when they read the way they run.
+    // `command` opens quecto there resuming the session (`quecto-tui
+    // --resume`, #2615); `resume` is the same typed inside an open quecto —
+    // for the one kind going there resumes, and only when they read the way
+    // they run.
     let there = decision.kind.resumes_by_opening_quecto_there();
     let folder = decision.execution_dir.as_deref().filter(|_| there);
-    let command = folder.and_then(open_there_command);
+    let command = folder.and_then(|folder| open_there_command(folder, &decision.target.name));
     let resume = folder.and_then(|_| resume_step(&decision.target.name));
     serde_json::json!({
         "outcome": "refused",

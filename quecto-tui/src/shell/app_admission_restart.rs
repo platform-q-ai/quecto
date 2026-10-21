@@ -4,6 +4,7 @@
 //! the command and presents the answer; the agent does the restart.
 
 use super::super::*;
+use crate::shell::app::app_ordinary_exit::SessionRelaunch;
 
 /// The correlation id of a restart request.
 const RESTART_ID: &str = "admission-restart";
@@ -11,11 +12,106 @@ pub(in crate::shell::app) const ADMISSION_USAGE: &str = "Usage: /admission resta
 /// How long a restart that others share waits for its confirmation.
 const CONFIRM_WITHIN: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// What a session restart for a changed policy would do.
+enum SessionRestartPlan {
+    /// Relaunch this TUI resuming the session.
+    Relaunch(SessionRelaunch),
+    /// The session is not persisted: a relaunch would lose it.
+    NotPersisted,
+    /// This TUI does not end its agent.
+    NotOwned,
+    /// The session's id is not known yet.
+    Unknown,
+}
+
 impl App {
+    /// Offer the restart once the agent reports that only a session restart
+    /// adopts the broker's changed policy (#2615), in words that say what
+    /// this TUI will actually do.
+    pub(in crate::shell::app) fn offer_session_restart(&mut self) {
+        let offer = match self.session_restart_plan() {
+            SessionRestartPlan::Relaunch(_) => {
+                "The admission broker came back with a different policy; this session must restart to use it. /admission restart restarts this session and resumes this conversation."
+            }
+            SessionRestartPlan::NotPersisted => {
+                "The admission broker came back with a different policy; this session must restart to use it, and it is not persisted (--no-persist): restart quecto-tui yourself."
+            }
+            SessionRestartPlan::NotOwned => {
+                "The admission broker came back with a different policy; this session must restart to use it. This TUI does not end its agent: restart that agent."
+            }
+            SessionRestartPlan::Unknown => {
+                "The admission broker came back with a different policy; this session must restart to use it: restart quecto-tui yourself."
+            }
+        };
+        self.notify(offer, NotifyLevel::Warning);
+    }
+
+    /// What restarting this session would do.
+    fn session_restart_plan(&self) -> SessionRestartPlan {
+        let owns_agent = self.exit_policy.kill_owned && self.ac().child_exit_watch.is_some();
+        if !owns_agent {
+            return SessionRestartPlan::NotOwned;
+        }
+        if !self.exit_policy.session_persisted {
+            return SessionRestartPlan::NotPersisted;
+        }
+        let Some(session_key) = self.ac().session_key.clone() else {
+            return SessionRestartPlan::Unknown;
+        };
+        let footer = &self.ac().master_session.footer;
+        let model = Some(footer.model().to_string())
+            .filter(|model| !model.is_empty() && model != "unknown");
+        SessionRestartPlan::Relaunch(SessionRelaunch {
+            session_key,
+            model,
+            effort: footer.effort().map(str::to_string),
+        })
+    }
+
+    /// The broker serves a different policy: restart this session (#2615),
+    /// resuming its conversation on the same model and effort. A TUI that
+    /// owns its agent ends it as an ordinary exit does (persisting first)
+    /// and starts itself again; otherwise it says what to restart instead.
+    fn restart_session_for_policy(&mut self, done: &str) {
+        match self.session_restart_plan() {
+            SessionRestartPlan::Relaunch(relaunch) => {
+                self.notify(
+                    &format!("{done}; restarting this session to use its policy (resuming this conversation)…"),
+                    NotifyLevel::Info,
+                );
+                self.exit_policy.relaunch = Some(relaunch);
+                self.request_ordinary_exit();
+            }
+            SessionRestartPlan::NotPersisted => self.notify(
+                &format!(
+                    "{done}; its policy changed, and this session is not persisted (--no-persist), so restarting it would lose this conversation: restart quecto-tui yourself to use it"
+                ),
+                NotifyLevel::Warning,
+            ),
+            SessionRestartPlan::NotOwned => self.notify(
+                &format!(
+                    "{done}; its policy changed, and this TUI does not end its agent: restart that agent to use it"
+                ),
+                NotifyLevel::Warning,
+            ),
+            SessionRestartPlan::Unknown => self.notify(
+                &format!(
+                    "{done}; its policy changed, and this session's id is not known yet: restart quecto-tui yourself to use it"
+                ),
+                NotifyLevel::Warning,
+            ),
+        }
+    }
+
     /// `/admission [args]`: `restart` restarts the broker; nothing shows the
     /// broker's health; anything else shows the usage.
     pub(in crate::shell::app) fn handle_admission_command(&mut self, args: &str) {
         match args.trim() {
+            // Already told the broker serves another policy (#2615): only
+            // this session restarts; the broker is never restarted again.
+            "restart" if self.ac().admission_restart_required => {
+                self.restart_session_for_policy("The admission broker serves a new policy");
+            }
             "restart" => {
                 let now = tokio::time::Instant::now();
                 let confirm = self
@@ -96,6 +192,10 @@ impl App {
                 return;
             }
         };
+        if view.session_restart_required {
+            self.restart_session_for_policy(done);
+            return;
+        }
         match view.authority_status.as_deref() {
             Some("connected") => self.notify(
                 &format!("{done}; this session reconnected"),

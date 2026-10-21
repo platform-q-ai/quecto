@@ -13,7 +13,7 @@ use super::directory::AuthorityDirectory;
 use crate::application::{
     admission::dto::broker::Credential,
     admission::ports::inference_attempt::AttemptAdmission,
-    admission::ports::{AuthorityLaunch, AuthoritySession, JoinedAuthority},
+    admission::ports::{AuthorityLaunch, AuthoritySession, JoinedAuthority, RejoinRefusal},
 };
 use crate::domain::admission::value_objects::inference_admission::WorkloadClass;
 use crate::infrastructure::providers::routing::provider_runtime_admission::{
@@ -153,6 +153,11 @@ impl ProcessAdmission {
     /// Live health of the authority link (#2024 S3).
     pub fn health(&self) -> super::link::LinkHealth {
         self.link.health()
+    }
+    /// Whether the broker came back with a different policy, so only a
+    /// session restart adopts it (#2615).
+    pub fn restart_required(&self) -> bool {
+        self.link.restart_required()
     }
     /// Be told whenever the link's health may have changed (loss, revocation,
     /// reconnection, exhaustion), so a projection can push it live.
@@ -459,11 +464,18 @@ impl AuthoritySession for CurrentProcessSession {
         }
     }
 
-    fn rejoin(&self) -> Result<(), String> {
-        match self.slot.get() {
-            Some(binding) => binding.rejoin(REJOIN_WAIT),
-            None => Err("admission is not configured for this session".into()),
-        }
+    fn rejoin(&self) -> Result<(), RejoinRefusal> {
+        let Some(binding) = self.slot.get() else {
+            return Err(RejoinRefusal::Failed(
+                "admission is not configured for this session".into(),
+            ));
+        };
+        binding
+            .rejoin(REJOIN_WAIT)
+            .map_err(|reason| match binding.restart_required() {
+                true => RejoinRefusal::PolicyChanged,
+                false => RejoinRefusal::Failed(reason),
+            })
     }
 
     fn health(&self) -> String {

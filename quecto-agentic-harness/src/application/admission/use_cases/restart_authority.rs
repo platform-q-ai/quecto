@@ -16,7 +16,7 @@ use crate::application::admission::dto::negotiation::{
 };
 use crate::application::admission::ports::{
     AuthorityAdmin, AuthorityLaunch, AuthorityLauncher, AuthorityServiceManager, AuthoritySession,
-    JoinedAuthority, UnitStatus,
+    JoinedAuthority, RejoinRefusal, UnitStatus,
 };
 
 pub struct RestartAuthority {
@@ -116,12 +116,19 @@ impl RestartAuthority {
 
     /// Rejoin the restarted broker and report.
     fn rejoin(&self, outcome: RestartOutcome) -> Result<Restart, RestartError> {
-        self.session
-            .rejoin()
-            .map_err(|reason| RestartError::Rejoin { outcome, reason })?;
+        // A broker back with a different policy is the restart this command
+        // offers the session (#2615): reported, not refused.
+        let session_restart_required = match self.session.rejoin() {
+            Ok(()) => false,
+            Err(RejoinRefusal::PolicyChanged) => true,
+            Err(RejoinRefusal::Failed(reason)) => {
+                return Err(RestartError::Rejoin { outcome, reason });
+            }
+        };
         Ok(Restart::Done(RestartReport {
             outcome,
             health: self.session.health(),
+            session_restart_required,
         }))
     }
 

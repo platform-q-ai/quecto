@@ -213,7 +213,28 @@ The TUI footer shows the broker's health beside the model:
 `admission ✓ connected`, `admission ⟳ reconnecting` or
 `admission ✗ unavailable`, followed by `· N queued here` while this session
 has attempts waiting; on a narrow terminal the badge gives way to the model
-name.
+name, except that a required restart keeps a short `admission!` marker.
+
+When the broker came back with a **different policy** (the session reads
+`restartRequired: true`), the footer shows `admission ✗ restart required` and
+the TUI offers the restart once, worded for what it can do. In a session that
+already reads `restartRequired`, `/admission restart` restarts **only this
+session**: the broker already serves the new policy and is not restarted
+again (otherwise every session accepting the offer would restart it in turn).
+Otherwise `/admission restart` restarts the broker (so it reads the current
+config) and, when the session cannot rejoin a different policy, answers
+`sessionRestartRequired: true`.
+
+A TUI that owns its agent restarts the session by ending that agent as an
+ordinary exit does (persisting first) and starting itself again with the
+flags it ran with plus `--resume=<session>` and the session's current `--model` and
+`--effort`, so a fresh agent composes against the broker's policy and the
+conversation carries on. A system prompt given with `--system-file` is passed
+as that file again (never inline), one given with `--system` as that text. It does not relaunch after a termination signal or
+without a terminal; it prints the `quecto-tui --resume <session>` command to
+run instead. A TUI started with `--no-persist` cannot keep the conversation
+and says to restart it yourself; one attached to an agent it does not end
+(`--detach-on-exit`, or `--socket`) says to restart that agent.
 
 ### Commands
 
@@ -271,7 +292,10 @@ and every pushed `admission_state_changed` carry `authorityStatus` live:
 (`epoch` moves after a reset), `unavailable` when reconnection was exhausted
 (retried on the next attempt) or when the broker came back publishing a
 **different policy** — the session composed against the old one, so it fails
-closed with "restart required" permanently. An attempt in flight at the loss
+closed with "restart required" until the session restarts; the admission view
+then also carries `restartRequired: true`, and the TUI offers the one-step
+restart (`/admission restart` restarts the broker and the session, see
+[Restarting it from a session](#restarting-it-from-a-session)). An attempt in flight at the loss
 fails closed exactly once with a clear `admission: …` error; nothing ever runs
 unadmitted. A child link has no reconnect: its `authorityStatus` becomes
 `unavailable` and its next attempt fails closed once
@@ -472,7 +496,7 @@ If it fails:
 | `install-service` → `systemctl` errors | no systemd user session | `loginctl enable-linger $USER`, or supervise `run --config <abs>` yourself |
 | an agent exits with `admission negotiation failed: the admission broker exited (…) before it answered; see …/broker.log` or `… did not answer (…)` | the broker started on demand could not serve (bad config, ledger refused, directory too long) | read `<directory>/broker.log`, fix the cause, start the agent again |
 | an agent exits with `admission negotiation failed: admission authority unreachable at …/client/admission.sock (…); if it was started on demand, its log is …/broker.log` | the broker answered the start-up probe, then went away before this agent registered | read `<directory>/broker.log` (a service-managed broker logs to `journalctl --user -u quecto-admission-broker.service`); start the agent again |
-| a session reports "restart required" | its own section changed on live reload, or the broker came back with a different policy | restart that session (never a child: children inherit) |
+| a session reports "restart required" | its own section changed on live reload, or the broker came back with a different policy | in the TUI, `/admission restart` (restarts this session, and the broker unless it already serves the new policy); otherwise restart that session (never a child: children inherit) |
 | `journal_healthy: false` | the journal is unwritable or corrupt | fix permissions/storage; never delete the journal to clear a queue |
 
 Quarantine (a group has stopped granting):

@@ -12,7 +12,9 @@ use crate::application::admission::dto::authority::{
 };
 use crate::application::admission::dto::negotiation::{Restart, RestartError, RestartReport};
 use crate::application::admission::dto::service::InstallServiceRequest;
-use crate::application::admission::ports::{LaunchState, LaunchedAuthority, ServiceUnitSpec};
+use crate::application::admission::ports::{
+    LaunchState, LaunchedAuthority, RejoinRefusal, ServiceUnitSpec,
+};
 use crate::application::admission::use_cases::InstallAuthorityService;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,7 +61,7 @@ struct Admin(Shared);
 struct Manager(Shared);
 struct Session {
     joined: Option<JoinedAuthority>,
-    rejoin: Result<(), String>,
+    rejoin: Result<(), RejoinRefusal>,
     host: Shared,
 }
 struct Running;
@@ -201,7 +203,7 @@ impl AuthoritySession for Session {
     fn joined(&self) -> Option<JoinedAuthority> {
         self.joined.clone()
     }
-    fn rejoin(&self) -> Result<(), String> {
+    fn rejoin(&self) -> Result<(), RejoinRefusal> {
         self.host.lock().unwrap().calls.push("rejoin".into());
         self.rejoin.clone()
     }
@@ -234,7 +236,7 @@ fn our_unit() -> Option<String> {
 fn use_case(
     host: &Shared,
     joined: Option<JoinedAuthority>,
-    rejoin: Result<(), String>,
+    rejoin: Result<(), RejoinRefusal>,
 ) -> RestartAuthority {
     let launcher = Arc::new(Launcher(host.clone()));
     RestartAuthority::new(
@@ -271,6 +273,7 @@ fn done(outcome: RestartOutcome) -> Result<Restart, RestartError> {
     Ok(Restart::Done(RestartReport {
         outcome,
         health: "connected".into(),
+        session_restart_required: false,
     }))
 }
 
@@ -541,15 +544,37 @@ fn a_broker_back_that_the_session_cannot_rejoin_says_both() {
     let outcome = use_case(
         &host,
         Some(JoinedAuthority::Root(launch())),
-        Err("restart required".into()),
+        Err(RejoinRefusal::Failed("connection refused".into())),
     )
     .execute(None);
     assert_eq!(
         outcome,
         Err(RestartError::Rejoin {
             outcome: RestartOutcome::Started,
-            reason: "restart required".into(),
+            reason: "connection refused".into(),
         })
+    );
+    assert_eq!(calls(&host), ["launch", "rejoin"]);
+}
+
+/// #2615: a broker back with a different policy is not a failure of the
+/// restart: it reports that the session itself must restart to adopt it.
+#[test]
+fn a_broker_back_with_another_policy_asks_for_a_session_restart() {
+    let host = host(|_| {});
+    let outcome = use_case(
+        &host,
+        Some(JoinedAuthority::Root(launch())),
+        Err(RejoinRefusal::PolicyChanged),
+    )
+    .execute(None);
+    assert_eq!(
+        outcome,
+        Ok(Restart::Done(RestartReport {
+            outcome: RestartOutcome::Started,
+            health: "connected".into(),
+            session_restart_required: true,
+        }))
     );
     assert_eq!(calls(&host), ["launch", "rejoin"]);
 }

@@ -125,6 +125,16 @@ pub enum JoinedAuthority {
     Child,
 }
 
+/// Why a session could not rejoin its restarted broker (#2615).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RejoinRefusal {
+    /// The broker publishes a different policy than the one this session
+    /// composed against: only a session restart adopts it.
+    PolicyChanged,
+    /// Anything else, with its reason.
+    Failed(String),
+}
+
 /// This process's own binding to the authority (#2615): how it joined, and
 /// rejoining after its broker was restarted.
 pub trait AuthoritySession: Send + Sync {
@@ -132,7 +142,7 @@ pub trait AuthoritySession: Send + Sync {
     fn joined(&self) -> Option<JoinedAuthority>;
     /// Rejoin the authority through the link, as an attempt would, once
     /// the old broker's connection has closed (bounded).
-    fn rejoin(&self) -> Result<(), String>;
+    fn rejoin(&self) -> Result<(), RejoinRefusal>;
     /// The link's health as `get_state` reports it (`connected`, …).
     fn health(&self) -> String;
 }

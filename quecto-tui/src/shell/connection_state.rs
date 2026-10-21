@@ -42,6 +42,9 @@ pub(crate) struct ConnectionState {
     /// The broker health the agent last reported (#2615): an activity-only
     /// event carries none, so the badge keeps it while its queue depth moves.
     pub(crate) admission_authority: Option<String>,
+    /// The agent reported that only a session restart adopts the broker's
+    /// changed policy (#2615).
+    pub(crate) admission_restart_required: bool,
     /// Until when a second `/admission restart` confirms restarting a broker
     /// shared with the acknowledged count of others (#2615).
     pub(crate) admission_restart_confirm_until: Option<(tokio::time::Instant, u64)>,
@@ -164,6 +167,7 @@ impl ConnectionState {
             admission_unversioned_clears: Default::default(),
             admission_view: None,
             admission_authority: None,
+            admission_restart_required: false,
             admission_restart_confirm_until: None,
             admission_spinner_message: None,
             running_tools: Default::default(),

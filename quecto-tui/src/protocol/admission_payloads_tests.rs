@@ -194,3 +194,19 @@ fn a_restart_answer_is_read_sanitized_and_unreadable_data_is_empty() {
         AdmissionRestartView::default()
     );
 }
+
+#[test]
+fn a_required_session_restart_is_read_from_the_view_and_the_answer() {
+    let view = parse_admission(
+        &serde_json::json!({"authorityStatus": "unavailable", "restartRequired": true}),
+        &|s: &str| s.to_string(),
+    )
+    .unwrap();
+    assert!(view.restart_required);
+    let answer = parse_admission_restart(
+        Some(&serde_json::json!({"outcome": "restarted", "sessionRestartRequired": true})),
+        &|s: &str| s.to_string(),
+    );
+    assert!(answer.session_restart_required);
+    assert!(!AdmissionView::default().restart_required);
+}

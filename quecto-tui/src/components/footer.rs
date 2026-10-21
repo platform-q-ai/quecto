@@ -4,6 +4,10 @@ use crate::components::component::Component;
 use crate::components::theme;
 use crate::components::utils::{truncate_to_width, visible_width};
 
+/// The badge's short form on a narrow line when it reports something to act
+/// on (#2615).
+pub const ADMISSION_ALERT: &str = "admission!";
+
 /// Footer status bar.
 pub struct Footer {
     model: String,
@@ -32,6 +36,9 @@ pub struct Footer {
     /// "⟳ reconnecting" / "✗ unavailable", plus "· N queued"; `None` when
     /// the agent reported no authority status.
     admission_health: Option<String>,
+    /// The badge reports something to act on (#2615: restart required): on
+    /// a line too narrow for it, a short marker stays ahead of the model.
+    admission_alert: bool,
     /// Cached working directory (read once at construction).
     pwd: String,
 }
@@ -63,6 +70,7 @@ impl Footer {
             admission: None,
             admission_compact: None,
             admission_health: None,
+            admission_alert: false,
             pwd,
         }
     }
@@ -77,6 +85,11 @@ impl Footer {
     /// Show (or clear) the broker-health badge (#2024 S3), presentation only.
     pub fn set_admission_health(&mut self, health: Option<String>) {
         self.admission_health = health;
+    }
+
+    /// Whether the badge reports something to act on (#2615).
+    pub fn set_admission_alert(&mut self, alert: bool) {
+        self.admission_alert = alert;
     }
 
     pub fn admission_health(&self) -> Option<&str> {
@@ -307,6 +320,10 @@ impl Component for Footer {
             let with_health = format!("{health} · {right}");
             if left_width + min_padding + visible_width(&with_health) <= width {
                 right = with_health;
+            } else if self.admission_alert {
+                // Something to act on is never squeezed out: a short marker
+                // stays ahead of the model, which is then cut at its end.
+                right = format!("{ADMISSION_ALERT} · {right}");
             }
         }
         let right = right.as_str();
