@@ -1278,3 +1278,31 @@ async fn an_always_on_authority_never_stops_itself() {
     );
     server.shutdown().await;
 }
+
+/// #2615: concurrent starters open the same fresh directory at once (two
+/// sessions starting the broker on demand); every one succeeds and finds it
+/// owner-only, whoever created it.
+#[test]
+fn concurrent_opens_of_a_fresh_directory_all_succeed() {
+    for round in 0..20 {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("authority");
+        let barrier = std::sync::Barrier::new(8);
+        let opened: Vec<_> = std::thread::scope(|scope| {
+            let openers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        AuthorityDirectory::open(&path).map(|_| ())
+                    })
+                })
+                .collect();
+            openers.into_iter().map(|o| o.join().unwrap()).collect()
+        });
+        for result in opened {
+            assert!(result.is_ok(), "round {round}: {result:?}");
+        }
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+}
