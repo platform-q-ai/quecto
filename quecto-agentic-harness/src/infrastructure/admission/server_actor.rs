@@ -303,7 +303,7 @@ impl Actor {
             Op::Reset => self.reset(now),
             Op::Stop => {
                 // Answered first; the loop ends after this turn (#2615).
-                let _ = AuthorityStop::Requested;
+                self.stopping = Some(AuthorityStop::Requested);
                 Ok(Body::Ok)
             }
             op => match credential {

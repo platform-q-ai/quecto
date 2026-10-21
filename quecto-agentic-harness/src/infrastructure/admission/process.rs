@@ -450,8 +450,11 @@ impl Default for CurrentProcessSession {
 
 impl AuthoritySession for CurrentProcessSession {
     fn joined(&self) -> Option<JoinedAuthority> {
-        let _ = self.slot.get().map(|binding| binding.launch.get());
-        None
+        let binding = self.slot.get()?;
+        match binding.kind {
+            BindingKind::Root => binding.launch.get().cloned().map(JoinedAuthority::Root),
+            BindingKind::Child => Some(JoinedAuthority::Child),
+        }
     }
 
     fn rejoin(&self) -> Result<(), String> {

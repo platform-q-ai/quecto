@@ -64,11 +64,23 @@ impl RestartAuthority {
     /// Restart the broker this root session joined, then rejoin it. Only a
     /// root restarts: a child's capability belongs to its parent.
     pub fn execute(&self) -> Result<RestartReport, RestartError> {
-        let _ = (&self.session, &self.in_flight, RestartOutcome::Started);
-        let _: fn(&Self, &AuthorityLaunch) -> Result<RestartOutcome, String> = Self::restart;
-        let _ = InFlight(&self.in_flight);
-        let _ = JoinedAuthority::Child;
-        Err(RestartError::NotConfigured)
+        let launch = match self.session.joined() {
+            Some(JoinedAuthority::Root(launch)) => launch,
+            Some(JoinedAuthority::Child) => return Err(RestartError::Child),
+            None => return Err(RestartError::NotConfigured),
+        };
+        if self.in_flight.swap(true, Ordering::AcqRel) {
+            return Err(RestartError::InProgress);
+        }
+        let _in_flight = InFlight(&self.in_flight);
+        let outcome = self.restart(&launch).map_err(RestartError::Restart)?;
+        self.session
+            .rejoin()
+            .map_err(|reason| RestartError::Rejoin { outcome, reason })?;
+        Ok(RestartReport {
+            outcome,
+            health: self.session.health(),
+        })
     }
 
     /// Restart the broker serving `launch`, and answer once it serves again.

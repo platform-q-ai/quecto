@@ -162,6 +162,19 @@ started for <directory> did not answer (…)`.
 stop themselves. While one serves the directory it answers the probe, so no
 second broker is started (and the singleton lock would refuse one).
 
+### Restarting it from a session
+
+`/admission restart` in the TUI (UDS `restart_admission`) restarts the broker
+the session uses and rejoins it. If the installed systemd unit runs the broker
+for this session's global config, the unit is restarted. Otherwise a running
+broker is asked to stop, as SIGTERM would (outstanding work stays journaled
+and is held as restart orphans until it clears), and a fresh one is started on
+demand with the current policy. A child session cannot restart the shared
+broker; its root session can. The TUI footer shows the broker's health beside
+the model: `admission ✓ connected`, `admission ⟳ reconnecting` or
+`admission ✗ unavailable`, followed by `· N queued` while this session has
+attempts waiting.
+
 ### Commands
 
 ```sh

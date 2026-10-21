@@ -114,14 +114,16 @@ pub fn parse_admission(
 /// unavailable`) and, while this session has attempts waiting, the queue
 /// depth (`· 2 queued`). `None` for a status this TUI does not know.
 pub fn authority_badge(status: &str, waiting: u64) -> Option<String> {
-    let _ = waiting;
-    let glyph = match status {
-        "connected" => "✓",
-        "reconnecting" => "⟳",
-        "unavailable" => "✗",
+    let health = match status {
+        "connected" => "✓ connected",
+        "reconnecting" => "⟳ reconnecting",
+        "unavailable" => "✗ unavailable",
         _ => return None,
     };
-    Some(format!("admission {glyph}"))
+    Some(match waiting {
+        0 => format!("admission {health}"),
+        queued => format!("admission {health} · {queued} queued"),
+    })
 }
 
 impl AdmissionView {
