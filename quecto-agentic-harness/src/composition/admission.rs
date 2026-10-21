@@ -37,7 +37,7 @@ pub fn build_admission_handles() -> AdmissionHandles {
         }),
     );
     AdmissionHandles {
-        inspect: Arc::new(InspectAuthority::new(admin.clone())),
+        inspect: Arc::new(InspectAuthority::new(admin.clone(), manager.clone())),
         reset: Arc::new(ResetAuthority::new(admin)),
         install: Arc::new(InstallAuthorityService::new(manager.clone())),
         uninstall: Arc::new(UninstallAuthorityService::new(manager)),

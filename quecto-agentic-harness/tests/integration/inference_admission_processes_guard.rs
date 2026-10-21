@@ -59,6 +59,12 @@ impl Drop for Proc {
 /// the test binary itself is killed and no `Drop` runs (#2631): the kernel
 /// sends it SIGTERM (Linux `PR_SET_PDEATHSIG`, armed as the harness arms its
 /// own children).
+///
+/// It reaches only this test's own children. A real `quecto agent` with an
+/// `admission` section that finds no broker starts one on demand (#2615,
+/// ADR-0032): detached and untethered, it would outlive the test until its
+/// one-hour idle stop. Start the test's broker (`start_broker`) before any
+/// such agent, and wait for its socket, as every test here does.
 pub(super) fn dies_with_the_test(command: &mut Command) {
     use std::os::unix::process::CommandExt;
     let parent = libc::pid_t::try_from(std::process::id()).expect("a process id fits pid_t");

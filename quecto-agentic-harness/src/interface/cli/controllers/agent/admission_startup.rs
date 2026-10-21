@@ -135,14 +135,30 @@ fn join_root(
     origin: &ConfigOrigin<'_>,
     negotiate_use_case: &NegotiateAuthority,
 ) -> Result<(), String> {
+    join_root_with(directory, origin, negotiate_use_case, &mut |negotiation| {
+        process::install(negotiation).map(drop)
+    })
+}
+
+/// How many times a root makes sure and registers: once, and once more for
+/// a broker that stopped in the instant it was reached.
+const JOIN_ATTEMPTS: usize = 2;
+
+/// [`join_root`] with the binding's install injected (tests).
+fn join_root_with(
+    directory: &Path,
+    origin: &ConfigOrigin<'_>,
+    negotiate_use_case: &NegotiateAuthority,
+    install: &mut dyn FnMut(Negotiation) -> Result<(), String>,
+) -> Result<(), String> {
     let launch = launch_request(directory, origin);
     let mut last = String::new();
-    for _ in 0..2 {
+    for _ in 0..JOIN_ATTEMPTS {
         negotiate_use_case.ensure_running(&launch)?;
-        match process::install(Negotiation::Root {
+        match install(Negotiation::Root {
             directory: directory.to_path_buf(),
         }) {
-            Ok(_) => return Ok(()),
+            Ok(()) => return Ok(()),
             Err(error) => last = error,
         }
     }

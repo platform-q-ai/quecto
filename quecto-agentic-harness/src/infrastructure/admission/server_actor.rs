@@ -126,7 +126,10 @@ impl Actor {
         let sleep = tokio::time::sleep_until(Instant::now().into());
         tokio::pin!(sleep);
         loop {
+            // Biased: a command already waiting (a client just connecting)
+            // is served before a timer turn that might find the broker idle.
             tokio::select! {
+                biased;
                 _ = shutdown.changed() => break,
                 command = rx.recv() => match command {
                     Some(command) => self.handle(command),
@@ -134,7 +137,13 @@ impl Actor {
                 },
                 _ = &mut sleep => {}
             }
-            let wake = self.settle();
+            let mut wake = self.settle();
+            if self.stop_for_idle && self.drain_pending(&mut rx) {
+                // Something arrived as the idle stop was decided (#2615):
+                // decide again with it served.
+                self.stop_for_idle = false;
+                wake = self.settle();
+            }
             if self.stop_for_idle {
                 // Stopped in the same turn that found it idle: nothing that
                 // arrives after this decision is served or granted.
@@ -155,6 +164,17 @@ impl Actor {
         {
             tracing::warn!(?error, "admission ledger not made durable at shutdown");
         }
+    }
+
+    /// Serve every command already waiting, without waiting for more;
+    /// `true` when there was any.
+    fn drain_pending(&mut self, rx: &mut mpsc::UnboundedReceiver<Command>) -> bool {
+        let mut drained = false;
+        while let Ok(command) = rx.try_recv() {
+            self.handle(command);
+            drained = true;
+        }
+        drained
     }
 
     fn handle(&mut self, command: Command) {
@@ -294,7 +314,10 @@ impl Actor {
             }
             Op::Bind { credential } => self.bind(session, credential.clone().into()),
             Op::Inspect | Op::Reset if role != Role::Admin => Err(AuthorityError::Unauthorized),
-            Op::Inspect => Ok(status_body(&self.authority.inspect(now))),
+            Op::Inspect => Ok(status_body(
+                &self.authority.inspect(now),
+                matches!(self.lifetime, AuthorityLifetime::StopWhenIdle(_)),
+            )),
             Op::Reset => self.reset(now),
             op => match credential {
                 None => Err(AuthorityError::Unauthorized),

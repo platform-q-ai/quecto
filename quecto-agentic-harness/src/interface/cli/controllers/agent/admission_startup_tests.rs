@@ -157,3 +157,56 @@ fn a_root_starts_its_broker_on_demand_and_stops_when_it_cannot() {
     ));
     assert_eq!(launches.len(), 1);
 }
+
+/// A launcher whose broker always answers, counting the probes.
+#[derive(Default)]
+struct Answering {
+    probes: Mutex<usize>,
+}
+
+impl AuthorityLauncher for Answering {
+    fn probe(&self, _directory: &Path) -> Result<(), String> {
+        *self.probes.lock().unwrap() += 1;
+        Ok(())
+    }
+
+    fn launch(&self, _launch: &AuthorityLaunch) -> Result<Box<dyn LaunchedAuthority>, String> {
+        unreachable!("an answering broker is never launched")
+    }
+
+    fn pause(&self, _attempt: u32) {}
+}
+
+/// #2615 review: a broker that stopped for being idle in the instant this
+/// root reached it closes the registration; the root makes sure once more
+/// and registers again, and only a second failure is final.
+#[test]
+fn a_registration_closed_by_a_stopping_broker_is_retried_once() {
+    let launcher = Arc::new(Answering::default());
+    let use_case = NegotiateAuthority::new(launcher.clone());
+    let selection = layered("/g/config.json");
+    let origin = ConfigOrigin {
+        base_dir: Path::new("/g"),
+        selection: &selection,
+    };
+    let directory = Path::new("/g/admission");
+    let mut installs = 0;
+    let joined = join_root_with(directory, &origin, &use_case, &mut |negotiation| {
+        installs += 1;
+        assert!(matches!(negotiation, Negotiation::Root { .. }));
+        match installs {
+            1 => Err("admission root registration: connection closed".into()),
+            _ => Ok(()),
+        }
+    });
+    assert_eq!(joined, Ok(()));
+    assert_eq!(installs, 2);
+    assert_eq!(*launcher.probes.lock().unwrap(), 2, "made sure again");
+    let mut installs = 0;
+    let joined = join_root_with(directory, &origin, &use_case, &mut |_| {
+        installs += 1;
+        Err(format!("refused {installs}"))
+    });
+    assert_eq!(joined, Err("refused 2".into()), "the last failure is final");
+    assert_eq!(installs, 2);
+}

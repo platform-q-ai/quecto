@@ -110,3 +110,67 @@ fn a_slow_failing_write_arms_the_next_probe_after_the_turn() {
         "and no later than one probe interval after it"
     );
 }
+
+/// #2615 review: a client that connects as the idle stop is decided is
+/// served first, and its open connection holds the broker.
+#[test]
+fn a_connection_pending_at_the_idle_stop_keeps_the_broker_serving() {
+    use crate::domain::admission::value_objects::authority_idle::{AuthorityLifetime, IdleWatch};
+    use crate::infrastructure::admission::protocol::Role;
+    let journal: SharedJournal = Arc::new(Mutex::new(MemoryJournal));
+    let use_cases = AuthorityUseCases {
+        restore: RestoreAuthority::new(journal.clone()),
+        settle: SettleAuthority::new(DispatchAdmissions::new(journal.clone())),
+        complete: CompleteAdmission::new(journal.clone()),
+        advance_epoch: AdvanceAuthorityEpoch::new(journal),
+        bind: BindScope::new(),
+        disconnect: DisconnectScope::new(),
+    };
+    let proposal = proposal();
+    let (stopped, _watch) = tokio::sync::watch::channel(false);
+    let mut actor = Actor::new(
+        AdmissionAuthority::new(1, proposal.policy.clone(), RandomSecretSource).unwrap(),
+        use_cases,
+        Clock::starting_now(),
+        ProposalWire::from(&proposal),
+        "owner".into(),
+    )
+    .with_lifetime(
+        AuthorityLifetime::StopWhenIdle(IdleWatch::new(1).unwrap()),
+        stopped,
+    );
+    actor.settle();
+    std::thread::sleep(Duration::from_millis(5));
+    actor.settle();
+    assert!(
+        actor.stop_for_idle,
+        "idle past its period: the stop is decided"
+    );
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (notices, _notices) = tokio::sync::mpsc::unbounded_channel();
+    let (close, _closed) = tokio::sync::oneshot::channel();
+    tx.send(super::Command::Open {
+        session: 1,
+        role: Role::Client,
+        notices,
+        close,
+    })
+    .unwrap();
+    assert!(actor.drain_pending(&mut rx));
+    actor.stop_for_idle = false;
+    actor.settle();
+    assert!(!actor.stop_for_idle, "the open connection holds it");
+    assert!(!actor.drain_pending(&mut rx), "nothing more waiting");
+}
+
+struct MemoryJournal;
+
+impl AdmissionJournal for MemoryJournal {
+    fn persist(&mut self, _ledger: &AdmissionLedger) -> Result<(), JournalError> {
+        Ok(())
+    }
+
+    fn load(&mut self) -> Result<Option<AdmissionLedger>, JournalError> {
+        Ok(None)
+    }
+}
