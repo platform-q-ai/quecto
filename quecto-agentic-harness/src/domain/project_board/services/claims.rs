@@ -89,6 +89,41 @@ pub(super) fn held_live_by<'a>(
     }
 }
 
+/// Whether `holder`'s renewal of `task`'s claim at `now` is due (#2656):
+/// it is, unless `holder` holds the claim and `now` is before halfway
+/// through its own lease ([`renew_after`]). Anything else is the
+/// renewal's own rule to judge.
+pub fn renewal_due(task: &Task, holder: &Identity, now: &Timestamp) -> bool {
+    match &task.fields().claim {
+        Some(claim) if claim.holder.is(holder) => *now >= halfway(claim),
+        Some(_) | None => true,
+    }
+}
+
+/// When the claim `task` holds is next renewed (#2656): halfway through
+/// its own lease; `None` for a task that holds none. A task holds only a
+/// claim its board validated, whose lease is never negative.
+pub fn renew_after(task: &Task) -> Option<Timestamp> {
+    task.fields().claim.as_ref().map(halfway)
+}
+
+/// Halfway through `claim`'s lease, `since + (expires - since) / 2`,
+/// which lies between the two, so the board spells it whenever it spells
+/// the claim: for a task's validated claim only.
+fn halfway(claim: &Claim) -> Timestamp {
+    let lease = claim.expires.seconds_since(&claim.since);
+    let half = u64::try_from(lease / 2).unwrap_or(0);
+    let at = claim
+        .since
+        .plus_seconds(half)
+        .expect("halfway lies before the claim's expiry, which the board spells");
+    assert!(
+        claim.since <= at && at <= claim.expires,
+        "halfway is within the lease"
+    );
+    at
+}
+
 /// A claim is live until the moment it expires; from then on it is
 /// expired and can be taken over.
 pub fn is_live(claim: &Claim, now: &Timestamp) -> bool {
