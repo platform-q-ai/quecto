@@ -268,6 +268,10 @@ async fn run_tui(flags: CliFlags) -> i32 {
     }
 
     drop(child_watch);
+    // #2615: the owned agent has ended; a fresh TUI adopts the new policy.
+    if app.session_restart_requested() {
+        return session_restart::restart_session();
+    }
 
     exit_code
 }
@@ -707,6 +711,8 @@ fn format_agent_startup_failure(reason: &str, stderr_lines: &[String]) -> String
 #[path = "cli_cov_tests.rs"]
 mod cli_cov_tests;
 
+#[path = "cli_session_restart.rs"]
+mod session_restart;
 #[path = "cli_termination.rs"]
 mod termination;
 use termination::{

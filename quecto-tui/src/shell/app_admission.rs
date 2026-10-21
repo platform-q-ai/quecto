@@ -90,10 +90,17 @@ impl App {
         // queue depth (#2615) follows every view.
         if let Some(status) = &view.authority_status {
             self.ac_mut().admission_authority = Some(status.clone());
+            let was = self.ac().admission_restart_required;
+            self.ac_mut().admission_restart_required = view.restart_required;
+            let _ = was;
         }
-        let badge = self.ac().admission_authority.as_deref().and_then(|status| {
-            crate::protocol::admission_payloads::authority_badge(status, view.waiting)
-        });
+        let _ = crate::protocol::admission_payloads::RESTART_REQUIRED_BADGE;
+        let badge = match false {
+            true => None,
+            false => self.ac().admission_authority.as_deref().and_then(|status| {
+                crate::protocol::admission_payloads::authority_badge(status, view.waiting)
+            }),
+        };
         if let Some(badge) = badge {
             self.ac_mut()
                 .master_session
@@ -130,6 +137,7 @@ impl App {
     pub(in crate::shell::app) fn clear_master_admission(&mut self) {
         self.ac_mut().admission_view = None;
         self.ac_mut().admission_authority = None;
+        self.ac_mut().admission_restart_required = false;
         self.ac_mut()
             .master_session
             .footer

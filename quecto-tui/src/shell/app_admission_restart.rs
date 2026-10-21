@@ -8,8 +8,40 @@ use super::super::*;
 /// The correlation id of a restart request.
 const RESTART_ID: &str = "admission-restart";
 pub(in crate::shell::app) const ADMISSION_USAGE: &str = "Usage: /admission restart";
+/// The one-step restart offered when the broker's policy changed (#2615).
+pub(in crate::shell::app) const SESSION_RESTART_OFFER: &str = "The admission broker came back with a different policy; this session must restart to use it. /admission restart restarts the broker and this session.";
 
 impl App {
+    /// Offer the one-step restart once the agent reports that only a
+    /// session restart adopts the broker's changed policy (#2615).
+    pub(in crate::shell::app) fn offer_session_restart(&mut self) {
+        self.notify(SESSION_RESTART_OFFER, NotifyLevel::Warning);
+    }
+
+    /// The broker is back with a different policy: restart this session
+    /// (#2615). A TUI that owns its agent ends it as an ordinary exit does
+    /// and starts itself again; one attached to an agent it does not end
+    /// says what to restart instead.
+    fn restart_session_for_policy(&mut self, done: &str) {
+        let owns_agent = self.exit_policy.kill_owned && self.ac().child_exit_watch.is_some();
+        match owns_agent {
+            true => {
+                self.notify(
+                    &format!("{done}; restarting this session to use its policy…"),
+                    NotifyLevel::Info,
+                );
+                self.exit_policy.restart_session = true;
+                self.request_ordinary_exit();
+            }
+            false => self.notify(
+                &format!(
+                    "{done}; its policy changed, and this TUI does not end its agent: restart that agent to use it"
+                ),
+                NotifyLevel::Warning,
+            ),
+        }
+    }
+
     /// `/admission [args]`: `restart` restarts the broker; nothing shows the
     /// broker's health; anything else shows the usage.
     pub(in crate::shell::app) fn handle_admission_command(&mut self, args: &str) {
@@ -64,6 +96,11 @@ impl App {
             Some("started") => "Admission broker started",
             _ => "Admission broker restarted",
         };
+        if view.session_restart_required && done.is_empty() {
+            self.restart_session_for_policy(done);
+            self.offer_session_restart();
+            return;
+        }
         match view.authority_status.as_deref() {
             Some("connected") => self.notify(
                 &format!("{done}; this session reconnected"),

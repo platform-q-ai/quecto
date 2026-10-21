@@ -21,6 +21,9 @@ pub(crate) struct OrdinaryExitPolicy {
     pub(crate) leader_budget_override: Option<LeaderBudget>,
     /// The termination signal this exit answers, if it was one (#2053).
     pub(crate) termination_signal: Option<crate::shell::signals::TerminationSignal>,
+    /// This exit restarts the session (#2615): the TUI starts itself again
+    /// once its owned agent has ended.
+    pub(crate) restart_session: bool,
     /// Every settling notice shown, in order (test seam).
     #[cfg(any(test, feature = "test-harness"))]
     pub(crate) settling_notices_shown: Vec<String>,
@@ -38,6 +41,7 @@ impl Default for OrdinaryExitPolicy {
             kill_owned: true,
             leader_budget_override: None,
             termination_signal: None,
+            restart_session: false,
             #[cfg(any(test, feature = "test-harness"))]
             settling_notices_shown: Vec::new(),
             #[cfg(test)]
@@ -74,6 +78,11 @@ impl App {
     /// The signal an ordinary exit was requested by, if any (#2053).
     pub(crate) fn termination_signal(&self) -> Option<crate::shell::signals::TerminationSignal> {
         self.exit_policy.termination_signal
+    }
+
+    /// Whether this exit restarts the session (#2615).
+    pub(crate) fn session_restart_requested(&self) -> bool {
+        self.exit_policy.restart_session
     }
 
     pub(crate) fn set_ordinary_exit_kill_owned(&mut self, kill_owned: bool) {

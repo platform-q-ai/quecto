@@ -51,10 +51,18 @@ fn proposal() -> AdmissionRuntimeProposal {
 /// Serve `directory` in-process until asked to stop, then shut down as the
 /// broker's run path does.
 fn serve(runtime: &tokio::runtime::Runtime, directory: &Path) {
+    serve_policy(runtime, directory, proposal());
+}
+
+fn serve_policy(
+    runtime: &tokio::runtime::Runtime,
+    directory: &Path,
+    policy: AdmissionRuntimeProposal,
+) {
     let server = runtime
         .block_on(start_authority(
             AuthorityDirectory::open(directory).unwrap(),
-            proposal(),
+            policy,
         ))
         .unwrap();
     runtime.spawn(async move {
@@ -69,6 +77,8 @@ struct InProcess {
     runtime: tokio::runtime::Runtime,
     probe: DetachedAuthorityLauncher,
     launches: Mutex<u32>,
+    /// The policy a started broker serves (the config may have changed).
+    policy: AdmissionRuntimeProposal,
 }
 
 struct Serving;
@@ -85,7 +95,7 @@ impl AuthorityLauncher for InProcess {
     }
     fn launch(&self, launch: &AuthorityLaunch) -> Result<Box<dyn LaunchedAuthority>, String> {
         *self.launches.lock().unwrap() += 1;
-        serve(&self.runtime, &launch.directory);
+        serve_policy(&self.runtime, &launch.directory, self.policy.clone());
         Ok(Box::new(Serving))
     }
     fn pause(&self, _attempt: u32) {
@@ -152,10 +162,15 @@ fn restart_over(
 }
 
 fn in_process() -> Arc<InProcess> {
+    in_process_serving(proposal())
+}
+
+fn in_process_serving(policy: AdmissionRuntimeProposal) -> Arc<InProcess> {
     Arc::new(InProcess {
         runtime: runtime(),
         probe: DetachedAuthorityLauncher::new(PathBuf::from("/nonexistent/quecto")),
         launches: Mutex::new(0),
+        policy,
     })
 }
 
@@ -222,4 +237,42 @@ fn a_session_without_admission_or_a_child_cannot_restart_the_broker() {
         )
     );
     assert_eq!(*launcher.launches.lock().unwrap(), 0, "nothing started");
+}
+
+/// #2615: a broker restarted onto a changed policy cannot be rejoined by
+/// this session; the answer says the session must restart, for the TUI to
+/// offer that restart, instead of failing.
+#[test]
+fn a_restart_onto_a_changed_policy_asks_for_a_session_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("authority");
+    let mut changed = proposal();
+    for group in changed.policy.groups.values_mut() {
+        group.capacity = 2;
+    }
+    let launcher = in_process_serving(changed);
+    serve(&launcher.runtime, &directory);
+    let binding = slot();
+    let root = install_in(
+        binding,
+        Negotiation::Root {
+            directory: directory.clone(),
+        },
+    )
+    .unwrap();
+    root.remember_launch(AuthorityLaunch {
+        directory: directory.clone(),
+        config: temp.path().join("config.json"),
+        base_dir: temp.path().to_path_buf(),
+    });
+    let data = respond(Some(&restart_over(&launcher, binding))).unwrap();
+    assert_eq!(
+        data,
+        serde_json::json!({
+            "outcome": "restarted",
+            "authorityStatus": "unavailable",
+            "sessionRestartRequired": true,
+        })
+    );
+    assert!(root.restart_required());
 }

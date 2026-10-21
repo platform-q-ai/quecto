@@ -48,10 +48,14 @@ fn outcome_name(outcome: RestartOutcome) -> &'static str {
 }
 
 fn present(report: RestartReport) -> serde_json::Value {
-    serde_json::json!({
+    let mut data = serde_json::json!({
         "outcome": outcome_name(report.outcome),
         "authorityStatus": report.health,
-    })
+    });
+    if report.session_restart_required {
+        data["sessionRestartRequired"] = serde_json::Value::Bool(true);
+    }
+    data
 }
 
 fn refusal(error: RestartError) -> String {

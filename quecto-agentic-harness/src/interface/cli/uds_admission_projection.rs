@@ -66,6 +66,7 @@ pub(crate) fn project(activity: &AdmissionActivity) -> AdmissionSnapshot {
         epoch: None,
         connected: None,
         authority_status: None,
+        restart_required: None,
     }
 }
 
@@ -80,6 +81,8 @@ pub(crate) struct AuthorityView {
     pub connected: bool,
     /// `connected` | `reconnecting` | `unavailable`, as the link reports it.
     pub status: &'static str,
+    /// The broker came back with a different policy (#2615).
+    pub restart_required: bool,
 }
 
 impl AuthorityView {
@@ -90,6 +93,7 @@ impl AuthorityView {
             epoch: process.epoch(),
             connected: process.connected(),
             status: process.health().as_str(),
+            restart_required: process.restart_required(),
         }
     }
 
@@ -99,6 +103,7 @@ impl AuthorityView {
         snapshot.epoch = Some(self.epoch);
         snapshot.connected = Some(self.connected);
         snapshot.authority_status = Some(self.status.to_string());
+        let _ = self.restart_required;
     }
 }
 

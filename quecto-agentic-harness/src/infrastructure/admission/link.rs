@@ -217,6 +217,12 @@ impl AuthorityLink {
         self.connection().hello().epoch
     }
 
+    /// The broker came back publishing a different policy than the one this
+    /// session composed against: only a session restart adopts it (#2615).
+    pub fn restart_required(&self) -> bool {
+        self.restart_required.lock().expect("link").is_some()
+    }
+
     pub fn health(&self) -> LinkHealth {
         if self.connected() {
             LinkHealth::Connected

@@ -43,6 +43,10 @@ pub struct AdmissionView {
     /// a process without one, or from an older harness.
     #[serde(default)]
     pub authority_status: Option<String>,
+    /// The broker came back publishing a different policy than the one the
+    /// session composed against (#2615): only a session restart adopts it.
+    #[serde(default)]
+    pub restart_required: bool,
 }
 
 /// A `restart_admission` answer (#2615): how the broker came back and the
@@ -55,6 +59,10 @@ pub struct AdmissionRestartView {
     pub outcome: Option<String>,
     #[serde(default)]
     pub authority_status: Option<String>,
+    /// The broker publishes a different policy: the session must restart
+    /// to adopt it (#2615).
+    #[serde(default)]
+    pub session_restart_required: bool,
 }
 
 /// Parse a `restart_admission` response's data; anything unreadable is the
@@ -108,6 +116,10 @@ pub fn parse_admission(
     }
     Some(view)
 }
+
+/// The footer badge of a session that must restart to adopt the broker's
+/// changed policy (#2615).
+pub const RESTART_REQUIRED_BADGE: &str = "admission ✗ restart required";
 
 /// The broker-health badge for the footer (#2024 S3, #2615): the health
 /// (`admission ✓ connected`, `admission ⟳ reconnecting`, `admission ✗

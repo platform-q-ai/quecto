@@ -417,6 +417,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
 | `shell/agent_args.rs` | `shell` `quecto agent` argument line built from the TUI flags (split from `cli.rs` for the 750-line cap; `--model`/`--effort` pass-through, #2024 S2) |
 | `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
+| `shell/cli_session_restart.rs` | `shell` restarting the TUI so a fresh agent adopts the admission broker's changed policy (#2615) |
 | `shell/cli_termination.rs` | `shell` why a spawn stopped on a termination signal and what an exit on one did (#2053) |
 | `shell/cli_startup_exit.rs` | `shell` startup-failure leader-only agent termination with a stderr notice (#1956) |
 | `shell/clipboard_image.rs` | `shell` clipboard port (`ClipboardReader`) and its adapter (#2425): an allowlist of two tools, `wl-paste` (Wayland) and `xclip` (X11), each command in its own process group, killed whole at a 2 s timeout, its output capped; a failing listing falls through to the next tool; tests use fake executables or a fake reader, and `tests/contracts/tui_clipboard_reader.rs` is the port's contract |
