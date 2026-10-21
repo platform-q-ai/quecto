@@ -1,6 +1,7 @@
 pub mod board_text;
 pub mod code_ref;
 mod commit_id;
+pub mod commit_token;
 pub mod reference;
 pub mod rule_error;
 pub mod schema_error;

@@ -1098,6 +1098,7 @@
         "code": "set_aside",
         "message": "task late is set aside as unreadable; mend its file, or remove it with clear_set_aside(path \"tasks/late.md\", object \"0000000000000000000000006d8fbafe020afc45\")",
         "task": "late",
+        "path": "tasks/late.md",
         "object": "0000000000000000000000006d8fbafe020afc45"
       }
     }
@@ -1205,6 +1206,7 @@
         "code": "set_aside",
         "message": "task late is set aside as unreadable; mend its file, or remove it with clear_set_aside(path \"tasks/late.md\", object \"0000000000000000000000006d8fbafe020afc45\")",
         "task": "late",
+        "path": "tasks/late.md",
         "object": "0000000000000000000000006d8fbafe020afc45"
       }
     }

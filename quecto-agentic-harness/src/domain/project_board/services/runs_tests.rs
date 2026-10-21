@@ -14,6 +14,24 @@ fn item(id: &str) -> RunItem {
     }
 }
 
+/// `run` of `task` ended as lost by `who` at `when`, its plan version 1
+/// accepted, nothing reported.
+fn lost(task: &Task, run: &Run, who: &Identity, when: &Timestamp) -> Result<Run, BoardRuleError> {
+    let reported = Reported {
+        items: vec![],
+        cost: None,
+        report: SwarmReport::NoneKept,
+        unpushed: 0,
+    };
+    end_lost(
+        task,
+        (run, &plan(1, PlanState::Accepted)),
+        reported,
+        who,
+        when,
+    )
+}
+
 fn ended(run: &Run) -> Run {
     lost_at(run, &at("09:30:00")).unwrap()
 }
@@ -213,7 +231,7 @@ fn a_run_ends_no_earlier_than_it_started() {
 #[test]
 fn the_holder_ends_an_open_run_as_lost_and_others_may_not() {
     for status in [Claimed, InProgress, Review, Blocked] {
-        let ended = end_lost(
+        let ended = lost(
             &task(status),
             &open_run(1, 1),
             &person("Ada"),
@@ -222,7 +240,7 @@ fn the_holder_ends_an_open_run_as_lost_and_others_may_not() {
         .unwrap();
         assert_eq!(ended.fields().outcome, Some(RunOutcome::Lost), "{status:?}");
         assert_eq!(
-            end_lost(
+            lost(
                 &task(status),
                 &open_run(1, 1),
                 &person("Bob"),
@@ -233,13 +251,13 @@ fn the_holder_ends_an_open_run_as_lost_and_others_may_not() {
     }
     let taken = take_over(&task(InProgress), &person("Bob"), &at("11:30:00")).unwrap();
     assert!(
-        end_lost(&taken, &open_run(1, 1), &person("Bob"), &at("11:31:00")).is_ok(),
+        lost(&taken, &open_run(1, 1), &person("Bob"), &at("11:31:00")).is_ok(),
         "whoever takes an expired claim over ends its run"
     );
     let mut elsewhere = open_run(1, 1).into_fields();
     elsewhere.task = Slug::parse("other").unwrap();
     assert_eq!(
-        end_lost(
+        lost(
             &task(InProgress),
             &Run::new(elsewhere).unwrap(),
             &person("Ada"),
@@ -277,7 +295,7 @@ fn a_task_leaves_its_holder_only_once_its_run_has_ended() {
 fn a_run_of_a_task_nobody_claims_is_ended_by_anyone() {
     for status in [Ready, Draft] {
         assert!(
-            end_lost(
+            lost(
                 &task(status),
                 &open_run(1, 1),
                 &person("Bob"),
@@ -290,7 +308,7 @@ fn a_run_of_a_task_nobody_claims_is_ended_by_anyone() {
     let held = task(InProgress);
     let bob = person("Bob");
     assert_eq!(
-        end_lost(&held, &open_run(1, 1), &bob, &at("10:59:59")),
+        lost(&held, &open_run(1, 1), &bob, &at("10:59:59")),
         Err(BoardRuleError::NotHolder)
     );
     assert_eq!(
@@ -298,19 +316,19 @@ fn a_run_of_a_task_nobody_claims_is_ended_by_anyone() {
         Err(BoardRuleError::ClaimLive)
     );
     assert_eq!(
-        end_lost(&held, &open_run(1, 1), &bob, &at("11:00:00")),
+        lost(&held, &open_run(1, 1), &bob, &at("11:00:00")),
         Err(BoardRuleError::NotHolderExpired),
         "an expired claim is still Ada's until it is taken over"
     );
     let taken = take_over(&held, &bob, &at("11:00:00")).unwrap();
-    assert!(end_lost(&taken, &open_run(1, 1), &bob, &at("11:00:01")).is_ok());
+    assert!(lost(&taken, &open_run(1, 1), &bob, &at("11:00:01")).is_ok());
 }
 
 /// A run ends by the task's clock rule: never before the task's last
 /// change, however far behind the caller's clock is.
 #[test]
 fn a_lost_run_ends_at_the_tasks_stamp() {
-    let ended = end_lost(
+    let ended = lost(
         &task(InProgress),
         &open_run(1, 1),
         &person("Ada"),
@@ -396,6 +414,7 @@ fn the_holder_ends_an_open_run_as_stopped_or_failed() {
                 items: vec![item("schema"), item("api")],
                 cost: Some(0),
                 report: SwarmReport::Kept,
+                unpushed: 0,
             },
             &person("Ada"),
             &at("10:00:00"),
@@ -415,6 +434,7 @@ fn the_holder_ends_an_open_run_as_stopped_or_failed() {
                 items: vec![],
                 cost: None,
                 report: SwarmReport::NoneKept,
+                unpushed: 0,
             },
             &person(who),
             &at(when),
@@ -455,6 +475,7 @@ fn a_held_end_is_stamped_after_the_tasks_last_change() {
         items: vec![],
         cost: None,
         report: SwarmReport::NoneKept,
+        unpushed: 0,
     };
     let run = open_run(1, 1);
     let accepted = plan(1, PlanState::Accepted);
@@ -468,7 +489,7 @@ fn a_held_end_is_stamped_after_the_tasks_last_change() {
     )
     .unwrap();
     assert_eq!(ended.fields().ended, Some(at("10:00:01")));
-    let lost = end_lost(&held, &run, &person("Ada"), &at("09:30:00")).unwrap();
+    let lost = lost(&held, &run, &person("Ada"), &at("09:30:00")).unwrap();
     assert_eq!(
         lost.fields().ended,
         ended.fields().ended,
@@ -499,6 +520,7 @@ fn a_run_ends_as_succeeded_only_when_every_task_item_is_done() {
                 items,
                 cost: None,
                 report: SwarmReport::Kept,
+                unpushed: 0,
             },
             &person("Ada"),
             &at("10:00:00"),
@@ -576,6 +598,7 @@ fn a_success_with_no_board_kept_is_refused_as_none_kept() {
             items: vec![],
             cost: None,
             report: SwarmReport::NoneKept,
+            unpushed: 0,
         },
         &person("Ada"),
         &at("10:00:00"),
@@ -612,6 +635,7 @@ fn a_run_ended_already_is_refused_before_its_items_are_judged() {
                 items: vec![],
                 cost: None,
                 report: SwarmReport::NoneKept,
+                unpushed: 0,
             },
             &person("Ada"),
             &at("10:00:00"),
@@ -619,3 +643,74 @@ fn a_run_ended_already_is_refused_before_its_items_are_judged() {
         Err(BoardRuleError::RunEnded(1))
     );
 }
+
+/// #2666: a board run ended succeeded with its evidence at a commit the
+/// coordinator made in its container and never pushed; the teardown took
+/// the work with the box. A run ends as succeeded only when every
+/// revision its evidence names is on the board's remote; undone items are
+/// named first, and a stop or failure is never judged by it.
+#[test]
+fn a_run_ends_as_succeeded_only_when_its_evidence_is_on_the_remote() {
+    let held = task(InProgress);
+    let accepted = plan(1, PlanState::Accepted);
+    let end = |end: HeldEnd, items: Vec<RunItem>, unpushed: usize| {
+        end_held(
+            &held,
+            (&open_run(1, 1), &accepted),
+            end,
+            Reported {
+                items,
+                cost: None,
+                report: SwarmReport::Kept,
+                unpushed,
+            },
+            &person("Ada"),
+            &at("10:00:00"),
+        )
+    };
+    let done = || vec![item("schema"), item("api")];
+    assert_eq!(
+        end(HeldEnd::Succeeded, done(), 1),
+        Err(BoardRuleError::NotPushed {
+            run: 1,
+            revisions: 1
+        })
+    );
+    assert_eq!(
+        end(HeldEnd::Succeeded, done(), 3),
+        Err(BoardRuleError::NotPushed {
+            run: 1,
+            revisions: 3
+        })
+    );
+    let todo = RunItem {
+        state: ItemState::Todo,
+        ..item("api")
+    };
+    assert!(
+        matches!(
+            end(HeldEnd::Succeeded, vec![item("schema"), todo], 1),
+            Err(BoardRuleError::ItemsNotDone { .. })
+        ),
+        "undone items are named first"
+    );
+    let ended = end(HeldEnd::Succeeded, done(), 0).unwrap();
+    assert_eq!(ended.fields().outcome, Some(RunOutcome::Succeeded));
+    for stop in [HeldEnd::Stopped, HeldEnd::Failed] {
+        assert!(end(stop, done(), 2).is_ok(), "{stop:?} is not judged by it");
+    }
+    assert_eq!(
+        BoardRuleError::NotPushed {
+            run: 1,
+            revisions: 2
+        }
+        .to_string(),
+        "run 1 cannot end as succeeded: 2 commit(s) its evidence names are on no branch or \
+         tag of the board's remote, so its work has not left the swarm's container; push them \
+         and call end_run again, or, if they went with the container, end it as \"failed\" \
+         and tell the user"
+    );
+}
+
+#[path = "runs_lost_tests.rs"]
+mod lost_tests;

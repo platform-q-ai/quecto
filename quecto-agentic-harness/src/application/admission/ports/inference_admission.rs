@@ -4,7 +4,7 @@
 
 use crate::domain::admission::value_objects::inference_admission::{
     AbandonReport, AdmissionError, AdmissionLedger, Feedback, GroupId, GroupSnapshot, RequestId,
-    RequestState, ScopeId, ThrottleFeedback, WorkloadClass,
+    RequestState, ScopeId, ThrottleFeedback, UncertainHold, WorkloadClass,
 };
 
 /// Trusted authority ingress only; not exposed to an unauthenticated client.
@@ -62,11 +62,20 @@ pub trait AdmissionDispatcher {
 }
 
 /// Owner-only recovery operations: abandonment on disconnect, grant withdrawal
-/// when durability fails, scheduler wake computation, ledger export and the
-/// operator epoch reset. Never exposed through a client capability.
+/// when durability fails, why a wait expired behind uncertain leases,
+/// scheduler wake computation, ledger export and the operator epoch reset.
+/// Never exposed through a client capability.
 pub trait AdmissionRecovery {
     fn high_water(&self, scope: ScopeId) -> Result<u64, AdmissionError>;
     fn abandon(&mut self, scope: ScopeId, now: u64) -> Result<AbandonReport, AdmissionError>;
+    /// The uncertain leases a queued wait expired behind (#2664), or `None`
+    /// when it was not held by any (or is not an expired wait at all).
+    fn held(
+        &mut self,
+        scope: ScopeId,
+        sequence: u64,
+        now: u64,
+    ) -> Result<Option<UncertainHold>, AdmissionError>;
     fn withdraw(&mut self, scope: ScopeId, sequence: u64, now: u64) -> Result<(), AdmissionError>;
     fn next_wake(&mut self, now: u64) -> Result<Option<u64>, AdmissionError>;
     fn ledger(&mut self, now: u64) -> Result<AdmissionLedger, AdmissionError>;

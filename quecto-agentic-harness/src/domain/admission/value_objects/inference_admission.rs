@@ -170,6 +170,14 @@ pub struct AbandonReport {
     pub active: usize,
 }
 
+/// How long an uncertain lease still holds its group after the later of its
+/// attempt's deadline and the loss of its owner (#2664). By the deadline the
+/// authority has told a live owner to stop its transport, and a closed
+/// connection stops it too; a dead owner has none. The margin covers the
+/// owner's teardown, after which the lease clears by itself instead of
+/// waiting for an operator reset.
+pub const UNCERTAIN_LEASE_MARGIN_MS: u64 = 60_000;
+
 /// One possibly outstanding remote attempt. Scope is the serial only: the
 /// epoch is the ledger's, and no capability material is ever recorded.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,6 +185,23 @@ pub struct OutstandingAttempt {
     pub group: GroupId,
     pub scope: u64,
     pub sequence: u64,
+    /// Milliseconds, relative to the ledger's observation instant, until the
+    /// attempt's lease clears by itself if it is never completed:
+    /// [`UNCERTAIN_LEASE_MARGIN_MS`] after the later of its deadline and the
+    /// loss of its owner (at the latest, this write). `None` in a ledger written
+    /// before #2664; a restore then bounds it by the group's full attempt
+    /// timeout plus the margin.
+    pub release_remaining_ms: Option<u64>,
+}
+
+/// Why a queued wait expired without a grant (#2664): its group was held by
+/// uncertain leases, the latest of which clears by itself in `clears_in_ms`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UncertainHold {
+    pub group: GroupId,
+    /// Uncertain and restart-orphaned leases holding the group.
+    pub leases: usize,
+    pub clears_in_ms: u64,
 }
 
 /// Durable per-group timing relative to the ledger's observation instant, so a
@@ -251,7 +276,8 @@ pub struct AdmissionActivity {
     /// Waits given up before a grant (cancelled at the authority).
     pub cancelled: u64,
     /// Permits dropped without completion: the authority keeps that occupancy
-    /// as uncertain until its attempt deadline (ADR-0026, drop is not release).
+    /// as uncertain until the lease margin past its deadline (or its loss), or a
+    /// verified completion (ADR-0026, drop is not release; ADR-0031).
     pub abandoned: u64,
     pub groups: BTreeMap<GroupId, GroupActivity>,
     pub attempts: BTreeMap<u64, AttemptObservation>,

@@ -308,7 +308,9 @@ pub(crate) fn cmd_agent(
             build.subagent_registry,
             build.harness_lifecycle,
             ctx.live_output,
-        ),
+        )
+        // A session's end ends the board runs its starts left open (#2655).
+        .ending_left_runs(build.board_tool.map(|board| board as _)),
     };
     let code = run_agent_session(&base_dir, sessions, agent, handles, &flags, &mut out);
     admission_startup::shutdown();
@@ -440,6 +442,7 @@ pub(crate) fn build_agent_from_config_in(
         notification_rx,
         subagent_registry,
         harness_lifecycle,
+        board_tool,
         environment_control,
         workflow_state,
         workspace,
@@ -532,6 +535,7 @@ pub(crate) fn build_agent_from_config_in(
         notification_rx,
         subagent_registry,
         harness_lifecycle,
+        board_tool,
         environment_control,
         workflow_state,
         workspace,

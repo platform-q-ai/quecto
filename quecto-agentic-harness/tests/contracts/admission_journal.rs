@@ -14,7 +14,8 @@ use quecto::application::admission::use_cases::{
 };
 use quecto::domain::admission::value_objects::inference_admission::{
     AbandonReport, AdmissionConfig, AdmissionError, AdmissionLedger, Feedback, GroupId,
-    GroupPolicy, RequestId, RequestState, ScopeId, TerminalOutcome, WorkloadClass,
+    GroupPolicy, RequestId, RequestState, ScopeId, TerminalOutcome, UNCERTAIN_LEASE_MARGIN_MS,
+    UncertainHold, WorkloadClass,
 };
 use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
@@ -576,3 +577,159 @@ fn journal_errors_convert_to_the_authority_error() {
 /// The running authority's session policy, over this file's harness.
 #[path = "admission_session.rs"]
 mod session;
+
+/// #2664: a wait that expires behind an uncertain lease is not answered as a
+/// bare queue timeout: the answer names the lease that held it.
+#[test]
+fn a_wait_that_expires_behind_an_uncertain_lease_says_so() {
+    let (mut a, _) = authority();
+    let lost = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    let waiting = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    a.acquire(&lost, 1, "g", 0).unwrap();
+    a.pump(0).unwrap();
+    a.disconnect(lost.scope, 1).unwrap();
+    a.acquire(&waiting, 1, "g", 10).unwrap();
+    let id = RequestId {
+        scope: waiting.scope,
+        sequence: 1,
+    };
+    assert_eq!(
+        a.settle(&[id], 1_010).answers,
+        vec![(
+            id,
+            Err(AuthorityError::HeldByUncertainLease(UncertainHold {
+                group: group(),
+                leases: 1,
+                clears_in_ms: 5_000 + UNCERTAIN_LEASE_MARGIN_MS - 1_010,
+            }))
+        )],
+        "not a bare timeout: the answer names the lease and when it clears"
+    );
+}
+
+/// #2664: a plain queue timeout, with no uncertain lease, is unchanged.
+#[test]
+fn a_wait_that_expires_without_an_uncertain_lease_is_a_plain_timeout() {
+    let (mut a, _) = authority();
+    let busy = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    let waiting = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    a.acquire(&busy, 1, "g", 0).unwrap();
+    a.pump(0).unwrap();
+    a.acquire(&waiting, 1, "g", 10).unwrap();
+    let id = RequestId {
+        scope: waiting.scope,
+        sequence: 1,
+    };
+    assert_eq!(
+        a.settle(&[id], 1_010).answers,
+        vec![(id, Ok(RequestState::Terminal(TerminalOutcome::TimedOut)))]
+    );
+}
+
+/// #2664: once a lost client's lease clears, its scope holds nothing and no
+/// connection, so it is released like a scope that disconnected idle: the
+/// group dispatches again and the scope slot is not leaked.
+#[test]
+fn a_lost_scope_is_released_once_its_lease_clears() {
+    let (mut a, _) = authority();
+    let lost = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    let other = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    a.acquire(&lost, 1, "g", 0).unwrap();
+    a.pump(0).unwrap();
+    a.disconnect(lost.scope, 1).unwrap();
+    assert_eq!(
+        a.inspect(1).live_scopes,
+        2,
+        "the lost scope is kept for now"
+    );
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
+    a.settle(&[], release - 1);
+    assert_eq!(
+        a.inspect(release - 1).live_scopes,
+        2,
+        "a lost scope still holding its lease stays tracked"
+    );
+    a.acquire(&other, 1, "g", release).unwrap();
+    let settled = a.settle(&[], release);
+    assert_eq!(settled.dispatch_failure, None);
+    assert_eq!(a.inspect(release).groups[&group()].uncertain, 0);
+    assert_eq!(a.inspect(release).groups[&group()].active, 1, "granted");
+    assert_eq!(
+        a.inspect(release).live_scopes,
+        1,
+        "the lost scope is released"
+    );
+    assert_eq!(
+        a.acquire(&lost, 2, "g", release).err(),
+        Some(AuthorityError::Unauthorized),
+        "its capability went with it"
+    );
+}
+
+/// #2664: a scope whose owner rebound its capability is live, so its lease
+/// clearing does not release it.
+#[test]
+fn a_rebound_scope_is_kept_when_its_lease_clears() {
+    let (mut a, _) = authority();
+    let root = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    a.acquire(&root, 1, "g", 0).unwrap();
+    a.pump(0).unwrap();
+    a.disconnect(root.scope, 1).unwrap();
+    assert_eq!(a.bind(&root, false, 2).unwrap(), 2, "rebound");
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
+    a.settle(&[], release);
+    assert_eq!(a.inspect(release).live_scopes, 1, "the rebound scope stays");
+    a.acquire(&root, 2, "g", release).unwrap();
+    assert_eq!(a.pump(release).unwrap().len(), 1, "and keeps working");
+}
+
+/// #2664 review: a lease that clears on time leaves no write of its own, so
+/// the turn that clears it makes the ledger durable; a restart cannot bring
+/// it back. A later quiet turn writes nothing more.
+#[test]
+fn a_lease_that_clears_on_time_is_checkpointed() {
+    let (mut a, journal) = authority();
+    let root = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    a.acquire(&root, 1, "g", 0).unwrap();
+    a.pump(0).unwrap();
+    a.disconnect(root.scope, 1).unwrap();
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
+    let written = journal.log().writes.len();
+    a.settle(&[], release - 1);
+    assert_eq!(journal.log().writes.len(), written, "nothing cleared yet");
+    a.settle(&[], release);
+    assert_eq!(
+        journal.log().writes.len(),
+        written + 1,
+        "the clearing is durable"
+    );
+    assert!(journal.log().writes.last().unwrap().outstanding.is_empty());
+    a.settle(&[], release + 1);
+    assert_eq!(journal.log().writes.len(), written + 1, "and written once");
+}
+
+/// #2664 review: a lease lost, rebound and lost again keeps the instant it
+/// was first lost: the margin runs from there, not from the second loss.
+#[test]
+fn a_lease_lost_twice_keeps_its_first_loss() {
+    let (mut a, _) = authority();
+    let root = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    let other = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    a.acquire(&root, 1, "g", 0).unwrap();
+    a.pump(0).unwrap();
+    let first = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
+    a.disconnect(root.scope, first).unwrap();
+    a.bind(&root, false, first + 1).unwrap();
+    a.disconnect(root.scope, first + 30_000).unwrap();
+    let release = first + UNCERTAIN_LEASE_MARGIN_MS;
+    a.acquire(&other, 1, "g", release - 1).unwrap();
+    a.settle(&[], release - 1);
+    assert_eq!(a.inspect(release - 1).groups[&group()].uncertain, 1);
+    a.settle(&[], release);
+    assert_eq!(
+        a.inspect(release).groups[&group()].uncertain,
+        0,
+        "cleared a margin after the first loss"
+    );
+    assert_eq!(a.inspect(release).groups[&group()].active, 1, "and granted");
+}

@@ -37,7 +37,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         C::NoBoard => &[],
         C::Rule => &["rule"],
         C::FolderSetAside => &["reason", "path", "object"],
-        C::SetAside => &["task", "object"],
+        C::SetAside => &["task", "path", "object"],
         C::NotFound | C::Exists | C::UnknownReference => &["task"],
         C::ClockUnreadable => &["read"],
         C::ClosesCycle | C::IdInUse => &["task", "by"],
@@ -423,6 +423,7 @@ board_rules! {
     R::NoSuchChange(_) => R::NoSuchChange(4), "no_such_change", ["change"];
     R::NoSuchRun(_) => R::NoSuchRun(4), "no_such_run", ["run"];
     R::ItemsNotDone { .. } => R::ItemsNotDone { run: 1, items: vec![Slug::parse("api").unwrap()], report: crate::domain::project_board::value_objects::rule_error::SwarmReport::NoneKept }, "items_not_done", ["run", "items", "report"];
+    R::NotPushed { .. } => R::NotPushed { run: 1, revisions: 2 }, "not_pushed", ["run", "revisions"];
     R::ChangeAhead { .. } => R::ChangeAhead { change: 1, updated: at("10:00:00") }, "change_ahead", ["change", "updated"];
     R::DiscussionClosed(_) => R::DiscussionClosed(Slug::parse("chat").unwrap()), "discussion_closed", ["discussion"];
     R::DiscussionLinked { .. } => R::DiscussionLinked { discussion: Slug::parse("chat").unwrap(), task: Slug::parse("board-store").unwrap() }, "discussion_linked", ["discussion", "task"];
@@ -568,6 +569,7 @@ fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
         json!({
             "code": "set_aside",
             "task": "t",
+            "path": "tasks/t.md",
             "object": "c".repeat(40),
             "message": "task t is set aside as unreadable; mend its file, or remove it with \
                         clear_set_aside(path \"tasks/t.md\", object \"cccccccccccccccccccccccccccccccccccccccc\")",
@@ -736,3 +738,6 @@ fn every_code_the_board_answers_is_a_known_kind() {
         "codes missing from KNOWN_KINDS: {unknown:?}"
     );
 }
+
+#[path = "answer_set_aside_tests.rs"]
+mod set_aside;

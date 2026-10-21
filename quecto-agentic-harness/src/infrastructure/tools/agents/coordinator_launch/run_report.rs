@@ -23,6 +23,22 @@ use crate::domain::swarm::entities::records::{RunState, TaskState};
 
 /// The view of `board`, a kept board's projection, when its run ended.
 pub fn swarm_run_view(board: &Value) -> Option<SwarmRunView> {
+    view_of(board, |status| SwarmEnd::of(&RunState::new(status)))
+}
+
+/// The view of `board`, a kept board's projection, when its run still ran
+/// or was paused (an allowlist) as its owner ended its coordinator
+/// (#2674): as far as it got, read as a swarm cancelled there, so a stop
+/// records the items it had finished.
+pub fn left_run_view(board: &Value) -> Option<SwarmRunView> {
+    view_of(board, |status| match status {
+        "running" | "paused" => Some(SwarmEnd::Cancelled),
+        _ => None,
+    })
+}
+
+/// The view of `board` when `end` reads its run's status as one it takes.
+fn view_of(board: &Value, end: impl Fn(&str) -> Option<SwarmEnd>) -> Option<SwarmRunView> {
     // Only a projection that holds every item (an allowlist): one past a
     // row limit or its byte budget on its items cannot tell an item the
     // swarm never seeded from one left out. Members or evidence left out
@@ -41,7 +57,7 @@ pub fn swarm_run_view(board: &Value) -> Option<SwarmRunView> {
         }
     }
     let run = board.get("run")?.as_object()?;
-    let end = SwarmEnd::of(&RunState::new(run.get("status")?.as_str()?))?;
+    let end = end(run.get("status")?.as_str()?)?;
     let observed_tokens = run.get("budget")?.get("observed_tokens")?.as_u64()?;
     let items = listed.iter().filter_map(item).collect();
     Some(SwarmRunView {

@@ -23,6 +23,9 @@ pub(super) fn persist<S: AdmissionSecretSource>(
         .persist(ledger);
     let healthy = written.is_ok();
     authority.record_journal(healthy);
+    if healthy {
+        authority.record_durable(ledger);
+    }
     debug_assert_eq!(
         authority.journal_healthy(),
         healthy,
