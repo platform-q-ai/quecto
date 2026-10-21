@@ -182,7 +182,7 @@ pub fn run_items(
             evidence += kept.len();
             RunItem {
                 id: item.id.clone(),
-                state: swarm.map_or(ItemState::Todo, |swarm| swarm.state.item_state()),
+                state: swarm.map_or(ItemState::Todo, SwarmItemView::item_state),
                 owner,
                 evidence: kept,
             }
@@ -265,7 +265,8 @@ pub fn evidence_revisions(plan: &Plan, view: &SwarmRunView) -> EvidenceRevisions
 /// The swarm item plan item `item` stands for, by its place in the view:
 /// of those carrying its
 /// title exactly, or else its `<slug>: ` prefix, the most progressed, the
-/// newest of equals.
+/// newest of equals: progressed by the state the board holds, the newest's
+/// by where it stood before a death that blocked it (#2685).
 fn matched<'v>(item: &PlanItem, view: &'v SwarmRunView) -> Option<(usize, &'v SwarmItemView)> {
     let key = item_title(item);
     let prefix = format!("{}: ", item.id.as_str());
@@ -284,7 +285,17 @@ fn matched<'v>(item: &PlanItem, view: &'v SwarmRunView) -> Option<(usize, &'v Sw
             })
     };
     let exact = under(true).next().is_some();
-    under(exact).max_by_key(|(at, swarm)| (swarm.state.progress(), *at))
+    // Copies rank by the state the board holds (#2685): one a death
+    // blocked only stands where it stood before when it is the newest,
+    // as an item made again is newer than the copy it replaced.
+    let newest = under(exact).map(|(at, _)| at).max();
+    under(exact).max_by_key(|(at, swarm)| {
+        let state = match Some(*at) == newest {
+            true => swarm.standing(),
+            false => swarm.state,
+        };
+        (state.progress(), *at)
+    })
 }
 
 /// `entry` as one evidence line: `<artifact> at <revision>`, each part one

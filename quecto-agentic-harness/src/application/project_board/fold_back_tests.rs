@@ -69,6 +69,7 @@ pub fn swarm_item(
                 revision: (*revision).into(),
             })
             .collect(),
+        stood_before_death: None,
     }
 }
 
@@ -630,4 +631,43 @@ fn the_cost_is_the_observed_tokens_within_the_board_bound() {
     assert_eq!(cost_of(&run), 1234);
     run.observed_tokens = u64::MAX;
     assert_eq!(cost_of(&run), MAX_BUDGET_TOKENS);
+}
+
+/// #2685 rounds 1 and 2: copies are ranked by the state the board holds,
+/// except the newest, which stands where it stood before a death that
+/// blocked it (an item made again is newer than the copy it replaced).
+/// Worker 1 submits `api` and dies; the coordinator makes `api` again and
+/// worker 2 claims it: the fold-back records the new copy, doing and held
+/// by worker 2, never the dead copy's stale evidence.
+#[test]
+fn a_death_blocked_copy_never_outranks_the_copy_that_replaced_it() {
+    let dead = SwarmItemView {
+        stood_before_death: Some(SwarmItemState::Submitted),
+        ..swarm_item(
+            "api: Build the api",
+            SwarmItemState::Blocked,
+            Some("worker-1"),
+            &[("src/api.rs", "abc1234")],
+        )
+    };
+    let again = swarm_item(
+        "api: Build the api",
+        SwarmItemState::Claimed,
+        Some("worker-2"),
+        &[],
+    );
+    let api = folded(vec![dead.clone(), again.clone()]).items.remove(0);
+    assert_eq!(api.state, ItemState::Doing);
+    assert_eq!(api.owner.as_deref(), Some("worker-2"));
+    assert!(api.evidence.is_empty(), "{:?}", api.evidence);
+    let replaced = view(vec![dead.clone(), again]);
+    assert!(evidence_revisions(&plan(), &replaced).ids.is_empty());
+    // Alone, the dead copy stands as it was before the death: in review.
+    let api = folded(vec![dead.clone()]).items.remove(0);
+    assert_eq!(api.state, ItemState::Review);
+    // Newest, it stands so above an older copy never claimed.
+    let older = swarm_item("api: Build the api", SwarmItemState::Ready, None, &[]);
+    let api = folded(vec![older, dead]).items.remove(0);
+    assert_eq!(api.state, ItemState::Review);
+    assert_eq!(api.owner.as_deref(), Some("worker-1"));
 }

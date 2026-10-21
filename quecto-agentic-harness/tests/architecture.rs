@@ -5217,6 +5217,8 @@ const TEARDOWN_PORTS: &[&str] = &[
     "OwnedChildTermination",
     "DelegatedAgentRegistry",
     "TeardownCompensation",
+    // The environments a selected termination kept (#2681).
+    "KeptEnvironments",
     // Container config selection at launch (#2024 S4a): the launch
     // policy's read of the configuration capability's effective container
     // configs for the launching agent's checkout.
@@ -5515,6 +5517,7 @@ const SUBAGENT_PORT_FILES: &[&str] = &[
     "delegated_agent_registry.rs",
     "ended_child_records.rs",
     "harness_shutdown.rs",
+    "kept_environments.rs",
     "mod.rs",
     "owned_child_termination.rs",
     "teardown_compensation.rs",
@@ -7272,6 +7275,9 @@ const SWARM_BOARD_PORTS: &[&str] = &[
     // reservations normalise paths in the checkout, an effect (#2275).
     "BoardMessages",
     "CheckoutPaths",
+    // Verification carries a submission's evidence to the coordinator's
+    // commit when the checkout's history confirms it (#2687), an effect.
+    "CheckoutHistory",
     // The wake frontiers (#2276): notification and wake cursors.
     "BoardWakes",
     // The usage report the control receipt carries (#2273; S9 adds the

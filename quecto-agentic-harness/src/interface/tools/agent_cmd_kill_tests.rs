@@ -13,7 +13,30 @@ fn outcome(result: TerminationResult, removed: usize) -> KillDelegatedAgentOutco
         removed: (0..removed)
             .map(|n| AgentUuid::new(format!("r{n}")))
             .collect(),
+        kept: Vec::new(),
     }
+}
+
+/// #2681: a kill whose teardown kept an environment says so, naming it
+/// and the reason its record holds.
+#[test]
+fn an_outcome_names_each_environment_its_teardown_kept() {
+    let reason = "board run succeeded at 247ec1d, which is on no branch or tag of the board's \
+                  remote: environment C6 kept so its work can be pushed from its checkout \
+                  /state/env-6/workspace/repo; kill_container C6 to remove it once pushed";
+    let mut kept = outcome(TerminationResult::Graceful, 1);
+    kept.kept = vec![
+        crate::application::subagents::ports::kept_environments::KeptEnvironment {
+            environment_ref: "C6".into(),
+            reason: reason.into(),
+        },
+    ];
+    let body: serde_json::Value = serde_json::from_str(&present_outcome(&kept).content).unwrap();
+    assert_eq!(
+        body["kept"],
+        serde_json::json!([{"environment": "C6", "reason": reason}])
+    );
+    assert_eq!(body["result"], "graceful");
 }
 
 #[test]
@@ -166,4 +189,31 @@ async fn the_tool_parses_invokes_and_presents() {
         .unwrap();
     assert!(missing.is_error);
     assert!(missing.content.contains("not found"));
+}
+
+/// #2681 round 1: a kept reason reaches the model redacted and clipped,
+/// and the list is capped as `killed` is.
+#[test]
+fn kept_reasons_are_redacted_clipped_and_capped() {
+    let mut kept = outcome(TerminationResult::Graceful, 1);
+    kept.kept = (0..23)
+        .map(
+            |n| crate::application::subagents::ports::kept_environments::KeptEnvironment {
+                environment_ref: format!("C{n}"),
+                reason: format!("token=hunter2 {}", "x".repeat(500)),
+            },
+        )
+        .collect();
+    let body: serde_json::Value = serde_json::from_str(&present_outcome(&kept).content).unwrap();
+    let listed = body["kept"].as_array().unwrap();
+    assert_eq!(listed.len(), 20);
+    assert_eq!(body["omitted_kept"], 3);
+    let reason = listed[0]["reason"].as_str().unwrap();
+    assert!(!reason.contains("hunter2"), "{reason}");
+    assert!(reason.ends_with('…'), "{reason}");
+    assert_eq!(
+        reason.chars().count(),
+        401,
+        "400 characters and the cut mark"
+    );
 }
