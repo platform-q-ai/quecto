@@ -30,7 +30,9 @@ fn every_hostile_file_is_refused_with_its_reason() {
         ("dollar math", edited("and all.", "and $x$."), |e| matches!(e, E::Math { line: 11 })),
         ("an image", edited("and all.", "![i](https://example.com/i.png)"), |e| matches!(e, E::Image { line: 11 })),
         ("an http link", edited("https://example.com/docs", "http://example.com/docs"), |e| matches!(e, E::Link { line: 16 })),
-        ("a stray escape", edited("and all.", "and all\\."), |e| matches!(e, E::Escape { line: 11 })),
+        // A backslash is itself (#2668): one a reader would take for an
+        // escape is written doubled, so a lone one is not canonical.
+        ("a stray escape", edited("and all.", "and all\\."), |e| matches!(e, E::NotCanonical)),
         ("an open code span", edited("and all.", "and `all."), |e| matches!(e, E::UnbalancedCode { line: 11 })),
         ("a setext underline", edited("1\\. not a list\n", "1\\. not a list\n===\n"), |e| matches!(e, E::BlockLike { line: 14 })),
         ("a heading in a paragraph", edited("\\# not a heading", "# not a heading"), |e| matches!(e, E::BlockLike { line: 12 })),
@@ -213,9 +215,6 @@ fn hostile_documents_are_refused_when_written() {
         ("a wikilink", render(&with_line("a [[x]] b"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
         ("a bare address", render(&with_line("see https://example.com"), &SHAPE), |e| matches!(e, E::Link { .. })),
         ("an autolink", render(&with_line("<https://example.com>"), &SHAPE), |e| matches!(e, E::Html { .. })),
-        ("an escape", render(&with_line("a\\*b"), &SHAPE), |e| matches!(e, E::Escape { .. })),
-        ("an escaped backtick", render(&with_line("a \\`b` <T>"), &SHAPE), |e| matches!(e, E::Escape { .. })),
-        ("a hard break", render(&with_line("a\\"), &SHAPE), |e| matches!(e, E::Escape { .. })),
         ("an open code span", render(&with_line("a `b"), &SHAPE), |e| matches!(e, E::UnbalancedCode { .. })),
         ("a leading space", render(&with_line(" indented"), &SHAPE), |e| matches!(e, E::Structure { .. })),
         ("a bidi override", render(&with_line("pla\u{202e}in"), &SHAPE), |e| matches!(e, E::Bidi { .. })),
@@ -393,6 +392,14 @@ fn near_misses_are_kept() {
         "an email in code `ada@example.com` and a handle @ada",
         "a profile [here](https://example.com/@ada) and [paypal.com](https://example.com)",
         "README.md and C:\\x",
+        // A backslash is itself (#2668): written doubled where a reader
+        // would take it for an escape, a hard break or a code span's.
+        "a\\*b",
+        "a \\`b`",
+        "a\\",
+        "\\",
+        "\\\\x",
+        "\\x and \\# and \\- and 1\\. x",
         "snake_case and a_b_c",
         "```a``` opens the line as code, not a fence",
     ] {
@@ -401,6 +408,15 @@ fn near_misses_are_kept() {
         assert_eq!(outline(&file, &document), Ok(()), "{line:?}");
         assert_eq!(parse(file.as_bytes(), &SHAPE), Ok(document), "{line:?}");
     }
+    // #2668: a text cell's backslashes are escaped outside code alone.
+    let document = with_claim("`a\\\\b` and a \\\\ b");
+    let file = render(&document, &SHAPE).unwrap();
+    assert!(
+        file.contains("| Claim | `a\\\\b` and a \\\\\\ b |"),
+        "{file}"
+    );
+    assert_eq!(outline(&file, &document), Ok(()));
+    assert_eq!(parse(file.as_bytes(), &SHAPE), Ok(document));
     let document = with_claim("`C:\\x` and `a|b`");
     let file = render(&document, &SHAPE).unwrap();
     assert!(file.contains("| Claim | `C:\\x` and `a\\|b` |"), "{file}");

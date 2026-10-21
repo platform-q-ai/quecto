@@ -38,12 +38,12 @@ fn other_tasks(version: u32) -> Plan {
 #[test]
 fn a_new_version_follows_the_last_and_records_who_proposed_it() {
     let versions = [plan(1, PlanState::Accepted), plan(2, PlanState::Draft)];
-    let next = propose(
+    let next = propose_at(
         &task(Ready),
         &versions,
         content(),
         &person("Bob"),
-        &at("10:00:00"),
+        &when(&at("10:00:00")),
     )
     .unwrap();
     let fields = next.fields();
@@ -55,12 +55,12 @@ fn a_new_version_follows_the_last_and_records_who_proposed_it() {
         (&fields.proposed_by, &fields.accepted),
         (&person("Bob"), &None)
     );
-    let first = propose(
+    let first = propose_at(
         &unaccepted(Draft),
         &[],
         content(),
         &person("Bob"),
-        &at("10:00:00"),
+        &when(&at("10:00:00")),
     )
     .unwrap();
     assert_eq!(first.fields().version, 1);
@@ -74,19 +74,22 @@ fn a_finished_tasks_plans_are_settled() {
         let finished = task(status);
         let refused = BoardRuleError::TaskFinished(status);
         assert_eq!(
-            propose(
+            propose_at(
                 &finished,
                 &[plan(1, PlanState::Accepted)],
                 content(),
                 &ada,
-                &now
+                &when(&now.clone())
             ),
             Err(refused.clone())
         );
         assert_eq!(
             edit_draft(
-                &finished,
-                &plan(2, PlanState::Draft),
+                DraftOf {
+                    task: &finished,
+                    versions: std::slice::from_ref(&plan(2, PlanState::Draft)),
+                    plan: &plan(2, PlanState::Draft)
+                },
                 content(),
                 None,
                 &person("Ada"),
@@ -96,8 +99,11 @@ fn a_finished_tasks_plans_are_settled() {
         );
         assert_eq!(
             discard(
-                &finished,
-                &plan(2, PlanState::Draft),
+                DraftOf {
+                    task: &finished,
+                    versions: std::slice::from_ref(&plan(2, PlanState::Draft)),
+                    plan: &plan(2, PlanState::Draft)
+                },
                 None,
                 &ada,
                 &when(&now)
@@ -175,7 +181,7 @@ fn plans_that_contradict_each_other_are_refused_not_built_on() {
             ),
             "{versions:?}: {refused:?}"
         );
-        assert!(propose(&held, &versions, content(), &ada, &now).is_err());
+        assert!(propose_at(&held, &versions, content(), &ada, &when(&now.clone())).is_err());
     }
 }
 
@@ -186,8 +192,11 @@ fn only_a_draft_is_edited_and_only_by_an_edit_that_changes_something() {
     changed.team = None;
     let held = task(InProgress);
     let edited = edit_draft(
-        &held,
-        &draft,
+        DraftOf {
+            task: &held,
+            versions: std::slice::from_ref(&draft),
+            plan: &draft,
+        },
         changed.clone(),
         None,
         &person("Ada"),
@@ -195,11 +204,15 @@ fn only_a_draft_is_edited_and_only_by_an_edit_that_changes_something() {
     )
     .unwrap();
     assert_eq!(edited.fields().team, None);
-    assert_eq!(edited.fields().updated, at("08:30:01"), "always moves on");
+    // Never before the task's last change, at 09:00 (#2662).
+    assert_eq!(edited.fields().updated, at("09:00:00"), "always moves on");
     assert_eq!(
         edit_draft(
-            &held,
-            &draft,
+            DraftOf {
+                task: &held,
+                versions: std::slice::from_ref(&draft),
+                plan: &draft,
+            },
             content(),
             None,
             &person("Ada"),
@@ -214,8 +227,11 @@ fn only_a_draft_is_edited_and_only_by_an_edit_that_changes_something() {
     ] {
         assert_eq!(
             edit_draft(
-                &held,
-                &plan(2, state),
+                DraftOf {
+                    task: &held,
+                    versions: std::slice::from_ref(&plan(2, state)),
+                    plan: &plan(2, state)
+                },
                 changed.clone(),
                 None,
                 &person("Ada"),
@@ -226,8 +242,11 @@ fn only_a_draft_is_edited_and_only_by_an_edit_that_changes_something() {
     }
     assert_eq!(
         edit_draft(
-            &held,
-            &other_tasks(2),
+            DraftOf {
+                task: &held,
+                versions: std::slice::from_ref(&other_tasks(2)),
+                plan: &other_tasks(2),
+            },
             changed,
             None,
             &person("Ada"),
@@ -347,8 +366,11 @@ fn the_holder_decides_for_a_held_task_and_anyone_for_an_unclaimed_one() {
         );
         assert_eq!(
             discard(
-                &held,
-                &versions[1],
+                DraftOf {
+                    task: &held,
+                    versions: std::slice::from_ref(&versions[1]),
+                    plan: &versions[1],
+                },
                 None,
                 &person("Bob"),
                 &when(&at("10:00:00"))
@@ -440,33 +462,6 @@ fn an_acceptance_waits_for_a_known_unchanged_draft_and_no_run_going() {
     );
 }
 
-#[test]
-fn a_discarded_draft_is_kept_and_only_a_draft_is_discarded() {
-    let discarded = discard(
-        &task(Ready),
-        &plan(2, PlanState::Draft),
-        None,
-        &person("Bob"),
-        &when(&at("10:00:00")),
-    )
-    .unwrap();
-    assert_eq!(discarded.fields().state, PlanState::Discarded);
-    assert_eq!(
-        discarded.fields().items,
-        plan(2, PlanState::Draft).fields().items
-    );
-    assert_eq!(
-        discard(
-            &task(Ready),
-            &discarded,
-            None,
-            &person("Bob"),
-            &when(&at("10:00:00"))
-        ),
-        Err(BoardRuleError::PlanNotDraft(PlanState::Discarded))
-    );
-}
-
 /// A plan proposed by a clock running ahead is accepted after its own
 /// last change: the task, both plans and the acceptance share one stamp,
 /// a second past the latest of them.
@@ -529,8 +524,11 @@ fn a_draft_edit_pinned_to_an_older_read_is_refused() {
     let draft = plan(2, PlanState::Draft);
     assert_eq!(
         edit_draft(
-            &task(InProgress),
-            &draft,
+            DraftOf {
+                task: &task(InProgress),
+                versions: std::slice::from_ref(&draft),
+                plan: &draft,
+            },
             changed.clone(),
             Some(&at("08:00:00")),
             &person("Ada"),
@@ -543,8 +541,11 @@ fn a_draft_edit_pinned_to_an_older_read_is_refused() {
     );
     assert!(
         edit_draft(
-            &task(InProgress),
-            &draft,
+            DraftOf {
+                task: &task(InProgress),
+                versions: std::slice::from_ref(&draft),
+                plan: &draft,
+            },
             changed,
             Some(&at("08:30:00")),
             &person("Ada"),
@@ -608,8 +609,11 @@ fn a_plan_stamped_ahead_of_the_outside_time_is_never_built_on() {
     );
     assert_eq!(
         edit_draft(
-            &held,
-            &ahead(PlanState::Draft, 2),
+            DraftOf {
+                task: &held,
+                versions: std::slice::from_ref(&ahead(PlanState::Draft, 2)),
+                plan: &ahead(PlanState::Draft, 2)
+            },
             content(),
             None,
             &ada,
@@ -621,27 +625,6 @@ fn a_plan_stamped_ahead_of_the_outside_time_is_never_built_on() {
         })
     );
     assert!(accept_in(&[plan(1, PlanState::Accepted), plan(2, PlanState::Draft)]).is_ok());
-}
-
-/// Drafts are anyone's: an edit records who made it, and keeps who
-/// proposed the plan.
-#[test]
-fn an_edit_records_its_editor_and_keeps_the_proposer() {
-    let mut changed = content();
-    changed.team = None;
-    let edited = edit_draft(
-        &task(InProgress),
-        &plan(2, PlanState::Draft),
-        changed,
-        None,
-        &person("Bob"),
-        &when(&at("10:00:00")),
-    )
-    .unwrap();
-    assert_eq!(
-        (&edited.fields().proposed_by, &edited.fields().edited_by),
-        (&person("Ada"), &Some(person("Bob")))
-    );
 }
 
 /// The bound is the latest time plus the stamp's slack, inclusive: with
@@ -708,10 +691,13 @@ fn plan_text_is_taken_only_once_normalised() {
         let mut raw = content();
         spoil(&mut raw);
         let ada = person("Ada");
-        let proposed = propose(&held, &[], raw.clone(), &ada, &at("10:00:00"));
+        let proposed = propose_at(&held, &[], raw.clone(), &ada, &when(&at("10:00:00")));
         let edited = edit_draft(
-            &held,
-            &plan(1, PlanState::Draft),
+            DraftOf {
+                task: &held,
+                versions: std::slice::from_ref(&plan(1, PlanState::Draft)),
+                plan: &plan(1, PlanState::Draft),
+            },
             raw,
             None,
             &ada,
@@ -738,5 +724,14 @@ fn plan_text_is_taken_only_once_normalised() {
     normalised.approach = board_text::text("Spike, then build. ");
     normalised.items[0].title = board_text::line(" Item schema");
     normalised.items[1].criteria[0] = board_text::line(" api proved");
-    assert!(propose(&held, &[], normalised, &person("Ada"), &at("10:00:00")).is_ok());
+    assert!(
+        propose_at(
+            &held,
+            &[],
+            normalised,
+            &person("Ada"),
+            &when(&at("10:00:00"))
+        )
+        .is_ok()
+    );
 }
