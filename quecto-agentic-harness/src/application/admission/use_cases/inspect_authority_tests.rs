@@ -16,6 +16,9 @@ impl AuthorityAdmin for Admin {
     fn reset(&self, _directory: &Path) -> Result<ResetReport, AuthorityAdminError> {
         unreachable!()
     }
+    fn stop(&self, _directory: &Path) -> Result<(), AuthorityAdminError> {
+        unreachable!()
+    }
 }
 
 struct Manager(Result<UnitStatus, String>, Result<bool, String>);
@@ -57,6 +60,7 @@ fn report(on_demand: bool) -> AuthorityReport {
     AuthorityReport {
         directory: PathBuf::from("/home/me/.quecto/admission"),
         on_demand,
+        instance: 1,
         epoch: 1,
         journal_healthy: true,
         live_scopes: 0,

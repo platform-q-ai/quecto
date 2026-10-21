@@ -146,6 +146,7 @@ const USE_CASES: &[&str] = &[
     "ReloadRuntimeConfiguration",
     "ReserveFiles",
     "ResetAuthority",
+    "RestartAuthority",
     "RestoreAuthority",
     "ResolveCatalogueUseCase",
     "ResolveEffectiveConfig",

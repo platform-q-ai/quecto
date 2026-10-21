@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use quecto::application::admission::ports::inference_authority_ports::AdmissionJournal;
+use quecto::domain::admission::value_objects::authority_idle::AuthorityStop;
 use quecto::domain::admission::value_objects::inference_admission::*;
 use quecto::infrastructure::admission::{
     AdminConnection, AuthorityConnection, AuthorityDirectory, AuthorityServer, ClientError,
@@ -1211,7 +1212,7 @@ async fn an_on_demand_authority_stops_itself_once_idle_and_never_while_it_holds_
         .await
         .unwrap();
     assert!(
-        timeout(HELD, server.stopped_for_idle()).await.is_err(),
+        timeout(HELD, server.stopped()).await.is_err(),
         "an open connection keeps the authority serving"
     );
     drop(bare);
@@ -1223,7 +1224,7 @@ async fn an_on_demand_authority_stops_itself_once_idle_and_never_while_it_holds_
         .unwrap()
         .unwrap();
     assert!(
-        timeout(HELD, server.stopped_for_idle()).await.is_err(),
+        timeout(HELD, server.stopped()).await.is_err(),
         "a root holding a permit keeps the authority serving"
     );
     // Its client is lost mid-request: the permit is an uncertain lease
@@ -1242,7 +1243,7 @@ async fn an_on_demand_authority_stops_itself_once_idle_and_never_while_it_holds_
     .expect("the lost client's permit becomes an uncertain lease");
     drop(admin);
     assert!(
-        timeout(HELD, server.stopped_for_idle()).await.is_err(),
+        timeout(HELD, server.stopped()).await.is_err(),
         "an uncertain lease keeps the authority serving"
     );
     // The same capability completes it and leaves: nothing is held.
@@ -1252,9 +1253,10 @@ async fn an_on_demand_authority_stops_itself_once_idle_and_never_while_it_holds_
     again.bind(credential).await.unwrap();
     again.complete(1, Feedback::Success).await.unwrap();
     drop(again);
-    timeout(LIMIT, server.stopped_for_idle())
+    let reason = timeout(LIMIT, server.stopped())
         .await
         .expect("an authority holding nothing stops itself once idle");
+    assert_eq!(reason, AuthorityStop::Idle);
     let socket = server.directory().client_socket();
     server.shutdown().await;
     assert!(!socket.exists(), "its sockets are removed");
@@ -1272,7 +1274,7 @@ async fn an_always_on_authority_never_stops_itself() {
     .await
     .unwrap();
     assert!(
-        timeout(Duration::from_millis(500), server.stopped_for_idle())
+        timeout(Duration::from_millis(500), server.stopped())
             .await
             .is_err()
     );

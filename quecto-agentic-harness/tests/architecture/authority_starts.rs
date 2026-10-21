@@ -24,7 +24,7 @@ const SERVER: &str = "AuthorityServer";
 /// The server's items that start nothing: anything else named through the
 /// server outside `STARTERS` counts as a start (an allowlist, so a new start
 /// variant is caught without being listed).
-const NON_STARTING: &[&str] = &["directory", "shutdown", "stopped_for_idle"];
+const NON_STARTING: &[&str] = &["directory", "shutdown", "stopped"];
 
 /// The only files that may name the server at all (#2627 review): its module
 /// and re-export, composition, the broker's run path, and the tests that

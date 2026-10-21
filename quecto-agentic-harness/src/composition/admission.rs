@@ -10,13 +10,13 @@ use crate::application::admission::ports::inference_authority_ports::SharedJourn
 use crate::application::admission::use_cases::{
     AdvanceAuthorityEpoch, BindScope, CompleteAdmission, DisconnectScope, DispatchAdmissions,
     InspectAuthority, InstallAuthorityService, NegotiateAuthority, ResetAuthority,
-    RestoreAuthority, SettleAuthority, UninstallAuthorityService,
+    RestartAuthority, RestoreAuthority, SettleAuthority, UninstallAuthorityService,
 };
 #[cfg(any(test, feature = "test-support"))]
 use crate::domain::admission::value_objects::authority_idle::{AuthorityLifetime, IdleWatch};
 use crate::infrastructure::admission::{
-    AuthorityDirectory, AuthorityUseCases, DetachedAuthorityLauncher, FileJournal,
-    SocketAuthorityAdmin,
+    AuthorityDirectory, AuthorityUseCases, CurrentProcessSession, DetachedAuthorityLauncher,
+    FileJournal, SocketAuthorityAdmin,
 };
 #[cfg(any(test, feature = "test-support"))]
 use crate::infrastructure::admission::{AuthorityServer, ServerError};
@@ -36,14 +36,21 @@ pub fn build_admission_handles() -> AdmissionHandles {
             SystemdUserServiceManager::new(PathBuf::from("/nonexistent/systemd/user"))
         }),
     );
+    let launcher = Arc::new(DetachedAuthorityLauncher::for_current_exe());
+    let negotiate = Arc::new(NegotiateAuthority::new(launcher.clone()));
     AdmissionHandles {
         inspect: Arc::new(InspectAuthority::new(admin.clone(), manager.clone())),
-        reset: Arc::new(ResetAuthority::new(admin)),
+        reset: Arc::new(ResetAuthority::new(admin.clone())),
         install: Arc::new(InstallAuthorityService::new(manager.clone())),
+        restart: Arc::new(RestartAuthority::new(
+            admin,
+            manager.clone(),
+            launcher,
+            negotiate.clone(),
+            Arc::new(CurrentProcessSession::new()),
+        )),
         uninstall: Arc::new(UninstallAuthorityService::new(manager)),
-        negotiate: Arc::new(NegotiateAuthority::new(Arc::new(
-            DetachedAuthorityLauncher::for_current_exe(),
-        ))),
+        negotiate,
         authority: build_authority_use_cases,
     }
 }

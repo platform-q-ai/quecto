@@ -120,8 +120,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             .await
         }
         AgentCommand::Reload { .. } => {
-            // Reload runtime configuration (#1849): forced, rebuilt off the
-            // runtime; the reply is the presenter's rendering of the outcome.
+            // Reload runtime configuration (#1849), rebuilt off the runtime; presented.
             let outcome = super::super::uds_dispatch_reload::force_reload(ctx).await;
             let ev = match crate::interface::uds::catalogue::reload_presenter::render(&outcome) {
                 Ok(data) => AgentEvent::ok(id.as_deref(), &type_name, data),
@@ -187,9 +186,10 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         | AgentCommand::ToolResult { .. } => {
             dispatch_ext_command(cmd, ctx, id.as_deref(), &type_name).await
         }
-        // Exhaustive: variants handled above; agent-targeted history/sync by pre-router.
+        // Exhaustive: handled above, by the pre-router (history/sync) or the reader (restart).
         AgentCommand::ClearHistory { .. }
         | AgentCommand::DeleteAllSubagents { .. }
+        | AgentCommand::RestartAdmission { .. }
         | AgentCommand::ListModels { .. }
         | AgentCommand::RefreshModels { .. }
         | AgentCommand::GetToolCatalogue { .. }

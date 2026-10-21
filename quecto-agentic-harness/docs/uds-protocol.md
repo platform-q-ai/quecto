@@ -623,7 +623,7 @@ bound to an authority, even with no live attempts, and ride on every pushed
 `admission_state_changed` of a bound process — which is also emitted, with the
 activity unchanged, whenever the link's health changes (loss, revocation,
 reconnection, exhaustion), so a client's badge is live without polling. The
-TUI footer renders `authorityStatus` as `admission ✓` / `⟳` / `✗`.
+TUI footer renders `authorityStatus` as `admission ✓ connected` / `⟳ reconnecting` / `✗ unavailable`, followed by `· N queued here` while the session has attempts waiting.
 
 The `waiting` verdict takes precedence over the tool-window verdicts
 (`advancing`, `active`, `quiet`) while any attempt is queued. A changed
@@ -1227,6 +1227,36 @@ A harness with no sub-agent registry answers with the error `no sub-agent regist
 
 ```json
 {"type":"delete_all_subagents","id":"del-1"}
+```
+
+---
+
+### `restart_admission`
+
+Restart the shared admission broker this root session uses, then rejoin it (#2615; the TUI's `/admission restart`). It is answered while a turn is running as well as when idle. When the installed systemd unit runs the broker for this session's global config and is active and serving, the unit is restarted (`systemctl --user restart`), so it stays always-on. Otherwise whatever serves is asked to stop (outstanding work stays journaled, as on SIGTERM) and, once it is gone, the unit (when installed for this config) or a fresh on-demand broker starts, reading the current policy; a broker that was not running is simply started. Success is reported only once a new broker (another `instance`) answers. The session then rejoins through its link as an attempt would.
+
+A restart fails every live sub-agent sharing the broker (they must be respawned) and other sessions' in-flight requests once. When any scope besides this root is registered, a request whose `confirm` is missing or smaller than that count restarts nothing and answers `{"outcome": "unconfirmed", "sharedWith": <others>}`. A broker that does not answer its owner within 5 s is not taken for "none": only an active unit serving this config is restarted around it; otherwise the restart is refused, naming how to stop it. A broker that answers its status with an error is not restarted at all (`… could not report who shares it (…); nothing was restarted`).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"restart_admission"` | yes | |
+| `id` | string | no | Correlation ID |
+| `confirm` | integer | no | Confirms restarting a broker shared with up to this many other sessions or sub-agents: the `sharedWith` count the user was shown. A restart that finds more registered now is not confirmed. |
+
+**Response data:** `{"outcome": "service_restarted" | "restarted" | "started", "authorityStatus": "connected" | "reconnecting" | "unavailable"}`, or `{"outcome": "unconfirmed", "sharedWith": <count>}` when nothing was restarted for want of confirmation.
+
+Errors (the response's `error`):
+
+- `admission is not configured for this session`
+- `a child session cannot restart the shared admission broker; its root session can`
+- `an admission restart is already in progress`
+- `admission broker restart failed: <reason>`
+- `the admission broker is back (<outcome>), but this session could not rejoin it: <reason>`
+
+**Example:**
+
+```json
+{"type":"restart_admission","id":"adm-1"}
 ```
 
 ---

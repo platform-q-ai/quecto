@@ -21,6 +21,8 @@ pub struct AuthorityReport {
     pub directory: PathBuf,
     /// Started on demand: it stops itself when idle (#2615, ADR-0032).
     pub on_demand: bool,
+    /// This run of the broker: a restarted one reports another (#2615).
+    pub instance: u64,
     pub epoch: u64,
     pub journal_healthy: bool,
     pub live_scopes: usize,
@@ -41,6 +43,9 @@ pub enum AuthorityAdminError {
     NotRunning { directory: PathBuf, reason: String },
     /// The broker answered but the operation failed.
     Failed { directory: PathBuf, reason: String },
+    /// A broker accepted the connection but answered nothing within the
+    /// bound (stopped with SIGSTOP, say) (#2615).
+    Unanswered { directory: PathBuf, bound_secs: u64 },
 }
 
 impl std::fmt::Display for AuthorityAdminError {
@@ -58,6 +63,14 @@ impl std::fmt::Display for AuthorityAdminError {
                     directory.display()
                 )
             }
+            Self::Unanswered {
+                directory,
+                bound_secs,
+            } => write!(
+                f,
+                "admission broker at {} answered nothing within {bound_secs} s (is it stopped?)",
+                directory.display()
+            ),
         }
     }
 }

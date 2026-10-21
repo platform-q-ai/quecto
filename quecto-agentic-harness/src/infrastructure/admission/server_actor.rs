@@ -21,7 +21,9 @@ use super::secret::RandomSecretSource;
 use super::server::{AuthorityUseCases, Clock, wall_ms};
 use crate::application::admission::dto::broker::{AuthorityError, Credential};
 use crate::application::admission::services::inference_authority::AdmissionAuthority;
-use crate::domain::admission::value_objects::authority_idle::{AuthorityLifetime, IdleVerdict};
+use crate::domain::admission::value_objects::authority_idle::{
+    AuthorityLifetime, AuthorityStop, IdleVerdict,
+};
 use crate::domain::admission::value_objects::inference_admission::{
     RequestId, RequestState, ScopeId, TerminalOutcome,
 };
@@ -69,14 +71,33 @@ pub(super) struct Actor {
     last_dispatch_failure: Option<String>,
     /// Whether this authority stops itself when idle (#2615, ADR-0032).
     lifetime: AuthorityLifetime,
-    /// Told `true` when the authority stops for being idle.
-    idle_stopped: Option<watch::Sender<bool>>,
-    /// The idle period ran out: the loop ends after this turn.
-    stop_for_idle: bool,
+    /// This run of the authority, so a restart can tell a new one (#2615).
+    instance: u64,
+    /// Told why when the authority stops itself.
+    stopped: Option<watch::Sender<Option<AuthorityStop>>>,
+    /// The idle period ran out or its owner asked: the loop ends after
+    /// this turn.
+    stopping: Option<AuthorityStop>,
+    /// An owner asked to stop on this session: the authority stops once the
+    /// asker has its answer and has gone, or at this deadline (#2615), so
+    /// the answer is never lost to the stop it asked for.
+    stop_requested: Option<(u64, u64)>,
     /// Tests: runs when a turn has decided an idle stop, before the
     /// waiting commands are drained (a client connecting in that instant).
     #[cfg(test)]
     on_idle_stop_decided: Option<Box<dyn FnMut() + Send>>,
+}
+
+/// How long a requested stop waits for its asker to take the answer and
+/// leave before it stops anyway (#2615).
+const STOP_ANSWER_GRACE_MS: u64 = 1_000;
+
+/// An identity for this run of the authority: its start time, its process,
+/// and its place among the authorities this process has run.
+fn run_instance() -> u64 {
+    static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let run = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    wall_ms().wrapping_mul(1_000_003) ^ u64::from(std::process::id()) ^ (run << 48)
 }
 
 fn far_future() -> Instant {
@@ -103,21 +124,23 @@ impl Actor {
             notified: BTreeSet::new(),
             last_dispatch_failure: None,
             lifetime: AuthorityLifetime::AlwaysOn,
-            idle_stopped: None,
-            stop_for_idle: false,
+            instance: run_instance(),
+            stopped: None,
+            stopping: None,
+            stop_requested: None,
             #[cfg(test)]
             on_idle_stop_decided: None,
         }
     }
 
-    /// Serve with `lifetime`, telling `idle_stopped` when it stops itself.
+    /// Serve with `lifetime`, telling `stopped` why when it stops itself.
     pub(super) fn with_lifetime(
         mut self,
         lifetime: AuthorityLifetime,
-        idle_stopped: watch::Sender<bool>,
+        stopped: watch::Sender<Option<AuthorityStop>>,
     ) -> Self {
         self.lifetime = lifetime;
-        self.idle_stopped = Some(idle_stopped);
+        self.stopped = Some(stopped);
         self
     }
 
@@ -145,22 +168,22 @@ impl Actor {
             }
             let mut wake = self.settle();
             #[cfg(test)]
-            if self.stop_for_idle {
+            if self.stopping == Some(AuthorityStop::Idle) {
                 if let Some(hook) = self.on_idle_stop_decided.as_mut() {
                     hook();
                 }
             }
-            if self.stop_for_idle && self.drain_pending(&mut rx) {
+            if self.stopping == Some(AuthorityStop::Idle) && self.drain_pending(&mut rx) {
                 // Something arrived as the idle stop was decided (#2615):
                 // decide again with it served.
-                self.stop_for_idle = false;
+                self.stopping = None;
                 wake = self.settle();
             }
-            if self.stop_for_idle {
-                // Stopped in the same turn that found it idle: nothing that
+            if let Some(reason) = self.stopping {
+                // Stopped in the same turn that decided it: nothing that
                 // arrives after this decision is served or granted.
-                if let Some(idle) = &self.idle_stopped {
-                    let _ = idle.send(true);
+                if let Some(stopped) = &self.stopped {
+                    let _ = stopped.send(Some(reason));
                 }
                 break;
             }
@@ -254,6 +277,12 @@ impl Actor {
     }
 
     fn closed(&mut self, session: u64) {
+        if self
+            .stop_requested
+            .is_some_and(|(asker, _)| asker == session)
+        {
+            self.stopping = Some(AuthorityStop::Requested);
+        }
         let Some(state) = self.sessions.remove(&session) else {
             return;
         };
@@ -325,12 +354,21 @@ impl Actor {
                 }
             }
             Op::Bind { credential } => self.bind(session, credential.clone().into()),
-            Op::Inspect | Op::Reset if role != Role::Admin => Err(AuthorityError::Unauthorized),
+            Op::Inspect | Op::Reset | Op::Stop if role != Role::Admin => {
+                Err(AuthorityError::Unauthorized)
+            }
             Op::Inspect => Ok(status_body(
                 &self.authority.inspect(now),
                 matches!(self.lifetime, AuthorityLifetime::StopWhenIdle(_)),
+                self.instance,
             )),
             Op::Reset => self.reset(now),
+            Op::Stop => {
+                // Answered now; stops once the asker has gone (#2615).
+                let deadline = now.saturating_add(STOP_ANSWER_GRACE_MS);
+                self.stop_requested.get_or_insert((session, deadline));
+                Ok(Body::Ok)
+            }
             op => match credential {
                 None => Err(AuthorityError::Unauthorized),
                 Some(credential) => return self.scoped(op, &credential, now),
@@ -496,7 +534,8 @@ impl Actor {
             | Op::RegisterRoot { .. }
             | Op::Bind { .. }
             | Op::Inspect
-            | Op::Reset => {
+            | Op::Reset
+            | Op::Stop => {
                 unreachable!("unscoped operations are dispatched by request()")
             }
         };
@@ -560,9 +599,23 @@ impl Actor {
             IdleVerdict::IdleUntil(deadline) => Some(deadline),
             IdleVerdict::Stop => {
                 debug_assert!(!holding, "only an idle authority stops itself");
-                self.stop_for_idle = true;
+                self.stopping = Some(AuthorityStop::Idle);
                 None
             }
+        };
+        // A requested stop that its asker never acknowledged by leaving
+        // still stops at its grace deadline.
+        let stop_deadline = match self.stop_requested {
+            Some((_, deadline)) if self.clock.now_ms() >= deadline => {
+                self.stopping = Some(AuthorityStop::Requested);
+                None
+            }
+            Some((_, deadline)) => Some(deadline),
+            None => None,
+        };
+        let idle_deadline = match (idle_deadline, stop_deadline) {
+            (Some(idle), Some(stop)) => Some(idle.min(stop)),
+            (idle, stop) => idle.or(stop),
         };
         // Armed now, after the turn: a slow write cannot leave the next
         // probe already due.

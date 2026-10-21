@@ -86,6 +86,14 @@ no `admission` section nothing is probed or started.
   stop bounds the window.
 - A broker started on demand leaves `broker.log` (owner-only, started afresh
   past 1 MiB, at start and while it runs) next to its journal.
+- **Restart from a session** (`/admission restart`). The installed unit is
+  restarted in place only while it is active and serving; anything else that
+  serves is stopped first, so a broker started by hand with
+  `quecto admission-broker run` is replaced by the unit (when installed for
+  this config) or by one that stops itself when idle. Success means a new
+  broker instance answers. Because it fails every live sub-agent and other
+  sessions' in-flight requests once, a broker others share is restarted only
+  on a confirming second request.
 - **Tests.** A test that starts a real `quecto agent` with an `admission`
   section must start its broker first: an agent that finds none starts a
   production broker, which is not tethered to the test and outlives it until

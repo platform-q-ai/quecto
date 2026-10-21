@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use super::client::{AuthorityConnection, ClientError};
 use super::directory::AuthorityDirectory;
 use crate::application::{
-    admission::dto::broker::Credential, admission::ports::inference_attempt::AttemptAdmission,
+    admission::dto::broker::Credential,
+    admission::ports::inference_attempt::AttemptAdmission,
+    admission::ports::{AuthorityLaunch, AuthoritySession, JoinedAuthority},
 };
 use crate::domain::admission::value_objects::inference_admission::WorkloadClass;
 use crate::infrastructure::providers::routing::provider_runtime_admission::{
@@ -89,6 +91,9 @@ pub struct ProcessAdmission {
     /// The authority directory this process is bound to (root: its own; child:
     /// derived from the mounted client directory), surfaced in `get_state`.
     directory: PathBuf,
+    /// What a root's broker serves, as startup negotiation resolved it, so a
+    /// restart (#2615) starts the same broker again.
+    launch: OnceLock<AuthorityLaunch>,
 }
 
 /// Whether this process owns the authority connection as a root or inherits it
@@ -339,6 +344,7 @@ pub fn negotiate(negotiation: Negotiation) -> Result<ProcessAdmission, String> {
         runtime,
         kind,
         directory,
+        launch: OnceLock::new(),
     })
 }
 
@@ -380,6 +386,91 @@ impl ProcessAdmission {
         })
         .join()
         .unwrap_or((false, Err(ClientError::Closed)))
+    }
+}
+
+impl ProcessAdmission {
+    /// Remember what a root's broker serves (#2615); the first one stays.
+    pub fn remember_launch(&self, launch: AuthorityLaunch) {
+        debug_assert_eq!(self.kind, BindingKind::Root, "only a root starts a broker");
+        let _ = self.launch.set(launch);
+    }
+
+    /// Rejoin the authority after its broker was restarted (#2615): wait
+    /// (bounded by `wait`) for the old connection to close, then reconnect
+    /// through the link exactly as an attempt would. A child cannot rejoin
+    /// (its capability was minted by its parent) and a changed policy is
+    /// refused as "restart required"; both are answered as errors.
+    pub fn rejoin(&self, wait: std::time::Duration) -> Result<(), String> {
+        let link = self.link.clone();
+        let handle = self.runtime.handle().clone();
+        std::thread::spawn(move || {
+            handle.block_on(async move {
+                let deadline = tokio::time::Instant::now() + wait;
+                while link.connection().is_open() && tokio::time::Instant::now() < deadline {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+                link.live_inner()
+                    .await
+                    .map(drop)
+                    .map_err(|error| error.to_string())
+            })
+        })
+        .join()
+        .unwrap_or_else(|_| Err("admission rejoin thread panicked".into()))
+    }
+}
+
+/// How long a rejoin waits for the restarted broker's old connection to close.
+const REJOIN_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The `AuthoritySession` port over a process binding slot (#2615): the
+/// installed binding in production, a test's own slot in its tests.
+#[derive(Debug, Clone, Copy)]
+pub struct CurrentProcessSession {
+    slot: &'static OnceLock<Arc<ProcessAdmission>>,
+}
+
+impl CurrentProcessSession {
+    /// Over this process's installed binding.
+    pub fn new() -> Self {
+        Self { slot: &PROCESS }
+    }
+
+    /// Over `slot` (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn over(slot: &'static OnceLock<Arc<ProcessAdmission>>) -> Self {
+        Self { slot }
+    }
+}
+
+impl Default for CurrentProcessSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AuthoritySession for CurrentProcessSession {
+    fn joined(&self) -> Option<JoinedAuthority> {
+        let binding = self.slot.get()?;
+        match binding.kind {
+            BindingKind::Root => binding.launch.get().cloned().map(JoinedAuthority::Root),
+            BindingKind::Child => Some(JoinedAuthority::Child),
+        }
+    }
+
+    fn rejoin(&self) -> Result<(), String> {
+        match self.slot.get() {
+            Some(binding) => binding.rejoin(REJOIN_WAIT),
+            None => Err("admission is not configured for this session".into()),
+        }
+    }
+
+    fn health(&self) -> String {
+        self.slot
+            .get()
+            .map_or("unavailable", |binding| binding.health().as_str())
+            .to_string()
     }
 }
 

@@ -42,6 +42,8 @@ mod authority_admin;
 mod authority_launcher;
 #[path = "contracts/authority_service_manager.rs"]
 mod authority_service_manager;
+#[path = "contracts/authority_session.rs"]
+mod authority_session;
 #[path = "contracts/authorization_callback.rs"]
 mod authorization_callback;
 #[path = "contracts/board_call_meter.rs"]

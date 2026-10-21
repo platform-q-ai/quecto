@@ -80,6 +80,41 @@ fn inspect_and_reset_address_the_running_authority_by_directory() {
     rt.block_on(server.shutdown());
 }
 
+/// #2615: stop asks the running authority to stop serving; it answers, then
+/// stops itself on request. Nothing running is `NotRunning`.
+#[test]
+fn stop_asks_the_running_authority_to_stop() {
+    let tmp = tempfile::tempdir().unwrap();
+    let directory = tmp.path().join("authority");
+    let admin = SocketAuthorityAdmin::new();
+    assert!(matches!(
+        admin.stop(&directory),
+        Err(AuthorityAdminError::NotRunning { .. })
+    ));
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let server = rt
+        .block_on(quecto::composition::admission::start_authority(
+            AuthorityDirectory::open(&directory).unwrap(),
+            proposal(),
+        ))
+        .unwrap();
+    admin.stop(&directory).unwrap();
+    let reason = rt
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(10), server.stopped()).await
+        })
+        .expect("the authority stops on request");
+    assert_eq!(
+        reason,
+        quecto::domain::admission::value_objects::authority_idle::AuthorityStop::Requested
+    );
+    rt.block_on(server.shutdown());
+}
+
 /// #2615 review: an authority started on demand says so to `status`.
 #[test]
 fn an_on_demand_authority_reports_itself_as_one() {
@@ -102,4 +137,28 @@ fn an_on_demand_authority_reports_itself_as_one() {
     let report = SocketAuthorityAdmin::new().inspect(&directory).unwrap();
     assert!(report.on_demand);
     rt.block_on(server.shutdown());
+}
+
+/// #2615 review: a broker that accepts but never answers (stopped with
+/// SIGSTOP, say) fails each admin call within its bound, as `Failed`, never
+/// as `NotRunning` and never by waiting forever.
+#[test]
+fn a_broker_that_never_answers_fails_within_the_bound() {
+    let tmp = tempfile::tempdir().unwrap();
+    let directory = tmp.path().join("authority");
+    std::fs::create_dir_all(&directory).unwrap();
+    let _silent = std::os::unix::net::UnixListener::bind(directory.join("admin.sock")).unwrap();
+    let admin = SocketAuthorityAdmin::bounded_by(std::time::Duration::from_millis(200));
+    let started = std::time::Instant::now();
+    for result in [
+        admin.inspect(&directory).map(drop),
+        admin.stop(&directory),
+        admin.reset(&directory).map(drop),
+    ] {
+        assert!(
+            matches!(result, Err(AuthorityAdminError::Unanswered { ref directory, .. }) if *directory == tmp.path().join("authority")),
+            "{result:?}"
+        );
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
 }

@@ -184,6 +184,37 @@ service back. (It says so only when the unit runs the broker for this config
 and is inactive; otherwise it says the unit is installed but not stopped in
 the on-demand broker's favour.)
 
+### Restarting it from a session
+
+`/admission restart` in the TUI (UDS `restart_admission`) restarts the broker
+the session uses and rejoins it. If the installed systemd unit runs the broker
+for this session's global config and is the one serving, the unit is
+restarted. Otherwise whatever serves is asked to stop, as SIGTERM would
+(outstanding work stays journaled and is held as restart orphans until it
+clears), and once it is gone the unit (when installed for this config) or a
+fresh on-demand broker starts in its place with the current policy. A broker
+started by hand with `quecto admission-broker run` is replaced by one that
+stops itself when idle. The restart reports success only once a **new** broker
+answers (each run of a broker reports its own instance to its owner). A child session cannot
+restart the shared broker; its root session can.
+
+A restart interrupts everyone sharing the broker: every live sub-agent (of any
+session) fails closed and must be respawned, and other sessions' in-flight
+requests fail once before they reconnect. So when other sessions or sub-agents
+are registered, the first `/admission restart` names how many and restarts
+nothing; running it again within a minute confirms it for that many (if more
+have joined since, it asks again). If the installed unit does not serve after
+being started twice, a broker started on demand serves instead. A broker that
+does not answer its owner (stopped with SIGSTOP, say) is never taken for "not
+running": only an active unit is restarted around it; otherwise the restart
+is refused with ``stop it (`fuser -k -TERM <directory>/authority.lock`)``.
+
+The TUI footer shows the broker's health beside the model:
+`admission ✓ connected`, `admission ⟳ reconnecting` or
+`admission ✗ unavailable`, followed by `· N queued here` while this session
+has attempts waiting; on a narrow terminal the badge gives way to the model
+name.
+
 ### Commands
 
 ```sh

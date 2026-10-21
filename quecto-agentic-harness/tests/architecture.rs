@@ -5391,6 +5391,36 @@ fn catalogue_interface_dependency_allowed(path: &str) -> bool {
     }
 }
 
+/// The admission edge (#2615) may name only the domain, the admission
+/// capability's DTOs and use cases, and itself — it invokes the restart use
+/// case and presents its report; the binding and the broker stay behind
+/// the use case's ports.
+fn admission_interface_dependency_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "domain", ..]
+        | ["crate", "application", "admission", "dto" | "use_cases", ..]
+        | ["crate", "interface", "uds", "admission", ..] => true,
+        ["crate", ..] => false,
+        ["super", "super", "super", ..] => false,
+        ["tokio" | "quecto_line_io" | "reqwest" | "futures", ..] => false,
+        [
+            "std",
+            "fs" | "io" | "net" | "os" | "process" | "env" | "thread" | "time",
+            ..,
+        ] => false,
+        _ => true,
+    }
+}
+
+#[test]
+fn admission_interface_only_parses_maps_and_presents() {
+    assert_dependencies(
+        "src/interface/uds/admission",
+        admission_interface_dependency_allowed,
+    );
+}
+
 #[test]
 fn catalogue_interface_only_parses_maps_and_presents() {
     assert_dependencies(
@@ -5416,6 +5446,7 @@ fn sessions_interface_only_parses_maps_and_presents() {
     assert_eq!(
         edges,
         [
+            "admission",
             "catalogue",
             "parent_control",
             "sessions",

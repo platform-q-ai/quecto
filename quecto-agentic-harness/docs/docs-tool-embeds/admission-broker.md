@@ -159,7 +159,7 @@ Recovery from a stuck or uncertain group is `quecto admission-broker reset` → 
 A **root session** (a top-level `quecto agent`) survives both a broker restart
 and a `reset` without being restarted. Its link notices the loss at once —
 `get_state.admission` and the pushed `admission_state_changed` carry
-`authorityStatus: "reconnecting"` (TUI footer `admission ⟳`) — and its next
+`authorityStatus: "reconnecting"` (TUI footer `admission ⟳ reconnecting`) — and its next
 prompt (or spawn) re-registers with the owner token on disk, with bounded,
 jittered backoff (8 tries, about ten seconds), then runs: `authorityStatus:
 "connected"`, and after a reset `epoch` is the new one. An attempt that was

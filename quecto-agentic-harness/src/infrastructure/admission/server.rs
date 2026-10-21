@@ -20,7 +20,7 @@ use crate::application::admission::use_cases::{
     AdvanceAuthorityEpoch, BindScope, CompleteAdmission, DisconnectScope, RestoreAuthority,
     SettleAuthority,
 };
-use crate::domain::admission::value_objects::authority_idle::AuthorityLifetime;
+use crate::domain::admission::value_objects::authority_idle::{AuthorityLifetime, AuthorityStop};
 use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
 pub(super) use super::server_actor::Command;
@@ -125,9 +125,9 @@ fn bind_private(path: &Path) -> Result<UnixListener, ServerError> {
 pub struct AuthorityServer {
     dir: AuthorityDirectory,
     shutdown: watch::Sender<bool>,
-    /// Becomes `true` when the actor stopped the authority for being idle
-    /// (#2615); the sender drops with the actor.
-    idle_stopped: watch::Receiver<bool>,
+    /// Why the actor stopped the authority itself, once it has (#2615);
+    /// the sender drops with the actor.
+    stopped: watch::Receiver<Option<AuthorityStop>>,
     tasks: Vec<JoinHandle<()>>,
     _lock: SingletonLock,
 }
@@ -247,9 +247,9 @@ impl AuthorityServer {
         let admin_listener = bind_private(&dir.admin_socket())?;
         let (tx, rx) = mpsc::unbounded_channel();
         let (shutdown, shutdown_rx) = watch::channel(false);
-        let (idle_tx, idle_stopped) = watch::channel(false);
+        let (stopped_tx, stopped) = watch::channel(None);
         let actor = Actor::new(authority, use_cases, clock, proposal_wire, owner_token)
-            .with_lifetime(lifetime, idle_tx);
+            .with_lifetime(lifetime, stopped_tx);
         let tasks = vec![
             tokio::spawn(actor.run(rx, shutdown_rx.clone())),
             tokio::spawn(accept_loop(
@@ -272,7 +272,7 @@ impl AuthorityServer {
         Ok(Self {
             dir,
             shutdown,
-            idle_stopped,
+            stopped,
             tasks,
             _lock: lock,
         })
@@ -282,12 +282,18 @@ impl AuthorityServer {
         &self.dir
     }
 
-    /// Resolves once the authority stopped itself for being idle (#2615);
-    /// never for an always-on authority, nor for one that ended otherwise.
-    pub async fn stopped_for_idle(&self) {
-        let mut idle = self.idle_stopped.clone();
-        if idle.wait_for(|stopped| *stopped).await.is_err() {
-            std::future::pending::<()>().await;
+    /// Resolves with the reason once the authority stopped itself (#2615):
+    /// idle (an on-demand broker) or asked to by its owner. Never for an
+    /// authority that ended otherwise.
+    pub async fn stopped(&self) -> AuthorityStop {
+        let mut stopped = self.stopped.clone();
+        let reason = match stopped.wait_for(Option::is_some).await {
+            Ok(reason) => *reason,
+            Err(_) => None,
+        };
+        match reason {
+            Some(reason) => reason,
+            None => std::future::pending().await,
         }
     }
 

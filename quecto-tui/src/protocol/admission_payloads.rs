@@ -45,6 +45,36 @@ pub struct AdmissionView {
     pub authority_status: Option<String>,
 }
 
+/// A `restart_admission` answer (#2615): how the broker came back and the
+/// session's link health after rejoining it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdmissionRestartView {
+    /// `service_restarted`, `restarted`, `started`, or `unconfirmed`.
+    #[serde(default)]
+    pub outcome: Option<String>,
+    /// With `unconfirmed`: how many other sessions or sub-agents share the
+    /// broker.
+    #[serde(default)]
+    pub shared_with: Option<u64>,
+    #[serde(default)]
+    pub authority_status: Option<String>,
+}
+
+/// Parse a `restart_admission` response's data; anything unreadable is the
+/// empty view (sanitized: it is shown to the user).
+pub fn parse_admission_restart(
+    value: Option<&serde_json::Value>,
+    sanitize: &dyn Fn(&str) -> String,
+) -> AdmissionRestartView {
+    let mut view = value
+        .and_then(|value| AdmissionRestartView::deserialize(value).ok())
+        .unwrap_or_default();
+    view.outcome = view.outcome.map(|outcome| sanitize(&outcome));
+    view.authority_status = view.authority_status.map(|status| sanitize(&status));
+    view
+}
+
 /// Groups are already bounded by the agent's configuration; this guards the
 /// TUI against a hostile or buggy peer.
 const MAX_GROUPS: usize = 32;
@@ -81,6 +111,23 @@ pub fn parse_admission(
         }
     }
     Some(view)
+}
+
+/// The broker-health badge for the footer (#2024 S3, #2615): the health
+/// (`admission ✓ connected`, `admission ⟳ reconnecting`, `admission ✗
+/// unavailable`) and, while this session has attempts waiting, its own queue
+/// depth (`· 2 queued here`). `None` for a status this TUI does not know.
+pub fn authority_badge(status: &str, waiting: u64) -> Option<String> {
+    let health = match status {
+        "connected" => "✓ connected",
+        "reconnecting" => "⟳ reconnecting",
+        "unavailable" => "✗ unavailable",
+        _ => return None,
+    };
+    Some(match waiting {
+        0 => format!("admission {health}"),
+        queued => format!("admission {health} · {queued} queued here"),
+    })
 }
 
 impl AdmissionView {
@@ -159,18 +206,10 @@ impl AdmissionView {
         })
     }
 
-    /// A one-glyph broker-health badge for the footer (#2024 S3): `admission ✓`
-    /// when connected, `admission ⟳` while reconnecting, `admission ✗` when the
-    /// authority is unavailable. `None` when the agent reported no authority
-    /// status (an older harness, or a process bound to no authority).
+    /// The broker-health badge for the footer (#2024 S3, #2615) from this
+    /// view's own `authorityStatus`; `None` when the agent reported none.
     pub fn authority_badge(&self) -> Option<String> {
-        let glyph = match self.authority_status.as_deref()? {
-            "connected" => "✓",
-            "reconnecting" => "⟳",
-            "unavailable" => "✗",
-            _ => return None,
-        };
-        Some(format!("admission {glyph}"))
+        authority_badge(self.authority_status.as_deref()?, self.waiting)
     }
 
     fn cooldown_text(group: &AdmissionGroupView) -> String {

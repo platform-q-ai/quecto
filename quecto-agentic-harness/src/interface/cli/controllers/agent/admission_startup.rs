@@ -36,7 +36,7 @@ pub(super) fn negotiate_from_flags(
         return false;
     };
     let handles = build_admission();
-    negotiate(
+    let joined = negotiate(
         config,
         &ConfigOrigin {
             base_dir,
@@ -45,7 +45,30 @@ pub(super) fn negotiate_from_flags(
         flags.admission_context.as_deref(),
         &handles.negotiate,
         stderr,
-    )
+    );
+    match joined {
+        Some(Joined::Root(launch)) => {
+            // `/admission restart` (#2615) restarts what this root joined.
+            if let Some(binding) = process::current() {
+                binding.remember_launch(launch);
+            }
+            crate::interface::uds::admission::restart_controller::register(handles.restart.clone());
+            true
+        }
+        Some(Joined::Disabled | Joined::Child) => true,
+        None => false,
+    }
+}
+
+/// How this process joined the authority, once it has.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Joined {
+    /// No `admission` section: nothing joined.
+    Disabled,
+    /// A root, registered at the broker serving this launch.
+    Root(AuthorityLaunch),
+    /// A child, bound to its parent's capability.
+    Child,
 }
 
 /// The plan for this process: a child inherits whatever its own config says
@@ -95,32 +118,36 @@ fn absolute(path: PathBuf) -> PathBuf {
     }
 }
 
+/// Join as the plan says; `None` (with the reason on `stderr`) when this
+/// process must not start.
 pub(super) fn negotiate(
     config: &Config,
     origin: &ConfigOrigin<'_>,
     admission_context: Option<&Path>,
     negotiate_use_case: &NegotiateAuthority,
     stderr: &mut String,
-) -> bool {
+) -> Option<Joined> {
     let plan = match plan(config, admission_context, negotiate_use_case) {
         Ok(plan) => plan,
         Err(error) => {
             stderr.push_str(&format!("agent: {error}\n"));
-            return false;
+            return None;
         }
     };
     let outcome = match plan {
-        NegotiationPlan::Disabled => return true,
-        NegotiationPlan::Root { directory } => join_root(&directory, origin, negotiate_use_case),
+        NegotiationPlan::Disabled => return Some(Joined::Disabled),
+        NegotiationPlan::Root { directory } => {
+            join_root(&directory, origin, negotiate_use_case).map(Joined::Root)
+        }
         NegotiationPlan::Child { context } => {
-            process::install(Negotiation::Child { context }).map(drop)
+            process::install(Negotiation::Child { context }).map(|_| Joined::Child)
         }
     };
     match outcome {
-        Ok(()) => true,
+        Ok(joined) => Some(joined),
         Err(error) => {
             stderr.push_str(&format!("agent: admission negotiation failed: {error}\n"));
-            false
+            None
         }
     }
 }
@@ -134,7 +161,7 @@ fn join_root(
     directory: &Path,
     origin: &ConfigOrigin<'_>,
     negotiate_use_case: &NegotiateAuthority,
-) -> Result<(), String> {
+) -> Result<AuthorityLaunch, String> {
     join_root_with(directory, origin, negotiate_use_case, &mut |negotiation| {
         process::install(negotiation).map(drop)
     })
@@ -150,7 +177,7 @@ fn join_root_with(
     origin: &ConfigOrigin<'_>,
     negotiate_use_case: &NegotiateAuthority,
     install: &mut dyn FnMut(Negotiation) -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<AuthorityLaunch, String> {
     let launch = launch_request(directory, origin);
     let mut last = String::new();
     for _ in 0..JOIN_ATTEMPTS {
@@ -158,7 +185,7 @@ fn join_root_with(
         match install(Negotiation::Root {
             directory: directory.to_path_buf(),
         }) {
-            Ok(()) => return Ok(()),
+            Ok(()) => return Ok(launch),
             Err(error) => last = error,
         }
     }

@@ -28,7 +28,8 @@ pub struct Footer {
     admission: Option<String>,
     /// The panel-row form of the same label ("12s").
     admission_compact: Option<String>,
-    /// Broker health badge (#2024 S3): "admission ✓" / "⟳" / "✗"; `None` when
+    /// Broker health badge (#2024 S3, #2615): "admission ✓ connected" /
+    /// "⟳ reconnecting" / "✗ unavailable", plus "· N queued"; `None` when
     /// the agent reported no authority status.
     admission_health: Option<String>,
     /// Cached working directory (read once at construction).
@@ -298,13 +299,18 @@ impl Component for Footer {
         // Broker health rides beside the model regardless of wait state
         // (#2024 S3): a session shows its authority is reachable even when
         // nothing is queued. Presentation only.
+        // The badge yields first when the line is too narrow (#2615 review):
+        // the model and effort are what the line is for.
+        let left_width = visible_width(&left);
+        let min_padding = 2;
         if let Some(health) = &self.admission_health {
-            right = format!("{health} · {right}");
+            let with_health = format!("{health} · {right}");
+            if left_width + min_padding + visible_width(&with_health) <= width {
+                right = with_health;
+            }
         }
         let right = right.as_str();
-        let left_width = visible_width(&left);
         let right_width = visible_width(right);
-        let min_padding = 2;
 
         let stats_line = if left_width + min_padding + right_width <= width {
             let padding = " ".repeat(width - left_width - right_width);

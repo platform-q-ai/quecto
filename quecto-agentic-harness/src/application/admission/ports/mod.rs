@@ -27,6 +27,9 @@ pub trait AuthorityAdmin: Send + Sync {
     fn inspect(&self, directory: &Path) -> Result<AuthorityReport, AuthorityAdminError>;
     /// Start a new accounting epoch at `directory`.
     fn reset(&self, directory: &Path) -> Result<ResetReport, AuthorityAdminError>;
+    /// Ask the authority at `directory` to stop serving, as SIGTERM would
+    /// (#2615): outstanding work stays journaled for the next start.
+    fn stop(&self, directory: &Path) -> Result<(), AuthorityAdminError>;
 }
 
 /// The systemd user unit as the manager should persist it.
@@ -111,4 +114,25 @@ pub trait AuthorityLauncher: Send + Sync {
 pub trait LaunchedAuthority: Send {
     /// How it is doing now.
     fn state(&mut self) -> LaunchState;
+}
+
+/// How this process joined the authority, as a restart needs it (#2615).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JoinedAuthority {
+    /// A root, registered at the broker serving this launch.
+    Root(AuthorityLaunch),
+    /// A child, bound to a capability its parent registered.
+    Child,
+}
+
+/// This process's own binding to the authority (#2615): how it joined, and
+/// rejoining after its broker was restarted.
+pub trait AuthoritySession: Send + Sync {
+    /// How this process joined; `None` when admission is off here.
+    fn joined(&self) -> Option<JoinedAuthority>;
+    /// Rejoin the authority through the link, as an attempt would, once
+    /// the old broker's connection has closed (bounded).
+    fn rejoin(&self) -> Result<(), String>;
+    /// The link's health as `get_state` reports it (`connected`, …).
+    fn health(&self) -> String;
 }

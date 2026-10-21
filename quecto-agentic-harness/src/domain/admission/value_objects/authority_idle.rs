@@ -65,6 +65,15 @@ impl IdleWatch {
     }
 }
 
+/// Why a broker stopped itself (#2615).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorityStop {
+    /// It held nothing for its whole idle period.
+    Idle,
+    /// Its owner asked it to stop (`/admission restart`).
+    Requested,
+}
+
 /// Whether a broker stops itself when idle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthorityLifetime {
