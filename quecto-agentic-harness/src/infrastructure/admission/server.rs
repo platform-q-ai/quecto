@@ -252,7 +252,13 @@ impl AuthorityServer {
     /// outstanding work for the next start; sockets are removed.
     pub async fn shutdown(mut self) {
         let _ = self.shutdown.send(true);
-        for task in std::mem::take(&mut self.tasks) {
+        let mut tasks = std::mem::take(&mut self.tasks).into_iter();
+        // The actor (spawned first) checkpoints its ledger as it stops: let
+        // it finish that final synchronous write before anything is aborted.
+        if let Some(actor) = tasks.next() {
+            let _ = actor.await;
+        }
+        for task in tasks {
             task.abort();
             let _ = task.await;
         }

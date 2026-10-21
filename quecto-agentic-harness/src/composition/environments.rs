@@ -96,13 +96,20 @@ pub fn build_member_finalizer(environments: EnvironmentRegistry) -> FinalizeEnvi
     )
     .keeping_ended_boards(Arc::new(hosted_store_observation()), kept_swarm_boards())
     // A succeeded board run its owner kills keeps its box while its
-    // completion commit is not on the board's remote (#2666 round 2): the
-    // board of the harness's working directory, as the board tool's.
-    .checking_delivery(Arc::new(RemoteCompletionDelivery::new(
-        std::env::current_dir()
-            .map_err(|error| format!("no working directory: {error}"))
-            .and_then(|repo| super::bootstrap::project_board::board_remote_revisions(&repo)),
-    )))
+    // completion commit is not on the board's remote (#2666): the board
+    // repository the session's board tool registered, opened lazily.
+    .checking_delivery(completion_delivery())
+}
+
+/// The one completion check of the process: each board repository's
+/// remote opened once, when a teardown first judges one of its runs.
+fn completion_delivery() -> Arc<RemoteCompletionDelivery> {
+    static DELIVERY: OnceLock<Arc<RemoteCompletionDelivery>> = OnceLock::new();
+    Arc::clone(DELIVERY.get_or_init(|| {
+        Arc::new(RemoteCompletionDelivery::new(
+            super::bootstrap::project_board::board_remote_revisions,
+        ))
+    }))
 }
 
 /// The one store of ended runs' boards composition hands both the

@@ -41,6 +41,14 @@ impl AdmissionRecovery for AdmissionService {
     fn abandon(&mut self, scope: ScopeId, now: u64) -> Result<AbandonReport, AdmissionError> {
         self.policy.abandon(scope, now)
     }
+    fn held(
+        &mut self,
+        scope: ScopeId,
+        sequence: u64,
+        now: u64,
+    ) -> Result<Option<UncertainHold>, AdmissionError> {
+        self.policy.held(scope, sequence, now)
+    }
     fn withdraw(&mut self, scope: ScopeId, sequence: u64, now: u64) -> Result<(), AdmissionError> {
         self.policy.withdraw(scope, sequence, now)
     }

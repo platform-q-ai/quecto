@@ -100,6 +100,12 @@ impl BoardSite {
         launcher: Launcher,
         spawned_in: &crate::domain::environments::entities::environment_registry::EnvironmentRegistry,
     ) -> Self {
+        // The one authority on the session's board repository, which its
+        // teardown judges a succeeded board run's completion against (#2666).
+        crate::infrastructure::tools::agents::coordinator_launch::register_board_repository(
+            spawned_in.session(),
+            &repo,
+        );
         Self {
             repo,
             remote: "origin".into(),

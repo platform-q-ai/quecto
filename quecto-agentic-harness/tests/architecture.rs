@@ -4137,6 +4137,14 @@ fn the_authority_surface_is_an_exhaustive_allowlist() {
         "disconnect",
         "cancellation_due",
         "next_wake",
+        // #2664: a rebound scope is live again, a lost scope whose lease
+        // cleared is released, and a held wait says what held it.
+        "attach",
+        "release_idle_detached",
+        "held",
+        // #2664 review: a lease that clears on time is checkpointed.
+        "record_durable",
+        "checkpoint_due",
     ];
     let source = production_source("src/application/admission/services/inference_authority.rs");
     let file = syn::parse_file(&source).expect("the authority parses");
@@ -4350,10 +4358,34 @@ fn the_authority_server_neither_reads_the_journal_nor_builds_the_authority() {
         "src/infrastructure/admission/server_actor.rs",
     ] {
         let source = production_source(file);
-        for needle in ["FileJournal", "AdmissionAuthority::", ".checkpoint"] {
+        for needle in [
+            "FileJournal",
+            "AdmissionAuthority::",
+            "authority.checkpoint",
+            "CheckpointLedger",
+        ] {
             assert!(!source.contains(needle), "{file} names `{needle}`");
         }
     }
+    // #2664: the actor checkpoints the ledger as it stops only through the
+    // settle use case, never by touching the journal or the authority.
+    let actor: String = production_source("src/infrastructure/admission/server_actor.rs")
+        .split_whitespace()
+        .collect();
+    assert_eq!(
+        actor.matches("checkpoint").count(),
+        actor
+            .matches("use_cases.settle.checkpoint_on_stop(&mutself.authority,")
+            .count(),
+        "every checkpoint in the actor goes through use_cases.settle"
+    );
+    assert_eq!(
+        actor
+            .matches("use_cases.settle.checkpoint_on_stop(&mutself.authority,")
+            .count(),
+        1,
+        "the actor checkpoints once, as it stops"
+    );
     let compact: String = server.split_whitespace().collect();
     assert!(
         compact.contains("use_cases.restore.execute("),

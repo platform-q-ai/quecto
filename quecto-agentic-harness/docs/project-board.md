@@ -486,7 +486,8 @@ short id, and evidence that names no commit (an artifact's digest, a red-test
 bundle, a branch or tag name, `working tree`) are accepted unchecked, so a done
 item whose evidence names no checkable commit does not refuse the success. The
 answer of a success recorded from a kept board gives `unchecked`: how many of
-its evidence revisions went unchecked, so a pass with nothing checked shows. Otherwise the
+its recorded items' evidence entries name no commit the push rule checked (each
+entry counted, repeats included), so a pass with nothing checked shows. Otherwise the
 end is refused (`not_pushed`, a rule refusal naming the `run` and how many
 commits, `revisions`, are not there) and nothing is written, so the board never
 shows a succeeded run over a commit made in the container and torn down with
@@ -508,15 +509,20 @@ remote, naming that branch and its head (evidence it deliberately does not
 push, such as a red-test bundle, names the bundle, not a commit); and the
 `start` answer's steps ask the parent, before it closes a run that succeeded,
 to make sure every such commit is on a branch or tag of the board's remote. And
-the owner's kill of a board run's coordinator whose run ended succeeded keeps
-its environment (retained, as an unfinished run's is; `kill_container` removes
-it) while the commit the run completed at (`completed at <revision>`) is not on
-the board's remote, or that cannot be told (the board, the completion or the
-remote cannot be read), with the reason "board run succeeded at <revision>,
-which is on no branch or tag of the board's remote: environment kept so its work
-can be pushed from its workspace; kill_container to remove it once pushed": the
-work survives, and can be fetched from the retained workspace and pushed. The
-board's remote here is the `origin` of the harness's working directory. If a
+the owner's kill (`agent_cmd kill`) of a board run's coordinator whose run
+ended succeeded keeps its environment (retained, as an unfinished run's is;
+`kill_container` removes it) while the commit the run completed at (`completed
+at <revision>`) is not on the board's remote, or that cannot be told: the board,
+the session's board repository or its remote cannot be read (each git call
+within 15 seconds), or the completion names no one commit the push rule checks
+(the same reading as the evidence's). The reason names the environment and its
+workspace: "board run succeeded at <revision>, which is on no branch or tag of
+the board's remote: environment <ref> kept so its work can be pushed from its
+workspace <path>; kill_container <ref> to remove it once pushed". The work
+survives, and can be fetched from that workspace and pushed. The board's remote
+is the `origin` of the repository the session's board tool works on. Only that
+kill keeps it: a run closed and then left to the session's end (its teardown of
+everything, or a harness shutdown) is torn down as before, so push first. If a
 refused end's commits can still be pushed, push them and call `end_run` again;
 if they went with the container, end the run as `failed`. Commits are judged against the board's own
 remote only: a run whose container cloned another repository (a container

@@ -77,13 +77,14 @@ pub trait EndedSwarmBoards: Send + Sync {
 /// names is on the board's remote. Blocking reads run inline, as the
 /// teardown's scripts do.
 pub trait CompletionDeliveryCheck: Send + Sync {
-    /// For the run of member `label`, whose board as it left is `board`
-    /// (`None`: it could not be read): `NotJudged` for a member that is no
-    /// board run's coordinator, or a completion that names no commit;
-    /// `Unknown` when the board, its completion or the remote cannot be
-    /// read.
+    /// For the run of `session`'s member `label`, whose board as it left
+    /// is `board` (`None`: it could not be read): `NotJudged` for a member
+    /// that is no board run's coordinator; `Unknown` when the board, a
+    /// commit its completion names, the session's board repository or its
+    /// remote cannot be read (within a short bound).
     fn delivery<'a>(
         &'a self,
+        session: &'a str,
         label: &'a str,
         board: Option<&'a SwarmBoardSnapshot>,
     ) -> PortFuture<'a, CompletionDelivery>;

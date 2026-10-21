@@ -331,18 +331,27 @@ pub fn judges_delivery(mode: MemberFinalizeMode, observed: &SwarmRunObservation)
 /// completion commit is not on the board's remote, or not known to be
 /// (fail safe), keeps its box so the work can be pushed from its
 /// workspace. `None`: nothing keeps it.
-pub fn undelivered_reason(delivery: &CompletionDelivery) -> Option<String> {
+///
+/// The reason names the environment `environment` and its `workspace`, the
+/// retained checkout the work is pushed from.
+pub fn undelivered_reason(
+    delivery: &CompletionDelivery,
+    environment: &str,
+    workspace: &str,
+) -> Option<String> {
+    let kept = format!(
+        "environment {environment} kept so its work can be pushed from its workspace \
+         {workspace}; kill_container {environment} to remove it once pushed"
+    );
     match delivery {
         CompletionDelivery::NotJudged | CompletionDelivery::OnRemote => None,
         CompletionDelivery::NotOnRemote { revision } => Some(format!(
             "board run succeeded at {revision}, which is on no branch or tag of the board's \
-             remote: environment kept so its work can be pushed from its workspace; \
-             kill_container to remove it once pushed"
+             remote: {kept}"
         )),
         CompletionDelivery::Unknown { why } => Some(format!(
             "board run succeeded, but whether its completion commit is on the board's remote \
-             could not be checked ({why}): environment kept so its work can be pushed from its \
-             workspace; kill_container to remove it once pushed"
+             could not be checked ({why}): {kept}"
         )),
     }
 }

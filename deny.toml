@@ -2,7 +2,12 @@
 all-features = true
 
 [advisories]
-ignore = []
+ignore = [
+    # webpki-roots 0.26.11 (via tokio-tungstenite) is the compatibility shim
+    # that re-exports webpki-roots 1.x; Cargo.lock resolves that to 1.0.10,
+    # which carries the fix, so the distrusted emSign roots are not bundled.
+    { id = "RUSTSEC-2026-0381", reason = "webpki-roots 0.26.11 only re-exports webpki-roots 1.0.10, which is fixed" },
+]
 
 [licenses]
 exceptions = [
