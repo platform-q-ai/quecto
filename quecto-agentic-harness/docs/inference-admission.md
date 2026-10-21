@@ -253,8 +253,9 @@ nothing but the pre-created `client/` mountpoint, which rootless Podman with
 - A client that disconnects or is killed while an attempt is outstanding leaves
   **uncertain** occupancy: the group stops granting (quarantine) because the
   remote work may still be running. The same session reconnecting and
-  completing the attempt clears it. Otherwise the lease clears by itself at
-  the attempt's deadline (`attempt_timeout_ms` after its grant) plus 60 s
+  completing the attempt clears it. Otherwise the lease clears by itself 60 s
+  after the later of the attempt's deadline (`attempt_timeout_ms` after its
+  grant) and the moment its client was lost
   (#2664, [ADR-0031](architecture-design-records/adr-0031-bounded-uncertain-admission-leases.md));
   the lost client's scope is then released.
 - An authority restart keeps the epoch and turns outstanding work into
@@ -265,7 +266,7 @@ nothing but the pre-created `client/` mountpoint, which rootless Podman with
   re-register; children fail closed and are respawned.
 - A wait that expires while uncertain leases hold its group says so:
   ``admission queue wait deadline elapsed: group `…` is held by N uncertain
-  lease(s) left by a client lost mid-request; it clears by itself in about S s,
+  lease(s) whose client or broker was lost mid-request; it clears by itself in about S s,
   or `quecto admission-broker reset` clears it now (revoking every session's
   capability)``. It is the same terminal `admission` class as a plain queue
   timeout.
@@ -388,8 +389,9 @@ Quarantine (a group has stopped granting):
    authority restarted with work in flight.
 2. If that session is still alive and reconnects with the same capability,
    completing the attempt clears the entry; wait for it. Otherwise the entry
-   clears by itself at the attempt's deadline plus 60 s (at most
-   `attempt_timeout_ms` plus 60 s after the grant, or after a restart); a
+   clears by itself 60 s after the later of the attempt's deadline and the
+   loss of its client (at most `attempt_timeout_ms` plus 60 s after a
+   restart); a
    queued request that times out meanwhile names the group and how long is
    left.
 3. To clear it sooner, `quecto admission-broker reset` starts a new epoch. It revokes

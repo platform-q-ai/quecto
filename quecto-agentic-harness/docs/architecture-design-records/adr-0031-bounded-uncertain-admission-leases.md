@@ -22,8 +22,12 @@ its transport on the close; a dead owner has no transport.
 
 ## Decision
 
-An uncertain lease clears by itself at its attempt's deadline plus a fixed
-margin (`UNCERTAIN_LEASE_MARGIN_MS`, 60 s) for owner teardown. Before then the
+An uncertain lease clears by itself a fixed margin
+(`UNCERTAIN_LEASE_MARGIN_MS`, 60 s) for owner teardown after the later of its
+attempt's deadline and the instant its owner was lost, so an owner lost long
+after its deadline (stopped, starved) still gets the whole margin to tear its
+transport down. An attempt still owned by a connected client never clears on
+time alone, even past its deadline. Before then the
 group stays quarantined exactly as before; completion by the same capability
 and an operator reset still clear it sooner. A late completion of a cleared
 lease is acknowledged and frees nothing a second time.
@@ -31,7 +35,9 @@ lease is acknowledged and frees nothing a second time.
 The durable ledger records each outstanding attempt's remaining time to that
 bound (an additive, optional field; the format number is unchanged). A restart
 turns outstanding work into orphans that clear when their remaining time has
-passed on the new clock, so downtime only lengthens a lease. An entry without
+passed on the new clock, so downtime only lengthens a lease; an attempt whose
+owner was still connected at the last write counts its margin from that write
+at the earliest. An entry without
 a recorded bound (written before this decision) or with one beyond the group's
 attempt timeout plus the margin is bounded by the attempt timeout plus the
 margin from the restart.

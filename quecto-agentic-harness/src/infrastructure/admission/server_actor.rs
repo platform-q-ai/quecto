@@ -31,6 +31,8 @@ pub(super) enum Command {
         session: u64,
         role: Role,
         notices: mpsc::UnboundedSender<Reply>,
+        /// Ends the connection when sent or dropped.
+        close: oneshot::Sender<()>,
     },
     Request {
         session: u64,
@@ -47,6 +49,7 @@ struct Session {
     greeted: bool,
     credential: Option<Credential>,
     notices: mpsc::UnboundedSender<Reply>,
+    close: Option<oneshot::Sender<()>>,
 }
 
 type Authority = AdmissionAuthority<RandomSecretSource>;
@@ -118,6 +121,7 @@ impl Actor {
                 session,
                 role,
                 notices,
+                close,
             } => {
                 self.sessions.insert(
                     session,
@@ -126,6 +130,7 @@ impl Actor {
                         greeted: false,
                         credential: None,
                         notices,
+                        close: Some(close),
                     },
                 );
             }
@@ -285,9 +290,14 @@ impl Actor {
         );
         if let Some(previous) = previous.filter(|previous| *previous != session) {
             // The superseded connection no longer holds the capability, and
-            // its waiters can never be answered.
+            // its waiters can never be answered. It is closed, so its client
+            // sees the loss and tears down any transport it still runs
+            // before the lease it left can clear (#2664, ADR-0031).
             if let Some(old) = self.sessions.get_mut(&previous) {
                 old.credential = None;
+                if let Some(close) = old.close.take() {
+                    let _ = close.send(());
+                }
             }
             self.waiters.retain(|id, _| id.scope != credential.scope);
         }

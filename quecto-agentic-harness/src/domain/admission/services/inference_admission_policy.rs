@@ -1,7 +1,7 @@
 //! Pure queue, pacing and capacity transitions for one accounting epoch.
 use crate::domain::admission::value_objects::inference_admission::*;
 use crate::domain::admission::value_objects::inference_cooldown::FallbackCooldown;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 #[path = "inference_admission_recovery.rs"]
 mod recovery;
@@ -47,8 +47,10 @@ struct Group {
     contested_pacing_streak: u8,
     last_root: [Option<ScopeId>; 2],
     last_agent: BTreeMap<(u8, ScopeId), ScopeId>,
-    /// Active attempts whose client vanished before acknowledgement.
-    uncertain: BTreeSet<RequestId>,
+    /// Active attempts whose client vanished before acknowledgement, with
+    /// the instant each became uncertain (#2664: its lease bound counts from
+    /// the later of its deadline and that instant).
+    uncertain: BTreeMap<RequestId, u64>,
     /// Outstanding attempts inherited from a previous authority process.
     orphans: Vec<Orphan>,
 }
@@ -86,7 +88,7 @@ impl AdmissionPolicy {
                         contested_pacing_streak: 0,
                         last_root: [None; 2],
                         last_agent: BTreeMap::new(),
-                        uncertain: BTreeSet::new(),
+                        uncertain: BTreeMap::new(),
                         orphans: Vec::new(),
                     },
                 ))

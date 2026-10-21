@@ -170,11 +170,12 @@ pub struct AbandonReport {
     pub active: usize,
 }
 
-/// How long past an attempt's deadline an uncertain lease still holds its
-/// group (#2664). By the deadline the authority has told a live owner to stop
-/// its transport, and a closed connection stops it too; a dead owner has
-/// none. The margin covers the owner's teardown, after which the lease clears
-/// by itself instead of waiting for an operator reset.
+/// How long an uncertain lease still holds its group after the later of its
+/// attempt's deadline and the loss of its owner (#2664). By the deadline the
+/// authority has told a live owner to stop its transport, and a closed
+/// connection stops it too; a dead owner has none. The margin covers the
+/// owner's teardown, after which the lease clears by itself instead of
+/// waiting for an operator reset.
 pub const UNCERTAIN_LEASE_MARGIN_MS: u64 = 60_000;
 
 /// One possibly outstanding remote attempt. Scope is the serial only: the
@@ -185,8 +186,9 @@ pub struct OutstandingAttempt {
     pub scope: u64,
     pub sequence: u64,
     /// Milliseconds, relative to the ledger's observation instant, until the
-    /// attempt's lease clears by itself if it is never completed: its
-    /// deadline plus [`UNCERTAIN_LEASE_MARGIN_MS`]. `None` in a ledger written
+    /// attempt's lease clears by itself if it is never completed:
+    /// [`UNCERTAIN_LEASE_MARGIN_MS`] after the later of its deadline and the
+    /// loss of its owner (at the latest, this write). `None` in a ledger written
     /// before #2664; a restore then bounds it by the group's full attempt
     /// timeout plus the margin.
     pub release_remaining_ms: Option<u64>,
@@ -274,7 +276,7 @@ pub struct AdmissionActivity {
     /// Waits given up before a grant (cancelled at the authority).
     pub cancelled: u64,
     /// Permits dropped without completion: the authority keeps that occupancy
-    /// as uncertain until its attempt deadline plus the lease margin, or a
+    /// as uncertain until the lease margin past its deadline (or its loss), or a
     /// verified completion (ADR-0026, drop is not release; ADR-0031).
     pub abandoned: u64,
     pub groups: BTreeMap<GroupId, GroupActivity>,

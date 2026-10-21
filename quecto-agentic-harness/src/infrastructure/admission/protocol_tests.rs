@@ -252,7 +252,8 @@ fn a_held_timeout_names_the_uncertain_lease_and_the_reset_command() {
     };
     assert_eq!(code, ErrorCode::Timeout);
     let expected = "queue wait deadline elapsed: group `openai-pro` is held by 1 uncertain \
-                    lease left by a client lost mid-request; it clears by itself in about 62 s, \
+                    lease whose client or broker was lost mid-request; it clears by itself in \
+                    about 62 s, \
                     or `quecto admission-broker reset` clears it now (revoking every session's \
                     capability)";
     assert_eq!(reason, expected);
@@ -270,4 +271,20 @@ fn a_held_timeout_names_the_uncertain_lease_and_the_reset_command() {
         "admission queue wait deadline elapsed",
         "only a reason extending the timeout adds detail"
     );
+}
+
+/// Review round 1: a hold that is already due by the time it is rendered
+/// still reads as at least a second away, never "about 0 s".
+#[test]
+fn a_held_timeout_never_reads_zero_seconds() {
+    let hold = UncertainHold {
+        group: GroupId::new("g").unwrap(),
+        leases: 2,
+        clears_in_ms: 0,
+    };
+    let Body::Error { reason, .. } = error_body(&AuthorityError::HeldByUncertainLease(hold)) else {
+        panic!("a held wait is an error reply");
+    };
+    assert!(reason.contains("2 uncertain leases whose"), "{reason}");
+    assert!(reason.contains("in about 1 s,"), "{reason}");
 }

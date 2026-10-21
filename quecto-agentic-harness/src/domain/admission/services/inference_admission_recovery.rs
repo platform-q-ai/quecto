@@ -2,13 +2,18 @@
 //!
 //! Occupancy leaves through a verified terminal transition, an explicit
 //! operator reset, or (#2664) an uncertain lease reaching its bound: the
-//! attempt's deadline plus [`UNCERTAIN_LEASE_MARGIN_MS`]. Nothing else
-//! reclaims capacity on elapsed time.
+//! later of the attempt's deadline and the instant it became uncertain, plus
+//! [`UNCERTAIN_LEASE_MARGIN_MS`]. Nothing else reclaims capacity on elapsed
+//! time.
 use super::*;
 
-/// The instant an uncertain lease on an attempt with `deadline` clears.
-fn lease_release(deadline: u64) -> u64 {
-    deadline.saturating_add(UNCERTAIN_LEASE_MARGIN_MS)
+/// The instant an uncertain lease clears: the margin for owner teardown runs
+/// from the later of the attempt's `deadline` and the instant its owner was
+/// lost (`since`), so an owner lost long after its deadline still gets it.
+fn lease_release(deadline: u64, since: u64) -> u64 {
+    deadline
+        .max(since)
+        .saturating_add(UNCERTAIN_LEASE_MARGIN_MS)
 }
 
 impl AdmissionPolicy {
@@ -19,14 +24,17 @@ impl AdmissionPolicy {
         let cleared: Vec<RequestId> = self
             .groups
             .values()
-            .flat_map(|group| group.uncertain.iter().copied())
-            .filter(|id| match self.requests.get(id).map(|r| r.state) {
-                Some(RequestState::Active { deadline, .. }) => lease_release(deadline) <= now,
+            .flat_map(|group| group.uncertain.iter())
+            .filter(|(id, since)| match self.requests.get(id).map(|r| r.state) {
+                Some(RequestState::Active { deadline, .. }) => {
+                    lease_release(deadline, **since) <= now
+                }
                 other => {
                     debug_assert!(false, "an uncertain lease is an active request: {other:?}");
                     false
                 }
             })
+            .map(|(id, _)| *id)
             .collect();
         for id in cleared {
             self.terminal(id, TerminalOutcome::Cancelled, None);
@@ -44,13 +52,14 @@ impl AdmissionPolicy {
     /// `None` when nothing uncertain holds it.
     pub(super) fn hold_of(&self, group: &GroupId) -> Option<(usize, u64)> {
         let held = &self.groups[group];
-        let uncertain =
-            held.uncertain
-                .iter()
-                .filter_map(|id| match self.requests.get(id).map(|r| r.state) {
-                    Some(RequestState::Active { deadline, .. }) => Some(lease_release(deadline)),
-                    _ => None,
-                });
+        let uncertain = held.uncertain.iter().filter_map(|(id, since)| {
+            match self.requests.get(id).map(|r| r.state) {
+                Some(RequestState::Active { deadline, .. }) => {
+                    Some(lease_release(deadline, *since))
+                }
+                _ => None,
+            }
+        });
         let orphans = held.orphans.iter().map(|orphan| orphan.release_at);
         let clears_at = uncertain.chain(orphans).max()?;
         Some((held.uncertain.len() + held.orphans.len(), clears_at))
@@ -102,7 +111,11 @@ impl AdmissionPolicy {
                 RequestState::Active { .. } => {
                     report.active += 1;
                     let group = self.groups.get_mut(&group).expect("configured group");
-                    if group.uncertain.insert(id) {
+                    // A lease already uncertain keeps the instant it was lost.
+                    if let std::collections::btree_map::Entry::Vacant(lost) =
+                        group.uncertain.entry(id)
+                    {
+                        lost.insert(now);
                         report.uncertain += 1;
                     }
                 }
@@ -163,8 +176,8 @@ impl AdmissionPolicy {
                         ..
                     } => {
                         active += 1;
-                        if group.uncertain.contains(request_id) {
-                            consider(lease_release(deadline));
+                        if let Some(since) = group.uncertain.get(request_id) {
+                            consider(lease_release(deadline, *since));
                         } else if !cancellation_required {
                             consider(deadline);
                         }
@@ -190,12 +203,18 @@ impl AdmissionPolicy {
             .requests
             .iter()
             .filter_map(|(id, r)| match r.state {
-                RequestState::Active { deadline, .. } => Some(OutstandingAttempt {
-                    group: r.group.clone(),
-                    scope: id.scope.serial,
-                    sequence: id.sequence,
-                    release_remaining_ms: Some(lease_release(deadline).saturating_sub(now)),
-                }),
+                // A restart loses every owner: an attempt not yet uncertain
+                // is lost no earlier than now, so its margin counts from here.
+                RequestState::Active { deadline, .. } => {
+                    let since = self.groups[&r.group].uncertain.get(id).copied();
+                    let release = lease_release(deadline, since.unwrap_or(now));
+                    Some(OutstandingAttempt {
+                        group: r.group.clone(),
+                        scope: id.scope.serial,
+                        sequence: id.sequence,
+                        release_remaining_ms: Some(release.saturating_sub(now)),
+                    })
+                }
                 _ => None,
             })
             .collect();

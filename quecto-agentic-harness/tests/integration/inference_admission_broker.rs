@@ -639,6 +639,12 @@ async fn rebinding_a_capability_supersedes_the_previous_session() {
         .await
         .unwrap();
     fresh.bind(credential).await.unwrap();
+    // #2664 review: the superseded connection is closed, so its client stops
+    // the transport it still runs before the lease it left can clear.
+    timeout(LIMIT, permit.deadline_expired())
+        .await
+        .expect("the superseded client is told to stop its transport");
+    assert!(!old.is_open(), "the superseded connection is closed");
     wait_for(&admin, (1, 0)).await;
     assert_eq!(admin.inspect().await.unwrap().groups[&group()].uncertain, 1);
     fresh.complete(1, Feedback::Success).await.unwrap();

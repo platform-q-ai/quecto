@@ -453,11 +453,13 @@ fn held_reason(hold: &UncertainHold) -> String {
     let plural = if hold.leases == 1 { "" } else { "s" };
     format!(
         "{QUEUE_TIMEOUT_REASON}: group `{group}` is held by {leases} uncertain lease{plural} \
-         left by a client lost mid-request; it clears by itself in about {secs} s, or \
+         whose client or broker was lost mid-request; it clears by itself in about {secs} s, or \
          `quecto admission-broker reset` clears it now (revoking every session's capability)",
         group = hold.group.as_str(),
         leases = hold.leases,
-        secs = hold.clears_in_ms.div_ceil(1_000),
+        // Recorded and read in different turns, so a hold can be due by
+        // now: it is still at least a second away from the waiter's view.
+        secs = hold.clears_in_ms.div_ceil(1_000).max(1),
     )
 }
 

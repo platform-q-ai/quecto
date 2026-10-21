@@ -41,7 +41,7 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 | [0027](adr-0027-tui-is-a-single-connection-client.md) | The TUI Is a Single-Connection Client | ✅ Accepted | One TUI owns one connection and one agent; no tab multiplexer, tab-agent registry, workspace manifest, or request-id namespace. |
 | [0029](adr-0029-contain-tool-panics-with-unwind-and-a-fail-fast-hook.md) | Contain Tool Panics: Unwind in Release, Abort Everywhere Else | ✅ Accepted | Release builds unwind; a process hook contains panics inside a tool-execution scope and aborts on every other panic. |
 | [0030](adr-0030-swarm-board-in-rust.md) | The Swarm Board Runs in Rust, on the Same SQLite File | ✅ Accepted | The board, its policy and use cases are Rust over the unchanged schema and file; the harness calls it in-process; Python remained only for `op=run` until #2282 removed it. |
-| [0031](adr-0031-bounded-uncertain-admission-leases.md) | Uncertain admission leases clear at a bound | ✅ Accepted | An uncertain or restart-orphaned lease clears at its attempt deadline plus a margin; waits held by one are told why; lost scopes are released. |
+| [0031](adr-0031-bounded-uncertain-admission-leases.md) | Uncertain admission leases clear at a bound | ✅ Accepted | An uncertain or restart-orphaned lease clears a margin after the later of its attempt deadline and the loss of its owner; waits held by one are told why; lost scopes are released. |
 
 ## The ADR-0008 protocol series
 

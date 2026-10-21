@@ -521,3 +521,101 @@ fn held_names_the_leases_a_wait_expired_behind() {
     );
     assert_eq!(s.held(two, 3, release + 1_000), Ok(None));
 }
+
+/// #2664 review: only an uncertain lease clears on time. An attempt whose
+/// owner is still connected keeps its slot past its deadline plus the margin
+/// (it was told to stop, but may still be streaming), so freeing it would
+/// double-spend the slot.
+#[test]
+fn a_connected_attempt_keeps_its_slot_past_its_deadline_and_margin() {
+    let (mut s, one, two) = seeded();
+    let later = 5_000 + UNCERTAIN_LEASE_MARGIN_MS + 1;
+    s.enqueue(two, 2, "a", later).unwrap();
+    s.next(&group("a"), later).unwrap().unwrap();
+    s.enqueue(two, 3, "a", later).unwrap();
+    assert!(
+        matches!(
+            s.status(one, 1, later).unwrap(),
+            RequestState::Active { .. }
+        ),
+        "the connected attempt is still active"
+    );
+    assert_eq!(
+        s.next(&group("a"), later).unwrap(),
+        None,
+        "and holds its slot"
+    );
+    let a = s.snapshot(&group("a"), later).unwrap();
+    assert_eq!((a.active, a.uncertain, a.queued), (2, 0, 1));
+}
+
+/// #2664 review: the margin runs from the later of the deadline and the loss
+/// of the owner, so an owner lost long after its deadline still gets the whole
+/// margin to tear its transport down.
+#[test]
+fn a_lease_lost_after_its_deadline_holds_for_the_margin_from_the_loss() {
+    let (mut s, one, two) = seeded();
+    let lost = 5_000 + 2 * UNCERTAIN_LEASE_MARGIN_MS;
+    s.abandon(one, lost).unwrap();
+    let release = lost + UNCERTAIN_LEASE_MARGIN_MS;
+    assert_eq!(
+        s.ledger(lost + 10).unwrap().outstanding[0].release_remaining_ms,
+        Some(UNCERTAIN_LEASE_MARGIN_MS - 10),
+        "a restart keeps the margin counted from the loss"
+    );
+    s.enqueue(two, 2, "a", release - 1).unwrap();
+    s.enqueue(two, 3, "a", release - 1).unwrap();
+    assert_eq!(
+        s.next(&group("a"), release - 1),
+        Err(AdmissionError::Quarantined)
+    );
+    assert!(s.next(&group("a"), release).unwrap().is_some());
+}
+
+/// #2664 review: a restart loses every connected owner too, so an attempt
+/// past its deadline whose owner was still connected keeps the whole margin
+/// from the ledger write, never a zero remainder.
+#[test]
+fn a_connected_attempt_past_its_deadline_keeps_the_margin_across_a_restart() {
+    let (mut s, _one, _two) = seeded();
+    let ledger = s.ledger(5_000 + 2 * UNCERTAIN_LEASE_MARGIN_MS).unwrap();
+    assert_eq!(
+        ledger.outstanding[0].release_remaining_ms,
+        Some(UNCERTAIN_LEASE_MARGIN_MS)
+    );
+}
+
+/// #2664 review: with several leases holding a group, the wait reports when
+/// the latest clears, since the group stays held until then.
+#[test]
+fn a_hold_reports_the_latest_of_several_leases() {
+    let (mut s, one, two) = seeded();
+    s.next(&group("a"), 10).unwrap().unwrap();
+    s.abandon(one, 20).unwrap();
+    s.abandon(two, 20).unwrap();
+    let three = s.register_root(WorkloadClass::Interactive).unwrap();
+    s.enqueue(three, 1, "a", 100).unwrap();
+    assert_eq!(
+        s.held(three, 1, 1_100),
+        Ok(Some(UncertainHold {
+            group: group("a"),
+            leases: 2,
+            clears_in_ms: 5_010 + UNCERTAIN_LEASE_MARGIN_MS - 1_100,
+        }))
+    );
+}
+
+/// #2664 review: a lease clears before waits expire at the same instant, so a
+/// wait whose deadline is the release instant is not reported as held.
+#[test]
+fn a_wait_expiring_as_the_lease_clears_is_not_held() {
+    let (mut s, one, two) = seeded();
+    s.abandon(one, 2).unwrap();
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
+    s.enqueue(two, 2, "a", release - 1_000).unwrap();
+    assert_eq!(
+        s.status(two, 2, release).unwrap(),
+        RequestState::Terminal(TerminalOutcome::TimedOut)
+    );
+    assert_eq!(s.held(two, 2, release), Ok(None));
+}
