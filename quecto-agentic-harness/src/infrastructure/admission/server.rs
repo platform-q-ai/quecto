@@ -121,9 +121,6 @@ fn bind_private(path: &Path) -> Result<UnixListener, ServerError> {
 }
 
 /// A running authority. Dropping without `shutdown` aborts its tasks.
-/// How long a shutdown waits for the actor's final ledger checkpoint.
-const SHUTDOWN_CHECKPOINT: Duration = Duration::from_secs(5);
-
 pub struct AuthorityServer {
     dir: AuthorityDirectory,
     shutdown: watch::Sender<bool>,
@@ -256,16 +253,10 @@ impl AuthorityServer {
     pub async fn shutdown(mut self) {
         let _ = self.shutdown.send(true);
         let mut tasks = std::mem::take(&mut self.tasks).into_iter();
-        // The actor (spawned first) checkpoints its ledger as it stops; let
-        // it finish that write, within a bound, before anything is aborted.
-        if let Some(mut actor) = tasks.next() {
-            if tokio::time::timeout(SHUTDOWN_CHECKPOINT, &mut actor)
-                .await
-                .is_err()
-            {
-                actor.abort();
-                let _ = actor.await;
-            }
+        // The actor (spawned first) checkpoints its ledger as it stops: let
+        // it finish that final synchronous write before anything is aborted.
+        if let Some(actor) = tasks.next() {
+            let _ = actor.await;
         }
         for task in tasks {
             task.abort();

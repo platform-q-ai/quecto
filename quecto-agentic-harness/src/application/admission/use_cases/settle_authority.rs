@@ -22,7 +22,7 @@ impl SettleAuthority {
 
     /// The authority's last turn as it stops: its ledger made durable with
     /// the lease bounds as they stand now (#2664).
-    pub fn last_turn<S: AdmissionSecretSource>(
+    pub fn checkpoint_on_stop<S: AdmissionSecretSource>(
         &self,
         authority: &mut AdmissionAuthority<S>,
         now: u64,
