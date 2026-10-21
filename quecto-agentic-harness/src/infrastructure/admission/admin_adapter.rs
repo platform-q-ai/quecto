@@ -53,12 +53,9 @@ impl SocketAuthorityAdmin {
         runtime
             .block_on(async { tokio::time::timeout(self.bound, call).await })
             .unwrap_or_else(|_| {
-                Err(AuthorityAdminError::Failed {
+                Err(AuthorityAdminError::Unanswered {
                     directory: directory.to_path_buf(),
-                    reason: format!(
-                        "no answer within {} s (is the broker stopped?)",
-                        self.bound.as_secs()
-                    ),
+                    bound_secs: self.bound.as_secs(),
                 })
             })
     }
