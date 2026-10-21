@@ -34,6 +34,8 @@ fn a_death_blocker_is_read_back_only_by_its_exact_text() {
         "waiting for the API key",
         "worker death confirmed",
         "Worker death confirmed; coordinator recovery required",
+        "worker death confirmed; coordinator recovery required; and more",
+        " worker death confirmed; coordinator recovery required",
     ] {
         assert_eq!(MemberExit::of_blocker(other), None, "{other:?}");
     }
