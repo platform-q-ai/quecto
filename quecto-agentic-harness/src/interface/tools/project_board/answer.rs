@@ -37,6 +37,8 @@
 //! present (`null` or `[]` when unset), in a fixed order.
 use serde_json::{Map, Value, json};
 
+use crate::domain::project_board::services::claims::renew_after;
+
 use super::request::RequestError;
 use crate::application::project_board::dto::{LivenessCheck, ProjectBoardError, RunReport};
 use crate::application::project_board::operations::{BoardOutcome, Completion};
@@ -341,6 +343,17 @@ fn started_fields(started: &StartedTask) -> Map<String, Value> {
         ),
         ("not_applied", Value::Array(not_applied)),
         ("claim", json!(started.claim.as_str())),
+        // When to renew the claim: halfway through it (#2656).
+        (
+            "renew_after",
+            started
+                .task
+                .fields()
+                .claim
+                .as_ref()
+                .and_then(|claim| renew_after(claim).ok())
+                .map_or(Value::Null, |at| json!(at.as_str())),
+        ),
     ])
 }
 

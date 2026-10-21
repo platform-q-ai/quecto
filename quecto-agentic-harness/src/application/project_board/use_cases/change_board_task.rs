@@ -17,7 +17,7 @@ use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::changes::Linked;
-use crate::domain::project_board::services::claims::{claim_facts, renew, take_over};
+use crate::domain::project_board::services::claims::{claim_facts, renew, renewal_due, take_over};
 use crate::domain::project_board::services::pull_requests::{add_pr, remove_pr};
 use crate::domain::project_board::services::transitions::{move_reads, move_task};
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -71,6 +71,17 @@ impl ChangeBoardTask {
         mut facts: Option<&mut OpFacts>,
     ) -> Result<Task, ProjectBoardError> {
         let actor = &self.actor;
+        // A renewal not due yet writes nothing: the task as it is (#2656).
+        if let BoardOp::Renew = op
+            && let Some(task) = self.not_due(id)?
+        {
+            if let Some(facts) = facts {
+                let status = task.fields().status;
+                facts.status_from = Some(status);
+                facts.status_to = Some(status);
+            }
+            return Ok(task);
+        }
         let noting = facts.is_some();
         let mut read = None;
         let noted = facts.as_deref_mut();
@@ -108,6 +119,23 @@ impl ChangeBoardTask {
             };
         }
         written
+    }
+}
+
+impl ChangeBoardTask {
+    /// Task `id` as the board holds it, when the actor's renewal of its
+    /// claim is not due yet ([`renewal_due`]); `None` when it is, or when
+    /// the renewal's own rule must judge it.
+    ///
+    /// # Errors
+    /// The store's, or the clock's.
+    fn not_due(&self, id: &Slug) -> Result<Option<Task>, ProjectBoardError> {
+        let board = self.store.read()?;
+        let now = self.clock.now()?;
+        Ok(task_on(&board, id)
+            .ok()
+            .filter(|task| !renewal_due(task, &self.actor, &now))
+            .cloned())
     }
 }
 

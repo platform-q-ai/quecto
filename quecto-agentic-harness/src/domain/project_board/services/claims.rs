@@ -89,6 +89,34 @@ pub(super) fn held_live_by<'a>(
     }
 }
 
+/// How long into a claim's two hours its holder renews it (#2656): half
+/// way. A renewal before then writes nothing.
+pub const RENEW_AFTER_SECONDS: u64 = CLAIM_TTL_SECONDS / 2;
+
+/// Whether `holder`'s renewal of `task`'s claim at `now` is due (#2656):
+/// it is, unless `holder` holds a live claim with more than half its two
+/// hours left. Anything else is the renewal's own rule to judge.
+pub fn renewal_due(task: &Task, holder: &Identity, now: &Timestamp) -> bool {
+    match &task.fields().claim {
+        Some(claim) if claim.holder.is(holder) && is_live(claim, now) => {
+            let left = claim.expires.seconds_since(now);
+            left <= i64::try_from(RENEW_AFTER_SECONDS).unwrap_or(i64::MAX)
+        }
+        Some(_) | None => true,
+    }
+}
+
+/// When `claim` is next renewed (#2656): half way through it.
+///
+/// # Errors
+/// A claim whose start plus half its lease the board cannot spell.
+pub fn renew_after(claim: &Claim) -> Result<Timestamp, BoardRuleError> {
+    claim
+        .since
+        .plus_seconds(RENEW_AFTER_SECONDS)
+        .map_err(|error| BoardRuleError::Invalid(error.at("claim/since")))
+}
+
 /// A claim is live until the moment it expires; from then on it is
 /// expired and can be taken over.
 pub fn is_live(claim: &Claim, now: &Timestamp) -> bool {
