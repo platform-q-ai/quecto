@@ -146,3 +146,47 @@ fn an_item_that_cannot_be_read_is_left_out() {
         }]
     );
 }
+
+/// #2685: a board is kept once its coordinator's teardown has ended its
+/// workers, and each worker's death blocked what it held ("worker death
+/// confirmed …"). That blocker is the teardown's, not the item's: the item
+/// is read as it stood before it, submitted when it holds the evidence its
+/// submission wrote (a submitted item is never blocked by its worker, and
+/// only a submission writes an item's evidence), else claimed. A blocker
+/// of any other text is the item's own and stays blocked. Ended and left
+/// boards alike are kept after the teardown.
+#[test]
+fn a_teardown_death_blocker_reads_as_where_the_item_stood() {
+    let items = json!([
+        {
+            "id": 1, "title": "implement: Implement", "state": "blocked", "owner": "worker-1",
+            "blocker": "worker death confirmed; coordinator recovery required",
+            "evidence": [{"artifact": "src/lib.rs", "revision": "abc123"}],
+        },
+        {
+            "id": 2, "title": "test: Test", "state": "blocked", "owner": "worker-2",
+            "blocker": "worker death confirmed (abrupt exit; reservations retained); coordinator recovery required",
+            "evidence": [],
+        },
+        {
+            "id": 3, "title": "docs: Docs", "state": "blocked", "owner": "worker-3",
+            "blocker": "waiting for the API key", "evidence": [],
+        },
+    ]);
+    let states = |view: SwarmRunView| -> Vec<SwarmItemState> {
+        view.items.into_iter().map(|item| item.state).collect()
+    };
+    let expected = vec![
+        SwarmItemState::Submitted,
+        SwarmItemState::Claimed,
+        SwarmItemState::Blocked,
+    ];
+    assert_eq!(
+        states(left_run_view(&board("running", 10, items.clone())).unwrap()),
+        expected
+    );
+    assert_eq!(
+        states(swarm_run_view(&board("cancelled", 10, items)).unwrap()),
+        expected
+    );
+}
