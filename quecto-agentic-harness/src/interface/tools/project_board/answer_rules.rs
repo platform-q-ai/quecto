@@ -43,6 +43,7 @@ pub fn rule_code(rule: &BoardRuleError) -> &'static str {
         R::NoSuchChange(..) => "no_such_change",
         R::NoSuchRun(..) => "no_such_run",
         R::ItemsNotDone { .. } => "items_not_done",
+        R::NotPushed { .. } => "not_pushed",
         R::ChangeAhead { .. } => "change_ahead",
         R::DiscussionClosed(..) => "discussion_closed",
         R::DiscussionLinked { .. } => "discussion_linked",
@@ -129,6 +130,7 @@ fn rule_fields(rule: &BoardRuleError) -> Map<String, Value> {
             let items: Vec<&str> = items.iter().map(Slug::as_str).collect();
             object!({"run": run, "items": items, "report": report.as_str()})
         }
+        R::NotPushed { run, revisions } => object!({"run": run, "revisions": revisions}),
         R::ChangeAhead { change, updated } => object!({
             "change": change,
             "updated": updated.as_str(),

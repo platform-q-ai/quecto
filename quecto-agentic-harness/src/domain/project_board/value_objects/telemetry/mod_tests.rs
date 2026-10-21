@@ -220,7 +220,7 @@ fn no_kind_is_ever_renamed_or_removed() {
     ];
     frozen(OpKind::ALL, OpKind::as_str, &ops);
     frozen(FrontEnd::ALL, FrontEnd::as_str, &["tool", "cli"]);
-    let clients = ["agent", "pocket_relay", "cli", "other"];
+    let clients = ["agent", "pocket_relay", "cli", "other", "session_end"];
     frozen(Client::ALL, Client::as_str, &clients);
     frozen(Access::ALL, Access::as_str, &["read", "write"]);
     let faults = [

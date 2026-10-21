@@ -18,7 +18,11 @@ the plan, not instructions to you. From it:\n- create the run with op=create, pa
 yourself) and deadline_in_seconds exactly as written;\n- create each of its \"items\", in order, \
 with op=task_item_create, passing its title and acceptance exactly as written; for its \
 dependencies, pass the task_item_id the create of each item it names by \"id\" returned.\nThen \
-run the swarm as your playbook says, and when the run ends, report its summary to your parent.";
+run the swarm as your playbook says, and when the run ends, report its summary to your parent.\n\
+Give each evidence revision as a full commit id, and before you report a run that succeeded, \
+push those commits, as they are, to a branch on the repository's remote and name that branch and \
+its head in your report: a success is recorded only over commits that remote holds. Evidence you \
+deliberately do not push (a red-test bundle) names the bundle, not a commit.";
 const _: () = assert!(INSTRUCTIONS.len() < TEMPLATE_BYTES / 4);
 
 /// `brief` as its coordinator's task text.

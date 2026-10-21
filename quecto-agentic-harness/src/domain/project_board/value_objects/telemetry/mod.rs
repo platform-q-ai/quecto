@@ -84,7 +84,14 @@ impl OpKind {
 }
 
 kinds!(FrontEnd { Tool => "tool", Cli => "cli" });
-kinds!(Client { Agent => "agent", PocketRelay => "pocket_relay", Cli => "cli", Other => "other" });
+kinds!(
+    /// Who a call acts for: `session_end` is the harness itself, ending the
+    /// runs a session leaves open as it ends (#2655).
+    Client {
+        Agent => "agent", PocketRelay => "pocket_relay", Cli => "cli", Other => "other",
+        SessionEnd => "session_end",
+    }
+);
 kinds!(Access { Read => "read", Write => "write" });
 kinds!(
     /// How a request's field was wrong.
