@@ -198,7 +198,30 @@ fn a_success_whose_evidence_names_no_commit_is_recorded_unchecked() {
         .execute(&ending(RunEndOutcome::Succeeded))
         .unwrap();
     assert_eq!(ended.run.fields().outcome, Some(RunOutcome::Succeeded));
+    assert_eq!(
+        ended.unchecked,
+        Some(3),
+        "every entry, none naming a commit"
+    );
     assert!(remote.asks().is_empty());
+}
+
+/// Round 4: `unchecked` counts entries, not distinct revisions: one short
+/// id named by every item is counted each time, and the remote is never
+/// asked about it.
+#[test]
+fn an_unchecked_revision_named_twice_is_counted_twice() {
+    let (store, _) = stranded();
+    let mut done = swarm(SwarmEnd::Succeeded, [SwarmItemState::Completed; 3]);
+    for item in &mut done.items {
+        item.evidence[0].revision = "abc1234".into();
+    }
+    let remote = Remote::holding_all();
+    let ended = ender_asking(&store, Some(done), Arc::clone(&remote))
+        .execute(&ending(RunEndOutcome::Succeeded))
+        .unwrap();
+    assert_eq!(ended.unchecked, Some(3));
+    assert!(remote.asks().is_empty(), "no commit to check");
 }
 
 /// Round 2: a commit token is the one word of a revision that is wholly
@@ -221,6 +244,9 @@ fn a_commit_token_is_one_whole_hex_word_and_only_twelve_up_to_a_full_id_are_chec
         ("sha256:abc123abc123", None),
         (&*format!("{DEF}x"), None),
         (&*format!("{ABC} {DEF}"), None),
+        (&*format!("{DEF} on 20261021"), Some(lower.as_str())),
+        (&*format!("owner/repo@{DEF}"), Some(lower.as_str())),
+        ("abc1234 on 20261021", None),
         ("main", None),
         ("", None),
     ] {

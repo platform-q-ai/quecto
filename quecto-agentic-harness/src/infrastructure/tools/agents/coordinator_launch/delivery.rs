@@ -8,7 +8,8 @@
 //! A completion that names no commit the push rule checks
 //! ([`commit_token`], [`checks_commit`]), a board, repository or remote
 //! that cannot be read, is `Unknown`, which keeps the box (fail safe).
-//! The repository's remote is opened lazily, on the first such judgement,
+//! The repository's remote is opened lazily, on the first such judgement
+//! (again on the next, when it could not be),
 //! and read within a short bound. Blocking: the remote is read inline, as
 //! the teardown's scripts run.
 use std::collections::BTreeMap;
@@ -47,8 +48,9 @@ pub type OpenRemote = fn(&Path) -> Opened;
 /// Judges completions against the board's remote, or says why it cannot.
 pub struct RemoteCompletionDelivery {
     open: OpenRemote,
-    /// Each repository's remote, opened once, or why it could not be.
-    opened: Mutex<BTreeMap<PathBuf, Opened>>,
+    /// Each repository's remote, once opened: one that could not be is
+    /// tried again on its next judgement.
+    opened: Mutex<BTreeMap<PathBuf, Arc<dyn RemoteRevisions>>>,
 }
 
 impl RemoteCompletionDelivery {
@@ -68,11 +70,19 @@ impl RemoteCompletionDelivery {
             .get(session)
             .cloned()
             .ok_or_else(|| "no board repository is known for this session".to_owned())?;
+        let held = self
+            .opened
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&repo)
+            .cloned();
+        if let Some(remote) = held {
+            return Ok(remote);
+        }
+        // Opened with no lock held: git runs here.
+        let remote = (self.open)(&repo)?;
         let mut opened = self.opened.lock().unwrap_or_else(PoisonError::into_inner);
-        opened
-            .entry(repo.clone())
-            .or_insert_with(|| (self.open)(&repo))
-            .clone()
+        Ok(Arc::clone(opened.entry(repo).or_insert(remote)))
     }
 
     fn judged(
