@@ -1205,6 +1205,16 @@ async fn an_on_demand_authority_stops_itself_once_idle_and_never_while_it_holds_
     )
     .await
     .unwrap();
+    // An open connection that has not even said hello yet: the instant a
+    // root is reaching the broker, before it registers.
+    let bare = tokio::net::UnixStream::connect(server.directory().client_socket())
+        .await
+        .unwrap();
+    assert!(
+        timeout(HELD, server.stopped_for_idle()).await.is_err(),
+        "an open connection keeps the authority serving"
+    );
+    drop(bare);
     // A connected root holding a permit.
     let a = root(&server).await;
     let credential = a.credential().unwrap();

@@ -161,12 +161,17 @@ fn an_unreachable_authority_is_started_and_probed_with_backoff() {
 fn a_lost_race_waits_for_the_winner_without_starting_another() {
     // The loser exits Busy; the winner answers on the next probe.
     let launcher = Arc::new(
-        Scripted::probing(vec![Err("refused"), Ok(())])
+        Scripted::probing(vec![Err("refused"), Err("refused"), Ok(())])
             .with_states(vec![LaunchState::LostRace, LaunchState::LostRace]),
     );
     let outcome = use_case(&launcher).ensure_running(&launch());
     assert_eq!(outcome, Ok(AuthorityAvailability::StartedOnDemand));
     assert_eq!(launcher.launches(), 1, "the winner was given its step");
+    assert_eq!(
+        launcher.pauses(),
+        vec![0, 1],
+        "the loss was seen, then the winner"
+    );
 }
 
 #[test]
