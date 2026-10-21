@@ -16,7 +16,7 @@ mod server_actor;
 mod session;
 
 pub use admin_adapter::SocketAuthorityAdmin;
-pub use client::{AdminConnection, AuthorityConnection, ClientError, Hello};
+pub use client::{AdminConnection, AdminStatus, AuthorityConnection, ClientError, Hello};
 pub use directory::{AuthorityDirectory, SingletonLock};
 pub use journal::FileJournal;
 pub use link::{AuthorityLink, LinkChangeHook, LinkHealth};

@@ -20,6 +20,7 @@ fn script(dir: &Path, tail: &str) -> PathBuf {
              echo \"args: $*\"\n\
              echo \"cwd: $(pwd)\"\n\
              echo \"env: $DETACHED_PROBE\"\n\
+             echo \"home: $HOME\"\n\
              set -- $(cat /proc/$$/stat)\n\
              echo \"ids: pid=$1 pgrp=$5 sid=$6\"\n\
              read line && echo \"stdin: $line\"\n\
@@ -37,6 +38,7 @@ fn command(dir: &Path, tail: &str, tether: Tether) -> DetachedCommand {
         env: vec![("DETACHED_PROBE".into(), "seen".into())],
         log: dir.join("detached.log"),
         tether,
+        scope: Scope::None,
     }
 }
 
@@ -69,6 +71,10 @@ fn a_detached_process_leads_its_own_session_from_root_with_its_output_logged() {
     assert!(log.contains("args: one two\n"), "{log}");
     assert!(log.contains("cwd: /\n"), "{log}");
     assert!(log.contains("env: seen\n"), "{log}");
+    assert!(
+        log.contains("home: \n"),
+        "nothing but the given environment: {log}"
+    );
     assert!(log.contains("oops\n"), "stderr is logged too: {log}");
     assert!(!log.contains("stdin:"), "stdin reads nothing: {log}");
     let ids = log
@@ -131,6 +137,7 @@ fn a_program_that_cannot_start_says_so() {
         env: Vec::new(),
         log: temp.path().join("detached.log"),
         tether: Tether::Detached,
+        scope: Scope::None,
     })
     .unwrap_err();
     assert!(error.contains("cannot start"), "{error}");
@@ -140,7 +147,104 @@ fn a_program_that_cannot_start_says_so() {
         env: Vec::new(),
         log: temp.path().join("no/such/dir/detached.log"),
         tether: Tether::Detached,
+        scope: Scope::None,
     })
     .unwrap_err();
     assert!(error.contains("detached.log"), "{error}");
+}
+
+/// A stand-in `systemd-run`: it records that it ran (and how), refuses when
+/// `refuse` is set, and otherwise execs the program after `--`, as
+/// `systemd-run --scope` does.
+fn runner(dir: &Path, refuse: bool) -> PathBuf {
+    let path = dir.join("systemd-run");
+    write_executable(
+        &path,
+        format!(
+            "#!/bin/sh\n\
+             echo \"runner: $*\" >> '{marks}'\n\
+             {refuse}\n\
+             while [ \"$1\" != \"--\" ]; do shift; done\n\
+             shift\n\
+             exec \"$@\"\n",
+            marks = dir.join("runner.log").display(),
+            refuse = if refuse { "exit 1" } else { ":" },
+        ),
+    );
+    path
+}
+
+fn with_scope(dir: &Path, scope: Scope) -> DetachedCommand {
+    DetachedCommand {
+        scope,
+        // The runner and `true` are found on this PATH.
+        env: vec![("PATH".into(), "/usr/bin:/bin".into())],
+        ..command(dir, "exit 3", Tether::Detached)
+    }
+}
+
+#[test]
+fn a_reachable_user_manager_starts_it_in_a_transient_scope() {
+    let temp = tempfile::tempdir().unwrap();
+    let scope = Scope::SystemdRun(runner(temp.path(), false));
+    let mut process = spawn_detached(&with_scope(temp.path(), scope)).unwrap();
+    assert_eq!(process.started(), Started::InScope);
+    assert_eq!(exited(&mut process).unwrap().code(), Some(3));
+    let marks = std::fs::read_to_string(temp.path().join("runner.log")).unwrap();
+    assert!(
+        marks.contains("runner: --user --scope --quiet --collect -- true\n"),
+        "probed first: {marks}"
+    );
+    assert!(
+        marks.contains(&format!(
+            "runner: --user --scope --quiet --collect -- {} one two\n",
+            temp.path().join("detached.sh").display()
+        )),
+        "then started through it: {marks}"
+    );
+    assert!(log(temp.path()).contains("args: one two\n"));
+}
+
+#[test]
+fn without_a_user_manager_it_starts_plainly() {
+    for (case, scope) in [("refused", Some(true)), ("absent", None)] {
+        let temp = tempfile::tempdir().unwrap();
+        let runner = match scope {
+            Some(refuse) => runner(temp.path(), refuse),
+            None => temp.path().join("no-systemd-run"),
+        };
+        let mut process =
+            spawn_detached(&with_scope(temp.path(), Scope::SystemdRun(runner))).unwrap();
+        assert_eq!(process.started(), Started::Plain, "{case}");
+        assert_eq!(exited(&mut process).unwrap().code(), Some(3), "{case}");
+        let log = log(temp.path());
+        assert!(log.contains("args: one two\n"), "{case}: {log}");
+        let marks = std::fs::read_to_string(temp.path().join("runner.log")).unwrap_or_default();
+        assert_eq!(
+            marks.lines().count(),
+            usize::from(scope.is_some()),
+            "{case}: only probed"
+        );
+    }
+}
+
+/// #2615 review: a log is kept within its cap while its writer runs, and a
+/// writer appending to it carries on at its new end.
+#[test]
+fn a_running_log_past_its_cap_is_emptied_and_appended_from_its_start() {
+    use std::io::Write;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("detached.log");
+    let mut writer = open_log(&path).unwrap();
+    writer.write_all(&[b'x'; 64]).unwrap();
+    let reader = std::fs::File::open(&path).unwrap();
+    assert!(!cap_log(&reader, 64).unwrap(), "at the cap: kept");
+    writer.write_all(b"y").unwrap();
+    assert!(cap_log(&writer, 64).unwrap(), "past it: emptied");
+    writer.write_all(b"after\n").unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "after\n");
+    // A terminal or pipe is never touched.
+    let (pipe, _keep) = std::io::pipe().unwrap();
+    let pipe = File::from(std::os::fd::OwnedFd::from(pipe));
+    assert!(!cap_log(&pipe, 0).unwrap());
 }

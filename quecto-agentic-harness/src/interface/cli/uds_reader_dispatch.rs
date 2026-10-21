@@ -124,9 +124,10 @@ fn intercept_admission_restart(ctx: &ReaderDispatchCtx<'_>) -> bool {
         .get("id")
         .and_then(|id| id.as_str())
         .map(str::to_owned);
+    let confirm = value.get("confirm").and_then(|confirm| confirm.as_bool()) == Some(true);
     let (clients, client_id) = (ctx.registry.clone(), ctx.client_id);
     tokio::spawn(async move {
-        let answered = tokio::task::spawn_blocking(|| respond(registered())).await;
+        let answered = tokio::task::spawn_blocking(move || respond(registered(), confirm)).await;
         let id = id.as_deref();
         let event = match answered {
             Ok(Ok(data)) => super::protocol::AgentEvent::ok(id, COMMAND, Some(data)),

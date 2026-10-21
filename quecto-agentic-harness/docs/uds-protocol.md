@@ -624,7 +624,7 @@ bound to an authority, even with no live attempts, and ride on every pushed
 `admission_state_changed` of a bound process — which is also emitted, with the
 activity unchanged, whenever the link's health changes (loss, revocation,
 reconnection, exhaustion), so a client's badge is live without polling. The
-TUI footer renders `authorityStatus` as `admission ✓ connected` / `⟳ reconnecting` / `✗ unavailable`, followed by `· N queued` while the session has attempts waiting.
+TUI footer renders `authorityStatus` as `admission ✓ connected` / `⟳ reconnecting` / `✗ unavailable`, followed by `· N queued here` while the session has attempts waiting.
 
 The `waiting` verdict takes precedence over the tool-window verdicts
 (`advancing`, `active`, `quiet`) while any attempt is queued. A changed
@@ -1234,14 +1234,17 @@ A harness with no sub-agent registry answers with the error `no sub-agent regist
 
 ### `restart_admission`
 
-Restart the shared admission broker this root session uses, then rejoin it (#2615; the TUI's `/admission restart`). It is answered while a turn is running as well as when idle. When the installed systemd unit runs the broker for this session's global config, the unit is restarted (`systemctl --user restart`), so it stays always-on. Otherwise a running broker is asked to stop (outstanding work stays journaled, as on SIGTERM) and a fresh one is started on demand, reading the current policy; a broker that was not running is simply started. The session then rejoins through its link as an attempt would.
+Restart the shared admission broker this root session uses, then rejoin it (#2615; the TUI's `/admission restart`). It is answered while a turn is running as well as when idle. When the installed systemd unit runs the broker for this session's global config and is active and serving, the unit is restarted (`systemctl --user restart`), so it stays always-on. Otherwise whatever serves is asked to stop (outstanding work stays journaled, as on SIGTERM) and, once it is gone, the unit (when installed for this config) or a fresh on-demand broker starts, reading the current policy; a broker that was not running is simply started. Success is reported only once a new broker (another `instance`) answers. The session then rejoins through its link as an attempt would.
+
+A restart fails every live sub-agent sharing the broker (they must be respawned) and other sessions' in-flight requests once. When any scope besides this root is registered, a request without `confirm: true` restarts nothing and answers `{"outcome": "unconfirmed", "sharedWith": <others>}`.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"restart_admission"` | yes | |
 | `id` | string | no | Correlation ID |
+| `confirm` | boolean | no | `true` confirms restarting a broker other sessions or sub-agents share (default `false`) |
 
-**Response data:** `{"outcome": "service_restarted" | "restarted" | "started", "authorityStatus": "connected" | "reconnecting" | "unavailable", "sessionRestartRequired": true}`. `sessionRestartRequired` is present (and `true`) only when the broker came back publishing a different policy than the one this session composed against: the broker restart succeeded, and only a session restart adopts the policy (the TUI then restarts its session).
+**Response data:** `{"outcome": "service_restarted" | "restarted" | "started", "authorityStatus": "connected" | "reconnecting" | "unavailable", "sessionRestartRequired": true}`, or `{"outcome": "unconfirmed", "sharedWith": <count>}` when nothing was restarted for want of confirmation. `sessionRestartRequired` is present (and `true`) only when the broker came back publishing a different policy than the one this session composed against: the broker restart succeeded, and only a session restart adopts the policy.
 
 Errors (the response's `error`):
 

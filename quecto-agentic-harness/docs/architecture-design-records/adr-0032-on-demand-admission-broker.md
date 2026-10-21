@@ -68,8 +68,36 @@ no `admission` section nothing is probed or started.
 - A root whose broker dies mid-session still only reconnects (bounded
   backoff, then `unavailable`); it does not start a replacement on its own.
   A restart from the TUI is a separate command.
+- **Environment and cgroup.** The broker gets an allowlisted environment
+  (no provider keys or tokens linger in its `/proc/<pid>/environ` for its
+  lifetime; `RUST_LOG` is fixed at `warn`). When a systemd user manager
+  answers, it starts in a transient scope of its own
+  (`systemd-run --user --scope`), so stopping the launching terminal's unit
+  does not stop the shared broker; otherwise it relies on its own session.
+- **Service race.** A session that starts a broker before the systemd unit
+  does (at login) leaves the unit exited `Busy` (3), not restarted by
+  `RestartPreventExitStatus=3`. `status` names this; once the on-demand broker
+  stops, `systemctl --user restart quecto-admission-broker.service` restores
+  the always-on service.
+- **Version skew.** A session of a newer `quecto` can meet a broker started
+  by an older binary. If the admission protocol version differs, joining fails
+  closed (`unsupported admission protocol: …`) until that broker stops (idle,
+  or SIGTERM) and the next session starts one from the new binary; the idle
+  stop bounds the window.
 - A broker started on demand leaves `broker.log` (owner-only, started afresh
-  past 1 MiB) next to its journal.
+  past 1 MiB, at start and while it runs) next to its journal.
+- **Restart from a session** (`/admission restart`). The installed unit is
+  restarted in place only while it is active and serving; anything else that
+  serves is stopped first, so a broker started by hand with
+  `quecto admission-broker run` is replaced by the unit (when installed for
+  this config) or by one that stops itself when idle. Success means a new
+  broker instance answers. Because it fails every live sub-agent and other
+  sessions' in-flight requests once, a broker others share is restarted only
+  on a confirming second request.
+- **Tests.** A test that starts a real `quecto agent` with an `admission`
+  section must start its broker first: an agent that finds none starts a
+  production broker, which is not tethered to the test and outlives it until
+  its idle stop. The test helpers say so beside `dies_with_the_test`.
 - Rejected: stay up until logout (keeps a stale policy alive indefinitely);
   a configurable idle period (no measured need, more surface); the TUI owning
   the broker (it would end with the TUI that started it while other sessions

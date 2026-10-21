@@ -249,6 +249,12 @@ fn cmd_status(
         Ok(report) => {
             stdout.push_str(&status_json(&report).to_string());
             stdout.push('\n');
+            if let Some(unit) = handles.inspect.stood_down_unit(&report) {
+                stderr.push_str(&format!(
+                    "admission-broker: service unit {unit} stopped; an on-demand broker is serving {} (it stops itself after an hour idle; then `systemctl --user restart {unit}`)\n",
+                    report.directory.display()
+                ));
+            }
             0
         }
         Err(AuthorityAdminError::NotRunning { directory, reason }) => {
@@ -461,6 +467,7 @@ fn status_json(
         "epoch": report.epoch,
         "journal_healthy": report.journal_healthy,
         "live_scopes": report.live_scopes,
+        "on_demand": report.on_demand,
         "groups": groups,
     })
 }
@@ -550,7 +557,33 @@ async fn run(start: BrokerStart, stdout: &mut String, stderr: &mut String) -> i3
             _ = sigterm.recv() => {}
         }
     };
-    run_until(start, stop, stdout, stderr).await
+    // A broker started on demand writes to its log as its stderr (#2615):
+    // keep that log within its cap for as long as it runs.
+    let log_cap = match start.lifetime {
+        AuthorityLifetime::StopWhenIdle(_) => Some(tokio::spawn(keep_log_capped())),
+        AuthorityLifetime::AlwaysOn => None,
+    };
+    let code = run_until(start, stop, stdout, stderr).await;
+    if let Some(task) = log_cap {
+        task.abort();
+    }
+    code
+}
+
+/// How often a broker started on demand checks its log's size.
+const LOG_CAP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+async fn keep_log_capped() {
+    use crate::infrastructure::processes::local::detached_process::{
+        LOG_CAP_BYTES, cap_own_stderr_log,
+    };
+    let mut interval = tokio::time::interval(LOG_CAP_INTERVAL);
+    loop {
+        interval.tick().await;
+        if let Err(error) = cap_own_stderr_log(LOG_CAP_BYTES) {
+            tracing::warn!(%error, "admission broker log could not be capped");
+        }
+    }
 }
 
 /// Serve until `stop` resolves. Separated from the signal wiring so the

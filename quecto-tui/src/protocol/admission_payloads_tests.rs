@@ -162,7 +162,7 @@ fn the_authority_badge_reflects_broker_health() {
     view.waiting = 3;
     assert_eq!(
         view.authority_badge().as_deref(),
-        Some("admission ✓ connected · 3 queued")
+        Some("admission ✓ connected · 3 queued here")
     );
 }
 

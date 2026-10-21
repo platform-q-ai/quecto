@@ -10,7 +10,7 @@
 use std::sync::{Arc, OnceLock};
 
 use crate::application::admission::dto::negotiation::{
-    RestartError, RestartOutcome, RestartReport,
+    Restart, RestartError, RestartOutcome, RestartReport,
 };
 use crate::application::admission::use_cases::RestartAuthority;
 
@@ -31,12 +31,23 @@ pub fn registered() -> Option<&'static RestartAuthority> {
     REGISTERED.get().map(Arc::as_ref)
 }
 
-/// Restart the broker and rejoin it: the response data, or the error text.
-pub fn respond(use_case: Option<&RestartAuthority>) -> Result<serde_json::Value, String> {
+/// Restart the broker and rejoin it (`confirm`: the restart of a broker
+/// other sessions share was confirmed): the response data, or the error
+/// text.
+pub fn respond(
+    use_case: Option<&RestartAuthority>,
+    confirm: bool,
+) -> Result<serde_json::Value, String> {
     let Some(use_case) = use_case else {
         return Err(NOT_CONFIGURED.into());
     };
-    use_case.execute().map(present).map_err(refusal)
+    match use_case.execute(confirm).map_err(refusal)? {
+        Restart::Done(report) => Ok(present(report)),
+        Restart::Unconfirmed { others } => Ok(serde_json::json!({
+            "outcome": "unconfirmed",
+            "sharedWith": others,
+        })),
+    }
 }
 
 fn outcome_name(outcome: RestartOutcome) -> &'static str {

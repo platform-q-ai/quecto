@@ -363,6 +363,9 @@ pub enum AgentCommand {
     RestartAdmission {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        /// Confirms restarting a broker other sessions or sub-agents share.
+        #[serde(default)]
+        confirm: bool,
     },
     GetMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -596,7 +599,7 @@ impl AgentCommand {
             Self::SetWorkflowAutomation { id, .. } => id.as_deref(),
             Self::GetSubagents { id, .. } => id.as_deref(),
             Self::DeleteAllSubagents { id } => id.as_deref(),
-            Self::RestartAdmission { id } => id.as_deref(),
+            Self::RestartAdmission { id, .. } => id.as_deref(),
             Self::GetMessage { id, .. } => id.as_deref(),
         }
     }

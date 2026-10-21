@@ -76,3 +76,13 @@ pub enum RestartError {
         reason: String,
     },
 }
+
+/// What `/admission restart` did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Restart {
+    /// Not restarted: `others` sessions or sub-agents share the broker and
+    /// the restart was not confirmed.
+    Unconfirmed { others: usize },
+    /// Restarted and rejoined.
+    Done(RestartReport),
+}

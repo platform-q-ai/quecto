@@ -105,6 +105,8 @@ fn requests_and_replies_round_trip_through_json() {
             receipt_wall_ms: 2,
         },
         Body::Status {
+            on_demand: true,
+            instance: 7,
             epoch: 3,
             journal_healthy: true,
             live_scopes: 1,
@@ -203,7 +205,7 @@ fn typed_conversions_are_lossless() {
     )
     .unwrap();
     assert_eq!(status.live_scopes, 2);
-    if let Body::Status { groups, .. } = status_body(&status) {
+    if let Body::Status { groups, .. } = status_body(&status, false, 0) {
         assert_eq!(groups["g"].queued, 2);
     } else {
         panic!("status body");

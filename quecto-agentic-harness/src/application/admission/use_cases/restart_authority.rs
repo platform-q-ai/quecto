@@ -10,8 +10,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::install_authority_service::unit_serves_config;
 use super::negotiate_authority::{ENSURE_ATTEMPTS, NegotiateAuthority};
+use crate::application::admission::dto::authority::AuthorityReport;
 use crate::application::admission::dto::negotiation::{
-    RestartError, RestartOutcome, RestartReport,
+    Restart, RestartError, RestartOutcome, RestartReport,
 };
 use crate::application::admission::ports::{
     AuthorityAdmin, AuthorityLaunch, AuthorityLauncher, AuthorityServiceManager, AuthoritySession,
@@ -62,8 +63,11 @@ impl RestartAuthority {
     }
 
     /// Restart the broker this root session joined, then rejoin it. Only a
-    /// root restarts: a child's capability belongs to its parent.
-    pub fn execute(&self) -> Result<RestartReport, RestartError> {
+    /// root restarts: a child's capability belongs to its parent. A broker
+    /// that other sessions or sub-agents share is restarted only once
+    /// `confirmed`: their sub-agents fail and must be respawned, and their
+    /// in-flight requests fail once.
+    pub fn execute(&self, confirmed: bool) -> Result<Restart, RestartError> {
         let launch = match self.session.joined() {
             Some(JoinedAuthority::Root(launch)) => launch,
             Some(JoinedAuthority::Child) => return Err(RestartError::Child),
@@ -73,7 +77,18 @@ impl RestartAuthority {
             return Err(RestartError::InProgress);
         }
         let _in_flight = InFlight(&self.in_flight);
-        let outcome = self.restart(&launch).map_err(RestartError::Restart)?;
+        let running = self.admin.inspect(&launch.directory).ok();
+        // This root is one live scope; every other is a session or a
+        // sub-agent the restart breaks.
+        let others = running
+            .as_ref()
+            .map_or(0, |report| report.live_scopes.saturating_sub(1));
+        if others > 0 && !confirmed {
+            return Ok(Restart::Unconfirmed { others });
+        }
+        let outcome = self
+            .restart(&launch, running.as_ref())
+            .map_err(RestartError::Restart)?;
         // A broker back with a different policy is the restart this command
         // offers the session (#2615): reported, not refused.
         let session_restart_required = match self.session.rejoin() {
@@ -83,38 +98,39 @@ impl RestartAuthority {
                 return Err(RestartError::Rejoin { outcome, reason });
             }
         };
-        Ok(RestartReport {
+        Ok(Restart::Done(RestartReport {
             outcome,
             health: self.session.health(),
             session_restart_required,
-        })
+        }))
     }
 
-    /// Restart the broker serving `launch`, and answer once it serves again.
-    fn restart(&self, launch: &AuthorityLaunch) -> Result<RestartOutcome, String> {
+    /// Restart the broker serving `launch` (`running` when one answered),
+    /// and answer once a **new** broker serves: one whose instance differs
+    /// from the old one's. The installed unit is restarted in place only
+    /// when it is active and is what serves; otherwise whatever serves is
+    /// stopped first, and the unit (when installed for this config) or an
+    /// on-demand broker is started in its place.
+    fn restart(
+        &self,
+        launch: &AuthorityLaunch,
+        running: Option<&AuthorityReport>,
+    ) -> Result<RestartOutcome, String> {
         let directory = &launch.directory;
-        let managed_by_unit = match self.service.unit_status()? {
+        let unit_installed = match self.service.unit_status()? {
             UnitStatus::Present { contents } => unit_serves_config(&contents, &launch.config),
             UnitStatus::Absent => false,
         };
-        if managed_by_unit {
-            self.service.restart()?;
-            self.wait_until(|launcher| launcher.probe(directory).is_ok())
-                .map_err(|()| {
-                    format!(
-                        "{} was restarted but its broker did not answer at {}",
-                        self.service.unit_name(),
-                        directory.display()
-                    )
-                })?;
-            return Ok(RestartOutcome::ServiceRestarted);
-        }
-        let was_running = self.launcher.probe(directory).is_ok();
-        if was_running {
+        let before = running.map(|report| report.instance);
+        let unit_serving = match running {
+            Some(report) if unit_installed && !report.on_demand => self.service.is_active()?,
+            _ => false,
+        };
+        if running.is_some() && !unit_serving {
             self.admin
                 .stop(directory)
                 .map_err(|error| error.to_string())?;
-            self.wait_until(|launcher| launcher.probe(directory).is_err())
+            self.wait_until(|| self.launcher.probe(directory).is_err())
                 .map_err(|()| {
                     format!(
                         "the admission broker at {} did not stop",
@@ -122,27 +138,62 @@ impl RestartAuthority {
                     )
                 })?;
         }
+        if unit_installed {
+            // A unit that lost the lock to a broker still exiting exits Busy
+            // and is not restarted by systemd: start it once more.
+            for _ in 0..UNIT_STARTS {
+                self.service.restart()?;
+                if self
+                    .wait_until(|| self.answers_anew(directory, before))
+                    .is_ok()
+                {
+                    return Ok(RestartOutcome::ServiceRestarted);
+                }
+            }
+            return Err(format!(
+                "{} was restarted but no new broker answered at {}",
+                self.service.unit_name(),
+                directory.display()
+            ));
+        }
         self.negotiate.ensure_running(launch)?;
-        Ok(match was_running {
-            true => RestartOutcome::Restarted,
-            false => RestartOutcome::Started,
+        self.wait_until(|| self.answers_anew(directory, before))
+            .map_err(|()| {
+                format!(
+                    "no new admission broker answered at {}",
+                    directory.display()
+                )
+            })?;
+        Ok(match running {
+            Some(_) => RestartOutcome::Restarted,
+            None => RestartOutcome::Started,
         })
     }
 
-    /// Probe through the bounded backoff until `done`.
-    fn wait_until(&self, done: impl Fn(&dyn AuthorityLauncher) -> bool) -> Result<(), ()> {
+    /// Whether a broker answers at `directory` that is not the one before.
+    fn answers_anew(&self, directory: &std::path::Path, before: Option<u64>) -> bool {
+        self.admin
+            .inspect(directory)
+            .is_ok_and(|report| Some(report.instance) != before)
+    }
+
+    /// Check through the bounded backoff until `done`.
+    fn wait_until(&self, done: impl Fn() -> bool) -> Result<(), ()> {
         for attempt in 0..ENSURE_ATTEMPTS {
-            if done(self.launcher.as_ref()) {
+            if done() {
                 return Ok(());
             }
             self.launcher.pause(attempt);
         }
-        match done(self.launcher.as_ref()) {
+        match done() {
             true => Ok(()),
             false => Err(()),
         }
     }
 }
+
+/// How many times the unit is started before the restart gives up.
+const UNIT_STARTS: usize = 2;
 
 #[cfg(test)]
 #[path = "restart_authority_tests.rs"]

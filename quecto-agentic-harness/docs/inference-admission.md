@@ -139,9 +139,14 @@ A root agent (the TUI's agent or a headless `quecto agent`) whose authority
 does not answer starts `quecto admission-broker run --stop-when-idle` for the
 configured directory and global config, then probes it with the bounded
 reconnect backoff (8 tries, ≈10 s) before it registers. The broker runs
-detached: its own session and process group, stdin closed, stdout and stderr
-appended to `<directory>/broker.log` (owner-only, started afresh past 1 MiB),
-working directory `/`. It outlives the agent and the TUI that started it,
+detached: its own session and process group, and, when a systemd user manager
+answers, its own transient scope (`systemd-run --user --scope`), so stopping
+the terminal's unit does not stop it; stdin closed; stdout and stderr appended
+to `<directory>/broker.log` (owner-only, started afresh past 1 MiB at start and
+checked every minute while it runs); working directory `/`. It gets only an
+allowlisted environment (`PATH`, `HOME`, `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME`,
+`DBUS_SESSION_BUS_ADDRESS`, `LANG`, `LC_*`, `TZ`, plus `QUECTO_BASE_DIR` and
+`RUST_LOG=warn`): no provider keys or tokens. It outlives the agent and the TUI that started it,
 because every session on the host shares it. Two agents starting at once end
 with one broker: the loser exits 3 (`Busy`) and its agent joins the winner.
 A child never starts one; it binds the capability its parent registered.
@@ -152,6 +157,14 @@ uncertain and restart-orphaned ones included. It never stops while it holds
 anything. It prints `admission authority stopped itself: idle with no
 sessions, permits or leases; the next session starts it again` to its log and
 exits 0; the next root starts a fresh one, which reads the current policy.
+To stop it sooner, send it SIGTERM (`pkill -TERM -f 'admission-broker run
+--stop-when-idle'`); like any broker it keeps outstanding work journaled.
+`quecto admission-broker status` reports `"on_demand": true` for it.
+
+An agent from a newer `quecto` than the running broker can fail to join it
+until that broker restarts (`unsupported admission protocol: …`): the
+protocol version fails closed. Stop the old broker; the next session starts
+one from the new binary.
 
 If the broker cannot start, the agent exits before any inference with
 `admission negotiation failed: …` and the reason: the broker's own exit (with
@@ -160,20 +173,39 @@ started for <directory> did not answer (…)`.
 
 `install-service` and a foreground `run` are always-on, as before: they never
 stop themselves. While one serves the directory it answers the probe, so no
-second broker is started (and the singleton lock would refuse one).
+second broker is started (and the singleton lock would refuse one). If a
+session started a broker on demand before the service did (at login, say), the
+service exits 3 (`Busy`) and, by `RestartPreventExitStatus=3`, stays stopped;
+`status` then says ``service unit quecto-admission-broker.service stopped; an
+on-demand broker is serving …``. Once that broker has stopped (idle, or
+SIGTERM), `systemctl --user restart quecto-admission-broker.service` brings the
+service back.
 
 ### Restarting it from a session
 
 `/admission restart` in the TUI (UDS `restart_admission`) restarts the broker
 the session uses and rejoins it. If the installed systemd unit runs the broker
-for this session's global config, the unit is restarted. Otherwise a running
-broker is asked to stop, as SIGTERM would (outstanding work stays journaled
-and is held as restart orphans until it clears), and a fresh one is started on
-demand with the current policy. A child session cannot restart the shared
-broker; its root session can. The TUI footer shows the broker's health beside
-the model: `admission ✓ connected`, `admission ⟳ reconnecting` or
-`admission ✗ unavailable`, followed by `· N queued` while this session has
-attempts waiting.
+for this session's global config and is the one serving, the unit is
+restarted. Otherwise whatever serves is asked to stop, as SIGTERM would
+(outstanding work stays journaled and is held as restart orphans until it
+clears), and once it is gone the unit (when installed for this config) or a
+fresh on-demand broker starts in its place with the current policy. A broker
+started by hand with `quecto admission-broker run` is replaced by one that
+stops itself when idle. The restart reports success only once a **new** broker
+answers (each run of a broker reports its own instance to its owner). A child session cannot
+restart the shared broker; its root session can.
+
+A restart interrupts everyone sharing the broker: every live sub-agent (of any
+session) fails closed and must be respawned, and other sessions' in-flight
+requests fail once before they reconnect. So when other sessions or sub-agents
+are registered, the first `/admission restart` names how many and restarts
+nothing; running it again within a minute confirms it.
+
+The TUI footer shows the broker's health beside the model:
+`admission ✓ connected`, `admission ⟳ reconnecting` or
+`admission ✗ unavailable`, followed by `· N queued here` while this session
+has attempts waiting; on a narrow terminal the badge gives way to the model
+name.
 
 When the broker came back with a **different policy** (the session reads
 `restartRequired: true`), the footer shows `admission ✗ restart required` and
@@ -405,7 +437,7 @@ Activation (per host, per user):
    (a second run: `unit … already up to date`). Do not run `quecto
    admission-broker run` from an agent tool call: it is foreground-only.
 4. Verify: `quecto admission-broker status` prints
-   `{"directory":"/home/me/.quecto/admission","epoch":1,"journal_healthy":true,"live_scopes":0,"groups":{"shared":{"active":0,"queued":0,"uncertain":0,"cooldown_until_ms":0,"unavailable":false}}}`,
+   `{"directory":"/home/me/.quecto/admission","epoch":1,"journal_healthy":true,"live_scopes":0,"on_demand":false,"groups":{"shared":{"active":0,"queued":0,"uncertain":0,"cooldown_until_ms":0,"unavailable":false}}}`,
    exit 0; `systemctl --user status quecto-admission-broker.service` →
    `active (running)`.
 5. Start (or restart) every agent process. Roots register before composing a
@@ -444,7 +476,8 @@ If it fails:
 | `another admission authority owns …/authority.lock`, exit 3 (not restarted: `RestartPreventExitStatus=3`) | a foreground `run` or an old service holds the lock | stop it, `systemctl --user restart quecto-admission-broker.service` |
 | `install-service` → `systemctl` errors | no systemd user session | `loginctl enable-linger $USER`, or supervise `run --config <abs>` yourself |
 | an agent exits with `admission negotiation failed: the admission broker exited (…) before it answered; see …/broker.log` or `… did not answer (…)` | the broker started on demand could not serve (bad config, ledger refused, directory too long) | read `<directory>/broker.log`, fix the cause, start the agent again |
-| a session reports "restart required" | its own section changed on live reload, or the broker came back with a different policy | in the TUI, `/admission restart` (restarts the broker and the session); otherwise restart that session (never a child: children inherit) |
+| an agent exits with `admission negotiation failed: admission authority unreachable at …/client/admission.sock (…); its broker's log is …/broker.log` | the broker answered the start-up probe, then went away before this agent registered | read `<directory>/broker.log`; start the agent again |
+| a session reports "restart required" | its own section changed on live reload, or the broker came back with a different policy | in the TUI, `/admission restart` (restarts this session, and the broker unless it already serves the new policy); otherwise restart that session (never a child: children inherit) |
 | `journal_healthy: false` | the journal is unwritable or corrupt | fix permissions/storage; never delete the journal to clear a queue |
 
 Quarantine (a group has stopped granting):

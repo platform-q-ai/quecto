@@ -401,6 +401,14 @@ pub enum Body {
         journal_healthy: bool,
         live_scopes: usize,
         groups: BTreeMap<String, SnapshotWire>,
+        /// Started on demand: stops itself when idle (#2615). Absent from an
+        /// older broker, which reads as always-on.
+        #[serde(default)]
+        on_demand: bool,
+        /// This run of the authority: a restarted one answers another
+        /// (#2615). Absent from an older broker.
+        #[serde(default)]
+        instance: u64,
     },
     Reset {
         epoch: u64,
@@ -465,8 +473,10 @@ fn held_reason(hold: &UncertainHold) -> String {
     )
 }
 
-pub fn status_body(status: &AuthorityStatus) -> Body {
+pub fn status_body(status: &AuthorityStatus, on_demand: bool, instance: u64) -> Body {
     Body::Status {
+        on_demand,
+        instance,
         epoch: status.epoch,
         journal_healthy: status.journal_healthy,
         live_scopes: status.live_scopes,

@@ -121,13 +121,33 @@ impl InstallAuthorityService {
 }
 
 /// Whether unit `contents` (as this use case writes them) run the broker for
-/// the global config at `config` (#2615): the installed service, not a
-/// broker started on demand, serves that config's directory.
+/// the global config at `config` (#2615): its `ExecStart=` is exactly a
+/// quoted binary followed by ` admission-broker run --config <config>`, the
+/// config quoted as this use case quotes it. Anything else (more arguments,
+/// another config, a hand-written line) is not this broker's unit.
 pub(super) fn unit_serves_config(contents: &str, config: &std::path::Path) -> bool {
-    let argument = format!(" admission-broker run --config {}", quote_unit_path(config));
-    contents
-        .lines()
-        .any(|line| line.starts_with("ExecStart=") && line.ends_with(&argument))
+    let argument = format!("admission-broker run --config {}", quote_unit_path(config));
+    contents.lines().any(|line| {
+        line.strip_prefix("ExecStart=")
+            .and_then(quoted_binary_rest)
+            .is_some_and(|rest| rest == argument)
+    })
+}
+
+/// What follows the leading quoted binary of an `ExecStart=` value and one
+/// space: `None` when it does not start with a quoted path.
+fn quoted_binary_rest(value: &str) -> Option<&str> {
+    let body = value.strip_prefix('"')?;
+    let mut escaped = false;
+    for (index, c) in body.char_indices() {
+        match (escaped, c) {
+            (true, _) => escaped = false,
+            (false, '\\') => escaped = true,
+            (false, '"') => return body[index + 1..].strip_prefix(' '),
+            (false, _) => {}
+        }
+    }
+    None
 }
 
 /// Quote a path for a systemd `ExecStart=` line: double quotes with the

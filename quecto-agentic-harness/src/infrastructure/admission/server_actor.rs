@@ -71,6 +71,8 @@ pub(super) struct Actor {
     last_dispatch_failure: Option<String>,
     /// Whether this authority stops itself when idle (#2615, ADR-0032).
     lifetime: AuthorityLifetime,
+    /// This run of the authority, so a restart can tell a new one (#2615).
+    instance: u64,
     /// Told why when the authority stops itself.
     stopped: Option<watch::Sender<Option<AuthorityStop>>>,
     /// The idle period ran out or its owner asked: the loop ends after
@@ -85,6 +87,14 @@ pub(super) struct Actor {
 /// How long a requested stop waits for its asker to take the answer and
 /// leave before it stops anyway (#2615).
 const STOP_ANSWER_GRACE_MS: u64 = 1_000;
+
+/// An identity for this run of the authority: its start time, its process,
+/// and its place among the authorities this process has run.
+fn run_instance() -> u64 {
+    static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let run = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    wall_ms().wrapping_mul(1_000_003) ^ u64::from(std::process::id()) ^ (run << 48)
+}
 
 fn far_future() -> Instant {
     Instant::now() + Duration::from_secs(3600)
@@ -110,6 +120,7 @@ impl Actor {
             notified: BTreeSet::new(),
             last_dispatch_failure: None,
             lifetime: AuthorityLifetime::AlwaysOn,
+            instance: run_instance(),
             stopped: None,
             stopping: None,
             stop_requested: None,
@@ -138,7 +149,10 @@ impl Actor {
         let sleep = tokio::time::sleep_until(Instant::now().into());
         tokio::pin!(sleep);
         loop {
+            // Biased: a command already waiting (a client just connecting)
+            // is served before a timer turn that might find the broker idle.
             tokio::select! {
+                biased;
                 _ = shutdown.changed() => break,
                 command = rx.recv() => match command {
                     Some(command) => self.handle(command),
@@ -146,7 +160,13 @@ impl Actor {
                 },
                 _ = &mut sleep => {}
             }
-            let wake = self.settle();
+            let mut wake = self.settle();
+            if self.stopping == Some(AuthorityStop::Idle) && self.drain_pending(&mut rx) {
+                // Something arrived as the idle stop was decided (#2615):
+                // decide again with it served.
+                self.stopping = None;
+                wake = self.settle();
+            }
             if let Some(reason) = self.stopping {
                 // Stopped in the same turn that decided it: nothing that
                 // arrives after this decision is served or granted.
@@ -167,6 +187,17 @@ impl Actor {
         {
             tracing::warn!(?error, "admission ledger not made durable at shutdown");
         }
+    }
+
+    /// Serve every command already waiting, without waiting for more;
+    /// `true` when there was any.
+    fn drain_pending(&mut self, rx: &mut mpsc::UnboundedReceiver<Command>) -> bool {
+        let mut drained = false;
+        while let Ok(command) = rx.try_recv() {
+            self.handle(command);
+            drained = true;
+        }
+        drained
     }
 
     fn handle(&mut self, command: Command) {
@@ -314,7 +345,11 @@ impl Actor {
             Op::Inspect | Op::Reset | Op::Stop if role != Role::Admin => {
                 Err(AuthorityError::Unauthorized)
             }
-            Op::Inspect => Ok(status_body(&self.authority.inspect(now))),
+            Op::Inspect => Ok(status_body(
+                &self.authority.inspect(now),
+                matches!(self.lifetime, AuthorityLifetime::StopWhenIdle(_)),
+                self.instance,
+            )),
             Op::Reset => self.reset(now),
             Op::Stop => {
                 // Answered now; stops once the asker has gone (#2615).

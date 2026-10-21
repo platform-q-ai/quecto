@@ -45,6 +45,9 @@ pub(crate) struct ConnectionState {
     /// The agent reported that only a session restart adopts the broker's
     /// changed policy (#2615).
     pub(crate) admission_restart_required: bool,
+    /// Until when a second `/admission restart` confirms restarting a broker
+    /// others share (#2615).
+    pub(crate) admission_restart_confirm_until: Option<tokio::time::Instant>,
     /// The spinner message this module last wrote, so a tool message set by
     /// someone else is never clobbered when the wait ends.
     pub(crate) admission_spinner_message: Option<String>,
@@ -165,6 +168,7 @@ impl ConnectionState {
             admission_view: None,
             admission_authority: None,
             admission_restart_required: false,
+            admission_restart_confirm_until: None,
             admission_spinner_message: None,
             running_tools: Default::default(),
             agent_connected: true,

@@ -421,9 +421,10 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
     }
 
     /// Whether the authority holds anything a stop would lose (#2615,
-    /// ADR-0032): a root scope, a lost scope still owing work, or any
-    /// permit, queued wait or lease, uncertain and restart-orphaned ones
-    /// included. A state it cannot read counts as holding, so the idle stop
+    /// ADR-0032): a root scope; any attempt outstanding in the ledger, which
+    /// is every permit and lease, uncertain and restart-orphaned ones
+    /// included (a lost scope still owing work owes it there); or a queued
+    /// wait. A state it cannot read counts as holding, so the idle stop
     /// fails safe.
     pub(in crate::application::admission) fn holds_anything(&mut self, now: u64) -> bool {
         let roots = self.issued.values().any(|issued| issued.parent.is_none());
@@ -431,12 +432,16 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
             .service
             .ledger(now)
             .map_or(true, |ledger| !ledger.outstanding.is_empty());
-        let occupied = self.groups.iter().any(|group| {
-            self.service.snapshot(group, now).map_or(true, |snapshot| {
-                snapshot.active > 0 || snapshot.queued > 0 || snapshot.uncertain > 0
-            })
+        let queued = self.groups.iter().any(|group| {
+            self.service
+                .snapshot(group, now)
+                .map_or(true, |snapshot| snapshot.queued > 0)
         });
-        roots || !self.detached.is_empty() || outstanding || occupied
+        debug_assert!(
+            outstanding || self.detached.is_empty(),
+            "a lost scope is kept only while it owes outstanding work"
+        );
+        roots || outstanding || queued
     }
 
     pub fn inspect(&mut self, now: u64) -> AuthorityStatus {
