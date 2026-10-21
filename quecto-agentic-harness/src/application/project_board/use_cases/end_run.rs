@@ -16,7 +16,11 @@
 //! back as a swarm that ended so with nothing reported is: every task item
 //! as todo, its cost unknown. A run ends as `succeeded` only when every
 //! task item is done there (`items_not_done` otherwise, from the domain),
-//! so no success is recorded over items the board shows undone. A run
+//! so no success is recorded over items the board shows undone; nor while
+//! a revision the recorded items' evidence names is on no branch or tag of
+//! the board's remote ([`RemoteRevisions`], `not_pushed` from the domain,
+//! #2666), so no success is recorded over work that never left the swarm's
+//! container (a remote that cannot be read refuses it too). A run
 //! that would leave the board past its bytes is ended once more without
 //! its evidence, as a fold-back is. Never while its swarm is still running:
 //! while this front end sees it running ([`RunLiveness`]: its session
@@ -31,19 +35,22 @@
 //! calling thread before it is tried again.
 use std::sync::Arc;
 
-use super::board_change::{checked_writer, commit_run, task_on};
+use super::board_change::{When, checked_now, checked_writer, commit_run, task_on};
 use super::board_view;
 use crate::application::project_board::dto::{
     EndedRun, LivenessCheck, ProjectBoardError, RunEnd, RunEndOutcome, RunReport,
 };
 use crate::application::project_board::dto::{SwarmEnd, SwarmRunView};
-use crate::application::project_board::fold_back::{Evidence, cost_of, run_items};
+use crate::application::project_board::fold_back::{
+    Evidence, EvidenceRevisions, checks_commit, cost_of, evidence_revisions, run_items,
+};
 use crate::application::project_board::ports::{
-    BoardArtifact, BoardClock, BoardStoreError, BoardTextCells, ProjectBoardStore, RunLiveness,
-    SwarmRunReports,
+    BoardArtifact, BoardClock, BoardStoreError, BoardTextCells, ProjectBoardStore, RemoteRevisions,
+    RunLiveness, SwarmRunReports,
 };
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::services::claims::claim_facts;
 use crate::domain::project_board::services::runs::{
     HeldEnd, Reported, end_held, end_lost, run_and_plan,
@@ -54,6 +61,9 @@ pub struct EndRun {
     store: Arc<dyn ProjectBoardStore>,
     clock: Arc<dyn BoardClock>,
     cells: Arc<dyn BoardTextCells>,
+    /// Which revisions the board's remote holds: a success is recorded
+    /// only over evidence that left the swarm's container (#2666).
+    revisions: Arc<dyn RemoteRevisions>,
     /// Whether a run's swarm still runs here (`None`: this front end can
     /// see none).
     liveness: Option<Arc<dyn RunLiveness>>,
@@ -71,6 +81,7 @@ impl EndRun {
         store: Arc<dyn ProjectBoardStore>,
         clock: Arc<dyn BoardClock>,
         cells: Arc<dyn BoardTextCells>,
+        revisions: Arc<dyn RemoteRevisions>,
         liveness: Option<Arc<dyn RunLiveness>>,
         reports: Option<Arc<dyn SwarmRunReports>>,
     ) -> Result<Self, ProjectBoardError> {
@@ -79,6 +90,7 @@ impl EndRun {
             store,
             clock,
             cells,
+            revisions,
             liveness,
             reports,
             actor,
@@ -135,11 +147,17 @@ impl EndRun {
             id.as_str(),
             request.outcome.as_str()
         );
+        // What the remote answered, asked at most once for every pass, and
+        // asked before the write begins (#2666 round 1): never between an
+        // attempt's read and its write, so the change is judged at the
+        // time it is written.
+        let mut asked = None;
+        self.asked_ahead(request, report.as_ref(), &mut asked);
         let mut written = self.write(
             request,
             &message,
             report.as_ref(),
-            Evidence::Kept,
+            (Evidence::Kept, &mut asked),
             &mut facts,
         );
         // Only a run past the board's bytes is ended again, smaller (an
@@ -150,7 +168,7 @@ impl EndRun {
                 request,
                 &message,
                 report.as_ref(),
-                Evidence::Left,
+                (Evidence::Left, &mut asked),
                 &mut facts,
             );
             if let (Some(facts), Some((attempts, lost))) = (facts, first) {
@@ -187,10 +205,22 @@ impl EndRun {
                         RunReport::Unreported
                     }
                 };
+                // How many evidence revisions a success left unchecked, so a
+                // silent pass shows (#2666 round 2).
+                let unchecked = match (request.outcome, &asked) {
+                    (RunEndOutcome::Succeeded, Some((_, Ok(judged)))) => {
+                        Some(u64::try_from(judged.unchecked).unwrap_or(u64::MAX))
+                    }
+                    (RunEndOutcome::Succeeded, Some((_, Err(_))) | None)
+                    | (RunEndOutcome::Stopped | RunEndOutcome::Failed | RunEndOutcome::Lost, _) => {
+                        None
+                    }
+                };
                 Ok(EndedRun {
                     run: run.clone(),
                     liveness,
                     report,
+                    unchecked,
                 })
             }
             other => panic!("an end_run writes its run alone, not {other:?}"),
@@ -200,16 +230,19 @@ impl EndRun {
     /// One pass at ending the run, as `request` says, with `report`'s
     /// items, owners and cost when there is one (its evidence kept or left
     /// out as `evidence` says), noting in `facts`, when given, the write's
-    /// attempts and the task as last read.
+    /// attempts and the task as last read. A success over a kept report
+    /// counts the revisions its evidence names that the remote does not
+    /// hold, asking the remote only for revisions `asked` holds no answer
+    /// for.
     fn write(
         &self,
         request: &RunEnd,
         message: &str,
         report: Option<&SwarmRunView>,
-        evidence: Evidence,
+        (evidence, asked): (Evidence, &mut Asked),
         facts: &mut Option<&mut OpFacts>,
     ) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
-        let (id, number) = (&request.task, request.run);
+        let id = &request.task;
         let noting = facts.is_some();
         let (store, clock, actor) = (&*self.store, &*self.clock, &self.actor);
         let mut read = None;
@@ -225,53 +258,7 @@ impl EndRun {
                 if noting {
                     read = Some((task.fields().status, claim_facts(task, actor, &when.now)));
                 }
-                when.may_build_on(task)?;
-                match &request.expected_updated {
-                    Some(expected) if *expected != task.fields().updated => {
-                        return Err(ProjectBoardError::Stale {
-                            id: id.clone(),
-                            expected: expected.clone(),
-                            updated: task.fields().updated.clone(),
-                        });
-                    }
-                    Some(_) | None => {}
-                }
-                let runs = board_view::runs_of(board, id)?;
-                let plans = board_view::plans_of(board, id)?;
-                let (run, plan) = run_and_plan(&runs, &plans, number)?;
-                let held = |end: HeldEnd, swarm: SwarmEnd| {
-                    let reported = match report {
-                        // What the swarm's board showed as it ended.
-                        Some(view) => Reported {
-                            items: run_items(plan, view, &*self.cells, evidence).items,
-                            cost: Some(cost_of(view)),
-                            report: SwarmReport::Kept,
-                        },
-                        // Nothing reported: every item as a fold-back maps
-                        // a swarm that reported nothing (a start's undo's
-                        // included), its cost unknown.
-                        None => {
-                            let nothing = SwarmRunView {
-                                end: swarm,
-                                items: vec![],
-                                observed_tokens: 0,
-                            };
-                            Reported {
-                                items: run_items(plan, &nothing, &*self.cells, Evidence::Left)
-                                    .items,
-                                cost: None,
-                                report: SwarmReport::NoneKept,
-                            }
-                        }
-                    };
-                    end_held(task, (run, plan), end, reported, actor, &when.now)
-                };
-                let ended = match request.outcome {
-                    RunEndOutcome::Succeeded => held(HeldEnd::Succeeded, SwarmEnd::Succeeded)?,
-                    RunEndOutcome::Stopped => held(HeldEnd::Stopped, SwarmEnd::Cancelled)?,
-                    RunEndOutcome::Failed => held(HeldEnd::Failed, SwarmEnd::Failed)?,
-                    RunEndOutcome::Lost => end_lost(task, run, actor, &when.now)?,
-                };
+                let ended = self.ended(request, report, (evidence, &mut *asked), board, when)?;
                 Ok(vec![BoardArtifact::Run(ended)])
             },
         );
@@ -281,7 +268,163 @@ impl EndRun {
         }
         written
     }
+
+    /// The run `request` names as `board` and `when` end it, with
+    /// `report`'s items, owners and cost when there is one (its evidence
+    /// kept or left out as `evidence` says). A success over a kept report
+    /// is first judged by every other rule (its claim, its run, its
+    /// items); only one that passes them asks the remote, once, which of
+    /// the commits its evidence names it holds (#2666), the answer kept in
+    /// `asked` for a later attempt or pass.
+    fn ended(
+        &self,
+        request: &RunEnd,
+        report: Option<&SwarmRunView>,
+        (evidence, asked): (Evidence, &mut Asked),
+        board: &crate::application::project_board::ports::BoardSnapshot,
+        when: &When,
+    ) -> Result<Run, ProjectBoardError> {
+        let (id, number, actor) = (&request.task, request.run, &self.actor);
+        let task = task_on(board, id)?;
+        when.may_build_on(task)?;
+        match &request.expected_updated {
+            Some(expected) if *expected != task.fields().updated => {
+                return Err(ProjectBoardError::Stale {
+                    id: id.clone(),
+                    expected: expected.clone(),
+                    updated: task.fields().updated.clone(),
+                });
+            }
+            Some(_) | None => {}
+        }
+        let runs = board_view::runs_of(board, id)?;
+        let plans = board_view::plans_of(board, id)?;
+        let (run, plan) = run_and_plan(&runs, &plans, number)?;
+        let held = |end: HeldEnd, swarm: SwarmEnd, unpushed: usize| {
+            let reported = match report {
+                // What the swarm's board showed as it ended.
+                Some(view) => Reported {
+                    items: run_items(plan, view, &*self.cells, evidence).items,
+                    cost: Some(cost_of(view)),
+                    report: SwarmReport::Kept,
+                    unpushed,
+                },
+                // Nothing reported: every item as a fold-back maps a swarm
+                // that reported nothing (a start's undo's included), its
+                // cost unknown.
+                None => {
+                    let nothing = SwarmRunView {
+                        end: swarm,
+                        items: vec![],
+                        observed_tokens: 0,
+                    };
+                    Reported {
+                        items: run_items(plan, &nothing, &*self.cells, Evidence::Left).items,
+                        cost: None,
+                        report: SwarmReport::NoneKept,
+                        unpushed: 0,
+                    }
+                }
+            };
+            end_held(task, (run, plan), end, reported, actor, &when.now)
+        };
+        Ok(match (request.outcome, report) {
+            (RunEndOutcome::Succeeded, Some(view)) => {
+                // Every other rule first: the remote is asked only for an
+                // end that passes them.
+                held(HeldEnd::Succeeded, SwarmEnd::Succeeded, 0)?;
+                let unpushed = self.unpushed(evidence_revisions(plan, view), asked)?;
+                held(HeldEnd::Succeeded, SwarmEnd::Succeeded, unpushed)?
+            }
+            (RunEndOutcome::Succeeded, None) => held(HeldEnd::Succeeded, SwarmEnd::Succeeded, 0)?,
+            (RunEndOutcome::Stopped, _) => held(HeldEnd::Stopped, SwarmEnd::Cancelled, 0)?,
+            (RunEndOutcome::Failed, _) => held(HeldEnd::Failed, SwarmEnd::Failed, 0)?,
+            (RunEndOutcome::Lost, _) => end_lost(task, run, actor, &when.now)?,
+        })
+    }
+
+    /// For a success over a kept report, the remote's answer asked ahead
+    /// of the write, against the board and the time as they are now, so
+    /// the write's attempts find it in `asked`: best effort, as anything
+    /// it finds wrong the write finds again, and refuses, noting it.
+    fn asked_ahead(&self, request: &RunEnd, report: Option<&SwarmRunView>, asked: &mut Asked) {
+        match (request.outcome, report) {
+            (RunEndOutcome::Succeeded, Some(_)) => {}
+            (RunEndOutcome::Succeeded, None)
+            | (RunEndOutcome::Stopped | RunEndOutcome::Failed | RunEndOutcome::Lost, _) => return,
+        }
+        let (Ok(board), Ok(when)) = (self.store.read(), checked_now(&*self.clock)) else {
+            return;
+        };
+        let _ahead = self.ended(request, report, (Evidence::Kept, asked), &board, &when);
+    }
+
+    /// How many of the commits `evidence` names the board's remote does
+    /// not hold, and how many of its revisions went unchecked (naming no
+    /// commit, or one too short or too long to check: [`checks_commit`]):
+    /// asked once (the remote not at all when no commit is named), the
+    /// answer (or why there is none) kept in `asked` for a later attempt
+    /// or pass at the same evidence.
+    fn unpushed(
+        &self,
+        evidence: EvidenceRevisions,
+        asked: &mut Asked,
+    ) -> Result<usize, ProjectBoardError> {
+        if let Some((kept, answer)) = asked.as_ref() {
+            if *kept == evidence {
+                return answer.clone().map(|judged| judged.unpushed);
+            }
+        }
+        let answer = self.judged(&evidence);
+        *asked = Some((evidence, answer.clone()));
+        answer.map(|judged| judged.unpushed)
+    }
+
+    /// `evidence` as the remote judges it.
+    fn judged(&self, evidence: &EvidenceRevisions) -> Result<Judged, ProjectBoardError> {
+        let id_len = match evidence.ids.as_slice() {
+            [] => {
+                return Ok(Judged {
+                    unpushed: 0,
+                    unchecked: evidence.entries.len(),
+                });
+            }
+            [_, ..] => self.revisions.commit_id_hex_len()?,
+        };
+        let (checked, _): (Vec<String>, Vec<String>) = evidence
+            .ids
+            .iter()
+            .cloned()
+            .partition(|id| checks_commit(id, id_len));
+        let unchecked = evidence.unchecked(id_len);
+        let unpushed = match checked.as_slice() {
+            [] => 0,
+            [_, ..] => {
+                let missing = self.revisions.not_on_remote(&checked)?;
+                assert!(
+                    missing.iter().all(|revision| checked.contains(revision)),
+                    "the remote answers only for the revisions asked"
+                );
+                missing.len()
+            }
+        };
+        Ok(Judged {
+            unpushed,
+            unchecked,
+        })
+    }
 }
+
+/// How the remote judged a success's evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Judged {
+    unpushed: usize,
+    unchecked: usize,
+}
+
+/// The evidence the remote was asked about, and how it judged it or why
+/// it could not.
+type Asked = Option<(EvidenceRevisions, Result<Judged, ProjectBoardError>)>;
 
 #[cfg(test)]
 #[path = "end_run_tests.rs"]

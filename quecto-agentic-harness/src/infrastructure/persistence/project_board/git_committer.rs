@@ -75,6 +75,15 @@ impl Git {
             },
         )
     }
+
+    /// This git, every call bounded by `bound` (local or reaching the
+    /// remote): for a read that must answer soon, as a teardown's (#2666).
+    #[must_use]
+    pub fn bounded(mut self, bound: std::time::Duration) -> Self {
+        self.local_timeout = self.local_timeout.min(bound);
+        self.network_timeout = self.network_timeout.min(bound);
+        self
+    }
 }
 
 /// What `git config --get` answered.

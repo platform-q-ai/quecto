@@ -20,7 +20,7 @@ use std::time::SystemTime;
 use crate::application::project_board::operations::{BoardOperationParts, NoPullRequestHost};
 use crate::application::project_board::ports::{
     BoardClock, BoardStoreError, CoordinatorLaunch, ProjectBoardStore, PullRequestStates,
-    PullRequestStatesError, RunLiveness, SwarmRunReports,
+    PullRequestStatesError, RemoteRevisions, RunLiveness, SwarmRunReports,
 };
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
@@ -113,6 +113,7 @@ fn build_with_warnings(
         Arc::clone(&store) as _,
     ));
     let prs = pull_request_states(&url, &environment.vars);
+    let revisions: Arc<dyn RemoteRevisions> = Arc::clone(&store) as _;
     let store: Arc<dyn ProjectBoardStore> = store;
     let built = |error: crate::application::project_board::dto::ProjectBoardError| {
         unavailable(error.to_string())
@@ -136,6 +137,9 @@ fn build_with_warnings(
             Arc::clone(&store),
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
+            // A success is judged by the revisions the board's own remote
+            // holds (#2666).
+            Arc::clone(&revisions),
             environment
                 .launcher
                 .clone()
@@ -176,6 +180,27 @@ fn build_with_warnings(
     Ok(ProjectBoardHandles {
         operations: RunBoardOperation::new(parts),
     })
+}
+
+/// How long one git call of a teardown's completion check may take: past
+/// it the completion is unknown, and the box is kept.
+const TEARDOWN_READ: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// The revisions the board of the repository at `repo` holds on its
+/// `origin` (#2666), read as the board's own store reads them, each git
+/// call within [`TEARDOWN_READ`]: what the teardown asks of a succeeded
+/// board run's completion. Or why there are none here (no repository, no
+/// `origin`).
+///
+/// # Errors
+/// git cannot run at `repo`, or it has no `origin`.
+pub fn board_remote_revisions(repo: &Path) -> Result<Arc<dyn RemoteRevisions>, String> {
+    let vars = GitEnvironment::allowlisted(std::env::vars_os());
+    let git = Git::reader(repo, vars)
+        .map_err(|error| format!("git cannot run here: {error}"))?
+        .bounded(TEARDOWN_READ);
+    let store = GitBoardStore::new(git, "origin").map_err(|error| store_reason(&error))?;
+    Ok(Arc::new(store))
 }
 
 /// Pull request states of the remote at `url`, read with `gh` when it is

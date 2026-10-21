@@ -612,6 +612,27 @@ pub trait SwarmRunReports: Send + Sync {
     fn recorded(&self, task: &Slug, run: u32);
 }
 
+/// Port: which revisions a run's swarm named in its evidence the board's
+/// remote holds (#2666): a revision is on the remote when it names a
+/// commit (by its full id, or a prefix of at least 12 hex digits) that one
+/// of the remote's branches or tags reaches. A revision a swarm committed
+/// in its container and never pushed is not, nor is any text that names
+/// no commit. Blocking: it reads the remote.
+pub trait RemoteRevisions: Send + Sync {
+    /// Those of `revisions` the remote does not hold so, each as given.
+    ///
+    /// # Errors
+    /// The remote could not be reached or read: nothing is judged.
+    fn not_on_remote(&self, revisions: &[String]) -> Result<Vec<String>, BoardStoreError>;
+
+    /// How many hex digits a full commit id of this repository has: 40
+    /// (SHA-1) or 64 (SHA-256). Read locally.
+    ///
+    /// # Errors
+    /// The repository's object format cannot be read, or is neither.
+    fn commit_id_hex_len(&self) -> Result<usize, BoardStoreError>;
+}
+
 /// Port: launches a started task's swarm coordinator in a new container
 /// (S4c). Its adapter goes through the session's own spawn path, so it
 /// launches only what the session itself could spawn, and only while its

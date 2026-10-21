@@ -1,6 +1,6 @@
 //! The start answers' steps are the Pocket start prompt's words, moved
 //! unchanged: only the task's id and the run's number are filled in.
-use super::{CONTENDED, REFUSED, refused, refused_before_board, running, undo};
+use super::{CONTENDED, PUSH_STEP, REFUSED, refused, refused_before_board, running, undo};
 use crate::application::project_board::dto::{ProjectBoardError, RunAfterUndo, TaskStart};
 use crate::application::project_board::operations::BoardRequest;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -50,10 +50,13 @@ fn the_steps_are_the_prompts_words_moved_unchanged() {
     let task = slug("a");
     let run = running(&task, 7);
     assert!(run.contains("end_run(task \"a\", run 7) with"), "{run}");
+    // The one step added since (#2666 round 1), taken out whole.
+    assert_eq!(run.matches(PUSH_STEP).count(), 1, "{run}");
     let run = run.replace(
         "end_run(task \"a\", run 7)",
         "end_run(task \"a\", the run start answered)",
     );
+    let run = run.replace(&format!("{PUSH_STEP} "), "");
     let undo = undo(&task);
     let mut rest = PROMPT.to_string();
     for step in [CONTENDED, REFUSED, undo.as_str(), run.as_str()] {
@@ -86,7 +89,24 @@ fn the_fixed_steps_read_exactly() {
          \"board-store\", to \"ready\"), or, if released is null and restored.moved is false, \
          move(task \"board-store\", to restored.status); say why the launch failed, and stop."
     );
+    assert_eq!(
+        PUSH_STEP,
+        "If the run succeeded, before you close it make sure every commit its evidence names is \
+         on a branch of the board's remote (git fetch <remote>, then git branch -r --contains \
+         <commit>): have the coordinator push any that is not. end_run refuses \"succeeded\" \
+         (\"not_pushed\") while one is not. If the container cannot push, stop the coordinator \
+         with agent_cmd kill: that keeps its environment while the run's completion commit is \
+         not on that remote, and the retention reason names the environment and its workspace; \
+         fetch the commit from that workspace, push it, then remove the environment with \
+         kill_container. Ending the session without that kill does not keep it."
+    );
     let steps = running(&slug("board-store"), 3);
+    assert!(
+        steps.contains(&format!(
+            "export what the run must keep. {PUSH_STEP} A run paused"
+        )),
+        "before the close: {steps}"
+    );
     assert!(
         steps.starts_with("Once it has started, you hold the task"),
         "{steps}"

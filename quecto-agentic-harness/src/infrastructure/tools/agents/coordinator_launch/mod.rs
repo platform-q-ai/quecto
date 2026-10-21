@@ -40,6 +40,7 @@ use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::sessions::entities::session::SubagentLiveness;
 use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
+pub use delivery::{OpenRemote, RemoteCompletionDelivery, register_board_repository};
 pub use kept_boards::{KeptRunReports, KeptSwarmBoards, MAX_KEPT};
 #[cfg(test)]
 pub(crate) use run_report::swarm_run_view;
@@ -347,6 +348,7 @@ fn label(task: &str, run: u32) -> String {
     label
 }
 
+mod delivery;
 mod kept_boards;
 mod run_report;
 mod spawn_permit;

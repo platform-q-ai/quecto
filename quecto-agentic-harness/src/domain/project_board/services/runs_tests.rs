@@ -396,6 +396,7 @@ fn the_holder_ends_an_open_run_as_stopped_or_failed() {
                 items: vec![item("schema"), item("api")],
                 cost: Some(0),
                 report: SwarmReport::Kept,
+                unpushed: 0,
             },
             &person("Ada"),
             &at("10:00:00"),
@@ -415,6 +416,7 @@ fn the_holder_ends_an_open_run_as_stopped_or_failed() {
                 items: vec![],
                 cost: None,
                 report: SwarmReport::NoneKept,
+                unpushed: 0,
             },
             &person(who),
             &at(when),
@@ -455,6 +457,7 @@ fn a_held_end_is_stamped_after_the_tasks_last_change() {
         items: vec![],
         cost: None,
         report: SwarmReport::NoneKept,
+        unpushed: 0,
     };
     let run = open_run(1, 1);
     let accepted = plan(1, PlanState::Accepted);
@@ -499,6 +502,7 @@ fn a_run_ends_as_succeeded_only_when_every_task_item_is_done() {
                 items,
                 cost: None,
                 report: SwarmReport::Kept,
+                unpushed: 0,
             },
             &person("Ada"),
             &at("10:00:00"),
@@ -576,6 +580,7 @@ fn a_success_with_no_board_kept_is_refused_as_none_kept() {
             items: vec![],
             cost: None,
             report: SwarmReport::NoneKept,
+            unpushed: 0,
         },
         &person("Ada"),
         &at("10:00:00"),
@@ -612,10 +617,79 @@ fn a_run_ended_already_is_refused_before_its_items_are_judged() {
                 items: vec![],
                 cost: None,
                 report: SwarmReport::NoneKept,
+                unpushed: 0,
             },
             &person("Ada"),
             &at("10:00:00"),
         ),
         Err(BoardRuleError::RunEnded(1))
+    );
+}
+
+/// #2666: a board run ended succeeded with its evidence at a commit the
+/// coordinator made in its container and never pushed; the teardown took
+/// the work with the box. A run ends as succeeded only when every
+/// revision its evidence names is on the board's remote; undone items are
+/// named first, and a stop or failure is never judged by it.
+#[test]
+fn a_run_ends_as_succeeded_only_when_its_evidence_is_on_the_remote() {
+    let held = task(InProgress);
+    let accepted = plan(1, PlanState::Accepted);
+    let end = |end: HeldEnd, items: Vec<RunItem>, unpushed: usize| {
+        end_held(
+            &held,
+            (&open_run(1, 1), &accepted),
+            end,
+            Reported {
+                items,
+                cost: None,
+                report: SwarmReport::Kept,
+                unpushed,
+            },
+            &person("Ada"),
+            &at("10:00:00"),
+        )
+    };
+    let done = || vec![item("schema"), item("api")];
+    assert_eq!(
+        end(HeldEnd::Succeeded, done(), 1),
+        Err(BoardRuleError::NotPushed {
+            run: 1,
+            revisions: 1
+        })
+    );
+    assert_eq!(
+        end(HeldEnd::Succeeded, done(), 3),
+        Err(BoardRuleError::NotPushed {
+            run: 1,
+            revisions: 3
+        })
+    );
+    let todo = RunItem {
+        state: ItemState::Todo,
+        ..item("api")
+    };
+    assert!(
+        matches!(
+            end(HeldEnd::Succeeded, vec![item("schema"), todo], 1),
+            Err(BoardRuleError::ItemsNotDone { .. })
+        ),
+        "undone items are named first"
+    );
+    let ended = end(HeldEnd::Succeeded, done(), 0).unwrap();
+    assert_eq!(ended.fields().outcome, Some(RunOutcome::Succeeded));
+    for stop in [HeldEnd::Stopped, HeldEnd::Failed] {
+        assert!(end(stop, done(), 2).is_ok(), "{stop:?} is not judged by it");
+    }
+    assert_eq!(
+        BoardRuleError::NotPushed {
+            run: 1,
+            revisions: 2
+        }
+        .to_string(),
+        "run 1 cannot end as succeeded: 2 commit(s) its evidence names are on no branch or \
+         tag of the board's remote, so its work has not left the swarm's container; push them \
+         and call end_run again, or, if they went with the container, end it as \"failed\" \
+         and tell the user"
     );
 }

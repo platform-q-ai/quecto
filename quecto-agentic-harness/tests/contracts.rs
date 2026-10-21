@@ -95,6 +95,8 @@ mod catalogue_inputs_loader;
 mod catalogue_source;
 #[path = "contracts/checkout_paths.rs"]
 mod checkout_paths;
+#[path = "contracts/completion_delivery_check.rs"]
+mod completion_delivery_check;
 #[path = "contracts/config_document_store.rs"]
 mod config_document_store;
 #[path = "contracts/config_document_writer.rs"]
@@ -199,6 +201,8 @@ mod project_board_kinds;
 mod project_board_op_log;
 #[path = "contracts/project_board_store.rs"]
 mod project_board_store;
+#[path = "contracts/remote_revisions.rs"]
+mod remote_revisions;
 
 #[path = "contracts/provider_runtime_factory.rs"]
 mod provider_runtime_factory;

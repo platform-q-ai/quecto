@@ -41,6 +41,18 @@ pub const CONTENDED: &str =
 pub const REFUSED: &str = "If start is refused for any other reason, say why in a sentence and \
                            stop; do not start the task any other way.";
 
+/// The step added to the prompt's (#2666 round 1): a succeeded run's
+/// commits are confirmed on the remote before its coordinator's container
+/// can go, as `end_run` refuses a success over any that is not.
+pub const PUSH_STEP: &str = "If the run succeeded, before you close it make sure every commit its evidence names is \
+     on a branch of the board's remote (git fetch <remote>, then git branch -r --contains \
+     <commit>): have the coordinator push any that is not. end_run refuses \"succeeded\" \
+     (\"not_pushed\") while one is not. If the container cannot push, stop the coordinator \
+     with agent_cmd kill: that keeps its environment while the run's completion commit is \
+     not on that remote, and the retention reason names the environment and its workspace; \
+     fetch the commit from that workspace, push it, then remove the environment with \
+     kill_container. Ending the session without that kill does not keep it.";
+
 /// The steps for running run `run` of task `task`, once it has started.
 pub fn running(task: &Slug, run: u32) -> String {
     assert!(run >= 1, "a started run is numbered from 1");
@@ -52,7 +64,7 @@ pub fn running(task: &Slug, run: u32) -> String {
          running, do nothing but renew. On \"not_holder\" from renew or end_run, stop the \
          coordinator with agent_cmd kill, do not end the run or move the task, and tell the \
          user here. When the coordinator reports, read its report with get_messages and \
-         export what the run must keep. A run paused as blocked waits for the user: ask them \
+         export what the run must keep. {PUSH_STEP} A run paused as blocked waits for the user: ask them \
          here before you close it. Close a run paused with a proposed outcome (a cancelled run \
          is final already). For a run paused with no outcome, resume it with agent_cmd \
          swarm_control resume and ask the coordinator to end it with its outcome, or to cancel \

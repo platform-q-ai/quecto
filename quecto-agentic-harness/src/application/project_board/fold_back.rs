@@ -208,6 +208,60 @@ pub fn run_items(
     folded
 }
 
+pub use crate::domain::project_board::value_objects::commit_token::{
+    MIN_COMMIT_PREFIX, MIN_COMMIT_TOKEN, checks_commit, commit_token,
+};
+
+/// What the evidence of a run's recorded task items names (#2666): the
+/// commit token of each entry (by [`commit_token`]: `None` for one naming
+/// none), in the plan's order; and each token once, case-insensitively.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EvidenceRevisions {
+    pub ids: Vec<String>,
+    pub entries: Vec<Option<String>>,
+}
+
+impl EvidenceRevisions {
+    /// How many entries name no commit that a repository whose full ids
+    /// are `id_len` hex digits checks ([`checks_commit`]).
+    pub fn unchecked(&self, id_len: usize) -> usize {
+        let checked = self
+            .entries
+            .iter()
+            .filter(|token| {
+                token
+                    .as_deref()
+                    .is_some_and(|token| checks_commit(token, id_len))
+            })
+            .count();
+        self.entries.len() - checked
+    }
+}
+
+/// What the evidence of the swarm items `plan`'s task items stand for (as
+/// [`run_items`] matches them) names: what a run recorded from `view`
+/// claims as its work, which the push rule checks. An extra item's
+/// evidence is never recorded, so it is not among it.
+pub fn evidence_revisions(plan: &Plan, view: &SwarmRunView) -> EvidenceRevisions {
+    let mut named = EvidenceRevisions::default();
+    let entries = plan
+        .fields()
+        .items
+        .iter()
+        .filter_map(|item| matched(item, view))
+        .flat_map(|(_, swarm)| swarm.evidence.iter());
+    for entry in entries {
+        let token = commit_token(&entry.revision);
+        if let Some(id) = &token {
+            if named.ids.iter().all(|named| named != id) {
+                named.ids.push(id.clone());
+            }
+        }
+        named.entries.push(token);
+    }
+    named
+}
+
 /// The swarm item plan item `item` stands for, by its place in the view:
 /// of those carrying its
 /// title exactly, or else its `<slug>: ` prefix, the most progressed, the

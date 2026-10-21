@@ -286,3 +286,72 @@ fn status_name(status: RunStatus) -> &'static str {
         RunStatus::BudgetExhausted => "budget-exhausted",
     }
 }
+
+/// Where the work a succeeded board run completed at went, read as its
+/// owner's kill tears its box down (#2666 round 2): its completion commit
+/// on the board's remote, or not, or not known.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionDelivery {
+    /// Nothing to judge: no board run's coordinator, or a completion that
+    /// names no commit.
+    NotJudged,
+    OnRemote,
+    NotOnRemote {
+        revision: String,
+    },
+    /// Whether it is there could not be told, and why.
+    Unknown {
+        why: String,
+    },
+}
+
+/// Whether the teardown of `observed` in `mode` judges where its run's
+/// completion went: the owner's kill (`OwnerEnd`) of a created run that
+/// ended succeeded (an allowlist). Any other end, or run, is torn down or
+/// kept as before.
+pub fn judges_delivery(mode: MemberFinalizeMode, observed: &SwarmRunObservation) -> bool {
+    match (mode, observed) {
+        (MemberFinalizeMode::OwnerEnd, SwarmRunObservation::Run(hosted)) => {
+            hosted.created() && hosted.status == RunStatus::Succeeded
+        }
+        (
+            MemberFinalizeMode::OwnerEnd
+            | MemberFinalizeMode::Exit
+            | MemberFinalizeMode::ParentKill
+            | MemberFinalizeMode::OwnerTeardown
+            | MemberFinalizeMode::LaunchRollback
+            | MemberFinalizeMode::LaunchRollbackOwned,
+            _,
+        ) => false,
+    }
+}
+
+/// The `metadata.retained` reason an environment is kept for, when
+/// `delivery` keeps it (#1924's machinery): a succeeded run whose
+/// completion commit is not on the board's remote, or not known to be
+/// (fail safe), keeps its box so the work can be pushed from its
+/// workspace. `None`: nothing keeps it.
+///
+/// The reason names the environment `environment` and its `workspace`, the
+/// retained checkout the work is pushed from.
+pub fn undelivered_reason(
+    delivery: &CompletionDelivery,
+    environment: &str,
+    workspace: &str,
+) -> Option<String> {
+    let kept = format!(
+        "environment {environment} kept so its work can be pushed from its workspace \
+         {workspace}; kill_container {environment} to remove it once pushed"
+    );
+    match delivery {
+        CompletionDelivery::NotJudged | CompletionDelivery::OnRemote => None,
+        CompletionDelivery::NotOnRemote { revision } => Some(format!(
+            "board run succeeded at {revision}, which is on no branch or tag of the board's \
+             remote: {kept}"
+        )),
+        CompletionDelivery::Unknown { why } => Some(format!(
+            "board run succeeded, but whether its completion commit is on the board's remote \
+             could not be checked ({why}): {kept}"
+        )),
+    }
+}
