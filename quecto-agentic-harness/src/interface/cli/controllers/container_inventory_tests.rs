@@ -463,6 +463,46 @@ fn ls_lists_a_retained_environment_whose_container_exited() {
     assert_eq!(on_file[0].status, EnvironmentStatus::Retained);
 }
 
+/// #2681: a retained environment's listing says why it is kept, in the
+/// reason its teardown recorded (not only the restore's generic note):
+/// the table on stderr, the JSON in its own `retained` field.
+#[test]
+fn ls_says_why_a_retained_environment_is_kept() {
+    let (_dir, ctx, _) = composed_with_exited_containers();
+    let reason = "board run succeeded at 2b23fe1, which is on no branch or tag of the board's \
+                  remote: environment C1 kept so its work can be pushed from its checkout \
+                  /state/env-one/workspace/repo; kill_container C1 to remove it once pushed";
+    let store = FileEnvironmentRegistryStore::for_base_dir(&ctx.base_dir());
+    let mut c1 = store
+        .load()
+        .unwrap()
+        .into_iter()
+        .find(|record| record.environment_ref == "C1")
+        .unwrap();
+    c1.metadata = serde_json::json!({ "retained": reason });
+    store.record(&c1).unwrap();
+    let output = run(&["container", "ls"], &ctx);
+    assert_eq!(output.exit_code, 0, "{output:?}");
+    assert!(
+        output
+            .stderr
+            .contains(&format!("note: C1 retained: {reason}\n")),
+        "{}",
+        output.stderr
+    );
+    let output = run(&["container", "ls", "--all", "--json"], &ctx);
+    assert_eq!(output.exit_code, 0, "{output:?}");
+    let listing: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+    let rows = listing["environments"].as_array().unwrap();
+    let row = |reference: &str| {
+        rows.iter()
+            .find(|row| row["ref"] == reference)
+            .unwrap_or_else(|| panic!("{reference} listed: {listing}"))
+    };
+    assert_eq!(row("C1")["retained"], reason, "{listing}");
+    assert_eq!(row("C3")["retained"], serde_json::Value::Null, "{listing}");
+}
+
 /// Round 3 H1 (#2033): `gc --dry-run` has no effect at all — the restore
 /// it runs over previews its corrections (`C3` running → stopped, its
 /// container gone) without writing them, so `environments.json` is byte
