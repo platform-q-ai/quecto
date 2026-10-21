@@ -207,9 +207,6 @@ pub fn redact_url_userinfo(input: &str) -> String {
     URL_USERINFO.replace_all(input, "${1}***@").into_owned()
 }
 
-#[cfg(test)]
-#[path = "redaction_tests.rs"]
-mod tests;
 /// The most characters of free text one field shows the model.
 pub const MODEL_TEXT_CHARS: usize = 400;
 
@@ -230,6 +227,9 @@ pub fn clip_chars(text: &str, max_chars: usize) -> String {
     }
 }
 
+#[cfg(test)]
+#[path = "redaction_tests.rs"]
+mod tests;
 #[cfg(test)]
 mod redacted_cov_tests {
     use super::*;

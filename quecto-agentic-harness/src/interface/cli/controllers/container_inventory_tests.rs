@@ -518,6 +518,65 @@ fn ls_says_why_a_retained_environment_is_kept() {
     assert_eq!(row("C3")["retained"], serde_json::Value::Null, "{listing}");
 }
 
+/// #2681 round 2: a record the restore retains during this very `ls` is
+/// said once, by the restore's own note; a record an older build relabelled
+/// is restored with the restore's reason, and its teardown's own reason is
+/// still said beside it.
+#[test]
+fn ls_says_each_retention_reason_once() {
+    let (dir, ctx, _) = composed_with_exited_containers();
+    let store = FileEnvironmentRegistryStore::for_base_dir(&ctx.base_dir());
+    let records = store.load().unwrap();
+    // C3 runs, its container is gone and its advertised checkout cannot be
+    // read: this ls retains it.
+    let mut c3 = records
+        .iter()
+        .find(|record| record.environment_ref == "C3")
+        .unwrap()
+        .clone();
+    c3.metadata = serde_json::json!({
+        "checkout": dir.path().join("elsewhere/repo").display().to_string()
+    });
+    store.record(&c3).unwrap();
+    // C2 was retained for a push, then relabelled stopped by an older build.
+    let mut c2 = records
+        .iter()
+        .find(|record| record.environment_ref == "C2")
+        .unwrap()
+        .clone();
+    std::fs::create_dir_all(dir.path().join("state/env-two/workspace")).unwrap();
+    c2.status = EnvironmentStatus::Stopped;
+    c2.metadata = serde_json::json!({ "retained": "kept so its work can be pushed" });
+    c2.last_error =
+        Some(crate::domain::environments::entities::environment_registry::GONE_AT_RESTORE.into());
+    store.record(&c2).unwrap();
+    let output = run(&["container", "ls"], &ctx);
+    assert_eq!(output.exit_code, 0, "{output:?}");
+    assert_eq!(
+        output.stderr.matches("note: C3 retained").count(),
+        1,
+        "{}",
+        output.stderr
+    );
+    assert!(
+        output.stderr.contains("note: C3 retained at restore: "),
+        "{}",
+        output.stderr
+    );
+    assert!(
+        output
+            .stderr
+            .contains("note: C2 retained: kept so its work can be pushed\n"),
+        "{}",
+        output.stderr
+    );
+    assert!(
+        output.stderr.contains("note: C2 retained at restore: "),
+        "{}",
+        output.stderr
+    );
+}
+
 /// Round 3 H1 (#2033): `gc --dry-run` has no effect at all — the restore
 /// it runs over previews its corrections (`C3` running → stopped, its
 /// container gone) without writing them, so `environments.json` is byte

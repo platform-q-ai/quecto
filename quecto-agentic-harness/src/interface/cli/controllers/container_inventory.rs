@@ -130,14 +130,21 @@ pub(crate) fn cmd_ls(
             present_restore_notes(&handles, stderr);
             // #2681: why each listed retained environment is kept, in its
             // teardown's own words, on one line; one this restore retained
-            // is said by its own note below.
+            // for that reason is said by its own note below.
             for record in &shown {
-                let retained_now = handles
-                    .restore
-                    .retained
-                    .iter()
-                    .any(|(environment_ref, _)| *environment_ref == record.environment_ref);
-                if let (Some(reason), false) = (record.retained_reason(), retained_now) {
+                // Said already only when the restore retained it now for
+                // this very reason (an older build's relabel names its
+                // own, so the teardown's is still said).
+                let said = |reason: &str| {
+                    handles
+                        .restore
+                        .retained
+                        .iter()
+                        .any(|(environment_ref, said)| {
+                            *environment_ref == record.environment_ref && said == reason
+                        })
+                };
+                if let Some(reason) = record.retained_reason().filter(|reason| !said(reason)) {
                     stderr.push_str(&format!(
                         "note: {} retained: {}\n",
                         record.environment_ref,
@@ -147,7 +154,8 @@ pub(crate) fn cmd_ls(
             }
             for (environment_ref, reason) in &handles.restore.retained {
                 stderr.push_str(&format!(
-                    "note: {environment_ref} retained at restore: {reason}\n"
+                    "note: {environment_ref} retained at restore: {}\n",
+                    one_line(reason)
                 ));
             }
             for (environment_ref, reason) in &handles.restore.unverified {
