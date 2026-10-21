@@ -65,3 +65,43 @@ fn a_change_is_never_stamped_before_another_change_of_its_task() {
     let unlinked = unlink(&task, &own, 2, &read, &ada, &now()).unwrap();
     assert_eq!(unlinked.fields().updated, at("10:00:05"), "an unlink");
 }
+
+/// #2662 review round 3: a sibling change stamped past the outside bound
+/// is refused before anything is built on it (`change_ahead`), so no
+/// link's or unlink's stamp is dragged after it.
+#[test]
+fn a_sibling_change_past_the_bound_is_refused_before_the_floor() {
+    let task = of(InProgress);
+    let ada = person("Ada");
+    let read = host(&[
+        (7, "feat/b1", PrState::Open),
+        (8, "feat/second", PrState::Open),
+    ]);
+    let mut fields = change(1, Some(7)).into_fields();
+    fields.updated = at("23:00:00");
+    let future = Change::new(fields).unwrap();
+    let bounded = Moment {
+        now: at("10:00:00"),
+        latest: Some(at("10:01:00")),
+    };
+    let ahead = BoardRuleError::ChangeAhead {
+        change: 1,
+        updated: at("23:00:00"),
+    };
+    let own = [future.clone()];
+    let linked = link(
+        &task,
+        on(&own),
+        head("feat/second", Some(8)),
+        &read,
+        &ada,
+        &bounded,
+    );
+    assert_eq!(linked, Err(ahead.clone()), "a link");
+    let both = [future, change(2, Some(8))];
+    assert_eq!(
+        unlink(&task, &both, 2, &read, &ada, &bounded),
+        Err(ahead),
+        "an unlink"
+    );
+}

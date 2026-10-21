@@ -47,9 +47,28 @@ fn a_plans_text_is_held_to_the_most_a_plan_holds_exactly() {
     fields.accepted_plan = None;
     let held = Task::new(fields).unwrap();
     let ada = person("Ada");
-    let most = propose(&held, &[], content(rest), &ada, &at("10:00:00")).unwrap();
+    let most = propose_at(
+        &held,
+        &[],
+        content(rest),
+        &ada,
+        &Moment {
+            now: (&at("10:00:00")).clone(),
+            latest: None,
+        },
+    )
+    .unwrap();
     assert_eq!(most.fields().text_bytes(), MAX_PLAN_TEXT_BYTES);
-    match propose(&held, &[], content(rest + 1), &ada, &at("10:00:00")) {
+    match propose_at(
+        &held,
+        &[],
+        content(rest + 1),
+        &ada,
+        &Moment {
+            now: (&at("10:00:00")).clone(),
+            latest: None,
+        },
+    ) {
         Err(BoardRuleError::InvalidPlan(error)) => assert_eq!(error.field, "text"),
         other => panic!("{other:?}"),
     }

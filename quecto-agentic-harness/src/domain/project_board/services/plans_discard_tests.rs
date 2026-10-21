@@ -88,7 +88,17 @@ fn a_plans_change_never_stamps_before_its_tasks_last_change() {
         ..PlanContent::default()
     };
     let versions = [plan(1, PlanState::Accepted), draft.clone()];
-    let proposed = propose(&task, &versions, content.clone(), &bob, &now.now).unwrap();
+    let proposed = propose_at(
+        &task,
+        &versions,
+        content.clone(),
+        &bob,
+        &Moment {
+            now: (&now.now).clone(),
+            latest: None,
+        },
+    )
+    .unwrap();
     let edited = edit_draft(
         DraftOf {
             task: &task,
@@ -144,7 +154,17 @@ fn a_plans_change_never_stamps_before_another_plan_of_its_task() {
     let now = when(&at("10:00:00"));
     let v2 = stamped(plan(2, PlanState::Draft), "10:00:03");
     let versions = [plan(1, PlanState::Accepted), v2.clone()];
-    let proposed = propose(&task, &versions, PlanContent::default(), &bob, &now.now).unwrap();
+    let proposed = propose_at(
+        &task,
+        &versions,
+        PlanContent::default(),
+        &bob,
+        &Moment {
+            now: (&now.now).clone(),
+            latest: None,
+        },
+    )
+    .unwrap();
     assert_eq!(
         (&proposed.fields().created, &proposed.fields().updated),
         (&at("10:00:03"), &at("10:00:03")),
@@ -281,4 +301,25 @@ fn a_sibling_past_the_bound_is_left_out_of_the_floor() {
     )
     .unwrap();
     assert_eq!(proposed.fields().created, at("10:00:00"));
+}
+
+/// #2662 review round 3: an acceptance leaves a sibling plan stamped past
+/// the outside bound out of its floor too.
+#[test]
+fn an_acceptance_leaves_a_sibling_past_the_bound_out_of_its_floor() {
+    let task = task(Ready);
+    let chosen = stamped(plan(2, PlanState::Draft), "09:30:00");
+    let future = stamped(plan(3, PlanState::Draft), "23:00:00");
+    let versions = [plan(1, PlanState::Accepted), chosen, future];
+    let board = TaskPlans {
+        task: &task,
+        versions: &versions,
+        runs: &[],
+    };
+    let bounded = Moment {
+        now: at("10:00:00"),
+        latest: Some(at("10:01:00")),
+    };
+    let accepted = accept(&board, 2, None, &person("Bob"), &bounded).unwrap();
+    assert_eq!(accepted.plan.fields().updated, at("10:00:00"));
 }

@@ -38,12 +38,15 @@ fn other_tasks(version: u32) -> Plan {
 #[test]
 fn a_new_version_follows_the_last_and_records_who_proposed_it() {
     let versions = [plan(1, PlanState::Accepted), plan(2, PlanState::Draft)];
-    let next = propose(
+    let next = propose_at(
         &task(Ready),
         &versions,
         content(),
         &person("Bob"),
-        &at("10:00:00"),
+        &Moment {
+            now: (&at("10:00:00")).clone(),
+            latest: None,
+        },
     )
     .unwrap();
     let fields = next.fields();
@@ -55,12 +58,15 @@ fn a_new_version_follows_the_last_and_records_who_proposed_it() {
         (&fields.proposed_by, &fields.accepted),
         (&person("Bob"), &None)
     );
-    let first = propose(
+    let first = propose_at(
         &unaccepted(Draft),
         &[],
         content(),
         &person("Bob"),
-        &at("10:00:00"),
+        &Moment {
+            now: (&at("10:00:00")).clone(),
+            latest: None,
+        },
     )
     .unwrap();
     assert_eq!(first.fields().version, 1);
@@ -74,12 +80,15 @@ fn a_finished_tasks_plans_are_settled() {
         let finished = task(status);
         let refused = BoardRuleError::TaskFinished(status);
         assert_eq!(
-            propose(
+            propose_at(
                 &finished,
                 &[plan(1, PlanState::Accepted)],
                 content(),
                 &ada,
-                &now
+                &Moment {
+                    now: (&now).clone(),
+                    latest: None
+                }
             ),
             Err(refused.clone())
         );
@@ -181,7 +190,19 @@ fn plans_that_contradict_each_other_are_refused_not_built_on() {
             ),
             "{versions:?}: {refused:?}"
         );
-        assert!(propose(&held, &versions, content(), &ada, &now).is_err());
+        assert!(
+            propose_at(
+                &held,
+                &versions,
+                content(),
+                &ada,
+                &Moment {
+                    now: (&now).clone(),
+                    latest: None
+                }
+            )
+            .is_err()
+        );
     }
 }
 
@@ -691,7 +712,16 @@ fn plan_text_is_taken_only_once_normalised() {
         let mut raw = content();
         spoil(&mut raw);
         let ada = person("Ada");
-        let proposed = propose(&held, &[], raw.clone(), &ada, &at("10:00:00"));
+        let proposed = propose_at(
+            &held,
+            &[],
+            raw.clone(),
+            &ada,
+            &Moment {
+                now: (&at("10:00:00")).clone(),
+                latest: None,
+            },
+        );
         let edited = edit_draft(
             DraftOf {
                 task: &held,
@@ -724,5 +754,17 @@ fn plan_text_is_taken_only_once_normalised() {
     normalised.approach = board_text::text("Spike, then build. ");
     normalised.items[0].title = board_text::line(" Item schema");
     normalised.items[1].criteria[0] = board_text::line(" api proved");
-    assert!(propose(&held, &[], normalised, &person("Ada"), &at("10:00:00")).is_ok());
+    assert!(
+        propose_at(
+            &held,
+            &[],
+            normalised,
+            &person("Ada"),
+            &Moment {
+                now: (&at("10:00:00")).clone(),
+                latest: None
+            }
+        )
+        .is_ok()
+    );
 }

@@ -390,17 +390,22 @@ fn not_ahead(changes: &[Change], when: &Moment) -> Result<(), BoardRuleError> {
     }
 }
 
-/// When each of `changes` (the task's) last changed, within `when`'s
-/// bound: what a change is stamped no earlier than (#2662). One stamped
-/// past the bound is left out, so it never drags a new stamp ahead of it.
+/// When each of `changes` (the task's) last changed: what a change is
+/// stamped no earlier than (#2662). A link or unlink refuses a change
+/// stamped past `when`'s bound first ([`not_ahead`]), so every one here is
+/// within it, and none drags a new stamp ahead.
 fn change_stamps<'a>(
     changes: &'a [Change],
     when: &'a Moment,
 ) -> impl Iterator<Item = &'a Timestamp> {
-    changes
-        .iter()
-        .map(|change| &change.fields().updated)
-        .filter(|updated| within_slack(updated, when.latest.as_ref()))
+    changes.iter().map(move |change| {
+        let updated = &change.fields().updated;
+        assert!(
+            within_slack(updated, when.latest.as_ref()),
+            "a change past the bound is refused before it is built on"
+        );
+        updated
+    })
 }
 
 /// `now`, or a second past `change`'s last change if that is later.
