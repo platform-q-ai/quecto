@@ -63,6 +63,13 @@ pub trait EndedSwarmBoards: Send + Sync {
     /// `label` held as it left, in place of any kept for it before. Never
     /// fails the teardown: a board it cannot keep whole is not kept.
     fn keep(&self, session: &str, label: &str, board: SwarmBoardSnapshot);
+
+    /// Keeps `board`, the board of a run its owner ended the member of
+    /// while it still ran or was paused (#2674), as far as it got, in place
+    /// of any kept for it before: what a stop of the run records, never a
+    /// success. Never fails the teardown: one it cannot keep whole (a run
+    /// that is neither running nor paused, items left out) is not kept.
+    fn keep_left(&self, session: &str, label: &str, board: SwarmBoardSnapshot);
 }
 
 /// Where the work of a succeeded swarm run went, read as its owner's kill

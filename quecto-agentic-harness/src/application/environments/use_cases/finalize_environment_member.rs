@@ -13,9 +13,9 @@ use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, KillClaim,
 };
 use crate::domain::environments::services::environment_retention::{
-    CompletionDelivery, MemberFinalizeMode, SwarmRunObservation, ends_plain_environment,
-    judges_delivery, loss_reason, retains_environment, retention_reason, undelivered_reason,
-    unrecorded_loss_reason,
+    BoardKept, CompletionDelivery, MemberFinalizeMode, SwarmRunObservation, board_kept,
+    ends_plain_environment, judges_delivery, loss_reason, retains_environment, retention_reason,
+    undelivered_reason, unrecorded_loss_reason,
 };
 
 use crate::application::environments::dto::SwarmBoardSnapshot;
@@ -126,11 +126,12 @@ impl FinalizeEnvironmentMember {
         };
         // An ended run's board is kept before anything can tear it down:
         // one still running or paused may yet change, and is not.
-        let board = match (&observed, label) {
-            (SwarmRunObservation::Run(hosted), Some(label))
-                if hosted.created() && hosted.status.terminal() =>
-            {
-                self.keep_board(&record, label).await
+        // One still running or paused is kept only on its owner's word,
+        // as far as it got (#2674): it may yet change, so nothing else
+        // keeps it.
+        let kept = match (&observed, label) {
+            (SwarmRunObservation::Run(hosted), Some(label)) => {
+                board_kept(mode, hosted).map(|kept| (label, kept))
             }
             (
                 SwarmRunObservation::Run(_)
@@ -139,6 +140,10 @@ impl FinalizeEnvironmentMember {
                 | SwarmRunObservation::Unreadable(_),
                 _,
             ) => None,
+        };
+        let board = match kept {
+            Some((label, kept)) => self.keep_board(&record, label, kept).await,
+            None => None,
         };
         if retains_environment(mode, &observed) {
             // `None`: the owner closed the run between the observation and
@@ -194,11 +199,16 @@ impl FinalizeEnvironmentMember {
         &self,
         record: &EnvironmentRecord,
         label: &str,
+        which: BoardKept,
     ) -> Option<SwarmBoardSnapshot> {
         let (boards, kept) = self.ended.as_ref()?;
+        let session = self.registry.session();
         match boards.board(record).await {
             Ok(Some(board)) => {
-                kept.keep(self.registry.session(), label, board.clone());
+                match which {
+                    BoardKept::Ended => kept.keep(session, label, board.clone()),
+                    BoardKept::Left => kept.keep_left(session, label, board.clone()),
+                }
                 Some(board)
             }
             Ok(None) => None,

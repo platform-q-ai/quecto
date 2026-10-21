@@ -14,7 +14,10 @@
 //! another session launched, a board that could not be read whole, a
 //! process restarted between the teardown and this end), it is folded
 //! back as a swarm that ended so with nothing reported is: every task item
-//! as todo, its cost unknown. A run ends as `succeeded` only when every
+//! as todo, its cost unknown. A stop, a failure or a loss is recorded
+//! from the board a run had reached as its owner ended its coordinator
+//! while it still ran or was paused, when that is what was kept (#2674);
+//! a success never is. A run ends as `succeeded` only when every
 //! task item is done there (`items_not_done` otherwise, from the domain),
 //! so no success is recorded over items the board shows undone; nor while
 //! a revision the recorded items' evidence names is on no branch or tag of
@@ -29,7 +32,9 @@
 //! `lost`
 //! it is ended by whoever the domain lets ([`end_lost`]: the holder of a
 //! live claim, or anyone when nobody claims the task; one who finds the
-//! claim expired takes the task over first). With `expected_updated`, the
+//! claim expired takes the task over first), recording what is known of
+//! it as a held end does: its swarm's kept board, or every item as todo
+//! (#2657). With `expected_updated`, the
 //! task must still be as the caller read it. Only the run is written: the
 //! task is left for its holder to move. Blocking: a lost write pauses the
 //! calling thread before it is tried again.
@@ -138,10 +143,17 @@ impl EndRun {
             });
         }
         // Read once, before any write: the board its swarm left, if kept.
-        let report = self
-            .reports
-            .as_ref()
-            .and_then(|reports| reports.ended_run(id, number));
+        // A success only from a run that ended there; any other end from
+        // the board a run had reached as its owner stopped it too (#2674).
+        let report = self.reports.as_ref().and_then(|reports| {
+            let ended = reports.ended_run(id, number);
+            match request.outcome {
+                RunEndOutcome::Succeeded => ended,
+                RunEndOutcome::Stopped | RunEndOutcome::Failed | RunEndOutcome::Lost => {
+                    ended.or_else(|| reports.left_run(id, number))
+                }
+            }
+        });
         let message = format!(
             "board: run {number} of {} ended, {}",
             id.as_str(),
@@ -192,18 +204,13 @@ impl EndRun {
                     None => LivenessCheck::NotChecked,
                 };
                 // A board recorded need not be kept: the run has ended.
-                let report = match (&report, &self.reports, request.outcome) {
-                    (
-                        Some(_),
-                        Some(reports),
-                        RunEndOutcome::Succeeded | RunEndOutcome::Stopped | RunEndOutcome::Failed,
-                    ) => {
+                // A loss records the kept board too (#2657).
+                let report = match (&report, &self.reports) {
+                    (Some(_), Some(reports)) => {
                         reports.recorded(id, number);
                         RunReport::Kept
                     }
-                    (_, _, RunEndOutcome::Lost) | (None, _, _) | (_, None, _) => {
-                        RunReport::Unreported
-                    }
+                    (None, _) | (_, None) => RunReport::Unreported,
                 };
                 // How many evidence revisions a success left unchecked, so a
                 // silent pass shows (#2666 round 2).
@@ -300,8 +307,11 @@ impl EndRun {
         let runs = board_view::runs_of(board, id)?;
         let plans = board_view::plans_of(board, id)?;
         let (run, plan) = run_and_plan(&runs, &plans, number)?;
-        let held = |end: HeldEnd, swarm: SwarmEnd, unpushed: usize| {
-            let reported = match report {
+        // What is known of the run: its swarm's board as kept, or every
+        // item as a swarm that reported nothing (#2657: a loss records it
+        // too).
+        let reported = |swarm: SwarmEnd, unpushed: usize| {
+            match report {
                 // What the swarm's board showed as it ended.
                 Some(view) => Reported {
                     items: run_items(plan, view, &*self.cells, evidence).items,
@@ -325,8 +335,17 @@ impl EndRun {
                         unpushed: 0,
                     }
                 }
-            };
-            end_held(task, (run, plan), end, reported, actor, &when.now)
+            }
+        };
+        let held = |end: HeldEnd, swarm: SwarmEnd, unpushed: usize| {
+            end_held(
+                task,
+                (run, plan),
+                end,
+                reported(swarm, unpushed),
+                actor,
+                &when.now,
+            )
         };
         Ok(match (request.outcome, report) {
             (RunEndOutcome::Succeeded, Some(view)) => {
@@ -339,7 +358,14 @@ impl EndRun {
             (RunEndOutcome::Succeeded, None) => held(HeldEnd::Succeeded, SwarmEnd::Succeeded, 0)?,
             (RunEndOutcome::Stopped, _) => held(HeldEnd::Stopped, SwarmEnd::Cancelled, 0)?,
             (RunEndOutcome::Failed, _) => held(HeldEnd::Failed, SwarmEnd::Failed, 0)?,
-            (RunEndOutcome::Lost, _) => end_lost(task, run, actor, &when.now)?,
+            // Nobody accounts for it: as a swarm that was lost.
+            (RunEndOutcome::Lost, _) => end_lost(
+                task,
+                (run, plan),
+                reported(SwarmEnd::Failed, 0),
+                actor,
+                &when.now,
+            )?,
         })
     }
 

@@ -46,6 +46,8 @@ impl HostedSwarmBoard for Boards {
 
 impl EndedSwarmBoards for Boards {
     fn keep(&self, _: &str, _: &str, _: SwarmBoardSnapshot) {}
+
+    fn keep_left(&self, _: &str, _: &str, _: SwarmBoardSnapshot) {}
 }
 
 /// A check answering `answer`, noting each label it was asked about and

@@ -128,25 +128,33 @@ pub fn fold_back(
 /// The open `run` of `task` ended as [`RunOutcome::Lost`] by `actor`: the
 /// holder of a live claim on the task (whoever finds a claim expired takes
 /// the task over first, and so becomes its holder), or anyone when nobody
-/// claims the task, so a run is never stranded. It ends at the task's
-/// stamp for `now` (never before the task's last change).
+/// claims the task, so a run is never stranded. It is folded back against
+/// the plan it `ran` with what is known of it (#2657), as a held end is:
+/// where each task item stood and its cost, as `reported`. It ends at the
+/// task's stamp for `now` (never before the task's last change).
 ///
 /// # Errors
 /// A claim `actor` does not hold live; a run of another task, or one that
-/// has ended; a stamp the board cannot spell.
+/// has ended; as [`fold_back`]; a stamp the board cannot spell.
 pub fn end_lost(
     task: &Task,
-    run: &Run,
+    ran: (&Run, &Plan),
+    reported: Reported,
     actor: &Identity,
     now: &Timestamp,
 ) -> Result<Run, BoardRuleError> {
+    let (run, plan) = ran;
     // A claimed task's run is its holder's (one whose claim expired takes
     // the task over first); only a task nobody claims leaves it to anyone.
     if task.fields().claim.is_some() {
         held_live_by(task, actor, now)?;
     }
     of_task(task, std::slice::from_ref(run))?;
-    lost_at(run, &stamp(task, now)?)
+    // A loss is judged by nothing it reports: no success is claimed.
+    let Reported { items, cost, .. } = reported;
+    let lost = fold_back(run, plan, RunOutcome::Lost, cost, items, &stamp(task, now)?)?;
+    debug_assert_eq!(lost.fields().outcome, Some(RunOutcome::Lost));
+    Ok(lost)
 }
 
 /// How a run's holder ends it by hand (S4c's `end_run`): an allowlist,

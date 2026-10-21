@@ -279,10 +279,15 @@ pub fn outcome(
             // from its swarm's kept board shows them in the run itself.
             let report = match (run.fields().outcome, ended.report) {
                 (
-                    Some(RunOutcome::Succeeded | RunOutcome::Stopped | RunOutcome::Failed),
+                    Some(
+                        RunOutcome::Succeeded
+                        | RunOutcome::Stopped
+                        | RunOutcome::Failed
+                        | RunOutcome::Lost,
+                    ),
                     RunReport::Unreported,
                 ) => Some(NO_SWARM_REPORT),
-                (Some(RunOutcome::Lost) | None, _) | (_, RunReport::Kept) => None,
+                (None, _) | (_, RunReport::Kept) => None,
             };
             if let Some(report) = report {
                 fields.insert("items_recorded".into(), json!(report));

@@ -683,3 +683,9 @@ fn a_composed_start_asks_whether_its_coordinator_still_runs() {
         "{started}"
     );
 }
+
+impl crate::application::project_board::ports::StartedRuns for FailedButRunning {
+    fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
+        vec![]
+    }
+}

@@ -607,6 +607,12 @@ pub trait SwarmRunReports: Send + Sync {
     /// The board of run `run` of `task`'s swarm as it ended, if kept here.
     fn ended_run(&self, task: &Slug, run: u32) -> Option<SwarmRunView>;
 
+    /// The board run `run` of `task`'s swarm had reached as its owner
+    /// ended its coordinator while it still ran or was paused (#2674), if
+    /// kept here: what a stop, a failure or a loss of the run records,
+    /// never a success.
+    fn left_run(&self, task: &Slug, run: u32) -> Option<SwarmRunView>;
+
     /// The board of run `run` of `task`'s swarm has been recorded on the
     /// project board: it need not be kept any longer.
     fn recorded(&self, task: &Slug, run: u32);
@@ -631,6 +637,15 @@ pub trait RemoteRevisions: Send + Sync {
     /// # Errors
     /// The repository's object format cannot be read, or is neither.
     fn commit_id_hex_len(&self) -> Result<usize, BoardStoreError>;
+}
+
+/// Port: the runs this front end's own starts launched (#2655), oldest
+/// first: each run of a task whose coordinator a start of this session
+/// launched, as `(task, run)`, whether or not it has ended since. A front
+/// end that launches none (the CLI) has none. Kept in memory: a process
+/// that restarted has forgotten them.
+pub trait StartedRuns: Send + Sync {
+    fn started(&self) -> Vec<(Slug, u32)>;
 }
 
 /// Port: launches a started task's swarm coordinator in a new container
