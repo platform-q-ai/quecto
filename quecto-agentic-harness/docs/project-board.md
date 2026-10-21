@@ -512,8 +512,9 @@ it is folded back as it most likely stood before, in review when it holds
 evidence (a submission writes it, and a submitted item is never blocked by its
 worker), else doing. An item blocked for any other reason is folded back
 blocked. When an item was created again, the copies are ranked by the state
-the board holds, so a copy a death blocked never outranks the copy that
-replaced it. The reading is not proof: a submission released and claimed
+the board holds, the newest by where it stood before a death that blocked it,
+so a copy a death blocked never outranks the copy that replaced it, and the
+newest copy is never outranked by an older one nobody claimed. The reading is not proof: a submission released and claimed
 again keeps its evidence, so it is folded back as in review; a worker that
 died mid-run and was never recovered is read the same way; and a blocker of
 the item's own that the death overwrote is folded back as doing.

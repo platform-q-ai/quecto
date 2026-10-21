@@ -68,25 +68,27 @@ fn view_of(board: &Value, end: impl Fn(&str) -> Option<SwarmEnd>) -> Option<Swar
 }
 
 /// One of the board's items, when its title and state can be read, with
-/// whether a confirmed death blocked it (#2685,
-/// [`SwarmItemState::death_blocked`]).
+/// where it stood before a confirmed death blocked it (#2685,
+/// [`SwarmItemState::before_death`], told by the evidence the board stores,
+/// whatever its entries' shape).
 fn item(item: &Value) -> Option<SwarmItemView> {
     let title = item.get("title")?.as_str()?.to_owned();
     let state = SwarmItemState::of(&TaskState::new(item.get("state")?.as_str()?))?;
-    let death_blocked = state.death_blocked(item.get("blocker").and_then(Value::as_str));
+    let entries = item.get("evidence").and_then(Value::as_array);
+    let stood_before_death = state.before_death(
+        item.get("blocker").and_then(Value::as_str),
+        entries.is_some_and(|entries| !entries.is_empty()),
+    );
     let owner = item.get("owner").and_then(Value::as_str).map(str::to_owned);
-    let evidence = item
-        .get("evidence")
-        .and_then(Value::as_array)
-        .map_or_else(Vec::new, |entries| {
-            entries.iter().filter_map(evidence).collect()
-        });
+    let evidence = entries.map_or_else(Vec::new, |entries| {
+        entries.iter().filter_map(evidence).collect()
+    });
     Some(SwarmItemView {
         title,
         state,
         owner,
         evidence,
-        death_blocked,
+        stood_before_death,
     })
 }
 

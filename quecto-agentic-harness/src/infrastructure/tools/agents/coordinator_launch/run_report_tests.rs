@@ -57,14 +57,14 @@ fn an_ended_boards_items_owners_evidence_and_spend_are_read() {
                     artifact: "docs/assessment.md".into(),
                     revision: "abc123".into(),
                 }],
-                death_blocked: false,
+                stood_before_death: None,
             },
             SwarmItemView {
                 title: "uk-shopping-list: List".into(),
                 state: SwarmItemState::Submitted,
                 owner: None,
                 evidence: vec![],
-                death_blocked: false,
+                stood_before_death: None,
             },
         ],
         "an evidence entry whose parts are not both text is left out"
@@ -145,7 +145,7 @@ fn an_item_that_cannot_be_read_is_left_out() {
             state: SwarmItemState::Completed,
             owner: None,
             evidence: vec![],
-            death_blocked: false,
+            stood_before_death: None,
         }]
     );
 }
@@ -180,18 +180,37 @@ fn a_teardown_death_blocker_reads_as_where_the_item_stood() {
             "blocker": "waiting for review access",
             "evidence": [{"artifact": "src/lint.rs", "revision": "def456"}],
         },
+        {
+            "id": 5, "title": "bench: Bench", "state": "blocked", "owner": "worker-5",
+            "blocker": "worker death confirmed; coordinator recovery required",
+            "evidence": [{"artifact": 7}],
+        },
     ]);
-    let read = |view: SwarmRunView| -> Vec<(SwarmItemState, bool, ItemState)> {
+    let read = |view: SwarmRunView| -> Vec<(SwarmItemState, Option<SwarmItemState>, ItemState)> {
         view.items
             .iter()
-            .map(|item| (item.state, item.death_blocked, item.item_state()))
+            .map(|item| (item.state, item.stood_before_death, item.item_state()))
             .collect()
     };
     let expected = vec![
-        (SwarmItemState::Blocked, true, ItemState::Review),
-        (SwarmItemState::Blocked, true, ItemState::Doing),
-        (SwarmItemState::Blocked, false, ItemState::Blocked),
-        (SwarmItemState::Blocked, false, ItemState::Blocked),
+        (
+            SwarmItemState::Blocked,
+            Some(SwarmItemState::Submitted),
+            ItemState::Review,
+        ),
+        (
+            SwarmItemState::Blocked,
+            Some(SwarmItemState::Claimed),
+            ItemState::Doing,
+        ),
+        (SwarmItemState::Blocked, None, ItemState::Blocked),
+        (SwarmItemState::Blocked, None, ItemState::Blocked),
+        // Evidence the board stores counts, whatever its entries' shape.
+        (
+            SwarmItemState::Blocked,
+            Some(SwarmItemState::Submitted),
+            ItemState::Review,
+        ),
     ];
     assert_eq!(
         read(left_run_view(&board("running", 10, items.clone())).unwrap()),

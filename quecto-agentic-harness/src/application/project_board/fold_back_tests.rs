@@ -69,7 +69,7 @@ pub fn swarm_item(
                 revision: (*revision).into(),
             })
             .collect(),
-        death_blocked: false,
+        stood_before_death: None,
     }
 }
 
@@ -633,16 +633,16 @@ fn the_cost_is_the_observed_tokens_within_the_board_bound() {
     assert_eq!(cost_of(&run), MAX_BUDGET_TOKENS);
 }
 
-/// #2685 round 1: duplicates are ranked by the state the board holds, and
-/// only the item that wins is read as it stood before a death. Worker 1
-/// submits `api` and dies (its item blocked by the death); the coordinator
-/// creates `api` again and worker 2 claims it: the fold-back records the
-/// new copy, doing and held by worker 2, never the dead copy's stale
-/// evidence.
+/// #2685 rounds 1 and 2: copies are ranked by the state the board holds,
+/// except the newest, which stands where it stood before a death that
+/// blocked it (an item made again is newer than the copy it replaced).
+/// Worker 1 submits `api` and dies; the coordinator makes `api` again and
+/// worker 2 claims it: the fold-back records the new copy, doing and held
+/// by worker 2, never the dead copy's stale evidence.
 #[test]
 fn a_death_blocked_copy_never_outranks_the_copy_that_replaced_it() {
     let dead = SwarmItemView {
-        death_blocked: true,
+        stood_before_death: Some(SwarmItemState::Submitted),
         ..swarm_item(
             "api: Build the api",
             SwarmItemState::Blocked,
@@ -656,18 +656,18 @@ fn a_death_blocked_copy_never_outranks_the_copy_that_replaced_it() {
         Some("worker-2"),
         &[],
     );
-    for items in [
-        vec![dead.clone(), again.clone()],
-        vec![again.clone(), dead.clone()],
-    ] {
-        let api = folded(items).items.remove(0);
-        assert_eq!(api.state, ItemState::Doing);
-        assert_eq!(api.owner.as_deref(), Some("worker-2"));
-        assert!(api.evidence.is_empty(), "{:?}", api.evidence);
-    }
-    let view = view(vec![dead.clone(), again]);
-    assert!(evidence_revisions(&plan(), &view).ids.is_empty());
+    let api = folded(vec![dead.clone(), again.clone()]).items.remove(0);
+    assert_eq!(api.state, ItemState::Doing);
+    assert_eq!(api.owner.as_deref(), Some("worker-2"));
+    assert!(api.evidence.is_empty(), "{:?}", api.evidence);
+    let replaced = view(vec![dead.clone(), again]);
+    assert!(evidence_revisions(&plan(), &replaced).ids.is_empty());
     // Alone, the dead copy stands as it was before the death: in review.
-    let api = folded(vec![dead]).items.remove(0);
+    let api = folded(vec![dead.clone()]).items.remove(0);
     assert_eq!(api.state, ItemState::Review);
+    // Newest, it stands so above an older copy never claimed.
+    let older = swarm_item("api: Build the api", SwarmItemState::Ready, None, &[]);
+    let api = folded(vec![older, dead]).items.remove(0);
+    assert_eq!(api.state, ItemState::Review);
+    assert_eq!(api.owner.as_deref(), Some("worker-1"));
 }
