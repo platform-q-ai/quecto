@@ -109,3 +109,19 @@ fn a_listed_remote_git_cannot_name_is_out_of_reach() {
         "{opened:?}"
     );
 }
+
+/// #2659 review round 2: a name quecto takes no remote by says which
+/// names it takes, before git is asked.
+#[test]
+fn a_name_that_is_no_remote_name_says_which_names_are() {
+    let dir = tempfile::tempdir().unwrap();
+    init(dir.path());
+    for name in ["-x", "", "a b", ".hidden"] {
+        let opened = GitBoardStore::new(git_at(dir.path()), name).map(|_| ());
+        assert!(
+            matches!(&opened, Err(StoreOpenError::NoSuchRemote(why))
+                if why.contains("no remote name quecto takes: letters, digits")),
+            "{name:?}: {opened:?}"
+        );
+    }
+}

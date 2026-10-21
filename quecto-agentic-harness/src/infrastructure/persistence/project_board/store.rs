@@ -105,7 +105,7 @@ impl GitBoardStore {
                 .is_some_and(u8::is_ascii_alphanumeric);
         if !named {
             return Err(StoreOpenError::NoSuchRemote(format!(
-                "{remote:?} is not a remote name"
+                "{remote:?} is no remote name quecto takes: letters, digits, '.', '_' and '-', starting with a letter or a digit"
             )));
         }
         // The name was checked first, so it is never read as an option.
