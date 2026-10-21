@@ -347,7 +347,8 @@ fn a_named_plan_version_is_refused_while_a_file_that_may_hold_it_is_set_aside() 
         held_too.version(2),
         Err(ProjectBoardError::Quarantined {
             key,
-            path: "plans/a.2.md".into()
+            path: "plans/a.2.md".into(),
+            object: "0".repeat(40),
         })
     );
     let keyless = shown(vec![file("plans/Not A Slug.md", None)]);
@@ -404,6 +405,7 @@ fn a_set_aside_refusal_names_clear_set_aside() {
     let task = ProjectBoardError::Quarantined {
         key: ArtifactKey::Task(Slug::parse("a").unwrap()),
         path: "tasks/a.md".into(),
+        object: "0".repeat(40),
     };
     let file = ProjectBoardError::SetAsideFile {
         path: "tasks/x.md".into(),

@@ -118,10 +118,20 @@ impl GitBoardStore {
                 cancelled: None,
                 partial: std::sync::OnceLock::new(),
             }),
-            // git ran and said no: there is no such remote.
-            Err(error @ GitError::Failed { .. }) => Err(StoreOpenError::NoSuchRemote(format!(
-                "{remote:?} is not a remote of this repository: {error}"
-            ))),
+            // git ran and failed: only a name its own list of remotes lacks
+            // is no such remote (an allowlist); anything else (no
+            // repository, a corrupt config, an unsafe directory) is a
+            // store git cannot reach.
+            Err(error @ GitError::Failed { .. }) => match git.text(&["remote"], None) {
+                Ok(listed) if !listed.lines().any(|name| name == remote) => {
+                    Err(StoreOpenError::NoSuchRemote(format!(
+                        "{remote:?} is not a remote of this repository: {error}"
+                    )))
+                }
+                Ok(_) | Err(_) => Err(StoreOpenError::Unavailable(BoardStoreError::Unavailable(
+                    format!("git could not say whether {remote:?} is a remote: {error}"),
+                ))),
+            },
             Err(
                 error @ (GitError::NotFound
                 | GitError::Spawn(_)
@@ -661,3 +671,7 @@ mod tests;
 #[cfg(test)]
 #[path = "store_readme_tests.rs"]
 mod readme_tests;
+
+#[cfg(test)]
+#[path = "store_open_tests.rs"]
+mod open_tests;

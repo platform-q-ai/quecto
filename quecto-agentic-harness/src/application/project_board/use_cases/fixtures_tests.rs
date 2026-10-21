@@ -26,6 +26,9 @@ pub fn set_aside_task(id: &str) -> crate::application::project_board::dto::Proje
     crate::application::project_board::dto::ProjectBoardError::Quarantined {
         key: crate::application::project_board::ports::ArtifactKey::Task(slug(id)),
         path: format!("tasks/{id}.md"),
+        object: crate::infrastructure::test_support::memory_board_store::memory_object(&format!(
+            "tasks/{id}.md"
+        )),
     }
 }
 

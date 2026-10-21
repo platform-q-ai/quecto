@@ -703,15 +703,24 @@ fn a_remote_the_clone_lacks_is_an_invalid_request() {
         launcher: None,
         swarm_session: None,
     };
-    let answer = crate::interface::tools::project_board::site::answer(
-        &site,
-        r#"{"op": "list"}"#,
-        None,
-        &mut crate::interface::tools::project_board::recording::BoardCall::unrecorded(),
-    );
+    use crate::domain::project_board::value_objects::telemetry::{Client, FrontEnd};
+    use crate::interface::tools::project_board::recording::BoardCall;
+    let answered = |front_end, client| {
+        crate::interface::tools::project_board::site::answer(
+            &site,
+            r#"{"op": "list"}"#,
+            None,
+            &mut BoardCall::start(None, front_end, client),
+        )
+    };
+    // The command line names the remote (`--remote`): its mistake.
+    let cli = answered(FrontEnd::Cli, Client::Cli);
     assert_eq!(
-        (&answer["error"]["code"], &answer["error"]["field"]),
+        (&cli["error"]["code"], &cli["error"]["field"]),
         (&json!("invalid_request"), &json!("remote")),
-        "{answer}"
+        "{cli}"
     );
+    // The agent tool names none (its board is `origin`): out of reach.
+    let tool = answered(FrontEnd::Tool, Client::Agent);
+    assert_eq!(tool["error"]["code"], json!("store_unavailable"), "{tool}");
 }

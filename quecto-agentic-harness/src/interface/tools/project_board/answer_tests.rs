@@ -32,12 +32,13 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         | C::InvalidWrite
         | C::StoreUnavailable
         | C::BoardTooLarge
-        | C::FolderSetAside
         | C::PullRequestsUnavailable
         | C::Refused => &["reason"],
         C::NoBoard => &[],
         C::Rule => &["rule"],
-        C::NotFound | C::Exists | C::SetAside | C::UnknownReference => &["task"],
+        C::FolderSetAside => &["reason", "path", "object"],
+        C::SetAside => &["task", "object"],
+        C::NotFound | C::Exists | C::UnknownReference => &["task"],
         C::ClockUnreadable => &["read"],
         C::ClosesCycle | C::IdInUse => &["task", "by"],
         C::PrStateUnknown => &["pr"],
@@ -50,7 +51,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         C::SetAsideFile => &["path", "object"],
         // A discussion's shape is its own: `kind`, `discussion`, `path`
         // (a_set_aside_artifact_is_named_by_its_kind_task_and_number).
-        C::ArtifactSetAside => &["kind", "task", "number", "path"],
+        C::ArtifactSetAside => &["kind", "task", "number", "path", "object"],
         C::NoPullRequestHost => &["reason"],
         // A discussion's and a task's shapes are their own
         // (a_duplicate_artifact_is_named_by_its_kind_task_and_number).
@@ -116,8 +117,12 @@ board_errors! {
     E::Store(BoardStoreError::TooLarge(_)) => {
         E::Store(BoardStoreError::TooLarge("16385 entries".into()))
     },
-    E::Store(BoardStoreError::FolderSetAside(_)) => {
-        E::Store(BoardStoreError::FolderSetAside("plans/a.1.md is set aside".into()))
+    E::Store(BoardStoreError::FolderSetAside { .. }) => {
+        E::Store(BoardStoreError::FolderSetAside {
+            why: "plans/a.1.md is set aside".into(),
+            path: "plans/a.1.md".into(),
+            object: "c".repeat(40),
+        })
     },
     E::Rule(_) => E::Rule(BoardRuleError::NotHolder),
     E::Invalid(_) => E::Invalid(SchemaError::new("title", "is empty")),
@@ -133,6 +138,7 @@ board_errors! {
     E::Quarantined { .. } => E::Quarantined {
         key: ArtifactKey::Task(slug("a")),
         path: "tasks/a.md".into(),
+        object: "c".repeat(40),
     },
     E::Duplicate { .. } => E::Duplicate {
         key: ArtifactKey::Plan(slug("a"), 2),
@@ -205,6 +211,7 @@ fn every_board_error_answers_its_codes_one_shape() {
     let plan_set_aside = ProjectBoardError::Quarantined {
         key: ArtifactKey::Plan(slug("a"), 1),
         path: "plans/a.1.md".into(),
+        object: "c".repeat(40),
     };
     for error in errors.iter().chain([&plan_set_aside]) {
         let answer = board_refused("show", error);
@@ -496,8 +503,9 @@ fn a_set_aside_file_is_named_by_its_raw_path_and_object() {
     assert_eq!(
         named.to_string(),
         format!(
-            "the file \"tasks/Not A Slug.json\" (object {object}) is set aside as unreadable and \
-             its task is unknown; mend it, or remove it with clear_set_aside(path, object)"
+            "the file \"tasks/Not A Slug.json\" is set aside as unreadable and its task is \
+             unknown; mend it, or remove it with clear_set_aside(path \"tasks/Not A Slug.json\", \
+             object \"{object}\")"
         )
     );
     assert_eq!(error_json(&named)["message"], json!(named.to_string()));
@@ -515,7 +523,11 @@ fn a_board_too_large_or_held_answers_its_own_code() {
             big,
         ),
         (
-            BoardStoreError::FolderSetAside(held.into()),
+            BoardStoreError::FolderSetAside {
+                why: held.into(),
+                path: "plans/a.1.md".into(),
+                object: "c".repeat(40),
+            },
             "folder_set_aside",
             held,
         ),
@@ -547,6 +559,7 @@ fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
         let error = ProjectBoardError::Quarantined {
             key,
             path: path.into(),
+            object: "c".repeat(40),
         };
         board_refused("show", &error)["error"].clone()
     };
@@ -555,8 +568,9 @@ fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
         json!({
             "code": "set_aside",
             "task": "t",
+            "object": "c".repeat(40),
             "message": "task t is set aside as unreadable; mend its file, or remove it with \
-                        clear_set_aside(path, object) (a listing names it under quarantined)",
+                        clear_set_aside(path \"tasks/t.md\", object \"cccccccccccccccccccccccccccccccccccccccc\")",
         })
     );
     let numbered = [
@@ -584,9 +598,11 @@ fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
                 "task": "t",
                 "number": number,
                 "path": path,
+                "object": "c".repeat(40),
                 "message": format!(
-                    "{kind} {number} of task t is set aside as unreadable; mend {path}, or remove \
-                     it with clear_set_aside(path, object)"
+                    "{kind} {number} of task t is set aside as unreadable; mend its file, or \
+                     remove it with clear_set_aside(path \"{path}\", object \"{}\")",
+                    "c".repeat(40)
                 ),
             }),
             "{kind}"
@@ -599,8 +615,10 @@ fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
             "kind": "discussion",
             "discussion": "d",
             "path": "discussions/d.md",
-            "message": "discussion d is set aside as unreadable; mend discussions/d.md, or \
-                        remove it with clear_set_aside(path, object)",
+            "object": "c".repeat(40),
+            "message": "discussion d is set aside as unreadable; mend its file, or remove it with \
+                        clear_set_aside(path \"discussions/d.md\", object \
+                        \"cccccccccccccccccccccccccccccccccccccccc\")",
         })
     );
 }
@@ -615,6 +633,7 @@ fn an_artifact_path_in_another_kinds_folder_is_never_shown() {
         &ProjectBoardError::Quarantined {
             key: ArtifactKey::Run(slug("t"), 1),
             path: "plans/t.1.md".into(),
+            object: "c".repeat(40),
         },
     );
 }
@@ -628,6 +647,7 @@ fn an_unsanitised_artifact_path_is_never_shown() {
         &ProjectBoardError::Quarantined {
             key: ArtifactKey::Run(slug("t"), 1),
             path: "runs/t\u{202e}.md".into(),
+            object: "c".repeat(40),
         },
     );
 }
@@ -690,6 +710,7 @@ fn every_code_the_board_answers_is_a_known_kind() {
     let plan_set_aside = ProjectBoardError::Quarantined {
         key: ArtifactKey::Plan(slug("a"), 1),
         path: "plans/a.1.md".into(),
+        object: "c".repeat(40),
     };
     codes.push(code(&board_refused("show", &plan_set_aside)));
     for refusal in [

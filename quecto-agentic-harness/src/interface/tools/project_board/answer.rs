@@ -376,10 +376,21 @@ fn slug_json(slug: &Slug) -> Value {
 /// The artifact a refusal names: a task as `set_aside` by its id, as
 /// ever; any other kind as `artifact_set_aside` by [`key_fields`] and its
 /// file's raw path, so a clear can name it exactly.
-fn set_aside_fields(key: &ArtifactKey, path: &str) -> (ErrorCode, Map<String, Value>) {
+fn set_aside_fields(
+    key: &ArtifactKey,
+    path: &str,
+    object: &str,
+) -> (ErrorCode, Map<String, Value>) {
+    assert!(
+        object.bytes().all(|b| b.is_ascii_hexdigit()),
+        "a set-aside file's object is git's id"
+    );
     let folder = match key {
         ArtifactKey::Task(id) => {
-            return (ErrorCode::SetAside, fields([("task", slug_json(id))]));
+            return (
+                ErrorCode::SetAside,
+                fields([("task", slug_json(id)), ("object", json!(object))]),
+            );
         }
         ArtifactKey::Plan(..)
         | ArtifactKey::Run(..)
@@ -396,6 +407,7 @@ fn set_aside_fields(key: &ArtifactKey, path: &str) -> (ErrorCode, Map<String, Va
     );
     let mut named = key_fields(key);
     named.insert("path".into(), json!(path));
+    named.insert("object".into(), json!(object));
     (ErrorCode::ArtifactSetAside, named)
 }
 
@@ -570,9 +582,14 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::Store(BoardStoreError::TooLarge(why)) => {
             (C::BoardTooLarge, fields([("reason", shown_json(why))]))
         }
-        E::Store(BoardStoreError::FolderSetAside(why)) => {
-            (C::FolderSetAside, fields([("reason", shown_json(why))]))
-        }
+        E::Store(BoardStoreError::FolderSetAside { why, path, object }) => (
+            C::FolderSetAside,
+            fields([
+                ("reason", shown_json(why)),
+                ("path", shown_json(path)),
+                ("object", json!(object)),
+            ]),
+        ),
         E::Rule(rule) => (C::Rule, fields([("rule", rule_json(rule))])),
         E::Invalid(schema) => (
             C::InvalidTask,
@@ -600,7 +617,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::Clock(BoardClockError::OutOfRange(read)) => {
             (C::ClockUnreadable, fields([("read", shown_json(read))]))
         }
-        E::Quarantined { key, path } => set_aside_fields(key, path),
+        E::Quarantined { key, path, object } => set_aside_fields(key, path, object),
         E::Duplicate { key } => (C::DuplicateArtifact, key_fields(key)),
         E::SetAsideFile { path, object } => {
             assert!(

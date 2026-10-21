@@ -553,7 +553,10 @@ fn a_create_waits_while_a_file_that_may_name_its_id_is_set_aside() {
             create(&store, SetClock::at("10:00:00")).execute(&new_task("x")),
             Err(ProjectBoardError::Quarantined {
                 key,
-                path: path.into()
+                path: path.into(),
+                object: crate::infrastructure::test_support::memory_board_store::memory_object(
+                    path
+                ),
             })
         );
     }

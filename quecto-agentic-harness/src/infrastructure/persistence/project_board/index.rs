@@ -65,7 +65,7 @@ impl std::fmt::Display for IndexError {
                 | BoardStoreError::WriteTooLarge(why)
                 | BoardStoreError::Unavailable(why)
                 | BoardStoreError::TooLarge(why)
-                | BoardStoreError::FolderSetAside(why),
+                | BoardStoreError::FolderSetAside { why, .. },
             ) => f.write_str(why),
             Self::NeedsRebuild(why) => write!(f, "the index needs a rebuild: {why}"),
             Self::Corrupt(why) => write!(f, "the index is corrupt: {why}"),
@@ -548,15 +548,22 @@ fn set_aside_indexable(snapshot: &BoardSnapshot) -> Result<(), IndexError> {
         .find(|file| !task_or_stray(file))
     {
         None => Ok(()),
-        Some(file) => Err(not_indexed(format!("{} is set aside", file.path))),
+        Some(file) => Err(not_indexed(&file.path, &file.object)),
     }
 }
 
-fn not_indexed(what: String) -> IndexError {
-    IndexError::Store(BoardStoreError::FolderSetAside(format!(
-        "the board index names set-aside task files only for now, and {what}: to list the \
-         board again, remove it with clear_set_aside(path, object), or move `quecto/board` back to the commit before that edit"
-    )))
+/// The index cannot list while `path` (of `object`) is set aside: the way
+/// out names both, as `clear_set_aside` takes them (#2659).
+fn not_indexed(path: &str, object: &str) -> IndexError {
+    IndexError::Store(BoardStoreError::FolderSetAside {
+        why: format!(
+            "the board index names set-aside task files only for now, and {path} is set aside: \
+             to list the board again, remove it with clear_set_aside(path \"{path}\", object \
+             \"{object}\"), or move `quecto/board` back to the commit before that edit"
+        ),
+        path: path.to_string(),
+        object: object.to_string(),
+    })
 }
 
 /// A file set aside as a task's, or as no artifact's: all the index's

@@ -211,7 +211,10 @@ fn a_held_tasks_plan_is_its_holders_and_a_set_aside_run_holds_it() {
         accept_as(&store, "Ada").execute(&of(1, None)).map(|_| ()),
         Err(ProjectBoardError::Quarantined {
             key,
-            path: "runs/a.1.md".into()
+            path: "runs/a.1.md".into(),
+            object: crate::infrastructure::test_support::memory_board_store::memory_object(
+                "runs/a.1.md"
+            ),
         })
     );
 }

@@ -135,6 +135,7 @@ fn board_readable_for(op: &BoardOp, board: &BoardSnapshot) -> Result<(), Project
                     Some(key) => Err(ProjectBoardError::Quarantined {
                         key: key.clone(),
                         path: file.path.clone(),
+                        object: file.object.clone(),
                     }),
                     None => Err(ProjectBoardError::SetAsideFile {
                         path: file.path.clone(),

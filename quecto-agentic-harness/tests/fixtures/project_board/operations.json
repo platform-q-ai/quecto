@@ -885,9 +885,9 @@
           "path": "tasks/ghost.md",
           "id": "ghost",
           "reason": "malformed",
-          "object": "0000000000000000000000000000000000000019",
+          "object": "0000000000000000000000006c8b4832f52e7118",
           "copies": [
-            "0000000000000000000000000000000000000019"
+            "0000000000000000000000006c8b4832f52e7118"
           ]
         }
       ]
@@ -900,9 +900,14 @@
       "object": "0000000000000000000000000000000000000019"
     },
     "answer": {
-      "ok": true,
+      "ok": false,
       "op": "clear_set_aside",
-      "head": "r26"
+      "error": {
+        "code": "not_set_aside",
+        "message": "no file is set aside at \"tasks/ghost.md\" as \"0000000000000000000000000000000000000019\"",
+        "path": "tasks/ghost.md",
+        "object": "0000000000000000000000000000000000000019"
+      }
     }
   },
   {
@@ -1096,8 +1101,9 @@
       "op": "show",
       "error": {
         "code": "set_aside",
-        "message": "task late is set aside as unreadable; mend its file, or remove it with clear_set_aside(path, object) (a listing names it under quarantined)",
-        "task": "late"
+        "message": "task late is set aside as unreadable; mend its file, or remove it with clear_set_aside(path \"tasks/late.md\", object \"0000000000000000000000006d8fbafe020afc45\")",
+        "task": "late",
+        "object": "0000000000000000000000006d8fbafe020afc45"
       }
     }
   },
@@ -1202,8 +1208,9 @@
       "op": "link_pr",
       "error": {
         "code": "set_aside",
-        "message": "task late is set aside as unreadable; mend its file, or remove it with clear_set_aside(path, object) (a listing names it under quarantined)",
-        "task": "late"
+        "message": "task ghost is set aside as unreadable; mend its file, or remove it with clear_set_aside(path \"tasks/ghost.md\", object \"0000000000000000000000006c8b4832f52e7118\")",
+        "task": "ghost",
+        "object": "0000000000000000000000006c8b4832f52e7118"
       }
     }
   },
@@ -1214,9 +1221,14 @@
       "object": "000000000000000000000000000000000000001c"
     },
     "answer": {
-      "ok": true,
+      "ok": false,
       "op": "clear_set_aside",
-      "head": "r32"
+      "error": {
+        "code": "not_set_aside",
+        "message": "no file is set aside at \"tasks/late.md\" as \"000000000000000000000000000000000000001c\"",
+        "path": "tasks/late.md",
+        "object": "000000000000000000000000000000000000001c"
+      }
     }
   },
   {
@@ -1226,36 +1238,13 @@
       "pr": 8
     },
     "answer": {
-      "ok": true,
+      "ok": false,
       "op": "link_pr",
-      "task": {
-        "id": "t4",
-        "title": "Fourth",
-        "kind": "task",
-        "description": "",
-        "status": "in_progress",
-        "parent": null,
-        "depends_on": [],
-        "accepted_plan": null,
-        "claim": {
-          "holder": {
-            "name": "Ada",
-            "email": "ada@example.com"
-          },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
-        },
-        "prs": [
-          8
-        ],
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:03Z"
-      },
-      "completion": {
-        "done": false,
-        "pending": [
-          8
-        ]
+      "error": {
+        "code": "set_aside",
+        "message": "task ghost is set aside as unreadable; mend its file, or remove it with clear_set_aside(path \"tasks/ghost.md\", object \"0000000000000000000000006c8b4832f52e7118\")",
+        "task": "ghost",
+        "object": "0000000000000000000000006c8b4832f52e7118"
       }
     }
   },
@@ -1269,12 +1258,9 @@
       "op": "complete",
       "error": {
         "code": "rule",
-        "message": "pull requests [8] are not merged",
+        "message": "the task links no pull request",
         "rule": {
-          "code": "prs_unmerged",
-          "prs": [
-            8
-          ]
+          "code": "no_prs"
         }
       }
     }
@@ -1286,39 +1272,13 @@
       "pr": 10
     },
     "answer": {
-      "ok": true,
+      "ok": false,
       "op": "link_pr",
-      "task": {
-        "id": "t4",
-        "title": "Fourth",
-        "kind": "task",
-        "description": "",
-        "status": "in_progress",
-        "parent": null,
-        "depends_on": [],
-        "accepted_plan": null,
-        "claim": {
-          "holder": {
-            "name": "Ada",
-            "email": "ada@example.com"
-          },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
-        },
-        "prs": [
-          8,
-          10
-        ],
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:04Z"
-      },
-      "completion": {
-        "done": false,
-        "error": {
-          "code": "pr_state_unknown",
-          "message": "pull request 10 is not known to the host",
-          "pr": 10
-        }
+      "error": {
+        "code": "set_aside",
+        "message": "task ghost is set aside as unreadable; mend its file, or remove it with clear_set_aside(path \"tasks/ghost.md\", object \"0000000000000000000000006c8b4832f52e7118\")",
+        "task": "ghost",
+        "object": "0000000000000000000000006c8b4832f52e7118"
       }
     }
   },
@@ -1638,7 +1598,7 @@
     "answer": {
       "ok": true,
       "op": "show",
-      "head": "r37",
+      "head": "r33",
       "task": {
         "id": "epic",
         "title": "Project boards",
@@ -1893,7 +1853,7 @@
     "answer": {
       "ok": true,
       "op": "show",
-      "head": "r42",
+      "head": "r38",
       "task": {
         "id": "epic",
         "title": "Project boards",

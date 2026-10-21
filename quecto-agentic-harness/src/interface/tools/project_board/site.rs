@@ -15,7 +15,7 @@ use super::{read, run_recorded_with, summaries_refusal};
 use crate::application::project_board::operations::ListSummaries;
 use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness};
 use crate::application::project_board::use_cases::RunBoardOperation;
-use crate::domain::project_board::value_objects::telemetry::FaultKind;
+use crate::domain::project_board::value_objects::telemetry::{FaultKind, FrontEnd};
 
 /// What a request does with the board.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,11 +190,18 @@ pub fn answer_with(
         Err(BuildError::NoCommitter(why)) => {
             call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::NoCommitter, &why)
         }
-        // The caller named a remote the clone lacks: its request's mistake.
-        Err(BuildError::NoSuchRemote(why)) => {
-            let error = RequestError::of("remote", why, FaultKind::InvalidValue);
-            call.refuse_request(op.as_deref(), &error)
-        }
+        // A remote the clone lacks: on the command line, which names it
+        // (`--remote`), the request's mistake; the agent tool names none
+        // (its board is `origin`), so there the store is out of reach.
+        Err(BuildError::NoSuchRemote(why)) => match call.front_end() {
+            FrontEnd::Cli => {
+                let error = RequestError::of("remote", why, FaultKind::InvalidValue);
+                call.refuse_request(op.as_deref(), &error)
+            }
+            FrontEnd::Tool => {
+                call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::StoreUnavailable, &why)
+            }
+        },
         Err(BuildError::Unavailable(why)) => {
             call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::StoreUnavailable, &why)
         }

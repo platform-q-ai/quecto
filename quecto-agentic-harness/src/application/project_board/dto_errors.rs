@@ -4,7 +4,7 @@ use std::fmt;
 
 use super::{IdUser, ProjectBoardError, Restored, RunAfterUndo};
 use crate::application::project_board::ports::{
-    ArtifactKey, BoardClockError, BoardStoreError, PullRequestStatesError,
+    BoardClockError, BoardStoreError, PullRequestStatesError,
 };
 
 impl fmt::Display for ProjectBoardError {
@@ -25,7 +25,7 @@ impl fmt::Display for ProjectBoardError {
             Self::Store(BoardStoreError::TooLarge(why)) => {
                 write!(f, "the board is too large to read: {why}")
             }
-            Self::Store(BoardStoreError::FolderSetAside(why)) => f.write_str(why),
+            Self::Store(BoardStoreError::FolderSetAside { why, .. }) => f.write_str(why),
             Self::Rule(error) => write!(f, "{error}"),
             Self::Clock(BoardClockError::OutOfRange(read)) => {
                 write!(
@@ -52,29 +52,18 @@ impl fmt::Display for ProjectBoardError {
             }
             Self::SetAsideFile { path, object } => write!(
                 f,
-                "the file {path:?} (object {object}) is set aside as unreadable and its task is \
-                 unknown; mend it, or remove it with clear_set_aside(path, object)"
+                "the file {path:?} is set aside as unreadable and its task is unknown; mend it, or \
+                 remove it with clear_set_aside(path \"{path}\", object \"{object}\")"
             ),
             Self::Duplicate { key } => write!(
                 f,
                 "{key} is on the board more than once; its store must be mended"
             ),
-            // A task's message is the one agents already know.
-            Self::Quarantined {
-                key: key @ ArtifactKey::Task(_),
-                ..
-            } => write!(
+            Self::Quarantined { key, path, object } => write!(
                 f,
                 "{key} is set aside as unreadable; mend its file, or remove it with \
-                 clear_set_aside(path, object) (a listing names it under quarantined)"
+                 clear_set_aside(path \"{path}\", object \"{object}\")"
             ),
-            Self::Quarantined { key, path } => {
-                write!(
-                    f,
-                    "{key} is set aside as unreadable; mend {path}, or remove it with \
-                     clear_set_aside(path, object)"
-                )
-            }
             Self::UnknownReference(id) => {
                 write!(f, "no task {} on the board to refer to", id.as_str())
             }
