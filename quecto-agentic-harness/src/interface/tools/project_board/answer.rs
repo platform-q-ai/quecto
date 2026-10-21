@@ -244,6 +244,10 @@ pub fn outcome(
         },
         BoardOutcome::Changed { task, completion } => {
             fields.insert("task".into(), task_json(task));
+            // A renewal says when the next one is due (#2656).
+            if op == "renew" {
+                fields.insert("renew_after".into(), renew_after_json(task));
+            }
             if let Some(completion) = completion {
                 let completion = match completion {
                     Completion::Done(task) => json!({"done": true, "task": task_json(task)}),
@@ -343,18 +347,19 @@ fn started_fields(started: &StartedTask) -> Map<String, Value> {
         ),
         ("not_applied", Value::Array(not_applied)),
         ("claim", json!(started.claim.as_str())),
-        // When to renew the claim: halfway through it (#2656).
-        (
-            "renew_after",
-            started
-                .task
-                .fields()
-                .claim
-                .as_ref()
-                .and_then(|claim| renew_after(claim).ok())
-                .map_or(Value::Null, |at| json!(at.as_str())),
-        ),
+        // When to renew the claim: halfway through it (#2656). A started
+        // task is held by its starter.
+        ("renew_after", renew_after_json(&started.task)),
     ])
+}
+
+/// When the claim `task` holds is next renewed (#2656): halfway through
+/// it; `null` for a task that holds none.
+fn renew_after_json(task: &Task) -> Value {
+    match &task.fields().claim {
+        Some(claim) => json!(renew_after(claim).as_str()),
+        None => Value::Null,
+    }
 }
 
 /// The files set aside, each with its `object` and the `copies` (every

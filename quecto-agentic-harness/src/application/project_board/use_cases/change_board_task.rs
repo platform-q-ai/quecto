@@ -79,6 +79,9 @@ impl ChangeBoardTask {
                 let status = task.fields().status;
                 facts.status_from = Some(status);
                 facts.status_to = Some(status);
+                facts.claim = claim_facts(&task, actor, &self.clock.now()?);
+                // No attempt was made: nothing was written.
+                facts.attempts = Some(0);
             }
             return Ok(task);
         }

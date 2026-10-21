@@ -209,3 +209,21 @@ fn claim_facts_count_from_its_start_to_its_expiry() {
         None
     );
 }
+
+/// #2656 review round 1: halfway is the claim's own lease's, and a
+/// renewal is due from then, an expired claim's too; another's is the
+/// renewal's own rule to refuse.
+#[test]
+fn a_renewal_is_due_from_halfway_through_the_claims_own_lease() {
+    let mut fields = task(InProgress).into_fields();
+    let claim = fields.claim.as_mut().unwrap();
+    claim.expires = at("10:00:00");
+    let short = Task::new(fields).unwrap();
+    let held = short.fields().claim.as_ref().unwrap();
+    assert_eq!(renew_after(held), at("09:30:00"));
+    let ada = person("Ada");
+    assert!(!renewal_due(&short, &ada, &at("09:29:59")));
+    assert!(renewal_due(&short, &ada, &at("09:30:00")));
+    assert!(renewal_due(&short, &ada, &at("12:00:00")), "expired");
+    assert!(renewal_due(&short, &person("Bob"), &at("09:00:00")));
+}

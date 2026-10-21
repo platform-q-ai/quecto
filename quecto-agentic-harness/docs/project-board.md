@@ -374,8 +374,10 @@ Once launched, the run is the swarm's, and the task stays held by its starter
 until its holder ends the run as "Ending a run", below, says: close a run
 paused holding an outcome, stop the coordinator, `end_run`, and renew the
 2-hour claim, which nothing renews while the swarm runs. A `renew` writes only
-from halfway through the claim on: before then the holder's renewal writes
-nothing and answers the task as it is, its claim's expiry unchanged.
+from halfway through the claim's own lease on: before then the holder's renewal
+writes nothing and answers the task as it is, its claim's expiry unchanged (its
+`board_op` record notes `attempts: 0` and the claim it found). Every `renew`
+answer gives `renew_after`, the time halfway through the claim it holds.
 
 A harness the pocket relay launches for a board task writes the board as the
 relay's bot: `QUECTO_BOARD_COMMITTER`, `name <email>` (`quecto pocket
@@ -387,7 +389,8 @@ agent's own commits stay its clone's. A value not so shaped is refused
 The answer gives the `task`, the `run`, the `coordinator` (`agent`,
 `environment_ref`), `not_applied` (`role`, `model`, `effort`), `claim`:
 `fresh` when the start took it, `held` when the starter held it already,
-`renew_after`: the time halfway through the claim, from which a `renew` is due,
+`renew_after`: the time halfway through the claim's lease, from which a `renew`
+is due,
 and, on the agent tool, `steps`: the steps for running the run to its end, as text for the agent that
 started it, the task's id and the run's number filled in.
 
