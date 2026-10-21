@@ -330,8 +330,8 @@ claimed by the starter (a task the starter holds has its claim renewed), moved
 to `in_progress`, and run 1 (or the next) of its accepted plan begins, all at
 one stamp. Then the run's coordinator is launched in a new container with the
 plan's brief: the run to create, its task items in dependency order, each
-title exactly as the board matches it back, and, before it reports a run that
-succeeded, the push of the commits its evidence names (see "Ending a run"). The
+title exactly as the board matches it back, and evidence revisions as full
+commit ids, pushed before it reports a run that succeeded (see "Ending a run"). The
 coordinator gets the plan's
 `coordinator` role's model and effort; other roles' models are not applied yet,
 and the answer lists them as `not_applied`.
@@ -398,7 +398,9 @@ whose op reads as `start`, or a front end's own), to say why and stop. No other
 op's answer carries `steps`, and these answers carry none: the CLI's (which
 takes no `start`), a refusal of a request whose op cannot be read, and a call
 that did not finish (cancelled, or ended without an answer). The words are the
-Pocket start prompt's, moved there unchanged, so that prompt can be one line.
+Pocket start prompt's, moved there unchanged, so that prompt can be one line,
+with one step added (#2666): before closing a run that succeeded, make sure
+every commit its evidence names is on the repository's remote.
 
 ## Ending a run
 
@@ -406,13 +408,17 @@ Nothing records a started run's end by itself: the swarm never writes the
 board, and the run holds its task until it ends, since a held task leaves its
 holder only once its runs have ended. Its claim holder ends it, in this order:
 
-1. When the run is paused holding an outcome, close it: `agent_cmd`
+1. For a run that succeeded, make sure every commit its evidence names is on
+   the repository's remote (have the coordinator push any that is not): once
+   the coordinator is killed, its container and any unpushed commit are gone,
+   and `end_run` refuses the success (`not_pushed`, below).
+2. When the run is paused holding an outcome, close it: `agent_cmd`
    `swarm_control` `close` on the coordinator. A cancelled run needs no close.
-2. Stop the coordinator with `agent_cmd kill`. Until it has stopped, `end_run`
+3. Stop the coordinator with `agent_cmd kill`. Until it has stopped, `end_run`
    answers `run_live`, naming the coordinator's `agent` to kill.
-3. `end_run(task, run, outcome, expected_updated)` with `succeeded`, `stopped`
+4. `end_run(task, run, outcome, expected_updated)` with `succeeded`, `stopped`
    or `failed`.
-4. Renew the claim before it lapses: it lasts 2 hours, and nothing renews it
+5. Renew the claim before it lapses: it lasts 2 hours, and nothing renews it
    while the swarm runs. If it has expired, renew it if it is yours
    (`renew`), or take the task over if it is another's (`take_over`), then
    `end_run`.
@@ -458,22 +464,39 @@ refusal asks the user whether the work was done before the run is ended. A run p
 once more without it, as a fold-back is.
 
 A run ends as `succeeded` only over work that left the swarm's container
-(#2666): every revision the evidence of its recorded task items names must be on
-the board's remote, a commit (its full id, or a prefix of at least 7 hex digits)
-that one of the remote's branches or tags reaches. Otherwise the end is refused
-(`not_pushed`, a rule refusal naming the `run` and how many `revisions` are not
-there) and nothing is written, so the board never shows a succeeded run over a
-commit made in the container and torn down with it. To judge it, the remote's
-branches and tags are listed (`ls-remote`) and the tips the clone lacks are
-fetched by id, moving no ref and writing no `FETCH_HEAD`. A revision that names
-no commit (`working tree`, `HEAD`) is never on the remote, and asks nothing of
-it; a remote that cannot be read refuses the end as unavailable; a shallow
-clone reads a commit past its boundary as not there. The kept board stays until
-the run is recorded, so once the commits are pushed `end_run` can be called
-again; if the work is gone, end the run as `failed`. The coordinator's brief
-asks it, before it reports a run that succeeded, to push the commits its
-evidence names, as they are, to a branch on the repository's remote and name
-that branch and its head. A stop, a failure or a loss is never judged by it.
+(#2666): every commit the evidence of its recorded task items names must be on
+the board's remote, reached by one of its branches or tags. A revision names a
+commit when it is a full commit id (40 or 64 hex digits) or a prefix of at least
+12 hex digits; evidence that names none (an artifact's digest, a red-test
+bundle, a branch or tag name, `working tree`) is accepted unchecked, so a done
+item whose evidence names no commit does not refuse the success. Otherwise the
+end is refused (`not_pushed`, a rule refusal naming the `run` and how many
+commits, `revisions`, are not there) and nothing is written, so the board never
+shows a succeeded run over a commit made in the container and torn down with
+it. Every other rule judges the end first (the claim, the run, its items), so
+the remote is asked only for an end that passes them, and it is asked once,
+before the write begins. To judge it, the remote's branches and tags are listed
+(`ls-remote`); each commit is walked against the tips the clone holds, and only
+when they do not reach it are the tips it lacks fetched by id, moving no ref and
+writing no `FETCH_HEAD`. A remote that cannot be read refuses the end as
+unavailable; a shallow clone reads a commit past its boundary as not there.
+
+The check comes after the container is gone (the kept board is read as the
+coordinator leaves), and the kept board is the swarm's record, not its commits:
+a commit that was never pushed went with the container. So the commits are
+pushed before the run is closed: the coordinator's brief asks it to give each
+evidence revision as a full commit id and, before it reports a run that
+succeeded, to push those commits as they are to a branch on the repository's
+remote, naming that branch and its head (evidence it deliberately does not
+push, such as a red-test bundle, names the bundle, not a commit); and the
+`start` answer's steps ask the parent, before it closes a run that succeeded,
+to make sure every such commit is on the remote. If a refused end's commits can
+still be pushed, push them and call `end_run` again; if they went with the
+container, end the run as `failed`. Commits are judged against the board's own
+remote only: a run whose container cloned another repository (a container
+config naming another URL) is refused until its commits are on the board's
+remote too, and is otherwise ended as `stopped` or `failed`. A stop, a failure
+or a loss is never judged by it.
 
 As `lost`, the run is ended by the holder of a live claim, or by anyone when the
 task has no claim; whoever finds the claim expired takes the task over with

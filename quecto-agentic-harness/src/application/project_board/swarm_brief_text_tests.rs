@@ -83,9 +83,11 @@ fn a_brief_renders_as_its_golden_text() {
              create of each item it names by \"id\" returned.",
             "Then run the swarm as your playbook says, and when the run ends, report its summary \
              to your parent.",
-            "Before you report a run that succeeded, push the commits its evidence names, as \
-             they are, to a branch on the repository's remote, and name that branch and its head \
-             in your report: a success is recorded only over evidence that remote holds.",
+            "Give each evidence revision as a full commit id, and before you report a run that \
+             succeeded, push those commits, as they are, to a branch on the repository's remote \
+             and name that branch and its head in your report: a success is recorded only over \
+             commits that remote holds. Evidence you deliberately do not push (a red-test bundle) \
+             names the bundle, not a commit.",
         ]
     );
     assert_eq!(lines[5], "=== BEGIN PLAN DATA 1 ===");

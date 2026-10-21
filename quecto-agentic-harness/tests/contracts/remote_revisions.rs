@@ -1,7 +1,7 @@
 //! The remote revisions port's contract (#2666), run against the git
 //! store: two clones of one bare remote. A revision is on the remote when
 //! one of its branches or tags reaches the commit it names (by its full id
-//! or a prefix of at least 7 hex digits), whichever clone asks and whether
+//! or a prefix of at least 12 hex digits), whichever clone asks and whether
 //! or not that clone holds the commit; a commit made in a clone and never
 //! pushed is not, nor is text that names no commit. Asking moves no
 //! branch, tag or `FETCH_HEAD` of the asking clone.
@@ -51,6 +51,7 @@ fn a_revision_is_on_the_remote_only_when_a_branch_or_tag_there_reaches_it() {
     let before = refs_of(&remote, 1);
     let asking = [
         pushed.as_str(),
+        &pushed[..12],
         &pushed[..7],
         &pushed.to_uppercase(),
         unpushed.as_str(),
@@ -61,6 +62,7 @@ fn a_revision_is_on_the_remote_only_when_a_branch_or_tag_there_reaches_it() {
         "abc12",
     ];
     let not_there = [
+        pushed[..7].to_string(),
         unpushed.clone(),
         unpushed[..12].to_string(),
         "working tree".into(),

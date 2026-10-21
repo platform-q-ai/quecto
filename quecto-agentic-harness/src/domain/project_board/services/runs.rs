@@ -180,8 +180,8 @@ pub struct Reported {
     pub items: Vec<RunItem>,
     pub cost: Option<u64>,
     pub report: SwarmReport,
-    /// How many of the revisions its task items' evidence names the
-    /// board's remote does not hold, on a branch or tag there (#2666):
+    /// How many of the commits its task items' evidence names the board's
+    /// remote does not hold, on a branch or tag there (#2666):
     /// work that never left the swarm's container. Only a success is
     /// judged by it, so an end of any other kind gives 0.
     pub unpushed: usize,
