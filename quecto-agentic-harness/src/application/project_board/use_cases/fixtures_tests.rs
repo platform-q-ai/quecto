@@ -271,6 +271,8 @@ pub struct Remote {
     pub missing: Vec<String>,
     pub down: bool,
     pub asked: Mutex<Vec<Vec<String>>>,
+    /// Its full commit ids' hex digits: 40 unless set (64: SHA-256).
+    pub id_len: Option<usize>,
 }
 
 impl Remote {
@@ -322,5 +324,11 @@ impl crate::application::project_board::ports::RemoteRevisions for Remote {
                 .cloned()
                 .collect()),
         }
+    }
+
+    fn commit_id_hex_len(
+        &self,
+    ) -> Result<usize, crate::application::project_board::ports::BoardStoreError> {
+        Ok(self.id_len.unwrap_or(40))
     }
 }

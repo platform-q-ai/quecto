@@ -624,6 +624,13 @@ pub trait RemoteRevisions: Send + Sync {
     /// # Errors
     /// The remote could not be reached or read: nothing is judged.
     fn not_on_remote(&self, revisions: &[String]) -> Result<Vec<String>, BoardStoreError>;
+
+    /// How many hex digits a full commit id of this repository has: 40
+    /// (SHA-1) or 64 (SHA-256). Read locally.
+    ///
+    /// # Errors
+    /// The repository's object format cannot be read, or is neither.
+    fn commit_id_hex_len(&self) -> Result<usize, BoardStoreError>;
 }
 
 /// Port: launches a started task's swarm coordinator in a new container
