@@ -382,6 +382,7 @@ macro_rules! board_rules {
 board_rules! {
     R::NotAllowed { .. } => R::NotAllowed { from: TaskStatus::Draft, to: TaskStatus::Done }, "not_allowed", ["from", "to"];
     R::NotHolder => R::NotHolder, "not_holder", [];
+    R::NotHolderExpired => R::NotHolderExpired, "not_holder", ["expired"];
     R::NoClaim => R::NoClaim, "no_claim", [];
     R::ClaimLive => R::ClaimLive, "claim_live", [];
     R::ClaimExpired => R::ClaimExpired, "claim_expired", [];
@@ -439,8 +440,16 @@ board_rules! {
 #[test]
 fn every_rule_answers_its_code_and_its_own_keys() {
     let rules = every_rule();
-    let codes: BTreeSet<&str> = rules.iter().map(|(rule, ..)| rule_row(rule)).collect();
-    assert_eq!(codes.len(), rules.len(), "every rule, each once");
+    // Each rule once, by its variant (two may share a code: #2659's
+    // not_holder on an expired claim).
+    let variants: std::collections::HashSet<_> = rules
+        .iter()
+        .map(|(rule, ..)| {
+            rule_row(rule);
+            std::mem::discriminant(rule)
+        })
+        .collect();
+    assert_eq!(variants.len(), rules.len(), "every rule, each once");
     for (rule, code, keys) in rules {
         let shown = rule_json(&rule);
         assert_eq!(shown["code"], json!(code), "{rule:?}");
@@ -488,7 +497,7 @@ fn a_set_aside_file_is_named_by_its_raw_path_and_object() {
         named.to_string(),
         format!(
             "the file \"tasks/Not A Slug.json\" (object {object}) is set aside as unreadable and \
-             its task is unknown; mend or clear it"
+             its task is unknown; mend it, or remove it with clear_set_aside(path, object)"
         )
     );
     assert_eq!(error_json(&named)["message"], json!(named.to_string()));
@@ -546,7 +555,8 @@ fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
         json!({
             "code": "set_aside",
             "task": "t",
-            "message": "task t is set aside as unreadable; mend its file",
+            "message": "task t is set aside as unreadable; mend its file, or remove it with \
+                        clear_set_aside(path, object) (a listing names it under quarantined)",
         })
     );
     let numbered = [
@@ -575,7 +585,8 @@ fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
                 "number": number,
                 "path": path,
                 "message": format!(
-                    "{kind} {number} of task t is set aside as unreadable; mend or clear {path}"
+                    "{kind} {number} of task t is set aside as unreadable; mend {path}, or remove \
+                     it with clear_set_aside(path, object)"
                 ),
             }),
             "{kind}"
@@ -588,7 +599,8 @@ fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
             "kind": "discussion",
             "discussion": "d",
             "path": "discussions/d.md",
-            "message": "discussion d is set aside as unreadable; mend or clear discussions/d.md",
+            "message": "discussion d is set aside as unreadable; mend discussions/d.md, or \
+                        remove it with clear_set_aside(path, object)",
         })
     );
 }

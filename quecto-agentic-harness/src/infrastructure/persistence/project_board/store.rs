@@ -51,7 +51,10 @@ pub use super::board_tree::MAX_TASK_ENTRIES as MAX_ENTRIES;
 pub const BOARD_REF: &str = "refs/heads/quecto/board";
 /// The most a listing of a repository's branches takes.
 const MAX_REF_LISTING: usize = 16 * 1024 * 1024;
-const README: &[u8] = b"# quecto board\n\nThis branch holds the project's board: one `tasks/<id>.md` per task. It is\nwritten only by quecto's board operations; do not edit, merge or rebase it by hand.\nIf a hand edit breaks it, move `quecto/board` back to the commit before that edit.\n";
+/// The README every write leaves at the board's root (#2660): each write
+/// writes it again, so a board written before this text has it once it is
+/// next written.
+const README: &[u8] = b"# quecto board\n\nThis branch holds the project's board: one markdown file per artifact, each in\nits kind's folder: `tasks/<id>.md`, `plans/<task>.<n>.md`, `runs/<task>.<n>.md`,\n`changes/<task>.<n>.md`, `reviews/<task>.<change>.md` and `discussions/<id>.md`,\nwith `format/board` naming the format and `archive/` kept for archived work. It is\nwritten only by quecto's board operations; do not edit, merge or rebase it by hand.\nIf a hand edit breaks it, move `quecto/board` back to the commit before that edit.\n";
 
 pub struct GitBoardStore {
     git: Git,
@@ -76,13 +79,23 @@ enum Pushed {
     Refused(String),
 }
 
+/// Why a store could not be opened on a remote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoreOpenError {
+    /// The name is no remote the repository configures: the caller's
+    /// mistake, never a store out of reach (#2659).
+    NoSuchRemote(String),
+    /// git could not say (it did not run, or timed out).
+    Unavailable(BoardStoreError),
+}
+
 impl GitBoardStore {
     /// `remote` is the name of a remote the repository configures, so a
     /// path or URL spelled like a name is never taken for one.
     ///
     /// # Errors
-    /// A name that is not a configured remote's.
-    pub fn new(git: Git, remote: &str) -> Result<Self, BoardStoreError> {
+    /// A name that is not a configured remote's; git that cannot say.
+    pub fn new(git: Git, remote: &str) -> Result<Self, StoreOpenError> {
         let named = remote
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
@@ -91,7 +104,7 @@ impl GitBoardStore {
                 .first()
                 .is_some_and(u8::is_ascii_alphanumeric);
         if !named {
-            return Err(BoardStoreError::Unavailable(format!(
+            return Err(StoreOpenError::NoSuchRemote(format!(
                 "{remote:?} is not a remote name"
             )));
         }
@@ -105,8 +118,18 @@ impl GitBoardStore {
                 cancelled: None,
                 partial: std::sync::OnceLock::new(),
             }),
-            Err(error) => Err(BoardStoreError::Unavailable(format!(
+            // git ran and said no: there is no such remote.
+            Err(error @ GitError::Failed { .. }) => Err(StoreOpenError::NoSuchRemote(format!(
                 "{remote:?} is not a remote of this repository: {error}"
+            ))),
+            Err(
+                error @ (GitError::NotFound
+                | GitError::Spawn(_)
+                | GitError::TimedOut { .. }
+                | GitError::TooMuchOutput { .. }
+                | GitError::Identity(_)),
+            ) => Err(StoreOpenError::Unavailable(BoardStoreError::Unavailable(
+                format!("git could not say whether {remote:?} is a remote: {error}"),
             ))),
         }
     }
@@ -634,3 +657,7 @@ mod writing;
 #[cfg(test)]
 #[path = "store_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "store_readme_tests.rs"]
+mod readme_tests;

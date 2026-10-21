@@ -299,7 +299,7 @@ fn a_run_of_a_task_nobody_claims_is_ended_by_anyone() {
     );
     assert_eq!(
         end_lost(&held, &open_run(1, 1), &bob, &at("11:00:00")),
-        Err(BoardRuleError::NotHolder),
+        Err(BoardRuleError::NotHolderExpired),
         "an expired claim is still Ada's until it is taken over"
     );
     let taken = take_over(&held, &bob, &at("11:00:00")).unwrap();

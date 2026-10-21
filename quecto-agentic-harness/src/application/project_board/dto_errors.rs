@@ -53,7 +53,7 @@ impl fmt::Display for ProjectBoardError {
             Self::SetAsideFile { path, object } => write!(
                 f,
                 "the file {path:?} (object {object}) is set aside as unreadable and its task is \
-                 unknown; mend or clear it"
+                 unknown; mend it, or remove it with clear_set_aside(path, object)"
             ),
             Self::Duplicate { key } => write!(
                 f,
@@ -63,9 +63,17 @@ impl fmt::Display for ProjectBoardError {
             Self::Quarantined {
                 key: key @ ArtifactKey::Task(_),
                 ..
-            } => write!(f, "{key} is set aside as unreadable; mend its file"),
+            } => write!(
+                f,
+                "{key} is set aside as unreadable; mend its file, or remove it with \
+                 clear_set_aside(path, object) (a listing names it under quarantined)"
+            ),
             Self::Quarantined { key, path } => {
-                write!(f, "{key} is set aside as unreadable; mend or clear {path}")
+                write!(
+                    f,
+                    "{key} is set aside as unreadable; mend {path}, or remove it with \
+                     clear_set_aside(path, object)"
+                )
             }
             Self::UnknownReference(id) => {
                 write!(f, "no task {} on the board to refer to", id.as_str())

@@ -134,9 +134,10 @@ fn a_read_needs_no_committer_and_a_write_says_none_is_configured() {
     );
     let mut nowhere = environment(&work, Access::Read);
     nowhere.remote = "nowhere".into();
+    // #2659: a remote the clone lacks is the request's mistake.
     assert!(matches!(
         build_project_board_handles(&nowhere),
-        Err(BuildError::Unavailable(_))
+        Err(BuildError::NoSuchRemote(_))
     ));
 }
 

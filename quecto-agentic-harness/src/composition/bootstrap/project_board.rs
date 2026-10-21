@@ -41,7 +41,7 @@ use crate::infrastructure::persistence::project_board::gh_pull_requests::{
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment, GitError};
 use crate::infrastructure::persistence::project_board::index::BoardIndex;
 use crate::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
-use crate::infrastructure::persistence::project_board::store::GitBoardStore;
+use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use crate::infrastructure::time::remote_time::ReferencedBoardClock;
 use crate::infrastructure::tools::agents::coordinator_launch::KeptRunReports;
@@ -93,8 +93,10 @@ fn build_with_warnings(
         Access::Read => Git::reader(&environment.repo, vars)
             .map_err(|error| unavailable(format!("git cannot run here: {error}")))?,
     };
-    let board = GitBoardStore::new(git, &environment.remote)
-        .map_err(|error| unavailable(store_reason(&error)))?;
+    let board = GitBoardStore::new(git, &environment.remote).map_err(|error| match error {
+        StoreOpenError::NoSuchRemote(why) => BuildError::NoSuchRemote(why),
+        StoreOpenError::Unavailable(error) => unavailable(store_reason(&error)),
+    })?;
     // A start's undo writes past the call's cancel, so no run is stranded.
     let undo_store: Arc<dyn ProjectBoardStore> = Arc::new(board.without_cancel());
     let store = Arc::new(board.with_cancel(environment.cancelled.clone()));

@@ -555,7 +555,7 @@ fn set_aside_indexable(snapshot: &BoardSnapshot) -> Result<(), IndexError> {
 fn not_indexed(what: String) -> IndexError {
     IndexError::Store(BoardStoreError::FolderSetAside(format!(
         "the board index names set-aside task files only for now, and {what}: to list the \
-         board again, move `quecto/board` back to the commit before that edit"
+         board again, remove it with clear_set_aside(path, object), or move `quecto/board` back to the commit before that edit"
     )))
 }
 

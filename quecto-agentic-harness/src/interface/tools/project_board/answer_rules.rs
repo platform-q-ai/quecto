@@ -21,7 +21,7 @@ pub fn rule_code(rule: &BoardRuleError) -> &'static str {
     use BoardRuleError as R;
     match rule {
         R::NotAllowed { .. } => "not_allowed",
-        R::NotHolder => "not_holder",
+        R::NotHolder | R::NotHolderExpired => "not_holder",
         R::NoClaim => "no_claim",
         R::ClaimLive => "claim_live",
         R::ClaimExpired => "claim_expired",
@@ -95,6 +95,7 @@ fn rule_fields(rule: &BoardRuleError) -> Map<String, Value> {
             object!({"from": from.as_str(), "to": to.as_str()})
         }
         R::NotHolder => Map::new(),
+        R::NotHolderExpired => object!({"expired": true}),
         R::NoClaim => Map::new(),
         R::ClaimLive => Map::new(),
         R::ClaimExpired => Map::new(),

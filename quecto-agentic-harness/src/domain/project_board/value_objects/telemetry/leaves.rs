@@ -265,6 +265,9 @@ const KNOWN_KINDS: &[&str] = &[
     "op",
     "request",
     "other",
+    // The CLI's `--remote`, named by a refusal of one the clone lacks
+    // (#2659).
+    "remote",
 ];
 
 /// Whether every one of [`KNOWN_KINDS`] is shaped as a kind (checked as

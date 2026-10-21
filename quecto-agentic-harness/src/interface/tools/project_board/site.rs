@@ -10,11 +10,12 @@ use serde_json::Value;
 
 use super::answer::FrontEndRefusal;
 use super::recording::BoardCall;
-use super::request::{op_of, parse};
+use super::request::{RequestError, op_of, parse};
 use super::{read, run_recorded_with, summaries_refusal};
 use crate::application::project_board::operations::ListSummaries;
 use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness};
 use crate::application::project_board::use_cases::RunBoardOperation;
+use crate::domain::project_board::value_objects::telemetry::FaultKind;
 
 /// What a request does with the board.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +68,8 @@ pub struct ProjectBoardHandles {
 pub enum BuildError {
     /// A write, with no committer configured.
     NoCommitter(String),
+    /// The remote named is none the repository configures (#2659).
+    NoSuchRemote(String),
     Unavailable(String),
 }
 
@@ -186,6 +189,11 @@ pub fn answer_with(
         Ok(handles) => run_recorded_with(&handles.operations, text, summaries, call),
         Err(BuildError::NoCommitter(why)) => {
             call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::NoCommitter, &why)
+        }
+        // The caller named a remote the clone lacks: its request's mistake.
+        Err(BuildError::NoSuchRemote(why)) => {
+            let error = RequestError::of("remote", why, FaultKind::InvalidValue);
+            call.refuse_request(op.as_deref(), &error)
         }
         Err(BuildError::Unavailable(why)) => {
             call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::StoreUnavailable, &why)

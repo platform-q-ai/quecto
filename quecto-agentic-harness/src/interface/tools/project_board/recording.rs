@@ -453,6 +453,7 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         R::Invalid(schema) | R::InvalidPlan(schema) => Some(schema),
         R::NotAllowed { .. }
         | R::NotHolder
+        | R::NotHolderExpired
         | R::NoClaim
         | R::ClaimLive
         | R::ClaimExpired

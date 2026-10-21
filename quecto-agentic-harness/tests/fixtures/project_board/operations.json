@@ -1096,7 +1096,7 @@
       "op": "show",
       "error": {
         "code": "set_aside",
-        "message": "task late is set aside as unreadable; mend its file",
+        "message": "task late is set aside as unreadable; mend its file, or remove it with clear_set_aside(path, object) (a listing names it under quarantined)",
         "task": "late"
       }
     }
@@ -1202,7 +1202,7 @@
       "op": "link_pr",
       "error": {
         "code": "set_aside",
-        "message": "task late is set aside as unreadable; mend its file",
+        "message": "task late is set aside as unreadable; mend its file, or remove it with clear_set_aside(path, object) (a listing names it under quarantined)",
         "task": "late"
       }
     }
