@@ -8,7 +8,8 @@ use std::process::Command;
 use quecto::application::swarm::ports::board_files::CheckoutHistory;
 use quecto::infrastructure::workspace::checkout_history::GitCheckoutHistory;
 
-/// git in `dir` with no user or system configuration: its trimmed output.
+/// git in `dir` with no user or system configuration and no inherited git
+/// environment: its trimmed output.
 fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .arg("-C")
@@ -16,6 +17,11 @@ fn git(dir: &Path, args: &[&str]) -> String {
         .args(["-c", "user.name=Test", "-c", "user.email=t@example.invalid"])
         .args(["-c", "commit.gpgsign=false"])
         .args(args)
+        // Only PATH passes: a git hook's GIT_DIR or GIT_INDEX_FILE (the
+        // pre-push gate runs these tests) must never reach the real
+        // repository.
+        .env_clear()
+        .envs(std::env::var_os("PATH").map(|path| ("PATH", path)))
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()

@@ -15,8 +15,8 @@ use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::rust::RustBoard;
 
-/// git in `dir` with no user or system configuration and a fixed
-/// committer: its trimmed standard output.
+/// git in `dir` with no user or system configuration, no inherited git
+/// environment and a fixed committer: its trimmed standard output.
 fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .arg("-C")
@@ -29,6 +29,11 @@ fn git(dir: &Path, args: &[&str]) -> String {
         ])
         .args(["-c", "commit.gpgsign=false"])
         .args(args)
+        // Only PATH passes: a git hook's GIT_DIR or GIT_INDEX_FILE (the
+        // pre-push gate runs these tests) must never reach the real
+        // repository.
+        .env_clear()
+        .envs(std::env::var_os("PATH").map(|path| ("PATH", path)))
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
