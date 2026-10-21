@@ -63,14 +63,14 @@ fn slash_dropdown_windowed(world: &mut TuiWorld, indicator: String) {
         "all built-in commands should be suggested"
     );
     // The removed tab commands (#1596) stay out by name, and the set is
-    // exactly today's: 18 plus `/image` (#2425).
+    // exactly today's: 18 plus `/image` (#2425) and `/admission` (#2615).
     assert!(
         names.iter().all(|name| !name.starts_with("tab-")),
         "the built-in command set excludes removed tab commands: {names:?}"
     );
     assert_eq!(
-        count, 19,
-        "the built-in command set is today's, `/image` included: {names:?}"
+        count, 20,
+        "the built-in command set is today's, `/image` and `/admission` included: {names:?}"
     );
     // Positive windowing lock: a drawn row is `/{name}` followed by the fixed
     // two-space description gap. Exactly the first 8 commands are drawn.
