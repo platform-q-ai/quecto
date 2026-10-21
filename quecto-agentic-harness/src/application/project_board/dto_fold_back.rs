@@ -8,6 +8,7 @@ use crate::domain::project_board::value_objects::telemetry::{
 };
 use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutcome};
 use crate::domain::swarm::entities::records::{RunState, TaskState};
+use crate::domain::swarm::value_objects::lifecycle::MemberExit;
 
 /// What came of a fold-back.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,6 +166,27 @@ impl SwarmItemState {
         }
     }
 
+    /// Where an item read in this state with `blocker` most likely stood
+    /// before a member's confirmed death blocked it (#2685), when one did:
+    /// blocked, by exactly the text such a death writes
+    /// ([`MemberExit::of_blocker`]). A board is kept only once its
+    /// coordinator's teardown has ended its workers, so such a blocker is
+    /// read as the teardown's rather than the item's own (a worker that
+    /// died mid-run and was never recovered reads the same). It stood
+    /// submitted when the board holds evidence for it (`evidence`: its
+    /// stored evidence is not empty; a submission writes it, and a
+    /// submitted item is never blocked by its worker), else claimed (its
+    /// worker held it). `None`: not blocked by a death.
+    pub fn before_death(self, blocker: Option<&str>, evidence: bool) -> Option<Self> {
+        let by_death = blocker.and_then(MemberExit::of_blocker).is_some();
+        match (self, by_death, evidence) {
+            (Self::Blocked, true, true) => Some(Self::Submitted),
+            (Self::Blocked, true, false) => Some(Self::Claimed),
+            (Self::Blocked, false, _)
+            | (Self::Ready | Self::Claimed | Self::Submitted | Self::Completed, _, _) => None,
+        }
+    }
+
     /// The board's state of a task item standing so.
     pub fn item_state(self) -> ItemState {
         match self {
@@ -192,6 +214,30 @@ pub struct SwarmItemView {
     /// The member holding it, by id.
     pub owner: Option<String>,
     pub evidence: Vec<SwarmEvidence>,
+    /// Where it most likely stood before a member's confirmed death
+    /// blocked it ([`SwarmItemState::before_death`]); `None`: no death did.
+    pub stood_before_death: Option<SwarmItemState>,
+}
+
+impl SwarmItemView {
+    /// Where this item stands for the fold-back (#2685): as its state
+    /// reads, or, for one a confirmed death blocked, where it most likely
+    /// stood before. Not proof: a submission released and claimed again
+    /// keeps its evidence (the swarm board's release does not clear it),
+    /// so it reads as submitted; and a blocker of the item's own that the
+    /// death overwrote reads as claimed.
+    pub fn standing(&self) -> SwarmItemState {
+        debug_assert!(
+            self.stood_before_death.is_none() || self.state == SwarmItemState::Blocked,
+            "only a blocked item is blocked by a death"
+        );
+        self.stood_before_death.unwrap_or(self.state)
+    }
+
+    /// The board's state of the task item this swarm item stands for.
+    pub fn item_state(&self) -> ItemState {
+        self.standing().item_state()
+    }
 }
 
 /// An ended swarm's board, as its live view (`get_swarm_board`) reads

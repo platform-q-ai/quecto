@@ -230,7 +230,8 @@ pub(super) fn run_kill_sync(
 /// checkout root, identity-mounted so the supervising session reads the
 /// coordination store there (#1924). Absent for script sets that host no
 /// swarm; the ordinary final-member teardown then applies.
-pub(super) const CHECKOUT_METADATA_KEY: &str = "checkout";
+pub(super) const CHECKOUT_METADATA_KEY: &str =
+    crate::domain::environments::entities::environment_registry::CHECKOUT_KEY;
 
 /// Sub-directory a repository-cloning script set checks the source out
 /// into, probed when a create result predates `metadata.checkout`.

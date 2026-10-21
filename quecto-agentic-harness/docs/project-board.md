@@ -504,6 +504,21 @@ coordinator's teardown and `end_run` has lost its board, and one that no longer
 holds the coordinator as its subagent (with its label) when the box is torn
 down keeps none.
 
+A board is kept once the coordinator's teardown has ended its workers, and
+each worker's confirmed death blocks the items it held ("worker death
+confirmed; coordinator recovery required", or its abrupt-exit form). Such a
+blocker is read as the teardown's, not the item's (#2685): an item blocked by
+it is folded back as it most likely stood before, in review when it holds
+evidence (a submission writes it, and a submitted item is never blocked by its
+worker), else doing. An item blocked for any other reason is folded back
+blocked. When an item was created again, the copies are ranked by the state
+the board holds, the newest by where it stood before a death that blocked it,
+so a copy a death blocked never outranks the copy that replaced it, and the
+newest copy is never outranked by an older one nobody claimed. The reading is not proof: a submission released and claimed
+again keeps its evidence, so it is folded back as in review; a worker that
+died mid-run and was never recovered is read the same way; and a blocker of
+the item's own that the death overwrote is folded back as doing.
+
 A run ends as `succeeded` only when every task item of its plan is done there:
 otherwise the end is refused (`items_not_done`, a rule refusal naming the
 `run`, the `items` not done and the `report`) and nothing is written, so the
@@ -558,10 +573,17 @@ at <revision>`) is not on the board's remote, or that cannot be told: the board,
 the session's board repository or its remote cannot be read (each git call
 within 15 seconds), or the completion names no one commit the push rule checks
 (the same reading as the evidence's). The reason names the environment and its
-workspace: "board run succeeded at <revision>, which is on no branch or tag of
-the board's remote: environment <ref> kept so its work can be pushed from its
-workspace <path>; kill_container <ref> to remove it once pushed". The work
-survives, and can be fetched from that workspace and pushed. The board's remote
+git checkout (the create's advertised `checkout`, `<workspace>/repo` for the
+shipped scripts, else the workspace): "board run succeeded at <revision>, which
+is on no branch or tag of the board's remote: environment <ref> kept so its work
+can be pushed from its checkout <path>; kill_container <ref> to remove it once
+pushed". The work survives, and can be fetched from that checkout and pushed.
+The kill's own answer says so (#2681): beside `result` and `killed` it carries
+`"kept": [{"environment": "<ref>", "reason": "<the reason above>"}]` for each
+environment its teardown kept (each reason redacted and clipped to 400
+characters, at most 20 listed, `omitted_kept` counting the rest), and `quecto container ls` shows the same reason
+(a `note: <ref> retained: <reason>` line on stderr, the `retained` field of
+`--json`). The board's remote
 is the `origin` of the repository the session's board tool works on. Only that
 kill keeps it: a run closed and then left to the session's end (its teardown of
 everything, or a harness shutdown) is torn down as before, so push first. If a
@@ -630,6 +652,17 @@ every task it depends on is done or archived, as `list_ready` lists it: otherwis
 the claim is refused (`dependency_not_done`), naming the tasks that hold it back:
 those not done yet in `tasks`, and those not on the board (or set aside) in
 `missing`.
+
+Only the claim's holder renews it, releases it (`move(task, to ready)` from
+claimed or in progress) and links or unlinks a pull request: anyone else is
+refused (`not_holder`), and once the claim has expired that refusal carries
+`expired: true` and says to take the task over first with `take_over(task)`,
+on every holder-only action alike (#2683). A link is judged on the task first:
+someone who may not link is told so, whatever else is set aside. Only then is a
+link by the holder of a live claim refused while a task file is set aside
+(`set_aside`, or `set_aside_file` for a kept file whose name spells no task),
+since that file may link the same pull request and a pull request is linked to
+one task once (#2686).
 
 `complete(task)` completes a task whose linked pull requests have all merged,
 reading their states from the repository's host (GitHub, or the configured

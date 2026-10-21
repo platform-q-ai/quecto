@@ -33,7 +33,7 @@ pub const CLOCK_AHEAD_SECONDS: u64 = 60;
 /// claim never spans more than that, so renewing restarts its window. An
 /// expired claim is renewed too, until someone takes it over.
 pub fn renew(task: &Task, holder: &Identity, now: &Timestamp) -> Result<Task, BoardRuleError> {
-    let claim = held_by(task, holder)?;
+    let claim = held_or_lapsed_by(task, holder, now)?;
     let at = stamp(task, now)?;
     let mut next = task.fields().clone();
     next.claim = Some(Claim {
@@ -74,15 +74,16 @@ pub(super) fn held_by<'a>(task: &'a Task, actor: &Identity) -> Result<&'a Claim,
     }
 }
 
-/// The task's claim, when `actor` holds it and it has not expired: the
-/// holder renews an expired claim before working under it again.
-pub(super) fn held_live_by<'a>(
+/// The task's claim, when `actor` holds it, live or expired, for the
+/// holder-only actions an expired claim still allows its holder (renew,
+/// release). Another's expired claim has a way on, as for every holder-only
+/// action: take the task over (#2659, #2683).
+pub(super) fn held_or_lapsed_by<'a>(
     task: &'a Task,
     actor: &Identity,
     now: &Timestamp,
 ) -> Result<&'a Claim, BoardRuleError> {
-    // Another's expired claim has a way on: take the task over (#2659).
-    let claim = match held_by(task, actor) {
+    match held_by(task, actor) {
         Err(BoardRuleError::NotHolder)
             if task
                 .fields()
@@ -90,10 +91,20 @@ pub(super) fn held_live_by<'a>(
                 .as_ref()
                 .is_some_and(|claim| !is_live(claim, now)) =>
         {
-            return Err(BoardRuleError::NotHolderExpired);
+            Err(BoardRuleError::NotHolderExpired)
         }
-        held => held?,
-    };
+        held => held,
+    }
+}
+
+/// The task's claim, when `actor` holds it and it has not expired: the
+/// holder renews an expired claim before working under it again.
+pub(super) fn held_live_by<'a>(
+    task: &'a Task,
+    actor: &Identity,
+    now: &Timestamp,
+) -> Result<&'a Claim, BoardRuleError> {
+    let claim = held_or_lapsed_by(task, actor, now)?;
     if is_live(claim, now) {
         Ok(claim)
     } else {

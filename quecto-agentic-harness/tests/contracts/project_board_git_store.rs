@@ -607,6 +607,7 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
                 revision: revision.into(),
             })
             .to_vec(),
+            stood_before_death: None,
         }],
         observed_tokens: 52_000,
     };

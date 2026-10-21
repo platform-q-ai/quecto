@@ -22,6 +22,7 @@ use crate::domain::swarm::{
 };
 use crate::infrastructure::observability::audit_log::AuditLog;
 use crate::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
+use crate::infrastructure::workspace::checkout_history::GitCheckoutHistory;
 use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 struct Fixed(f64);
@@ -143,6 +144,7 @@ fn plain(repository: Arc<dyn BoardRepository>) -> SwarmBoardHandles {
         Arc::new(Fixed(1_000.0)),
         Arc::new(Counter::default()),
         Arc::new(ResolvedCheckout::new(std::env::temp_dir())),
+        Arc::new(GitCheckoutHistory::new(std::env::temp_dir())),
     )
 }
 
@@ -154,6 +156,7 @@ fn recorded(dir: &tempfile::TempDir, log: Arc<dyn BoardOpLog>) -> SwarmBoardHand
         Arc::new(Fixed(1_000.0)),
         Arc::new(Counter::default()),
         Arc::new(ResolvedCheckout::new(dir.path())),
+        Arc::new(GitCheckoutHistory::new(dir.path())),
         log,
     )
 }
