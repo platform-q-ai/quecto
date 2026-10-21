@@ -719,4 +719,13 @@ fn an_archive_waits_while_a_task_file_is_set_aside() {
             .execute(&slug("epic"), &BoardOp::Move(TaskStatus::Archived)),
         Err(set_aside_task("kid"))
     );
+    // The move's own rules answer first (#2661 review round 2).
+    seed(&store, held_by_ada(TaskStatus::InProgress));
+    assert_eq!(
+        change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived)),
+        Err(ProjectBoardError::Rule(BoardRuleError::NotAllowed {
+            from: TaskStatus::InProgress,
+            to: TaskStatus::Archived,
+        }))
+    );
 }

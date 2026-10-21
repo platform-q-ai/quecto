@@ -110,3 +110,31 @@ fn a_move_asks_the_tasks_it_relates_to() {
     let done = [related("x", Done, None, &[])];
     assert!(move_task(&a, Claimed, &actor, (&[], &[]), &done, &now).is_ok());
 }
+
+/// #2661 review round 2: each form of `dependency_not_done`, verbatim.
+#[test]
+fn dependency_not_done_reads_in_each_form() {
+    let refused = |undone: &[&str], missing: &[&str]| {
+        BoardRuleError::DependencyNotDone {
+            undone: undone.iter().map(|id| slug(id)).collect(),
+            missing: missing.iter().map(|id| slug(id)).collect(),
+        }
+        .to_string()
+    };
+    assert_eq!(
+        refused(&["a", "b"], &[]),
+        "the task depends on tasks not done yet: a, b; it can be claimed or started once \
+         each is done or archived"
+    );
+    assert_eq!(
+        refused(&[], &["c"]),
+        "the task depends on tasks not on the board or set aside: c (add or mend them \
+         first); it can be claimed or started once each is done or archived"
+    );
+    assert_eq!(
+        refused(&["a"], &["c"]),
+        "the task depends on tasks not done yet: a, and on tasks not on the board or set \
+         aside: c (add or mend them first); it can be claimed or started once each is done \
+         or archived"
+    );
+}

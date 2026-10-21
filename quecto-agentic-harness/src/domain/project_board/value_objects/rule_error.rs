@@ -383,15 +383,19 @@ impl fmt::Display for BoardRuleError {
                         .collect::<Vec<_>>()
                         .join(", ")
                 };
+                let missing_text = |ids: &[Slug]| {
+                    format!(
+                        "tasks not on the board or set aside: {} (add or mend them first)",
+                        named(ids)
+                    )
+                };
                 let held = match (undone.as_slice(), missing.as_slice()) {
                     ([_, ..], []) => format!("tasks not done yet: {}", named(undone)),
-                    ([], [_, ..]) => {
-                        format!("tasks not on the board (or set aside): {}", named(missing))
-                    }
+                    ([], [_, ..]) => missing_text(missing),
                     (_, _) => format!(
-                        "tasks not done yet: {}; and on tasks not on the board (or set aside): {}",
+                        "tasks not done yet: {}, and on {}",
                         named(undone),
-                        named(missing)
+                        missing_text(missing)
                     ),
                 };
                 write!(
