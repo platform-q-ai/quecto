@@ -118,12 +118,8 @@ fn build_with_warnings(
     let built = |error: crate::application::project_board::dto::ProjectBoardError| {
         unavailable(error.to_string())
     };
-    let complete = match prs {
-        Ok(prs) => Ok(
-            CompleteMergedTask::new(Arc::clone(&store), Arc::clone(&clock), prs).map_err(built)?,
-        ),
-        Err(why) => Err(why),
-    };
+    let complete =
+        CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs).map_err(built)?;
     let parts = BoardOperationParts {
         bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
         create: CreateBoardTask::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
