@@ -26,7 +26,8 @@ pub(super) struct ConfigOrigin<'a> {
 /// (#2024 S3). Keeps `agent.rs` free of the capability-not-composed plumbing.
 pub(super) fn negotiate_from_flags(
     config: &Config,
-    origin: &ConfigOrigin<'_>,
+    base_dir: &Path,
+    selection: &ConfigSelection,
     flags: &super::AgentFlags,
     stderr: &mut String,
 ) -> bool {
@@ -37,7 +38,10 @@ pub(super) fn negotiate_from_flags(
     let handles = build_admission();
     negotiate(
         config,
-        origin,
+        &ConfigOrigin {
+            base_dir,
+            selection,
+        },
         flags.admission_context.as_deref(),
         &handles.negotiate,
         stderr,
