@@ -76,7 +76,15 @@ pub(super) struct Actor {
     /// The idle period ran out or its owner asked: the loop ends after
     /// this turn.
     stopping: Option<AuthorityStop>,
+    /// An owner asked to stop on this session: the authority stops once the
+    /// asker has its answer and has gone, or at this deadline (#2615), so
+    /// the answer is never lost to the stop it asked for.
+    stop_requested: Option<(u64, u64)>,
 }
+
+/// How long a requested stop waits for its asker to take the answer and
+/// leave before it stops anyway (#2615).
+const STOP_ANSWER_GRACE_MS: u64 = 1_000;
 
 fn far_future() -> Instant {
     Instant::now() + Duration::from_secs(3600)
@@ -104,6 +112,7 @@ impl Actor {
             lifetime: AuthorityLifetime::AlwaysOn,
             stopped: None,
             stopping: None,
+            stop_requested: None,
         }
     }
 
@@ -225,6 +234,12 @@ impl Actor {
     }
 
     fn closed(&mut self, session: u64) {
+        if self
+            .stop_requested
+            .is_some_and(|(asker, _)| asker == session)
+        {
+            self.stopping = Some(AuthorityStop::Requested);
+        }
         let Some(state) = self.sessions.remove(&session) else {
             return;
         };
@@ -302,8 +317,9 @@ impl Actor {
             Op::Inspect => Ok(status_body(&self.authority.inspect(now))),
             Op::Reset => self.reset(now),
             Op::Stop => {
-                // Answered first; the loop ends after this turn (#2615).
-                self.stopping = Some(AuthorityStop::Requested);
+                // Answered now; stops once the asker has gone (#2615).
+                let deadline = now.saturating_add(STOP_ANSWER_GRACE_MS);
+                self.stop_requested.get_or_insert((session, deadline));
                 Ok(Body::Ok)
             }
             op => match credential {
@@ -539,6 +555,20 @@ impl Actor {
                 self.stopping = Some(AuthorityStop::Idle);
                 None
             }
+        };
+        // A requested stop that its asker never acknowledged by leaving
+        // still stops at its grace deadline.
+        let stop_deadline = match self.stop_requested {
+            Some((_, deadline)) if self.clock.now_ms() >= deadline => {
+                self.stopping = Some(AuthorityStop::Requested);
+                None
+            }
+            Some((_, deadline)) => Some(deadline),
+            None => None,
+        };
+        let idle_deadline = match (idle_deadline, stop_deadline) {
+            (Some(idle), Some(stop)) => Some(idle.min(stop)),
+            (idle, stop) => idle.or(stop),
         };
         // Armed now, after the turn: a slow write cannot leave the next
         // probe already due.
