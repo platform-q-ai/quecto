@@ -32,6 +32,10 @@ fn only_a_lock_on_the_tracking_ref_is_a_local_race() {
             true,
         ),
         (
+            "error: cannot lock ref 'refs/remotes/origin/quecto/board': reference already exists",
+            true,
+        ),
+        (
             "error: cannot lock ref 'refs/remotes/upstream/quecto/board': is at 0087cc but expected e2d505",
             false,
         ),

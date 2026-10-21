@@ -97,10 +97,13 @@ in `attempts` and `lost`.
 
 Every change stamps what it writes with the writer's clock, or a second past the
 artifact's own `updated` if that clock reads no later, and never before its task's
-`updated`, so stamps never run backwards on one task. A quick run of changes may
-stamp a second or so ahead of the wall clock.
+`updated`. A plan's change is stamped no earlier than any plan of its task, and a
+change's no earlier than any change of its task, so a task's own stamps, its
+plans' and its changes' never run backwards. A quick run of changes may stamp a
+second or so ahead of the wall clock.
 
-A text cell (a task item's title or criterion, say) holds every backslash as
+Board text (a title, a line of prose such as a description or a plan's approach,
+and a text cell such as a task item's title or criterion) holds every backslash as
 itself: one a reader would take for an escape (before ASCII punctuation, or at the
 end, outside code) is written doubled, and read back as one.
 

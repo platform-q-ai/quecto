@@ -141,11 +141,20 @@ pub(super) fn stamp(task: &Task, now: &Timestamp) -> Result<Timestamp, BoardRule
 }
 
 /// The time a change to another artifact of `task` (a plan, say) builds
-/// on: the caller's `now`, or the task's own `updated` if the caller's
-/// clock reads earlier, so no artifact of one task is stamped before the
-/// task's last change, and stamps never run backwards on one task (#2662).
-pub(super) fn not_before(task: &Task, now: &Timestamp) -> Timestamp {
-    let at = now.max(&task.fields().updated).clone();
+/// on: the caller's `now`, or, if the caller's clock reads earlier, the
+/// latest of the task's own `updated` and `stamps` (every artifact of the
+/// task of the kind changed, as the board holds them), so no artifact of
+/// one task is stamped before the task's last change or a sibling's, and
+/// stamps never run backwards on one task (#2662).
+pub(super) fn not_before<'a>(
+    task: &Task,
+    stamps: impl IntoIterator<Item = &'a Timestamp>,
+    now: &Timestamp,
+) -> Timestamp {
+    let floor = stamps
+        .into_iter()
+        .fold(&task.fields().updated, |latest, stamp| latest.max(stamp));
+    let at = now.max(floor).clone();
     assert!(
         at >= task.fields().updated,
         "a task's stamps never run backwards"

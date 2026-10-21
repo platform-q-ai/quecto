@@ -1981,8 +1981,8 @@
           "email": "ada@example.com"
         },
         "edited_by": null,
-        "created": "2026-10-10T10:00:04Z",
-        "updated": "2026-10-10T10:00:04Z"
+        "created": "2026-10-10T10:00:05Z",
+        "updated": "2026-10-10T10:00:05Z"
       }
     }
   },
@@ -1991,7 +1991,7 @@
       "op": "accept_plan",
       "task": "epic",
       "version": 4,
-      "expected_updated": "2026-10-10T10:00:04Z",
+      "expected_updated": "2026-10-10T10:00:05Z",
       "expected_accepted": 1
     },
     "answer": {

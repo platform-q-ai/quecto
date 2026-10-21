@@ -694,7 +694,8 @@ fn an_approach_with_chat_spaces_is_held_once_normalised() {
     );
 }
 
-/// #2668: a task item's title and criteria of awkward characters (a
+/// #2668: a task item's title and criteria, and the approach (a line
+/// opening with them, and a list item), of awkward characters (a
 /// backslash before punctuation or at the end, an escaped pipe, a code
 /// span holding either) are written, read back as themselves, and shown by
 /// both readers of the oracle as written: the codec escapes, never
@@ -710,6 +711,7 @@ fn awkward_titles_and_criteria_round_trip() {
             for third in pieces {
                 let text = format!("x {first}{second} {third}");
                 let fields = PlanFields {
+                    approach: format!("{first}{second} {third} x\n\n- {text}"),
                     items: vec![item("store", &text, &[&text, "plain"], &[])],
                     team: None,
                     ..example()

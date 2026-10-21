@@ -68,6 +68,15 @@ pub struct TaskPlans<'a> {
     pub runs: &'a [Run],
 }
 
+/// A draft of a task's plan as the board holds it (#2662): the task,
+/// every version of its plan (the draft among them), and the draft.
+#[derive(Debug, Clone, Copy)]
+pub struct DraftOf<'a> {
+    pub task: &'a Task,
+    pub versions: &'a [Plan],
+    pub plan: &'a Plan,
+}
+
 /// What an acceptance's caller read (#2481 M4c): the draft's `updated`,
 /// so the content accepted is the content reviewed, and the version the
 /// task named as accepted (`None`: none), so no acceptance the caller did
@@ -102,7 +111,7 @@ pub fn propose(
 ) -> Result<Plan, BoardRuleError> {
     open_to_plans(task)?;
     consistent(task, versions)?;
-    let now = &not_before(task, now);
+    let now = &not_before(task, stamps_of(versions), now);
     let last = versions
         .iter()
         .map(|plan| plan.fields().version)
@@ -134,8 +143,9 @@ pub fn propose(
     .map_err(BoardRuleError::InvalidPlan)
 }
 
-/// The draft `plan` of `task` saying `content` instead, edited by `actor`
-/// (anyone: drafts are shared) at `when`.
+/// The draft `plan` of `task` (`of`, with every version of its plan)
+/// saying `content` instead, edited by `actor` (anyone: drafts are shared)
+/// at `when`, stamped no earlier than any of the task's plans (#2662).
 /// With `expected`, the draft must still be as the caller read it (its
 /// `updated`), so a newer edit is never overwritten.
 ///
@@ -144,16 +154,21 @@ pub fn propose(
 /// changed since it was read, or stamped ahead of `when`'s bound; an edit
 /// that changes nothing; or a plan its schema refuses.
 pub fn edit_draft(
-    task: &Task,
-    plan: &Plan,
+    of: DraftOf<'_>,
     content: PlanContent,
     expected: Option<&Timestamp>,
     actor: &Identity,
     when: &Moment,
 ) -> Result<Plan, BoardRuleError> {
+    let DraftOf {
+        task,
+        versions,
+        plan,
+    } = of;
     let now = &when.now;
     open_to_plans(task)?;
     of_task(task, std::slice::from_ref(plan))?;
+    of_task(task, versions)?;
     draft(plan)?;
     as_read(plan, expected)?;
     when.may_build_on(plan)?;
@@ -172,7 +187,7 @@ pub fn edit_draft(
     next.team = content.team;
     // Drafts are anyone's: the last editor is recorded, the proposer kept.
     next.edited_by = Some(actor.clone());
-    restamped(next, plan, &not_before(task, now))
+    restamped(next, plan, &not_before(task, stamps_of(versions), now))
 }
 
 /// `content`'s text is as it enters the board, normalised: its approach
@@ -286,8 +301,9 @@ pub fn accept(
     })
 }
 
-/// The draft `plan` of `task` discarded by `actor` at `when`; it is kept,
-/// as discarded.
+/// The draft `plan` of `task` (`of`, with every version of its plan)
+/// discarded by `actor` at `when`, stamped no earlier than any of the
+/// task's plans (#2662); it is kept, as discarded.
 /// With `expected`, the draft must still be as the caller read it (its
 /// `updated`), so the draft discarded is the one reviewed (#2481 M4c).
 ///
@@ -296,20 +312,29 @@ pub fn accept(
 /// changed since it was read, or stamped ahead of `when`'s bound; or an
 /// actor who may not decide for the task.
 pub fn discard(
-    task: &Task,
-    plan: &Plan,
+    of: DraftOf<'_>,
     expected: Option<&Timestamp>,
     actor: &Identity,
     when: &Moment,
 ) -> Result<Plan, BoardRuleError> {
+    let DraftOf {
+        task,
+        versions,
+        plan,
+    } = of;
     let now = &when.now;
     open_to_plans(task)?;
     of_task(task, std::slice::from_ref(plan))?;
+    of_task(task, versions)?;
     draft(plan)?;
     as_read(plan, expected)?;
     when.may_build_on(plan)?;
     decides(task, actor, now)?;
-    moved(plan, PlanState::Discarded, &not_before(task, now))
+    moved(
+        plan,
+        PlanState::Discarded,
+        &not_before(task, stamps_of(versions), now),
+    )
 }
 
 /// The task's plans as the board holds them agree with each other and
@@ -420,6 +445,12 @@ fn decides(task: &Task, actor: &Identity, now: &Timestamp) -> Result<(), BoardRu
         Some(_) => held_live_by(task, actor, now).map(|_| ()),
         None => Ok(()),
     }
+}
+
+/// When each of `versions` (the task's plans, as the board holds them)
+/// last changed: what a plan's change is stamped no earlier than.
+fn stamps_of(versions: &[Plan]) -> impl Iterator<Item = &Timestamp> {
+    versions.iter().map(|plan| &plan.fields().updated)
 }
 
 fn moved(plan: &Plan, state: PlanState, now: &Timestamp) -> Result<Plan, BoardRuleError> {

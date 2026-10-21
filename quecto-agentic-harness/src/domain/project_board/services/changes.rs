@@ -147,6 +147,12 @@ pub fn link(
             )));
         }
     }
+    // Never before the task's last change, nor any of its changes'.
+    let at = not_before(
+        task,
+        own.iter().map(|change| &change.fields().updated),
+        &when.now,
+    );
     Change::new(ChangeFields {
         task: task.fields().id.clone(),
         number: last + 1,
@@ -156,8 +162,8 @@ pub fn link(
         merged: None,
         linked_by: actor.clone(),
         unlinked: None,
-        created: not_before(task, &when.now),
-        updated: not_before(task, &when.now),
+        created: at.clone(),
+        updated: at,
     })
     .map_err(BoardRuleError::Invalid)
 }
@@ -231,7 +237,8 @@ pub fn unlink(
         None | Some(PrState::Open | PrState::Closed) => {}
         Some(PrState::Merged(_)) => return Err(BoardRuleError::ChangeMerged(number)),
     }
-    let at = after(change, &not_before(task, &when.now))?;
+    let siblings = changes.iter().map(|change| &change.fields().updated);
+    let at = after(change, &not_before(task, siblings, &when.now))?;
     let mut next = fields.clone();
     next.unlinked = Some((actor.clone(), at.clone()));
     next.updated = at;

@@ -286,7 +286,7 @@ pub fn check_inline(text: &str, at: usize) -> Result<(), MarkdownError> {
 }
 
 /// What stands, in the text the inline rules check, for a backslash a
-/// text cell writes doubled ([`cell_escaped`]): a character a reader sees
+/// text writes doubled ([`backslashes_escaped`]): a character a reader sees
 /// that is neither punctuation markdown reads nor one an address holds,
 /// as the literal backslash a reader shows there is.
 const LITERAL_BACKSLASH: char = '¦';
@@ -343,9 +343,10 @@ fn each_escaping_backslash(value: &str, at: usize, with: &str) -> Result<String,
     Ok(out)
 }
 
-/// A text cell's value as the inline rules check it (#2668): every
-/// backslash in a value is itself, so each one the cell writes doubled is
-/// checked as the literal character a reader shows.
+/// A text's value (a text cell's, a title's, a line of prose's) as the
+/// inline rules check it (#2668): every backslash in a value is itself, so
+/// each one the text writes doubled is checked as the literal character a
+/// reader shows.
 ///
 /// # Errors
 /// A code span left open.
@@ -353,25 +354,26 @@ pub fn with_literal_backslashes(value: &str, at: usize) -> Result<String, Markdo
     each_escaping_backslash(value, at, LITERAL_BACKSLASH.encode_utf8(&mut [0; 4]))
 }
 
-/// A text cell's value as it is written (#2668): outside code spans, each
+/// A text's value as it is written (#2668): outside code spans, each
 /// backslash a reader would take for an escape (before ASCII punctuation,
 /// or at the end) doubled, so a reader shows it as itself; any other
 /// backslash, and code, as it is.
 ///
 /// # Errors
 /// A code span left open.
-pub fn cell_escaped(value: &str, at: usize) -> Result<String, MarkdownError> {
+pub fn backslashes_escaped(value: &str, at: usize) -> Result<String, MarkdownError> {
     each_escaping_backslash(value, at, "\\\\")
 }
 
-/// A text cell's value from the cell as written: [`cell_escaped`] undone,
-/// each doubled backslash outside code read as one. A cell [`cell_escaped`]
-/// would not write (a lone backslash before punctuation, say) is read as
-/// it is, and the writer's check that the file is canonical refuses it.
+/// A text's value from the text as written: [`backslashes_escaped`]
+/// undone, each doubled backslash outside code read as one. A text
+/// [`backslashes_escaped`] would not write (a lone backslash before
+/// punctuation, say) is read as it is, and the writer's check that the file
+/// is canonical refuses it.
 ///
 /// # Errors
 /// A code span left open.
-pub fn cell_unescaped(written: &str, at: usize) -> Result<String, MarkdownError> {
+pub fn backslashes_unescaped(written: &str, at: usize) -> Result<String, MarkdownError> {
     let mut out = String::with_capacity(written.len());
     for (code, piece) in code_pieces(written, at)? {
         match code {

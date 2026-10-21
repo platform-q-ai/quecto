@@ -30,9 +30,10 @@
 //! refused when it is written, never escaped into something else. Files,
 //! lines and line counts are capped by the caller's [`Limits`].
 //!
-//! A backslash is no hostile text: in a text cell every one is itself, so
-//! one a reader would take for an escape (before ASCII punctuation, or at
-//! the end, outside code) is written doubled and read back as one (#2668).
+//! A backslash is no hostile text: in a text cell, a title and a line of
+//! prose every one is itself, so one a reader would take for an escape
+//! (before ASCII punctuation, or at the end, outside code) is written
+//! doubled and read back as one (#2668).
 //!
 //! Accepted, as visible text a reader may misread but which hides nothing:
 //! - GitHub draws an emoji shortcode (`:smile:`) as its emoji; refusing it
@@ -116,8 +117,8 @@ pub fn check_text_cell(value: &str) -> Result<(), MarkdownError> {
 /// # Errors
 /// The rule the title breaks.
 pub fn check_title(value: &str) -> Result<(), MarkdownError> {
-    title(value)?;
-    chars::check_line(&format!("# {value}"), 2)
+    let written = title(value)?;
+    chars::check_line(&format!("# {written}"), 2)
 }
 
 /// A field or a table's column: its name and what its cells hold.
@@ -462,7 +463,7 @@ fn cell(value: &str, kind: CellKind, at: usize) -> Result<String, MarkdownError>
         (CellKind::Code, _) => refused("code of printable ASCII but a backtick"),
         (CellKind::Text, value) => {
             inline::check_inline(&inline::with_literal_backslashes(value, at)?, at)?;
-            Ok(inline::cell_escaped(value, at)?.replace('|', "\\|"))
+            Ok(inline::backslashes_escaped(value, at)?.replace('|', "\\|"))
         }
     }
 }
@@ -476,7 +477,7 @@ fn cell(value: &str, kind: CellKind, at: usize) -> Result<String, MarkdownError>
 /// left open.
 fn cell_value(read: String, kind: CellKind, at: usize) -> Result<String, MarkdownError> {
     match kind {
-        CellKind::Text => inline::cell_unescaped(&read, at),
+        CellKind::Text => inline::backslashes_unescaped(&read, at),
         CellKind::Ascii => Ok(read),
         CellKind::Code => read
             .strip_prefix('`')
@@ -601,17 +602,20 @@ fn out_of_order(lines: &[String], expected: &'static str) -> MarkdownError {
     }
 }
 
-/// A title: one line of text with nothing at its edges and no closing run
-/// of `#` (hashes alone, or after a space), which a heading drops; `C#`
-/// keeps its own.
-fn title(title: &str) -> Result<&str, MarkdownError> {
+/// A title as its heading writes it: one line of text with nothing at its
+/// edges and no closing run of `#` (hashes alone, or after a space), which
+/// a heading drops (`C#` keeps its own), its backslashes escaped (#2668).
+fn title(title: &str) -> Result<String, MarkdownError> {
     let edges = title.trim() != title;
     // A closing run a heading drops: hashes alone, or after a space.
     let open = title.trim_end_matches('#');
     let closed = open.len() < title.len() && (open.is_empty() || open.ends_with(' '));
     match title.is_empty() || title.contains('\n') || edges || closed {
         true => Err(MarkdownError::Title),
-        false => inline::check_inline(title, 2).map(|()| title),
+        false => {
+            inline::check_inline(&inline::with_literal_backslashes(title, 2)?, 2)?;
+            inline::backslashes_escaped(title, 2)
+        }
     }
 }
 

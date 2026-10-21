@@ -318,13 +318,15 @@ fn oid_of(wanted: &Wanted) -> &str {
 const LOCK_PAUSES_MS: [u64; 5] = [50, 100, 200, 400, 800];
 
 /// Whether git said another writer in this clone holds `tracking`, the
-/// board's tracking ref, locked (its lock file exists) or moved it while
-/// this fetch held it (`is at <a> but expected <b>`): the two ways a fetch
-/// loses a race on it (an allowlist).
+/// board's tracking ref, locked (its lock file exists), moved it while this
+/// fetch held it (`is at <a> but expected <b>`), or made it first while
+/// this fetch made it too (`reference already exists`, the clone's first
+/// fetch): the ways a fetch loses a race on it (an allowlist).
 fn locked_by_another_writer(why: &str, tracking: &str) -> bool {
     let ours = format!("cannot lock ref '{tracking}': ");
     why.split(&ours).skip(1).any(|reason| {
         reason.contains("but expected")
+            || reason.starts_with("reference already exists")
             || (reason.starts_with("Unable to create") && reason.contains(".lock': File exists"))
     })
 }
