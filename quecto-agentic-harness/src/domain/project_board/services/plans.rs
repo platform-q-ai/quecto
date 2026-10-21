@@ -97,26 +97,6 @@ pub struct Accepted {
 }
 
 /// A new draft version of `task`'s plan, after every version in
-/// `versions`, proposed by `actor` at `now`, with no outside bound
-/// ([`propose_at`]).
-///
-/// # Errors
-/// As [`propose_at`].
-pub fn propose(
-    task: &Task,
-    versions: &[Plan],
-    content: PlanContent,
-    actor: &Identity,
-    now: &Timestamp,
-) -> Result<Plan, BoardRuleError> {
-    let when = Moment {
-        now: now.clone(),
-        latest: None,
-    };
-    propose_at(task, versions, content, actor, &when)
-}
-
-/// A new draft version of `task`'s plan, after every version in
 /// `versions`, proposed by `actor` at `when`: stamped no earlier than the
 /// task or any of its plans within `when`'s bound (#2662).
 ///
