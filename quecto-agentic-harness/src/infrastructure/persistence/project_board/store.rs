@@ -66,6 +66,9 @@ pub struct GitBoardStore {
     /// Whether the remote is this clone's promisor (a partial clone), and
     /// the fetch filter the clone keeps for it, once asked.
     partial: std::sync::OnceLock<fetching::Partial>,
+    /// How many times a fetch found the tracking ref locked by another
+    /// writer in this clone and fetched again (#2654, #2663).
+    pub(super) lock_races: std::sync::atomic::AtomicU64,
 }
 
 /// What became of a push.
@@ -104,6 +107,7 @@ impl GitBoardStore {
                 limits: LIMITS,
                 cancelled: None,
                 partial: std::sync::OnceLock::new(),
+                lock_races: std::sync::atomic::AtomicU64::new(0),
             }),
             Err(error) => Err(BoardStoreError::Unavailable(format!(
                 "{remote:?} is not a remote of this repository: {error}"
@@ -201,6 +205,7 @@ impl GitBoardStore {
             cancelled: None,
             // What this store found of its remote holds for the same board.
             partial: self.partial.clone(),
+            lock_races: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -618,6 +623,10 @@ impl ProjectBoardStore for GitBoardStore {
     fn writer(&self) -> Identity {
         self.git.identity().clone()
     }
+
+    fn lock_races(&self) -> u64 {
+        self.lock_races.load(std::sync::atomic::Ordering::Acquire)
+    }
 }
 
 #[path = "store_clear.rs"]
@@ -636,3 +645,7 @@ mod writing;
 #[cfg(test)]
 #[path = "store_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "store_board_id_tests.rs"]
+mod board_id_tests;

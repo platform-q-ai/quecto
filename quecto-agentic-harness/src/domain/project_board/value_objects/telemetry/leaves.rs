@@ -272,6 +272,10 @@ const KNOWN_KINDS: &[&str] = &[
     "op",
     "request",
     "other",
+    // Whether an `end_run` folded a kept swarm board (#2663).
+    "kept",
+    "none_kept",
+    "not_checked",
 ];
 
 /// Whether every one of [`KNOWN_KINDS`] is shaped as a kind (checked as
@@ -330,6 +334,30 @@ impl TaskRef {
 
     pub fn as_str(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+/// The hex digits a [`BoardId`] holds: 64 bits of a digest.
+const BOARD_ID_HEX: usize = 16;
+
+/// A board as a record names it (#2663): an opaque id, the same for every
+/// record of one board's remote, naming no remote. Enforced: [`Self::of_hex`]
+/// holds only [`BOARD_ID_HEX`] lowercase hex digits, so no URL, path or
+/// name passes as one; composition derives them from a digest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct BoardId(String);
+
+impl BoardId {
+    /// The id `hex` is, when it is [`BOARD_ID_HEX`] lowercase hex digits.
+    pub fn of_hex(hex: &str) -> Option<Self> {
+        let shaped = hex.len() == BOARD_ID_HEX
+            && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        shaped.then(|| Self(hex.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 

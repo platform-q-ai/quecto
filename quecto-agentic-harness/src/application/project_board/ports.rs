@@ -316,6 +316,14 @@ pub trait ProjectBoardStore: Send + Sync {
         self.write(expected, &artifacts, message)
     }
 
+    /// How many times this store found its board's tracking ref locked by
+    /// another writer in the same clone and fetched again (#2654): a count
+    /// that only grows, for a write's record (#2663). A store that shares
+    /// no ref with other writers counts none.
+    fn lock_races(&self) -> u64 {
+        0
+    }
+
     /// Removes the file set aside that `clear` names (a
     /// [`QuarantinedFile`] of the board at `expected`, by path and, when
     /// two share a path, object) in one change, made by [`Self::writer`]

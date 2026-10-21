@@ -113,7 +113,10 @@ fn left_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHandl
         },
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
-    Ok(ProjectBoardHandles { operations })
+    Ok(ProjectBoardHandles {
+        operations,
+        board: None,
+    })
 }
 
 #[test]
@@ -214,7 +217,10 @@ fn bobs(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, Bu
         },
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
-    Ok(ProjectBoardHandles { operations })
+    Ok(ProjectBoardHandles {
+        operations,
+        board: None,
+    })
 }
 
 /// Round 1 (#2674): an end the board's rules refuse says so, naming the

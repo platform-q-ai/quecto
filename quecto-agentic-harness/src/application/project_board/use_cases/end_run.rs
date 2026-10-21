@@ -45,22 +45,27 @@ use super::board_view;
 use crate::application::project_board::dto::{
     EndedRun, LivenessCheck, ProjectBoardError, RunEnd, RunEndOutcome, RunReport,
 };
+use crate::application::project_board::dto::{FoldBackFacts, FoldedBack};
 use crate::application::project_board::dto::{SwarmEnd, SwarmRunView};
 use crate::application::project_board::fold_back::{
-    Evidence, EvidenceRevisions, checks_commit, cost_of, evidence_revisions, run_items,
+    Evidence, EvidenceRevisions, FoldBackItems, checks_commit, cost_of, evidence_revisions,
+    run_items,
 };
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardStoreError, BoardTextCells, ProjectBoardStore, RemoteRevisions,
     RunLiveness, SwarmRunReports,
 };
-use crate::application::project_board::telemetry::OpFacts;
+use crate::application::project_board::start::NotedFoldBack;
+use crate::application::project_board::telemetry::{OpFacts, ReportSeen, counted, summed};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::services::claims::claim_facts;
 use crate::domain::project_board::services::runs::{
     HeldEnd, Reported, end_held, end_lost, run_and_plan,
 };
+use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::rule_error::SwarmReport;
+use crate::domain::project_board::value_objects::telemetry::RunOutcomeKind;
 
 pub struct EndRun {
     store: Arc<dyn ProjectBoardStore>,
@@ -125,6 +130,7 @@ impl EndRun {
         request: &RunEnd,
         mut facts: Option<&mut OpFacts>,
     ) -> Result<EndedRun, ProjectBoardError> {
+        let started = facts.as_ref().map(|_| self.clock.elapsed());
         if let Some(facts) = facts.as_deref_mut() {
             facts.run = Some(u64::from(request.run));
             facts.run_outcome = Some(request.outcome.outcome());
@@ -165,31 +171,61 @@ impl EndRun {
         // time it is written.
         let mut asked = None;
         self.asked_ahead(request, report.as_ref(), &mut asked);
+        let mut items = None;
         let mut written = self.write(
             request,
             &message,
             report.as_ref(),
-            (Evidence::Kept, &mut asked),
+            (Evidence::Kept, &mut asked, &mut items),
             &mut facts,
         );
         // Only a run past the board's bytes is ended again, smaller (an
         // allowlist), as a fold-back is: any other refusal is the caller's.
         if let Err(ProjectBoardError::Store(BoardStoreError::WriteTooLarge(_))) = &written {
-            let first = facts.as_deref().map(|facts| (facts.attempts, facts.lost));
+            let first = facts
+                .as_deref()
+                .map(|facts| (facts.attempts, facts.lost, facts.lock_races));
             written = self.write(
                 request,
                 &message,
                 report.as_ref(),
-                (Evidence::Left, &mut asked),
+                (Evidence::Left, &mut asked, &mut items),
                 &mut facts,
             );
-            if let (Some(facts), Some((attempts, lost))) = (facts, first) {
-                let sum = |one: Option<u64>, two: Option<u64>| {
-                    Some(one.unwrap_or(0).saturating_add(two.unwrap_or(0)))
-                };
-                facts.attempts = sum(attempts, facts.attempts);
-                facts.lost = sum(lost, facts.lost);
+            if let (Some(facts), Some((attempts, lost, races))) = (facts.as_deref_mut(), first) {
+                facts.attempts = summed(attempts, facts.attempts);
+                facts.lost = summed(lost, facts.lost);
+                facts.lock_races = summed(races, facts.lock_races);
+                assert!(facts.attempts.is_some(), "a noted write notes its attempts");
             }
+        }
+        // An end that wrote says what it found of the board its swarm left
+        // (#2663), whatever its outcome: kept, none kept, or no keeper to
+        // ask.
+        if let (Some(facts), Ok(_)) = (facts.as_deref_mut(), &written) {
+            facts.swarm_report = Some(match (&self.reports, &report) {
+                (None, _) => ReportSeen::NotChecked,
+                (Some(_), Some(_)) => ReportSeen::Kept,
+                (Some(_), None) => ReportSeen::NoneKept,
+            });
+        }
+        // A kept swarm board folded onto the run (the end says so: `items`
+        // holds what it folded): its own fold-back record (#2667).
+        if let (Some(facts), Some(started), Some(items), Some(_), Ok([BoardArtifact::Run(run)])) =
+            (facts, started, items, &report, written.as_deref())
+        {
+            assert_eq!(
+                run.fields().items,
+                items.items,
+                "the run holds the items folded onto it"
+            );
+            facts.fold_back = Some(NotedFoldBack {
+                task: id.clone(),
+                run: number,
+                result: Ok(FoldedBack::Folded(run.clone())),
+                facts: folded_facts(run, &items, facts),
+                elapsed: self.clock.elapsed().saturating_sub(started),
+            });
         }
         match written?.as_slice() {
             [BoardArtifact::Run(run)] => {
@@ -246,7 +282,7 @@ impl EndRun {
         request: &RunEnd,
         message: &str,
         report: Option<&SwarmRunView>,
-        (evidence, asked): (Evidence, &mut Asked),
+        (evidence, asked, kept): (Evidence, &mut Asked, &mut Option<FoldBackItems>),
         facts: &mut Option<&mut OpFacts>,
     ) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
         let id = &request.task;
@@ -265,7 +301,12 @@ impl EndRun {
                 if noting {
                     read = Some((task.fields().status, claim_facts(task, actor, &when.now)));
                 }
-                let ended = self.ended(request, report, (evidence, &mut *asked), board, when)?;
+                // This attempt's items folded from the board its swarm
+                // left, never an earlier attempt's.
+                *kept = None;
+                let (ended, folded) =
+                    self.ended(request, report, (evidence, &mut *asked), board, when)?;
+                *kept = folded;
                 Ok(vec![BoardArtifact::Run(ended)])
             },
         );
@@ -290,7 +331,7 @@ impl EndRun {
         (evidence, asked): (Evidence, &mut Asked),
         board: &crate::application::project_board::ports::BoardSnapshot,
         when: &When,
-    ) -> Result<Run, ProjectBoardError> {
+    ) -> Result<(Run, Option<FoldBackItems>), ProjectBoardError> {
         let (id, number, actor) = (&request.task, request.run, &self.actor);
         let task = task_on(board, id)?;
         when.may_build_on(task)?;
@@ -307,14 +348,17 @@ impl EndRun {
         let runs = board_view::runs_of(board, id)?;
         let plans = board_view::plans_of(board, id)?;
         let (run, plan) = run_and_plan(&runs, &plans, number)?;
+        // The items folded from the board its swarm left, when one was
+        // kept: every outcome folds them, a loss too (#2657, #2667).
+        let folded = report.map(|view| run_items(plan, view, &*self.cells, evidence));
         // What is known of the run: its swarm's board as kept, or every
         // item as a swarm that reported nothing (#2657: a loss records it
         // too).
         let reported = |swarm: SwarmEnd, unpushed: usize| {
-            match report {
+            match (report, &folded) {
                 // What the swarm's board showed as it ended.
-                Some(view) => Reported {
-                    items: run_items(plan, view, &*self.cells, evidence).items,
+                (Some(view), Some(folded)) => Reported {
+                    items: folded.items.clone(),
                     cost: Some(cost_of(view)),
                     report: SwarmReport::Kept,
                     unpushed,
@@ -322,7 +366,7 @@ impl EndRun {
                 // Nothing reported: every item as a fold-back maps a swarm
                 // that reported nothing (a start's undo's included), its
                 // cost unknown.
-                None => {
+                (None, _) | (Some(_), None) => {
                     let nothing = SwarmRunView {
                         end: swarm,
                         items: vec![],
@@ -347,7 +391,7 @@ impl EndRun {
                 &when.now,
             )
         };
-        Ok(match (request.outcome, report) {
+        let ended = match (request.outcome, report) {
             (RunEndOutcome::Succeeded, Some(view)) => {
                 // Every other rule first: the remote is asked only for an
                 // end that passes them.
@@ -366,7 +410,9 @@ impl EndRun {
                 actor,
                 &when.now,
             )?,
-        })
+        };
+        // Every outcome writes the kept board's items as folded (#2667).
+        Ok((ended, folded))
     }
 
     /// For a success over a kept report, the remote's answer asked ahead
@@ -438,6 +484,29 @@ impl EndRun {
             unpushed,
             unchecked,
         })
+    }
+}
+
+/// What an end's fold-back of a kept swarm board saw, for its record:
+/// the run as written, the `items` it mapped, and the write's own `facts`.
+fn folded_facts(run: &Run, items: &FoldBackItems, facts: &OpFacts) -> FoldBackFacts {
+    let fields = run.fields();
+    FoldBackFacts {
+        run_outcome: fields.outcome.map(RunOutcomeKind::of),
+        items: Some(items.counts()),
+        unmatched: Some(counted(items.unmatched)),
+        extra: Some(counted(items.extra)),
+        evidence: Some(counted(items.evidence)),
+        evidence_dropped: Some(counted(items.dropped)),
+        cost_tokens: fields.cost,
+        attempts: facts.attempts,
+        lost: facts.lost,
+        lock_races: facts.lock_races,
+        bytes: Some(counted(fields.text_bytes())),
+        head: facts
+            .head
+            .as_ref()
+            .and_then(|head| CommitId::parse(&head.0).ok()),
     }
 }
 
