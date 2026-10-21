@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// Test-side git: only PATH and HOME, no global or system config.
-fn sh(dir: &Path, args: &[&str], input: &[u8]) -> String {
+pub fn sh(dir: &Path, args: &[&str], input: &[u8]) -> String {
     let mut child = Command::new("git")
         .current_dir(dir)
         .args(args)
@@ -91,6 +91,11 @@ impl Remote {
         };
         let git = Git::new(repo, GitEnvironment::allowlisted(vars), writer).unwrap();
         Box::new(GitBoardStore::new(git, "origin").unwrap())
+    }
+
+    /// Clone `clone`'s working directory.
+    pub fn clone_dir(&self, clone: usize) -> &Path {
+        &self.clones[clone]
     }
 
     pub fn clients(&self) -> Clients {

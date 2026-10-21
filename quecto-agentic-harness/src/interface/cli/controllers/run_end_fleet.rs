@@ -76,9 +76,24 @@ impl<'a> RunHandles<'a> {
     }
 }
 
+/// What ends the board runs a session leaves open as its run ends
+/// (#2655): the session's `board` tool. Each line says how one went.
+pub(crate) trait LeftRunsEnder: Send + Sync {
+    fn end_left_runs(&self) -> Vec<String>;
+}
+
+impl LeftRunsEnder for crate::interface::tools::project_board::tool::BoardTool {
+    fn end_left_runs(&self) -> Vec<String> {
+        self.end_left_runs()
+    }
+}
+
 /// The fleet a one-shot run settles when it ends in an orderly way.
 pub(crate) struct RunEnd {
     fleet: Option<(Arc<TerminateAllDelegatedAgents>, SubagentRegistry)>,
+    /// The board runs its session's starts left open, ended once its
+    /// children have settled (#2655); `None`: no board tool.
+    left: Option<Arc<dyn LeftRunsEnder>>,
     /// The run's output reaches the real terminal (`quecto agent -m` from
     /// `run`), so its answer is written out before the children settle
     /// rather than held behind them; a run whose output is captured
@@ -92,8 +107,16 @@ impl RunEnd {
     pub(crate) fn none() -> Self {
         Self {
             fleet: None,
+            left: None,
             live_output: false,
         }
+    }
+
+    /// This run end, ending the board runs `left` names once its children
+    /// have settled (#2655).
+    #[must_use]
+    pub(crate) fn ending_left_runs(self, left: Option<Arc<dyn LeftRunsEnder>>) -> Self {
+        Self { left, ..self }
     }
 
     pub(crate) fn compose(
@@ -112,6 +135,7 @@ impl RunEnd {
                     }),
                     registry,
                 )),
+                left: None,
                 live_output,
             },
             _ => Self {
@@ -130,7 +154,7 @@ impl RunEnd {
     /// parent-loss shutdown and every box is kept (#2206 round 1). The
     /// answer is written out first, so nothing waits on the children.
     pub(crate) fn after(
-        self,
+        mut self,
         rt: &tokio::runtime::Runtime,
         out: &mut super::agent::AgentOutput<'_>,
         code: i32,
@@ -142,7 +166,17 @@ impl RunEnd {
             let _ = std::io::stdout().flush();
             let _ = std::io::stderr().flush();
         }
+        let (left, live_output) = (self.left.take(), self.live_output);
         self.settle(rt);
+        // Only once no child runs: a coordinator still running keeps its
+        // run open (its end answers `run_live`).
+        let lines = left.map(|left| left.end_left_runs()).unwrap_or_default();
+        for line in lines {
+            match live_output {
+                true => eprintln!("{line}"),
+                false => out.stderr.push_str(&format!("{line}\n")),
+            }
+        }
         code
     }
 

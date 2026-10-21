@@ -48,6 +48,7 @@ fn recovered_by_end_run(store: &MemoryBoardStore) {
         Arc::new(store.client_as(person("Ada"))),
         SetClock::at("10:05:00"),
         Arc::new(MarkdownTextCells),
+        crate::application::project_board::use_cases::fixtures_tests::Remote::holding_all(),
         None,
         None,
     )

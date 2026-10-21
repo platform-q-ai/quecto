@@ -44,6 +44,22 @@ impl RunBoardOperation {
         Self { parts }
     }
 
+    /// The ends this front end owes as its session ends (#2655): each run
+    /// its starts launched that the board still shows open, to be ended as
+    /// [`ListLeftRuns`](super::ListLeftRuns) says; none for a front end
+    /// that launches none.
+    ///
+    /// # Errors
+    /// The store's.
+    pub fn left_runs(
+        &self,
+    ) -> Result<Vec<crate::application::project_board::dto::RunEnd>, ProjectBoardError> {
+        match &self.parts.left_runs {
+            Some(left) => left.execute(),
+            None => Ok(vec![]),
+        }
+    }
+
     /// What `request` comes to.
     ///
     /// # Errors

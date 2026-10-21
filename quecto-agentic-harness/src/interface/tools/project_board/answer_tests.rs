@@ -415,6 +415,7 @@ board_rules! {
     R::NoSuchChange(_) => R::NoSuchChange(4), "no_such_change", ["change"];
     R::NoSuchRun(_) => R::NoSuchRun(4), "no_such_run", ["run"];
     R::ItemsNotDone { .. } => R::ItemsNotDone { run: 1, items: vec![Slug::parse("api").unwrap()], report: crate::domain::project_board::value_objects::rule_error::SwarmReport::NoneKept }, "items_not_done", ["run", "items", "report"];
+    R::NotPushed { .. } => R::NotPushed { run: 1, revisions: 2 }, "not_pushed", ["run", "revisions"];
     R::ChangeAhead { .. } => R::ChangeAhead { change: 1, updated: at("10:00:00") }, "change_ahead", ["change", "updated"];
     R::DiscussionClosed(_) => R::DiscussionClosed(Slug::parse("chat").unwrap()), "discussion_closed", ["discussion"];
     R::DiscussionLinked { .. } => R::DiscussionLinked { discussion: Slug::parse("chat").unwrap(), task: Slug::parse("board-store").unwrap() }, "discussion_linked", ["discussion", "task"];

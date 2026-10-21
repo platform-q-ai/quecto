@@ -52,7 +52,7 @@ fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
 }
 
-fn ada() -> Identity {
+pub(super) fn ada() -> Identity {
     Identity {
         name: "Ada".into(),
         email: "ada@example.com".into(),
@@ -61,7 +61,7 @@ fn ada() -> Identity {
 
 /// Task `a`, ready, with version 1 of its plan accepted: items `schema`
 /// and `api`.
-fn ready_with_plan() -> (Task, Plan) {
+pub(super) fn ready_with_plan() -> (Task, Plan) {
     let at = Timestamp::parse("2026-10-10T09:00:00Z").unwrap();
     let item = |id: &str, title: &str| PlanItem {
         id: slug(id),
@@ -148,6 +148,7 @@ fn started_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHa
         Err(NoPullRequestHost::NotAPullRequestHost),
         Swarms {
             launcher: launcher.clone().map(|swarms| swarms as _),
+            started: launcher.clone().map(|swarms| swarms as _),
             liveness: launcher.map(|swarms| swarms as _),
             reports,
         },

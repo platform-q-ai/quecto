@@ -59,3 +59,31 @@ fn a_write_names_its_board_and_the_commit_it_made() {
     let listed = recorded(&handles, json!({"op": "list"}));
     assert_eq!(listed["board"], json!(board), "{listed}");
 }
+
+/// #2663 verify round: a relative remote is the clone's top level's, as
+/// git resolves it, so the CLI run from a subdirectory names the same
+/// board as from the clone itself.
+#[test]
+fn a_relative_remote_names_one_board_from_any_directory_of_the_clone() {
+    let (_dir, work) = repository();
+    let git = |args: &[&str]| {
+        let done = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&work)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap();
+        assert!(done.success(), "{args:?}");
+    };
+    git(&["remote", "set-url", "origin", "../remote.git"]);
+    let sub = work.join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    let board_of = |repo: &std::path::Path| {
+        build_project_board_handles(&environment(repo, Access::Read))
+            .unwrap()
+            .board
+            .unwrap()
+    };
+    assert_eq!(board_of(&work), board_of(&sub));
+}

@@ -37,8 +37,12 @@ fn a_board_id_names_its_repository_whatever_its_spelling() {
         committer::repository_of("/nowhere/remote.git/", here),
         "/nowhere/remote"
     );
-    // A port that is not the scheme's default is kept.
+    // A port that is not the scheme's default is kept, another scheme's
+    // default too.
     assert_ne!(id("ssh://git@github.com:2222/o/r"), id(same[0]));
+    assert_ne!(id("https://github.com:22/o/r"), id(same[0]));
+    assert_eq!(id("git://github.com:9418/o/r"), id(same[0]));
+    assert_eq!(id("http://github.com:80/o/r"), id(same[0]));
 }
 
 /// #2663 review round 2: a relative local remote is the absolute path it
@@ -65,4 +69,7 @@ fn a_relative_local_remote_is_resolved_from_its_clone() {
         id("github.com/o/r", &one),
         id("https://github.com/o/r", &one)
     );
+    // A `file://` remote is the same local path.
+    let url = format!("file://{}", absolute.display());
+    assert_eq!(id(&url, &two), id("../board.git", &one));
 }
