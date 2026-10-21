@@ -137,16 +137,63 @@ struct FolderContents {
     refused: Vec<String>,
 }
 
-/// Whether `source` declares the module file `file`: by `#[path]`, or as
-/// a sibling `mod` of its stem.
+/// A declaration line without its visibility: `pub`, `pub(crate)`,
+/// `pub(super)`, `pub(self)` or `pub(in …)`. A line with no visibility is
+/// returned as it is.
+fn without_visibility(line: &str) -> &str {
+    match line.strip_prefix("pub") {
+        Some(rest) if rest.starts_with('(') => match rest.find(')') {
+            Some(close) => rest[close + 1..].trim_start(),
+            None => line,
+        },
+        Some(rest) if rest.starts_with(char::is_whitespace) => rest.trim_start(),
+        _ => line,
+    }
+}
+
+/// Whether `source` declares the module file `file`: by a `#[path]`
+/// attribute line, or as a sibling `mod` of its stem, under any visibility.
+/// A commented-out line declares nothing.
 fn declares(source: &str, file: &str) -> bool {
     let stem = file.trim_end_matches(".rs");
-    source.contains(&format!("#[path = \"{file}\"]"))
-        || source.lines().any(|line| {
-            line.trim()
-                .trim_start_matches("pub ")
-                .starts_with(&format!("mod {stem};"))
-        })
+    let path = format!("#[path = \"{file}\"]");
+    let module = format!("mod {stem};");
+    source
+        .lines()
+        .map(str::trim)
+        .any(|line| line.starts_with(&path) || without_visibility(line).starts_with(&module))
+}
+
+#[test]
+fn a_module_is_declared_under_any_visibility_or_by_its_path() {
+    let file = "x_tests.rs";
+    for source in [
+        "mod x_tests;",
+        "pub mod x_tests;",
+        "pub(crate) mod x_tests;",
+        "pub(super) mod x_tests;",
+        "pub(in crate::infrastructure::providers) mod x_tests;",
+        "#[cfg(test)]\n    pub(crate) mod x_tests;",
+        "#[path = \"x_tests.rs\"]\nmod tests;",
+    ] {
+        assert!(declares(source, file), "{source:?} declares {file}");
+    }
+}
+
+#[test]
+fn a_commented_or_other_declaration_declares_nothing() {
+    let file = "x_tests.rs";
+    for source in [
+        "// #[path = \"x_tests.rs\"]\nmod tests;",
+        "// mod x_tests;",
+        "// pub(crate) mod x_tests;",
+        "mod y_tests;",
+        "pub(crate) mod x_tests_more;",
+        "publish mod x_tests;",
+        "pub(crate mod x_tests;",
+    ] {
+        assert!(!declares(source, file), "{source:?} declares nothing");
+    }
 }
 
 fn folder_contents(folder: &Path) -> FolderContents {
