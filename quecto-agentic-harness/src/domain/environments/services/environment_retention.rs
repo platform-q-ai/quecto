@@ -332,16 +332,17 @@ pub fn judges_delivery(mode: MemberFinalizeMode, observed: &SwarmRunObservation)
 /// (fail safe), keeps its box so the work can be pushed from its
 /// workspace. `None`: nothing keeps it.
 ///
-/// The reason names the environment `environment` and its `workspace`, the
-/// retained checkout the work is pushed from.
+/// The reason names the environment `environment` and its `checkout`, the
+/// retained git checkout the work is fetched and pushed from (#2682: the
+/// checkout a parent can `git fetch` from, not the workspace above it).
 pub fn undelivered_reason(
     delivery: &CompletionDelivery,
     environment: &str,
-    workspace: &str,
+    checkout: &str,
 ) -> Option<String> {
     let kept = format!(
-        "environment {environment} kept so its work can be pushed from its workspace \
-         {workspace}; kill_container {environment} to remove it once pushed"
+        "environment {environment} kept so its work can be pushed from its checkout \
+         {checkout}; kill_container {environment} to remove it once pushed"
     );
     match delivery {
         CompletionDelivery::NotJudged | CompletionDelivery::OnRemote => None,

@@ -306,6 +306,12 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
         "tool invocation containment: the find tool's own `fd` Child on a cap",
     ),
     (
+        "src/infrastructure/workspace/checkout_history.rs",
+        &["kill("],
+        "the swarm board's own `git merge-base` Child ended through its \
+         retained handle when it outlives its deadline (#2687)",
+    ),
+    (
         "src/infrastructure/tools/swarm/swarm_bridge.rs",
         &["/proc/"],
         "signal-free liveness observation (`/proc/<pid>/stat` start time, \
@@ -406,6 +412,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/application/subagents/ports/delegated_agent_registry.rs",
     "src/application/subagents/ports/ended_child_records.rs",
     "src/application/subagents/ports/harness_shutdown.rs",
+    "src/application/subagents/ports/kept_environments.rs",
     "src/application/subagents/ports/mod.rs",
     "src/application/subagents/ports/owned_child_termination.rs",
     "src/application/subagents/ports/teardown_compensation.rs",

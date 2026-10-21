@@ -145,6 +145,10 @@ fn kill_container_result_json(killed: &KilledEnvironment) -> serde_json::Value {
         // record forgotten.
         result["removed_stopped"] = serde_json::json!(true);
     }
+    if killed.nothing_left {
+        // #2684: it had left nothing; its record alone went.
+        result["nothing_left"] = serde_json::json!(true);
+    }
     // How each member was settled before the retained kill ran (#1939).
     result["settled"] = serde_json::json!(
         killed
