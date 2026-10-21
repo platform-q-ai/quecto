@@ -18,7 +18,7 @@ use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::changes::Linked;
 use crate::domain::project_board::services::claims::{claim_facts, renew, renewal_due, take_over};
-use crate::domain::project_board::services::pull_requests::{add_pr, remove_pr};
+use crate::domain::project_board::services::pull_requests::{add_pr, may_link, remove_pr};
 use crate::domain::project_board::services::transitions::{move_reads, move_task};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -50,8 +50,9 @@ impl ChangeBoardTask {
     ///
     /// # Errors
     /// No such task, or its file quarantined; a move while a run or
-    /// change of the task is set aside; a pull request linked while a file
-    /// every write carries is set aside; the board's rules (against the
+    /// change of the task is set aside; a pull request linked, by the
+    /// holder of a live claim, while a file every write carries is set
+    /// aside; the board's rules (against the
     /// latest task, its runs and changes, and every change on the board);
     /// the clock's; a board that kept moving; the store's.
     pub fn execute(&self, id: &Slug, op: &BoardOp) -> Result<Task, ProjectBoardError> {
@@ -104,7 +105,6 @@ impl ChangeBoardTask {
                 }
                 let task = task?;
                 when.may_build_on(task)?;
-                board_readable_for(op, board)?;
                 let changed = apply(task, board, actor, op, &when.now)?;
                 Ok(vec![BoardArtifact::Task(changed)])
             },
@@ -144,40 +144,36 @@ impl ChangeBoardTask {
     }
 }
 
-/// The board holds what `op` must see: linking a pull request needs every
-/// task's, so while a file every write carries is set aside (what it holds
-/// unknown, whether or not its task can be told) a link is refused rather
-/// than risk linking one twice. A stray the next write drops holds nothing
-/// that stays, so it blocks nothing. The other ops read only their own
-/// task. Of several such files the least is named (one whose artifact is
-/// unknown first, then by key and path), whatever the store's order.
-/// It runs before [`board_view::all_changes`], which sees only keys: a
-/// kept file with no key blocks no view, so this is what keeps a link
-/// failing closed on one.
-fn board_readable_for(op: &BoardOp, board: &BoardSnapshot) -> Result<(), ProjectBoardError> {
-    match op {
-        BoardOp::AddPr(_) => {
-            let carried = board
-                .quarantined
-                .iter()
-                .filter(|file| file.carried)
-                .min_by(|a, b| (&a.key, &a.path, &a.object).cmp(&(&b.key, &b.path, &b.object)));
-            match carried {
-                None => Ok(()),
-                Some(file) => match &file.key {
-                    Some(key) => Err(ProjectBoardError::Quarantined {
-                        key: key.clone(),
-                        path: file.path.clone(),
-                        object: file.object.clone(),
-                    }),
-                    None => Err(ProjectBoardError::SetAsideFile {
-                        path: file.path.clone(),
-                        object: file.object.clone(),
-                    }),
-                },
-            }
-        }
-        BoardOp::Renew | BoardOp::TakeOver | BoardOp::Move(_) | BoardOp::RemovePr(_) => Ok(()),
+/// The board holds what a link must see: linking a pull request needs
+/// every task's, so while a file every write carries is set aside (what it
+/// holds unknown, whether or not its task can be told: any of them may
+/// link the same pull request) a link is refused rather than risk linking
+/// one twice. A stray the next write drops holds nothing that stays, so it
+/// blocks nothing. The other ops read only their own task. Of several such
+/// files the least is named (one whose artifact is unknown first, then by
+/// key and path), whatever the store's order. It runs once the task's own
+/// rule allows the link ([`may_link`], #2686), and before
+/// [`board_view::all_changes`], which sees only keys: a kept file with no
+/// key blocks no view, so this is what keeps a link failing closed on one.
+fn links_readable(board: &BoardSnapshot) -> Result<(), ProjectBoardError> {
+    let carried = board
+        .quarantined
+        .iter()
+        .filter(|file| file.carried)
+        .min_by(|a, b| (&a.key, &a.path, &a.object).cmp(&(&b.key, &b.path, &b.object)));
+    match carried {
+        None => Ok(()),
+        Some(file) => match &file.key {
+            Some(key) => Err(ProjectBoardError::Quarantined {
+                key: key.clone(),
+                path: file.path.clone(),
+                object: file.object.clone(),
+            }),
+            None => Err(ProjectBoardError::SetAsideFile {
+                path: file.path.clone(),
+                object: file.object.clone(),
+            }),
+        },
     }
 }
 
@@ -219,6 +215,10 @@ fn apply(
             Ok(moved)
         }
         BoardOp::AddPr(pr) => {
+            // The task's own rule first (#2686): a link it refuses is
+            // refused as such, whatever is set aside elsewhere.
+            may_link(task, actor, now).map_err(ProjectBoardError::Rule)?;
+            links_readable(board)?;
             let changes = owned(board_view::all_changes(board)?);
             let linked = Linked {
                 changes: &changes,

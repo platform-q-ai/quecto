@@ -412,6 +412,14 @@ pub fn check_carried_set_aside(
     let alice: Arc<dyn ProjectBoardStore> = Arc::from(alice);
     let change =
         ChangeBoardTask::new(alice.clone(), Arc::new(SystemBoardClock::default())).unwrap();
+    // A link is judged on its task first (#2686): Alice holds `a`, so only
+    // the carried file can refuse it. The claim's write drops the stray.
+    change
+        .execute(
+            &Slug::parse("a").unwrap(),
+            &BoardOp::Move(TaskStatus::Claimed),
+        )
+        .unwrap();
     let b_object = alice
         .read()
         .unwrap()
