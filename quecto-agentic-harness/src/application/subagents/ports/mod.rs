@@ -14,6 +14,7 @@ pub mod container_configs;
 pub mod delegated_agent_registry;
 pub mod ended_child_records;
 pub mod harness_shutdown;
+pub mod kept_environments;
 pub mod owned_child_termination;
 pub mod teardown_compensation;
 

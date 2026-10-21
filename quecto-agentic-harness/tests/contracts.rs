@@ -184,6 +184,8 @@ mod hosted_swarm_run_inspection;
 mod hosted_swarm_run_observation;
 #[path = "contracts/id_source.rs"]
 mod id_source;
+#[path = "contracts/kept_environments.rs"]
+mod kept_environments;
 #[path = "contracts/llm_provider.rs"]
 mod llm_provider;
 #[path = "contracts/loaded_catalogue_inputs.rs"]

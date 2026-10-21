@@ -3,7 +3,8 @@
 //! where the run's completion went, and keeps the box (#1924's retained
 //! state, `kill_container` to remove it) while the commit is not on the
 //! board's remote or that cannot be told, so the work can be pushed from
-//! its workspace. Any other end, or run, is torn down as before.
+//! its checkout (#2682: the git checkout the create advertised, not the
+//! workspace above it). Any other end, or run, is torn down as before.
 
 use std::sync::{Arc, Mutex};
 
@@ -88,7 +89,7 @@ fn finalized(
         asked: Mutex::new(Vec::new()),
     });
     let registry = EnvironmentRegistry::new();
-    let env_ref = committed_env(&registry, vec!["coordinator-uuid"]);
+    let env_ref = committed_env_at_checkout(&registry, "coordinator-uuid");
     let finalizer = use_case(&registry, Arc::clone(&port))
         .keeping_ended_boards(Arc::new(Boards), Arc::new(Boards))
         .checking_delivery(Arc::clone(&check) as _);
@@ -100,6 +101,16 @@ fn finalized(
         mode,
     ));
     (port, check, registry, env_ref)
+}
+
+/// A running box with `member`, whose create advertised its git checkout
+/// below the workspace (`/ws/<ref>/repo`), as the shipped scripts do.
+fn committed_env_at_checkout(registry: &EnvironmentRegistry, member: &str) -> String {
+    let env_ref = committed_env(registry, vec![member]);
+    let mut record = registry.remove(&env_ref).expect("just committed");
+    record.metadata = serde_json::json!({ "checkout": format!("/ws/{env_ref}/repo") });
+    registry.commit(record);
+    env_ref
 }
 
 fn retained(registry: &EnvironmentRegistry, env_ref: &str) -> Option<String> {
@@ -130,8 +141,8 @@ fn a_succeeded_runs_box_is_kept_while_its_completion_is_not_on_the_remote() {
         Some(format!(
             "board run succeeded at 2b23fe18d39ae8692eaab45d60cc50ff1d66c1d3, which is on no \
              branch or tag of the board's remote: environment {env_ref} kept so its work can \
-             be pushed from its workspace /ws/{env_ref}; kill_container {env_ref} to remove it \
-             once pushed"
+             be pushed from its checkout /ws/{env_ref}/repo; kill_container {env_ref} to remove \
+             it once pushed"
         ))
     );
 }
@@ -151,8 +162,8 @@ fn a_box_is_kept_when_where_the_completion_went_cannot_be_told() {
         Some(format!(
             "board run succeeded, but whether its completion commit is on the board's remote \
              could not be checked (the remote is down): environment {env_ref} kept so its work \
-             can be pushed from its workspace /ws/{env_ref}; kill_container {env_ref} to remove \
-             it once pushed"
+             can be pushed from its checkout /ws/{env_ref}/repo; kill_container {env_ref} to \
+             remove it once pushed"
         ))
     );
 }

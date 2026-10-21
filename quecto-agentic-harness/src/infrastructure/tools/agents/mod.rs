@@ -13,6 +13,7 @@ pub(crate) mod inherited_tool_policy;
 #[cfg(test)]
 #[path = "inherited_tool_policy_unit_tests.rs"]
 mod inherited_tool_policy_unit_tests;
+pub mod kept_environments;
 pub mod launch_rollbacks;
 pub mod owner_exit;
 pub(super) mod process_tree;
