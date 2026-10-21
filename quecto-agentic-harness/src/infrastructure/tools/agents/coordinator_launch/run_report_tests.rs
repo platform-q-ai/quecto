@@ -57,12 +57,14 @@ fn an_ended_boards_items_owners_evidence_and_spend_are_read() {
                     artifact: "docs/assessment.md".into(),
                     revision: "abc123".into(),
                 }],
+                death_blocked: false,
             },
             SwarmItemView {
                 title: "uk-shopping-list: List".into(),
                 state: SwarmItemState::Submitted,
                 owner: None,
                 evidence: vec![],
+                death_blocked: false,
             },
         ],
         "an evidence entry whose parts are not both text is left out"
@@ -143,20 +145,21 @@ fn an_item_that_cannot_be_read_is_left_out() {
             state: SwarmItemState::Completed,
             owner: None,
             evidence: vec![],
+            death_blocked: false,
         }]
     );
 }
 
 /// #2685: a board is kept once its coordinator's teardown has ended its
 /// workers, and each worker's death blocked what it held ("worker death
-/// confirmed …"). That blocker is the teardown's, not the item's: the item
-/// is read as it stood before it, submitted when it holds the evidence its
-/// submission wrote (a submitted item is never blocked by its worker, and
-/// only a submission writes an item's evidence), else claimed. A blocker
-/// of any other text is the item's own and stays blocked. Ended and left
-/// boards alike are kept after the teardown.
+/// confirmed …"). The item is read as the board holds it (blocked, so a
+/// duplicate is ranked by its own state) and marked blocked by a death;
+/// the fold-back reads it as where it stood, in review when it holds
+/// evidence, else doing. A blocker of any other text is the item's own,
+/// and stays blocked, evidence or none. Ended and left boards alike.
 #[test]
 fn a_teardown_death_blocker_reads_as_where_the_item_stood() {
+    use crate::domain::project_board::value_objects::vocabulary::ItemState;
     let items = json!([
         {
             "id": 1, "title": "implement: Implement", "state": "blocked", "owner": "worker-1",
@@ -172,21 +175,30 @@ fn a_teardown_death_blocker_reads_as_where_the_item_stood() {
             "id": 3, "title": "docs: Docs", "state": "blocked", "owner": "worker-3",
             "blocker": "waiting for the API key", "evidence": [],
         },
+        {
+            "id": 4, "title": "lint: Lint", "state": "blocked", "owner": "worker-4",
+            "blocker": "waiting for review access",
+            "evidence": [{"artifact": "src/lint.rs", "revision": "def456"}],
+        },
     ]);
-    let states = |view: SwarmRunView| -> Vec<SwarmItemState> {
-        view.items.into_iter().map(|item| item.state).collect()
+    let read = |view: SwarmRunView| -> Vec<(SwarmItemState, bool, ItemState)> {
+        view.items
+            .iter()
+            .map(|item| (item.state, item.death_blocked, item.item_state()))
+            .collect()
     };
     let expected = vec![
-        SwarmItemState::Submitted,
-        SwarmItemState::Claimed,
-        SwarmItemState::Blocked,
+        (SwarmItemState::Blocked, true, ItemState::Review),
+        (SwarmItemState::Blocked, true, ItemState::Doing),
+        (SwarmItemState::Blocked, false, ItemState::Blocked),
+        (SwarmItemState::Blocked, false, ItemState::Blocked),
     ];
     assert_eq!(
-        states(left_run_view(&board("running", 10, items.clone())).unwrap()),
+        read(left_run_view(&board("running", 10, items.clone())).unwrap()),
         expected
     );
     assert_eq!(
-        states(swarm_run_view(&board("cancelled", 10, items)).unwrap()),
+        read(swarm_run_view(&board("cancelled", 10, items)).unwrap()),
         expected
     );
 }

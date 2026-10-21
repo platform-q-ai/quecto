@@ -69,6 +69,7 @@ pub fn swarm_item(
                 revision: (*revision).into(),
             })
             .collect(),
+        death_blocked: false,
     }
 }
 
@@ -630,4 +631,43 @@ fn the_cost_is_the_observed_tokens_within_the_board_bound() {
     assert_eq!(cost_of(&run), 1234);
     run.observed_tokens = u64::MAX;
     assert_eq!(cost_of(&run), MAX_BUDGET_TOKENS);
+}
+
+/// #2685 round 1: duplicates are ranked by the state the board holds, and
+/// only the item that wins is read as it stood before a death. Worker 1
+/// submits `api` and dies (its item blocked by the death); the coordinator
+/// creates `api` again and worker 2 claims it: the fold-back records the
+/// new copy, doing and held by worker 2, never the dead copy's stale
+/// evidence.
+#[test]
+fn a_death_blocked_copy_never_outranks_the_copy_that_replaced_it() {
+    let dead = SwarmItemView {
+        death_blocked: true,
+        ..swarm_item(
+            "api: Build the api",
+            SwarmItemState::Blocked,
+            Some("worker-1"),
+            &[("src/api.rs", "abc1234")],
+        )
+    };
+    let again = swarm_item(
+        "api: Build the api",
+        SwarmItemState::Claimed,
+        Some("worker-2"),
+        &[],
+    );
+    for items in [
+        vec![dead.clone(), again.clone()],
+        vec![again.clone(), dead.clone()],
+    ] {
+        let api = folded(items).items.remove(0);
+        assert_eq!(api.state, ItemState::Doing);
+        assert_eq!(api.owner.as_deref(), Some("worker-2"));
+        assert!(api.evidence.is_empty(), "{:?}", api.evidence);
+    }
+    let view = view(vec![dead.clone(), again]);
+    assert!(evidence_revisions(&plan(), &view).ids.is_empty());
+    // Alone, the dead copy stands as it was before the death: in review.
+    let api = folded(vec![dead]).items.remove(0);
+    assert_eq!(api.state, ItemState::Review);
 }

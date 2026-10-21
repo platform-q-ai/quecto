@@ -506,12 +506,17 @@ down keeps none.
 
 A board is kept once the coordinator's teardown has ended its workers, and
 each worker's confirmed death blocks the items it held ("worker death
-confirmed; coordinator recovery required", or its abrupt-exit form). That
-blocker is the teardown's, not the item's (#2685): an item blocked by it is
-folded back as it stood before, in review when it holds the evidence its
-submission wrote (only a submission writes an item's evidence, and a
-submitted item is never blocked by its worker), else doing. An item blocked
-for any other reason is folded back blocked.
+confirmed; coordinator recovery required", or its abrupt-exit form). Such a
+blocker is read as the teardown's, not the item's (#2685): an item blocked by
+it is folded back as it most likely stood before, in review when it holds
+evidence (a submission writes it, and a submitted item is never blocked by its
+worker), else doing. An item blocked for any other reason is folded back
+blocked. When an item was created again, the copies are ranked by the state
+the board holds, so a copy a death blocked never outranks the copy that
+replaced it. The reading is not proof: a submission released and claimed
+again keeps its evidence, so it is folded back as in review; a worker that
+died mid-run and was never recovered is read the same way; and a blocker of
+the item's own that the death overwrote is folded back as doing.
 
 A run ends as `succeeded` only when every task item of its plan is done there:
 otherwise the end is refused (`items_not_done`, a rule refusal naming the

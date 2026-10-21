@@ -182,7 +182,7 @@ pub fn run_items(
             evidence += kept.len();
             RunItem {
                 id: item.id.clone(),
-                state: swarm.map_or(ItemState::Todo, |swarm| swarm.state.item_state()),
+                state: swarm.map_or(ItemState::Todo, SwarmItemView::item_state),
                 owner,
                 evidence: kept,
             }
