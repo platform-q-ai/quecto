@@ -218,6 +218,9 @@ case!(
     Assembled
 );
 
+/// A send refused by a dead `http://127.0.0.1:<port>` is a retryable network
+/// failure: the loopback octet `127` is part of the URL, never a status
+/// (#2653; before it, `127` was read as the status and classed `Unknown`).
 fn characterize_refused(disabled: &Observation, leaf: Leaf, url: &str) {
     match (disabled, leaf) {
         (Observation::Error(error), Leaf::Anthropic) => {
@@ -227,8 +230,8 @@ fn characterize_refused(disabled: &Observation, leaf: Leaf, url: &str) {
                     "provider error: HTTP error: error sending request for url ({url}/v1/messages)"
                 )
             );
-            assert_eq!(error.class, ProviderErrorClass::Unknown);
-            assert!(!error.retryable);
+            assert_eq!(error.class, ProviderErrorClass::Network);
+            assert!(error.retryable);
         }
         (Observation::Events(events), Leaf::Anthropic) => {
             assert_eq!(events.len(), 1);
@@ -239,13 +242,13 @@ fn characterize_refused(disabled: &Observation, leaf: Leaf, url: &str) {
                 raw,
                 &format!("HTTP error: error sending request for url ({url}/v1/messages)")
             );
-            assert_eq!(classified.class, ProviderErrorClass::Unknown);
+            assert_eq!(classified.class, ProviderErrorClass::Network);
         }
         (Observation::Error(error), _) => {
             assert!(error.display.starts_with(
                 "provider error: Codex request failed: error sending request for url ("
             ));
-            assert_eq!(error.class, ProviderErrorClass::Unknown);
+            assert_eq!(error.class, ProviderErrorClass::Network);
         }
         (Observation::Events(events), _) => {
             assert_eq!(events.len(), 1);
@@ -253,7 +256,7 @@ fn characterize_refused(disabled: &Observation, leaf: Leaf, url: &str) {
                 panic!("expected error")
             };
             assert!(raw.starts_with("Codex request failed: error sending request for url ("));
-            assert_eq!(classified.class, ProviderErrorClass::Unknown);
+            assert_eq!(classified.class, ProviderErrorClass::Network);
         }
         _ => panic!("send refusal cannot succeed: {disabled:?}"),
     }
@@ -517,6 +520,8 @@ fn disabled_characterizations_reject_each_expected_fact_counterexample() {
         };
         let mut e = error();
         e.display = format!("provider error: {raw}");
+        e.class = ProviderErrorClass::Network;
+        e.retryable = true;
         let fields: &[usize] = if matches!(leaf, Leaf::Anthropic) {
             &[0, 1, 3]
         } else {

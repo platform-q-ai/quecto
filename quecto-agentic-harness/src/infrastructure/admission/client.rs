@@ -35,7 +35,9 @@ pub enum ClientError {
     Admission(String),
     JournalUnavailable,
     Cancelled,
-    Timeout,
+    /// The queue wait expired; the authority's reason, which may say what
+    /// held the group (#2664).
+    Timeout(String),
     EpochReset,
     Closed,
     Protocol(String),
@@ -50,7 +52,14 @@ impl std::fmt::Display for ClientError {
             Self::Admission(m) => write!(f, "admission refused: {m}"),
             Self::JournalUnavailable => f.write_str("admission ledger not durable"),
             Self::Cancelled => f.write_str("admission request cancelled"),
-            Self::Timeout => f.write_str("admission queue wait deadline elapsed"),
+            // Only a reason that extends the plain timeout adds detail; any
+            // other reads as the plain timeout every client knows.
+            Self::Timeout(reason) => match reason.strip_prefix(QUEUE_TIMEOUT_REASON) {
+                Some(detail) if detail.starts_with(": ") => {
+                    write!(f, "admission {QUEUE_TIMEOUT_REASON}{detail}")
+                }
+                _ => write!(f, "admission {QUEUE_TIMEOUT_REASON}"),
+            },
             Self::EpochReset => f.write_str("admission authority was reset"),
             Self::Closed => f.write_str("admission authority connection closed"),
             Self::Protocol(m) => write!(f, "admission protocol violation: {m}"),
@@ -113,7 +122,7 @@ fn map_error(code: ErrorCode, reason: String) -> ClientError {
         ErrorCode::Malformed => ClientError::Protocol(reason),
         ErrorCode::Admission => ClientError::Admission(reason),
         ErrorCode::Cancelled => ClientError::Cancelled,
-        ErrorCode::Timeout => ClientError::Timeout,
+        ErrorCode::Timeout => ClientError::Timeout(reason),
         ErrorCode::EpochReset => ClientError::EpochReset,
     }
 }
