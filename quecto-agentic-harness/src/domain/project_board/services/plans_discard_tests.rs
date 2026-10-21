@@ -93,10 +93,7 @@ fn a_plans_change_never_stamps_before_its_tasks_last_change() {
         &versions,
         content.clone(),
         &bob,
-        &Moment {
-            now: (&now.now).clone(),
-            latest: None,
-        },
+        &when(&now.now.clone()),
     )
     .unwrap();
     let edited = edit_draft(
@@ -159,10 +156,7 @@ fn a_plans_change_never_stamps_before_another_plan_of_its_task() {
         &versions,
         PlanContent::default(),
         &bob,
-        &Moment {
-            now: (&now.now).clone(),
-            latest: None,
-        },
+        &when(&now.now.clone()),
     )
     .unwrap();
     assert_eq!(

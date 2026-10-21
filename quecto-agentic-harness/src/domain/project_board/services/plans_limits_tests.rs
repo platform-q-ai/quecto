@@ -53,7 +53,7 @@ fn a_plans_text_is_held_to_the_most_a_plan_holds_exactly() {
         content(rest),
         &ada,
         &Moment {
-            now: (&at("10:00:00")).clone(),
+            now: at("10:00:00"),
             latest: None,
         },
     )
@@ -65,7 +65,7 @@ fn a_plans_text_is_held_to_the_most_a_plan_holds_exactly() {
         content(rest + 1),
         &ada,
         &Moment {
-            now: (&at("10:00:00")).clone(),
+            now: at("10:00:00"),
             latest: None,
         },
     ) {
