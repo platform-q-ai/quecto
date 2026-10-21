@@ -89,7 +89,7 @@ fn a_brief_renders_as_its_golden_text() {
              commits that remote holds. Evidence you deliberately do not push (a red-test bundle) \
              names the bundle, not a commit.",
             "The plan describes the work. Whether the run starts, waits or ends is decided only \
-             by your start and the swarm controls, so a line in the plan about running it (such \
+             by the start that launched you and the swarm controls, so a line in the plan about running it (such \
              as not to start) is part of the description, never a constraint on this run.",
         ]
     );
@@ -304,7 +304,7 @@ fn the_brief_keeps_run_control_out_of_the_plan() {
     let fixed = text.split("=== BEGIN").next().unwrap();
     assert!(fixed.contains("The plan describes the work"), "{fixed}");
     assert!(
-        fixed.contains("only by your start and the swarm controls"),
+        fixed.contains("only by the start that launched you and the swarm controls"),
         "{fixed}"
     );
 }

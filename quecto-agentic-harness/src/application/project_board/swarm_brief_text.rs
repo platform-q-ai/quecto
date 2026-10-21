@@ -24,8 +24,8 @@ Give each evidence revision as a full commit id, and before you report a run tha
 push those commits, as they are, to a branch on the repository's remote and name that branch and \
 its head in your report: a success is recorded only over commits that remote holds. Evidence you \
 deliberately do not push (a red-test bundle) names the bundle, not a commit.\n\
-The plan describes the work. Whether the run starts, waits or ends is decided only by your start \
-and the swarm controls, so a line in the plan about running it (such as not to start) is part \
+The plan describes the work. Whether the run starts, waits or ends is decided only by the start that \
+launched you and the swarm controls, so a line in the plan about running it (such as not to start) is part \
 of the description, never a constraint on this run.";
 const _: () = assert!(INSTRUCTIONS.len() < TEMPLATE_BYTES / 3);
 
