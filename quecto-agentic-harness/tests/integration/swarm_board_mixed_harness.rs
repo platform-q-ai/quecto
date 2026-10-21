@@ -20,6 +20,7 @@ use quecto::composition::swarm::{SwarmBoardHandles, build_swarm_board_handles_wi
 use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use quecto::infrastructure::tools::registry::call_work::off_the_runtime;
 use quecto::infrastructure::tools::swarm::swarm_bridge::{SwarmBoard, SwarmContext};
+use quecto::infrastructure::workspace::checkout_history::GitCheckoutHistory;
 use quecto::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
@@ -62,7 +63,8 @@ fn fixed_handles(location: BoardLocation, _log: Option<Arc<dyn BoardOpLog>>) -> 
         Arc::new(SqliteBoardRepository::new(&location)),
         Arc::new(FixedClock),
         Arc::new(CounterIds),
-        Arc::new(ResolvedCheckout::new(location.checkout)),
+        Arc::new(ResolvedCheckout::new(location.checkout.clone())),
+        Arc::new(GitCheckoutHistory::new(location.checkout)),
     )
 }
 

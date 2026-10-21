@@ -1,5 +1,5 @@
-//! The coordination board's file reservations, and the checkout paths they
-//! normalise.
+//! The coordination board's file reservations, the checkout paths they
+//! normalise, and the checkout's commit history (#2687).
 
 use crate::application::swarm::dto::{FileRow, NewReservation};
 use crate::domain::swarm::value_objects::board_error::BoardError;
@@ -60,4 +60,49 @@ pub trait CheckoutPaths: Send + Sync {
     /// `file must resolve inside the shared checkout` for a path that
     /// resolves outside it, or cannot be resolved.
     fn normalize(&self, path: &str) -> Result<String, BoardError>;
+}
+
+/// What the checkout's history answered about carrying evidence (#2687):
+/// confirmed, or why not. The reasons name why a carry was declined in
+/// the trace.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ancestry {
+    /// git confirmed every earlier commit is an ancestor.
+    Confirmed,
+    /// git answered that an earlier commit is not an ancestor.
+    NotAncestor,
+    /// A revision asked about is not a full commit id.
+    NotFullId,
+    /// git could not answer: no repository, an unknown commit, no git, or
+    /// any other failure.
+    GitFailed,
+    /// git did not answer within the history's one deadline.
+    TimedOut,
+}
+
+impl Ancestry {
+    /// The reason's name in the trace.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Confirmed => "confirmed",
+            Self::NotAncestor => "not_ancestor",
+            Self::NotFullId => "not_full_id",
+            Self::GitFailed => "git_failed",
+            Self::TimedOut => "timeout",
+        }
+    }
+}
+
+/// The shared checkout's commit history (#2687): whether a submission's
+/// evidence, taken at earlier commits, may be carried to the commit the
+/// coordinator verifies at. Reading it runs git, an effect behind this
+/// port, which the board asks outside any transaction; the adapter is
+/// bound to one checkout.
+pub trait CheckoutHistory: Send + Sync {
+    /// Whether each of `ancestors` is `descendant` or one of its
+    /// ancestors, all full commit ids, asked under one deadline for the
+    /// whole question. [`Ancestry::Confirmed`] only when git answers yes
+    /// for every one; otherwise the first reason it is not, so nothing is
+    /// carried that the history does not confirm.
+    fn ancestry(&self, ancestors: &[String], descendant: &str) -> Ancestry;
 }
