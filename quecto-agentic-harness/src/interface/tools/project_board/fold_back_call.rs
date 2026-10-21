@@ -17,18 +17,20 @@ use crate::application::project_board::dto::FoldedBack;
 use crate::application::project_board::ports::{FoldBackOutcome, FoldBackRecorder};
 use crate::application::project_board::telemetry::BoardRecording;
 use crate::domain::project_board::value_objects::telemetry::{
-    FoldBackRecord, OpOutcome, StaticKind, TaskRef,
+    BoardId, FoldBackRecord, OpOutcome, StaticKind, TaskRef,
 };
 
 /// Fold-backs recorded in a board recording.
 pub struct FoldBackCall {
     recording: Arc<BoardRecording>,
+    /// The board folded back onto, when known (#2663).
+    board: Option<BoardId>,
 }
 
 impl FoldBackCall {
-    /// Fold-backs recorded in `recording`.
-    pub fn new(recording: Arc<BoardRecording>) -> Self {
-        Self { recording }
+    /// Fold-backs onto `board` recorded in `recording`.
+    pub fn new(recording: Arc<BoardRecording>, board: Option<BoardId>) -> Self {
+        Self { recording, board }
     }
 }
 
@@ -46,6 +48,7 @@ impl FoldBackRecorder for FoldBackCall {
         let mut record = FoldBackRecord {
             task: TaskRef::of(outcome.task),
             run: u64::from(outcome.run),
+            board: self.board.clone(),
             outcome: result,
             run_outcome: None,
             items: None,
@@ -55,8 +58,10 @@ impl FoldBackRecorder for FoldBackCall {
             evidence_dropped: None,
             cost_tokens: None,
             attempts: None,
-            lost: None,
+            races_lost: None,
+            lock_races: None,
             bytes: None,
+            head: None,
             duration_us: 0,
         };
         outcome.facts.fill(&mut record);

@@ -42,6 +42,10 @@ fn a_change_that_lost_once_tells_two_attempts_and_the_task_it_built_on() {
         attempts: Some(2),
         lost: Some(1),
         pause_ms: Some(40),
+        // The commit the write made (#2663).
+        head: Some(crate::application::project_board::ports::BoardHead(
+            "r4".into(),
+        )),
         ..OpFacts::default()
     };
     assert_eq!(facts, want);

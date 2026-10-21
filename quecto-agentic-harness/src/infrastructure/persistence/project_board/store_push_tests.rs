@@ -373,8 +373,12 @@ fn a_fetch_that_finds_the_tracking_ref_locked_by_another_writer_fetches_again() 
         std::thread::sleep(std::time::Duration::from_millis(400));
         std::fs::remove_file(held).unwrap();
     });
-    let read = store(&repos.bob).read();
+    let bob = store(&repos.bob);
+    assert_eq!(bob.lock_races(), 0);
+    let read = bob.read();
     other.join().unwrap();
     assert!(read.is_ok(), "{read:?}");
     assert!(!lock.exists());
+    // Each race is counted, for the write's record (#2663).
+    assert!(bob.lock_races() >= 1, "{}", bob.lock_races());
 }

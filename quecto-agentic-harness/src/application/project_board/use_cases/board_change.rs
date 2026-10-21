@@ -145,7 +145,11 @@ fn shaped(
     facts: Option<&mut OpFacts>,
     mut change: impl FnMut(&BoardSnapshot, &When) -> Result<Vec<BoardArtifact>, ProjectBoardError>,
 ) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
-    retried(clock, facts, || {
+    let mut facts = facts;
+    // The store's count before this change, so its own races are told.
+    let races = facts.as_ref().map(|_| store.lock_races());
+    let mut written = None;
+    let result = retried(clock, facts.as_deref_mut(), || {
         let snapshot = store.read()?;
         let when = checked_now(clock)?;
         let artifacts = change(&snapshot, &when)?;
@@ -156,12 +160,25 @@ fn shaped(
                     head, snapshot.head,
                     "a write the board holds moves its head"
                 );
+                written = Some(head);
                 Ok(Attempt::Done(artifacts))
             }
             BoardWrite::Lost => Ok(Attempt::Lost),
             BoardWrite::Refused(reason) => Err(ProjectBoardError::Refused(reason)),
         }
-    })
+    });
+    if let (Some(facts), Some(before)) = (facts, races) {
+        note_lock_races(store, before, facts);
+        facts.head = written;
+    }
+    result
+}
+
+/// Notes in `facts` the lock races `store` met since it counted `before`
+/// (#2663): only when it met one, as a record tells it.
+pub(super) fn note_lock_races(store: &dyn ProjectBoardStore, before: u64, facts: &mut OpFacts) {
+    let met = store.lock_races().saturating_sub(before);
+    facts.lock_races = (met > 0).then_some(met);
 }
 
 /// Whether `artifacts` are one task's change (an allowlist): that task

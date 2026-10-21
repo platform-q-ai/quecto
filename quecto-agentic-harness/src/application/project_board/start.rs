@@ -42,12 +42,13 @@ pub struct StartFacts {
     pub run_state: Option<super::dto::RunAfterUndo>,
     pub released: Option<bool>,
     /// The undo's fold-back, for its own `board_fold_back` record.
-    pub fold_back: Option<UndoFoldBack>,
+    pub fold_back: Option<NotedFoldBack>,
 }
 
-/// A start's undo fold-back (S4c), as its record is made from it.
+/// A fold-back a request made, as its record is made from it: a start's
+/// undo (S4c), or an `end_run`'s (#2667).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UndoFoldBack {
+pub struct NotedFoldBack {
     pub task: Slug,
     pub run: u32,
     pub result: Result<FoldedBack, ProjectBoardError>,
