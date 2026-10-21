@@ -103,6 +103,7 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("domain/project_board", &["entities", "value_objects", "services"]),
     Capability("infrastructure/tools", &["agents", "native", "registry", "swarm"]),
     Capability("infrastructure/persistence", &["file", "sqlite", "project_board"]),
+    Capability("infrastructure/providers", &["anthropic", "catalogue", "codex", "openai", "routing", "transport"]),
     Capability("application/auth", &["use_cases", "ports", "dto"]),
     Capability("application/catalogue", &["use_cases", "ports", "dto", "services"]),
     Capability("application/configuration", &["use_cases", "ports", "dto", "services"]),

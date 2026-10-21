@@ -685,3 +685,6 @@ mod cov_tests;
 #[cfg(test)]
 #[path = "anthropic_sse_end_tests.rs"]
 mod end_tests;
+#[cfg(test)]
+#[path = "anthropic_sse_wire_cov_tests.rs"]
+mod wire_cov_tests;

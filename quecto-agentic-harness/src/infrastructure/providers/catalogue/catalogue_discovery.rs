@@ -27,7 +27,7 @@ use crate::domain::catalogue::value_objects::identity::{
 };
 use crate::domain::catalogue::value_objects::precedence::SourceLayer;
 use crate::infrastructure::persistence::file::atomic_write::atomic_write;
-use crate::infrastructure::providers::{
+use crate::infrastructure::providers::routing::provider_factory::{
     ProviderFactoryError, validate_provider_api_base_with_options,
 };
 

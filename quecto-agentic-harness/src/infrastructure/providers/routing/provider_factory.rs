@@ -1,9 +1,459 @@
-//! The provider factory (#1849 PR 1; split out of the OAuth refresh wiring
-//! by #1839): the [`ProviderFactory`] that rebuilds a concrete provider
-//! around a fresh token after an OAuth refresh. Handed to the runtime
-//! composition; never constructed by the interface.
+//! Provider construction (#2679, from the providers root): the
+//! `create_*_provider*` constructors for every vendor, the binding that
+//! gives each leaf provider its admission gate and stream idle bounds, the
+//! API-base and host validation they share, and (#1849 PR 1; split out of
+//! the OAuth refresh wiring by #1839) the [`ProviderFactory`] that rebuilds
+//! a concrete provider around a fresh token after an OAuth refresh. Handed
+//! to the runtime composition; never constructed by the interface.
 //!
 //! [`ProviderFactory`]: crate::infrastructure::providers::routing::refreshable::ProviderFactory
+
+use std::sync::Arc;
+
+use crate::application::providers::ports::LlmProvider;
+use crate::infrastructure::providers::{anthropic, codex, openai, transport};
+
+/// Cohesive leaf capability: a gate never arrives without a single-send transport.
+#[derive(Clone)]
+pub(crate) struct AttemptTransportBinding {
+    pub gate: Arc<dyn crate::application::admission::ports::inference_attempt::AttemptAdmission>,
+    pub client: transport::single_attempt_client::SingleAttemptClient,
+}
+
+/// What binds one provider's leaf transport: its admission capability, when
+/// a gate binds it, and its stream idle bounds — the provider's configured
+/// `stream_idle_seconds`, or the defaults (#2433 review).
+#[derive(Clone, Default)]
+pub(crate) struct ProviderBinding {
+    pub admission: Option<AttemptTransportBinding>,
+    pub stream_idle: transport::stream_idle::StreamIdle,
+}
+
+/// Shared HTTP connection pool and the provider's binding.
+/// Both endpoint alternatives for a named provider use the same transport context.
+pub(crate) struct ProviderTransportContext {
+    pub client: reqwest::Client,
+    pub binding: ProviderBinding,
+}
+
+// Binding must happen before type erasure: a provider-level wrapper is not a leaf attempt gate.
+macro_rules! bind_attempt_admission {
+    ($provider:expr, $binding:expr) => {{
+        let binding: ProviderBinding = $binding;
+        let provider = $provider.with_stream_idle(binding.stream_idle);
+        match binding.admission {
+            Some(admission) => provider.with_attempt_admission(admission.gate, admission.client),
+            None => provider,
+        }
+    }};
+}
+
+const ALLOW_CUSTOM_HOSTS_ENV: &str = "QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS";
+const RESERVED_PROVIDER_PREFIXES: &[&str] =
+    &["openai", "openai-codex", "codex", "anthropic", "router"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderFactoryError {
+    UnknownProvider(String),
+    InvalidApiBase {
+        provider: String,
+        api_base: String,
+        reason: String,
+    },
+}
+
+impl std::fmt::Display for ProviderFactoryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownProvider(name) => write!(f, "unknown provider: {}", name),
+            Self::InvalidApiBase {
+                provider,
+                api_base,
+                reason,
+            } => write!(
+                f,
+                "invalid api_base for {}: '{}' ({})",
+                provider, api_base, reason
+            ),
+        }
+    }
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+fn allow_custom_provider_hosts() -> bool {
+    std::env::var(ALLOW_CUSTOM_HOSTS_ENV)
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn allowed_https_host(provider: &str, host: &str) -> bool {
+    if allow_custom_provider_hosts() {
+        return true;
+    }
+
+    match provider {
+        "openai" => host == "api.openai.com",
+        "anthropic" => host == "api.anthropic.com",
+        _ => false,
+    }
+}
+
+fn validate_provider_api_base(provider: &str, api_base: &str) -> Result<(), ProviderFactoryError> {
+    validate_provider_api_base_with_options(provider, api_base, false, false)
+}
+
+pub(crate) fn validate_provider_api_base_with_options(
+    provider: &str,
+    api_base: &str,
+    allow_remote_http: bool,
+    allow_any_https_host: bool,
+) -> Result<(), ProviderFactoryError> {
+    let invalid = |reason: String| ProviderFactoryError::InvalidApiBase {
+        provider: provider.to_string(),
+        api_base: api_base.to_string(),
+        reason,
+    };
+
+    let Ok(url) = reqwest::Url::parse(api_base) else {
+        return Err(invalid("URL parse failed".to_string()));
+    };
+
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(invalid("credentials in URL are not allowed".to_string()));
+    }
+
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(invalid("query and fragment are not allowed".to_string()));
+    }
+
+    let Some(host) = url.host_str() else {
+        return Err(invalid("host is missing".to_string()));
+    };
+
+    match url.scheme() {
+        "https" => {
+            if allow_any_https_host || allowed_https_host(provider, host) || is_loopback_host(host)
+            {
+                Ok(())
+            } else {
+                Err(invalid(format!(
+                    "host '{}' is not allowed (set {}=1 to allow custom hosts)",
+                    host, ALLOW_CUSTOM_HOSTS_ENV
+                )))
+            }
+        }
+        "http" => {
+            if is_loopback_host(host) || allow_remote_http {
+                Ok(())
+            } else {
+                Err(invalid(format!(
+                    "http is allowed only for loopback hosts (set {}=1 or allow_remote_http=true on an explicit custom endpoint to allow custom hosts)",
+                    ALLOW_CUSTOM_HOSTS_ENV
+                )))
+            }
+        }
+        scheme => Err(invalid(format!(
+            "unsupported URL scheme '{}'; use https or loopback http",
+            scheme
+        ))),
+    }
+}
+
+/// Create a provider by name and API key with a shared `reqwest::Client`.
+pub fn create_provider_with_client(
+    name: &str,
+    api_key: String,
+    api_base: Option<String>,
+    client: reqwest::Client,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    create_provider_with_client_and_admission(
+        name,
+        api_key,
+        api_base,
+        client,
+        ProviderBinding::default(),
+    )
+}
+
+pub(crate) fn create_provider_with_client_and_admission(
+    name: &str,
+    api_key: String,
+    api_base: Option<String>,
+    client: reqwest::Client,
+    binding: ProviderBinding,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    match name {
+        "openai" | "anthropic" => {}
+        _ => return Err(ProviderFactoryError::UnknownProvider(name.to_string())),
+    }
+
+    if let Some(ref base) = api_base {
+        validate_provider_api_base(name, base)?;
+    }
+
+    match name {
+        "openai" => Ok(Arc::new(bind_attempt_admission!(
+            openai::OpenAiProvider::with_client(api_key, api_base, client,),
+            binding.clone()
+        ))),
+        "anthropic" => Ok(Arc::new(bind_attempt_admission!(
+            anthropic::AnthropicProvider::with_client(api_key, api_base, client,),
+            binding.clone()
+        ))),
+        _ => unreachable!("provider name validated above"),
+    }
+}
+
+/// Create an OpenAI-compatible/built-in provider with an explicit router prefix.
+///
+/// #1066: reasoning models registered for `provider_name` are routed per
+/// request to the Responses API; everything else stays on Chat Completions.
+///
+/// `reasoning_model_ids` must come from the *effective* (user-override-aware)
+/// model registry, not `ModelRegistry::builtin()`, so `models.json`
+/// `reasoning` overrides steer the endpoint routing.
+pub fn create_named_openai_provider_with_client(
+    provider_name: &str,
+    api_key: String,
+    api_base: Option<String>,
+    client: reqwest::Client,
+    include_oauth_headers: bool,
+    reasoning_model_ids: std::collections::HashSet<String>,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    create_named_openai_provider_with_client_and_admission(
+        provider_name,
+        api_key,
+        api_base,
+        ProviderTransportContext {
+            client,
+            binding: ProviderBinding::default(),
+        },
+        include_oauth_headers,
+        reasoning_model_ids,
+    )
+}
+
+pub(crate) fn create_named_openai_provider_with_client_and_admission(
+    provider_name: &str,
+    api_key: String,
+    api_base: Option<String>,
+    transport: ProviderTransportContext,
+    include_oauth_headers: bool,
+    reasoning_model_ids: std::collections::HashSet<String>,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    let ProviderTransportContext { client, binding } = transport;
+    if let Some(ref base) = api_base {
+        validate_provider_api_base("openai", base)?;
+    }
+    let chat_completions: Arc<dyn LlmProvider> = Arc::new(bind_attempt_admission!(
+        openai::OpenAiProvider::with_client_and_name_and_oauth_headers(
+            provider_name,
+            api_key.clone(),
+            api_base.clone(),
+            client.clone(),
+            include_oauth_headers,
+        ),
+        binding.clone()
+    ));
+    if reasoning_model_ids.is_empty() {
+        return Ok(chat_completions);
+    }
+    let responses: Arc<dyn LlmProvider> = Arc::new(bind_attempt_admission!(
+        codex::CodexProvider::with_api_key(api_key, api_base, client,),
+        binding.clone()
+    ));
+    Ok(Arc::new(
+        openai::openai_endpoint_router::OpenAiEndpointRouter::new(
+            provider_name.to_string(),
+            chat_completions,
+            responses,
+            reasoning_model_ids,
+        ),
+    ))
+}
+
+/// Create the built-in OpenAI provider with explicit OAuth-header control.
+pub fn create_openai_provider_with_client(
+    api_key: String,
+    api_base: Option<String>,
+    client: reqwest::Client,
+    include_oauth_headers: bool,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    create_openai_provider_with_client_and_admission(
+        api_key,
+        api_base,
+        client,
+        include_oauth_headers,
+        ProviderBinding::default(),
+    )
+}
+
+pub(crate) fn create_openai_provider_with_client_and_admission(
+    api_key: String,
+    api_base: Option<String>,
+    client: reqwest::Client,
+    include_oauth_headers: bool,
+    binding: ProviderBinding,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    if let Some(ref base) = api_base {
+        validate_provider_api_base("openai", base)?;
+    }
+    Ok(Arc::new(bind_attempt_admission!(
+        openai::OpenAiProvider::with_client_and_name_and_oauth_headers(
+            "openai",
+            api_key,
+            api_base,
+            client,
+            include_oauth_headers,
+        ),
+        binding.clone()
+    )))
+}
+
+/// Create an OpenAI-compatible provider with a custom router prefix.
+///
+/// Unlike the built-in `openai` slot, this never performs Codex/OAuth routing;
+/// it always sends `Authorization: Bearer <api_key>` to the configured base URL.
+pub fn create_openai_compatible_provider(
+    prefix: &str,
+    api_key: String,
+    api_base: String,
+    allow_remote_http: bool,
+    client: reqwest::Client,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    create_openai_compatible_provider_and_admission(
+        prefix,
+        api_key,
+        api_base,
+        allow_remote_http,
+        client,
+        ProviderBinding::default(),
+    )
+}
+
+pub(crate) fn create_openai_compatible_provider_and_admission(
+    prefix: &str,
+    api_key: String,
+    api_base: String,
+    allow_remote_http: bool,
+    client: reqwest::Client,
+    binding: ProviderBinding,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    let prefix = prefix.trim();
+    if prefix.is_empty()
+        || prefix.contains('/')
+        || RESERVED_PROVIDER_PREFIXES
+            .iter()
+            .any(|reserved| prefix.eq_ignore_ascii_case(reserved))
+    {
+        return Err(ProviderFactoryError::UnknownProvider(prefix.to_string()));
+    }
+    let allow_remote_http = allow_remote_http || allow_custom_provider_hosts();
+    validate_provider_api_base_with_options(prefix, &api_base, allow_remote_http, true)?;
+    Ok(Arc::new(bind_attempt_admission!(
+        openai::OpenAiProvider::with_client_and_name_and_oauth_headers(
+            prefix,
+            api_key,
+            Some(api_base),
+            client,
+            false,
+        ),
+        binding.clone()
+    )))
+}
+
+/// Create an Anthropic-compatible provider with a custom router prefix.
+///
+/// This uses the kernel-owned Anthropic Messages wire protocol while letting
+/// `models.json` expose distinct provider keys such as `anthropic-api` and
+/// `anthropic-oauth`.
+pub fn create_anthropic_compatible_provider(
+    prefix: &str,
+    api_key: String,
+    api_base: Option<String>,
+    allow_remote_http: bool,
+    client: reqwest::Client,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    create_anthropic_compatible_provider_and_admission(
+        prefix,
+        api_key,
+        api_base,
+        allow_remote_http,
+        client,
+        ProviderBinding::default(),
+    )
+}
+
+pub(crate) fn create_anthropic_compatible_provider_and_admission(
+    prefix: &str,
+    api_key: String,
+    api_base: Option<String>,
+    allow_remote_http: bool,
+    client: reqwest::Client,
+    binding: ProviderBinding,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    let prefix = prefix.trim();
+    if prefix.is_empty()
+        || prefix.contains('/')
+        || RESERVED_PROVIDER_PREFIXES
+            .iter()
+            .any(|reserved| prefix.eq_ignore_ascii_case(reserved))
+    {
+        return Err(ProviderFactoryError::UnknownProvider(prefix.to_string()));
+    }
+    if let Some(ref base) = api_base {
+        let allow_remote_http = allow_remote_http || allow_custom_provider_hosts();
+        validate_provider_api_base_with_options(prefix, base, allow_remote_http, true)?;
+    }
+    Ok(Arc::new(bind_attempt_admission!(
+        anthropic::AnthropicProvider::with_client_and_name(api_key, api_base, client, prefix),
+        binding.clone()
+    )))
+}
+
+/// Create a Codex provider with a shared `reqwest::Client`.
+///
+/// Used for ChatGPT OAuth tokens from `auth.openai.com`, which only work
+/// against the ChatGPT backend using the Responses API. Requires an
+/// `account_id` extracted from the JWT.
+pub fn create_codex_provider_with_client(
+    api_key: String,
+    account_id: String,
+    api_base: Option<String>,
+    client: reqwest::Client,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    create_codex_provider_with_client_and_admission(
+        api_key,
+        account_id,
+        api_base,
+        client,
+        ProviderBinding::default(),
+    )
+}
+
+pub(crate) fn create_codex_provider_with_client_and_admission(
+    api_key: String,
+    account_id: String,
+    api_base: Option<String>,
+    client: reqwest::Client,
+    binding: ProviderBinding,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    // A config-supplied `providers.openai.api_base` may redirect
+    // OAuth-JWT-bearing requests only when it passes the same
+    // `validate_provider_api_base` gate as every other provider base
+    // (https required for non-loopback); unset falls back to the
+    // hardwired ChatGPT backend.
+    if let Some(ref base) = api_base {
+        validate_provider_api_base("openai", base)?;
+    }
+    Ok(Arc::new(bind_attempt_admission!(
+        codex::CodexProvider::with_client(api_key, account_id, api_base, client,),
+        binding.clone()
+    )))
+}
 
 /// Build a [`ProviderFactory`] that re-creates a provider with a new API key.
 ///
@@ -25,12 +475,9 @@ pub fn make_bounded_provider_factory(
     stream_idle: crate::infrastructure::providers::transport::stream_idle::StreamIdle,
     http_client: reqwest::Client,
 ) -> crate::infrastructure::providers::routing::refreshable::ProviderFactory {
-    use crate::infrastructure::providers;
-    use std::sync::Arc;
-
     let name = provider_name.to_string();
     let base = api_base;
-    let binding = move || providers::ProviderBinding {
+    let binding = move || ProviderBinding {
         admission: None,
         stream_idle,
     };
@@ -44,7 +491,7 @@ pub fn make_bounded_provider_factory(
                     // was constructed; an invalid base cannot appear here, but
                     // degrade to the hardwired ChatGPT backend rather than
                     // panic inside the refresh path.
-                    match providers::create_codex_provider_with_client_and_admission(
+                    match create_codex_provider_with_client_and_admission(
                         new_token.to_string(),
                         acct.clone(),
                         base.clone(),
@@ -57,7 +504,7 @@ pub fn make_bounded_provider_factory(
                                 error = %e,
                                 "invalid openai api_base at token refresh; using default backend"
                             );
-                            return providers::create_codex_provider_with_client_and_admission(
+                            return create_codex_provider_with_client_and_admission(
                                 new_token.to_string(),
                                 acct,
                                 None,
@@ -69,7 +516,7 @@ pub fn make_bounded_provider_factory(
                     }
                 }
             }
-            match providers::create_provider_with_client_and_admission(
+            match create_provider_with_client_and_admission(
                 &name,
                 new_token.to_string(),
                 base.clone(),
@@ -84,7 +531,7 @@ pub fn make_bounded_provider_factory(
                         "failed to rebuild provider after token refresh"
                     );
                     // Return a provider that will fail — better than panicking
-                    providers::create_provider_with_client_and_admission(
+                    create_provider_with_client_and_admission(
                         &name,
                         new_token.to_string(),
                         None,
@@ -109,3 +556,15 @@ pub fn make_bounded_provider_factory(
 #[cfg(test)]
 #[path = "provider_factory_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "provider_factory_create_tests.rs"]
+mod create_tests;
+
+#[cfg(test)]
+#[path = "provider_factory_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
+#[path = "provider_factory_attempt_observation_tests.rs"]
+mod attempt_observation_tests;
