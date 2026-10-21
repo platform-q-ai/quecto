@@ -142,7 +142,10 @@ fn a_plan_set_aside_holds_proposals_and_a_missing_task_is_refused() {
         propose(&store).execute(&proposal("a")),
         Err(ProjectBoardError::Quarantined {
             key,
-            path: "plans/a.2.md".into()
+            path: "plans/a.2.md".into(),
+            object: crate::infrastructure::test_support::memory_board_store::memory_object(
+                "plans/a.2.md"
+            ),
         })
     );
     assert_eq!(

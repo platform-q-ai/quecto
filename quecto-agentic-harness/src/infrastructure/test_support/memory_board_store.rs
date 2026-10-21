@@ -38,6 +38,21 @@ struct Board {
     committers: BTreeMap<u64, Identity>,
     /// The message of each revision a write made.
     messages: BTreeMap<u64, String>,
+    /// Every path an artifact's file was set aside at, so a file set
+    /// aside there again gets another object.
+    set_aside_at: std::collections::BTreeSet<String>,
+}
+
+impl Board {
+    /// The object a file set aside at `path` at `revision` gets: the
+    /// first time, [`memory_object`] of its path, which a test can name;
+    /// any later time, one of its revision, as other contents would have.
+    fn object_at(&mut self, path: &str, revision: u64) -> String {
+        match self.set_aside_at.insert(path.to_string()) {
+            true => memory_object(path),
+            false => format!("{revision:040x}"),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -117,11 +132,12 @@ impl MemoryBoardStore {
         if let Some(key) = &key {
             board.artifacts.remove(key);
         }
+        let object = board.object_at(&path, revision + 1);
         board.quarantined.push(QuarantinedFile {
             path,
             key,
             reason: reason.into(),
-            object: format!("{:040x}", revision + 1),
+            object,
             carried: true,
         });
     }
@@ -137,11 +153,12 @@ impl MemoryBoardStore {
         let revision = board.head.expect("a bootstrapped board");
         board.head = Some(revision + 1);
         board.artifacts.remove(&key);
+        let object = board.object_at(path, revision + 1);
         board.quarantined.push(QuarantinedFile {
             path: path.into(),
             key: Some(key),
             reason: reason.into(),
-            object: format!("{:040x}", revision + 1),
+            object,
             carried: true,
         });
     }
@@ -445,4 +462,14 @@ impl ProjectBoardStore for MemoryBoardStore {
     fn writer(&self) -> Identity {
         self.writer.clone()
     }
+}
+
+/// The object the in-memory store gives a file it first sets aside at
+/// `path`: the same for one path every time, so a test can name it
+/// (#2659).
+pub fn memory_object(path: &str) -> String {
+    let hash = path.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{hash:040x}")
 }

@@ -217,3 +217,33 @@ fn claim_facts_count_from_its_start_to_its_expiry() {
         None
     );
 }
+
+/// #2659: another's claim that has expired is refused with the way on:
+/// take it over first.
+#[test]
+fn another_on_an_expired_claim_is_told_to_take_it_over() {
+    let held = task(InProgress);
+    let lapsed = held_live_by(&held, &person("Bob"), &at("14:00:00"));
+    assert_eq!(lapsed.map(|_| ()), Err(BoardRuleError::NotHolderExpired));
+    // While it is live, there is no way on for anyone else.
+    let live = held_live_by(&held, &person("Bob"), &at("10:00:00"));
+    assert_eq!(live.map(|_| ()), Err(BoardRuleError::NotHolder));
+}
+
+/// #2656 review round 1: halfway is the claim's own lease's, and a
+/// renewal is due from then, an expired claim's too; another's is the
+/// renewal's own rule to refuse.
+#[test]
+fn a_renewal_is_due_from_halfway_through_the_claims_own_lease() {
+    let mut fields = task(InProgress).into_fields();
+    let claim = fields.claim.as_mut().unwrap();
+    claim.expires = at("10:00:00");
+    let short = Task::new(fields).unwrap();
+    assert_eq!(renew_after(&short), Some(at("09:30:00")));
+    assert_eq!(renew_after(&task(Ready)), None, "no claim, no renewal");
+    let ada = person("Ada");
+    assert!(!renewal_due(&short, &ada, &at("09:29:59")));
+    assert!(renewal_due(&short, &ada, &at("09:30:00")));
+    assert!(renewal_due(&short, &ada, &at("12:00:00")), "expired");
+    assert!(renewal_due(&short, &person("Bob"), &at("09:00:00")));
+}

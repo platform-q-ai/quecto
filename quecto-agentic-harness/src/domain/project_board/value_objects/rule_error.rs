@@ -27,6 +27,9 @@ impl SwarmReport {
 pub enum BoardRuleError {
     /// No row of the transition table moves a task between these statuses.
     NotAllowed { from: TaskStatus, to: TaskStatus },
+    /// Another's claim has expired: only its holder may do this, and
+    /// anyone may take the task over first (#2659).
+    NotHolderExpired,
     /// Only the claim's holder may do this.
     NotHolder,
     /// The task has no claim to act on.
@@ -201,6 +204,15 @@ pub enum BoardRuleError {
     InvalidPlan(SchemaError),
 }
 
+/// `word` after the article it reads with (`an accepted`, `a ready`):
+/// `an` before a vowel, as every status word starts (#2659).
+fn with_article(word: &str) -> String {
+    match word.starts_with(['a', 'e', 'i', 'o', 'u']) {
+        true => format!("an {word}"),
+        false => format!("a {word}"),
+    }
+}
+
 impl fmt::Display for BoardRuleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -213,6 +225,10 @@ impl fmt::Display for BoardRuleError {
                 )
             }
             Self::NotHolder => f.write_str("only the claim's holder may do this"),
+            Self::NotHolderExpired => f.write_str(
+                "only the claim's holder may do this, and the task's claim has expired: take the task \
+                 over first with take_over(task)",
+            ),
             Self::NoClaim => f.write_str("the task has no claim"),
             Self::ClaimLive => f.write_str("the claim has not expired"),
             Self::ClaimExpired => f.write_str("the claim has expired; renew it first"),
@@ -220,13 +236,17 @@ impl fmt::Display for BoardRuleError {
             Self::RunEnded(run) => write!(f, "run {run} has already ended"),
             Self::PlanNotDraft(state) => write!(
                 f,
-                "a {} plan is not a draft: only drafts are edited, accepted or discarded",
-                state.as_str()
+                "{} plan is not a draft: only drafts are edited, accepted or discarded",
+                with_article(state.as_str())
             ),
             Self::NotThisTasks => f.write_str("it belongs to another task or plan version"),
             Self::NotThisChange => f.write_str("the review is of another change"),
             Self::TaskFinished(status) => {
-                write!(f, "a {} task's plans are settled", status.as_str())
+                write!(
+                    f,
+                    "{} task's plans are settled",
+                    with_article(status.as_str())
+                )
             }
             Self::UnknownPlanVersion(version) => {
                 write!(f, "the task has no plan version {version}")
@@ -359,7 +379,11 @@ impl fmt::Display for BoardRuleError {
             Self::ChangesUnmerged(numbers) => write!(f, "changes {numbers:?} have not merged"),
             Self::ChangesInconsistent(why) => write!(f, "the task's changes contradict: {why}"),
             Self::NotTakeable(status) => {
-                write!(f, "a {} task cannot be taken over", status.as_str())
+                write!(
+                    f,
+                    "{} task cannot be taken over",
+                    with_article(status.as_str())
+                )
             }
             Self::AlreadyHolder => f.write_str("the holder renews rather than takes over"),
             Self::NoPrs => f.write_str(
@@ -376,8 +400,8 @@ impl fmt::Display for BoardRuleError {
             Self::PrAlreadyLinked(pr) => write!(f, "the task already links pull request {pr}"),
             Self::NotDraft(status) => write!(
                 f,
-                "a {} task is not a draft: only drafts are edited",
-                status.as_str()
+                "{} task is not a draft: only drafts are edited",
+                with_article(status.as_str())
             ),
             Self::NoEdit => f.write_str("the edit changes nothing"),
             Self::Superseded { by } => {
@@ -454,3 +478,7 @@ impl fmt::Display for BoardRuleError {
 }
 
 impl std::error::Error for BoardRuleError {}
+
+#[cfg(test)]
+#[path = "rule_error_tests.rs"]
+mod tests;

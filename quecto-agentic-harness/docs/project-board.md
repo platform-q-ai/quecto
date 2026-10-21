@@ -38,7 +38,17 @@ way out, moving `quecto/board` back to the commit before the hand edit, covers i
 Listings are unavailable (`folder_set_aside`) while a file set aside outside
 `tasks/` names a plan, run, change, review or discussion, since the index holds
 tasks alone for now. `show` reads the store itself, so it still answers then (see
-below). It writes the marker `quecto-board 3` and reads `quecto-board 2` too. A
+below). Every refusal over a file set aside (`set_aside`, `artifact_set_aside`,
+`set_aside_file`, `folder_set_aside`) names the file's `path` and `object` and,
+in its message, the way out: mend the file, or discard it with
+`clear_set_aside(path, object)`, which discards the file's content.
+
+`quecto board --remote <name>` naming a remote the clone does not have answers
+`invalid_request` on field `remote`. The agent tool names no remote (its board is
+`origin`), so there a missing `origin` answers `store_unavailable`, as git failing
+to say whether a remote exists does.
+
+The board writes the marker `quecto-board 3` and reads `quecto-board 2` too. A
 build that reads only format 2 asks for an upgrade on a board this build has
 written, rather than taking its folders for someone else's branch.
 
@@ -332,7 +342,8 @@ version it `superseded` (`null` when none was accepted).
 
 On a task someone holds, only the holder of a live claim accepts or discards
 (`not_holder`; the holder of an expired claim gets `claim_expired` and renews
-first, and anyone else takes the task over with `take_over` first). On a task
+first, and anyone else takes the task over with `take_over` first: their
+`not_holder` on an expired claim carries `expired: true` and says so). On a task
 nobody holds, anyone does. Both are refused for a done or archived task
 (`task_finished`), for a version that is not a draft (`plan_not_draft`) or that
 the task does not have (`unknown_plan_version`), and while the task's file or a
@@ -398,7 +409,11 @@ and the answer lists them as `not_applied`.
 Once launched, the run is the swarm's, and the task stays held by its starter
 until its holder ends the run as "Ending a run", below, says: close a run
 paused holding an outcome, stop the coordinator, `end_run`, and renew the
-2-hour claim, which nothing renews while the swarm runs.
+2-hour claim, which nothing renews while the swarm runs. A `renew` writes only
+from halfway through the claim's own lease on: before then the holder's renewal
+writes nothing and answers the task as it is, its claim's expiry unchanged (its
+`board_op` record notes `attempts: 0` and the claim it found). Every `renew`
+answer gives `renew_after`, the time halfway through the claim it holds.
 
 A harness the pocket relay launches for a board task writes the board as the
 relay's bot: `QUECTO_BOARD_COMMITTER`, `name <email>` (`quecto pocket
@@ -409,8 +424,10 @@ agent's own commits stay its clone's. A value not so shaped is refused
 
 The answer gives the `task`, the `run`, the `coordinator` (`agent`,
 `environment_ref`), `not_applied` (`role`, `model`, `effort`), `claim`:
-`fresh` when the start took it, `held` when the starter held it already, and,
-on the agent tool, `steps`: the steps for running the run to its end, as text for the agent that
+`fresh` when the start took it, `held` when the starter held it already,
+`renew_after`: the time halfway through the claim's lease, from which a `renew`
+is due,
+and, on the agent tool, `steps`: the steps for running the run to its end, as text for the agent that
 started it, the task's id and the run's number filled in.
 
 On the agent tool, every refused start's `error` carries `steps` too, what its

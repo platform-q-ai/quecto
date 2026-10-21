@@ -412,11 +412,20 @@ pub fn check_carried_set_aside(
     let alice: Arc<dyn ProjectBoardStore> = Arc::from(alice);
     let change =
         ChangeBoardTask::new(alice.clone(), Arc::new(SystemBoardClock::default())).unwrap();
+    let b_object = alice
+        .read()
+        .unwrap()
+        .quarantined
+        .into_iter()
+        .find(|file| file.path == "tasks/b.md")
+        .unwrap()
+        .object;
     assert_eq!(
         change.execute(&Slug::parse("a").unwrap(), &BoardOp::AddPr(7)),
         Err(ProjectBoardError::Quarantined {
             key: ArtifactKey::Task(Slug::parse("b").unwrap()),
             path: "tasks/b.md".into(),
+            object: b_object,
         })
     );
     let head = alice.read().unwrap().head;

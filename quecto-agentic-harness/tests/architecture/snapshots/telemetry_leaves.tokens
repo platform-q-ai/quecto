@@ -212,6 +212,7 @@ const KNOWN_KINDS : & [
 "op" ,
 "request" ,
 "other" ,
+"remote" ,
 "kept" ,
 "none_kept" ,
 "not_checked" ,

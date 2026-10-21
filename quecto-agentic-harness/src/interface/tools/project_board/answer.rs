@@ -37,6 +37,8 @@
 //! present (`null` or `[]` when unset), in a fixed order.
 use serde_json::{Map, Value, json};
 
+use crate::domain::project_board::services::claims::renew_after;
+
 use super::request::RequestError;
 use crate::application::project_board::dto::{LivenessCheck, ProjectBoardError, RunReport};
 use crate::application::project_board::operations::{BoardOutcome, Completion};
@@ -47,18 +49,17 @@ use crate::application::project_board::ports::{
 use crate::application::project_board::start::StartedTask;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
-use crate::domain::project_board::value_objects::shown_text::{
-    shown_artifact_path, shown_board_path,
-};
+use crate::domain::project_board::value_objects::shown_text::shown_board_path;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::RunOutcome;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 
 #[path = "answer_artifacts.rs"]
 mod artifacts;
+#[path = "answer_set_aside.rs"]
+mod set_aside;
 use artifacts::{
-    artifact_folder, listing_fields, page_fields, planned_json, quarantined_json, run_json,
-    shown_fields,
+    listing_fields, page_fields, planned_json, quarantined_json, run_json, shown_fields,
 };
 
 /// The most characters of an error's message an answer carries.
@@ -242,6 +243,10 @@ pub fn outcome(
         },
         BoardOutcome::Changed { task, completion } => {
             fields.insert("task".into(), task_json(task));
+            // A renewal says when the next one is due (#2656).
+            if op == "renew" {
+                fields.insert("renew_after".into(), renew_after_json(task));
+            }
             if let Some(completion) = completion {
                 let completion = match completion {
                     Completion::Done(task) => json!({"done": true, "task": task_json(task)}),
@@ -350,7 +355,16 @@ fn started_fields(started: &StartedTask) -> Map<String, Value> {
         ),
         ("not_applied", Value::Array(not_applied)),
         ("claim", json!(started.claim.as_str())),
+        // When to renew the claim: halfway through it (#2656). A started
+        // task is held by its starter.
+        ("renew_after", renew_after_json(&started.task)),
     ])
+}
+
+/// When the claim `task` holds is next renewed (#2656): halfway through
+/// it; `null` for a task that holds none.
+fn renew_after_json(task: &Task) -> Value {
+    renew_after(task).map_or(Value::Null, |at| json!(at.as_str()))
 }
 
 /// The files set aside, each with its `object` and the `copies` (every
@@ -380,32 +394,6 @@ fn head_json(head: &BoardHead) -> Value {
 
 fn slug_json(slug: &Slug) -> Value {
     Value::String(slug.as_str().into())
-}
-
-/// The artifact a refusal names: a task as `set_aside` by its id, as
-/// ever; any other kind as `artifact_set_aside` by [`key_fields`] and its
-/// file's raw path, so a clear can name it exactly.
-fn set_aside_fields(key: &ArtifactKey, path: &str) -> (ErrorCode, Map<String, Value>) {
-    let folder = match key {
-        ArtifactKey::Task(id) => {
-            return (ErrorCode::SetAside, fields([("task", slug_json(id))]));
-        }
-        ArtifactKey::Plan(..)
-        | ArtifactKey::Run(..)
-        | ArtifactKey::Change(..)
-        | ArtifactKey::Review(..)
-        | ArtifactKey::Discussion(_) => {
-            artifact_folder(key).expect("every kind but a task has a folder")
-        }
-    };
-    // Its own kind's folder, one name in it.
-    assert!(
-        shown_artifact_path(folder, path),
-        "a store shows every path it sets aside sanitised: {path:?}"
-    );
-    let mut named = key_fields(key);
-    named.insert("path".into(), json!(path));
-    (ErrorCode::ArtifactSetAside, named)
 }
 
 /// An artifact by its key: `kind` and `task` for a task; `kind`, `task`
@@ -579,8 +567,10 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::Store(BoardStoreError::TooLarge(why)) => {
             (C::BoardTooLarge, fields([("reason", shown_json(why))]))
         }
-        E::Store(BoardStoreError::FolderSetAside(why)) => {
-            (C::FolderSetAside, fields([("reason", shown_json(why))]))
+        E::Store(BoardStoreError::FolderSetAside { why, path, object }) => {
+            let mut named = set_aside::file_fields(path, object);
+            named.insert("reason".into(), shown_json(why));
+            (C::FolderSetAside, named)
         }
         E::Rule(rule) => (C::Rule, fields([("rule", rule_json(rule))])),
         E::Invalid(schema) => (
@@ -609,7 +599,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::Clock(BoardClockError::OutOfRange(read)) => {
             (C::ClockUnreadable, fields([("read", shown_json(read))]))
         }
-        E::Quarantined { key, path } => set_aside_fields(key, path),
+        E::Quarantined { key, path, object } => set_aside::fields_of(key, path, object),
         E::Duplicate { key } => (C::DuplicateArtifact, key_fields(key)),
         E::SetAsideFile { path, object } => {
             assert!(

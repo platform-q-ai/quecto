@@ -272,6 +272,9 @@ const KNOWN_KINDS: &[&str] = &[
     "op",
     "request",
     "other",
+    // The CLI's `--remote`, named by a refusal of one the clone lacks
+    // (#2659).
+    "remote",
     // Whether an `end_run` folded a kept swarm board (#2663).
     "kept",
     "none_kept",

@@ -105,7 +105,7 @@ pub fn told(error: &BoardStoreError) -> &str {
         | BoardStoreError::WriteTooLarge(why)
         | BoardStoreError::Unavailable(why)
         | BoardStoreError::TooLarge(why)
-        | BoardStoreError::FolderSetAside(why) => why,
+        | BoardStoreError::FolderSetAside { why, .. } => why,
     }
 }
 

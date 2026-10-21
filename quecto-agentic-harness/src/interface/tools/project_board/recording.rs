@@ -159,6 +159,11 @@ impl BoardCall {
         }
     }
 
+    /// The front end the call came from.
+    pub fn front_end(&self) -> FrontEnd {
+        self.front_end
+    }
+
     /// The request names the op `op` (`None`: none, or none of `OPS`).
     pub fn named(&mut self, op: Option<&str>) {
         self.note(|record| {
@@ -474,6 +479,7 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         R::Invalid(schema) | R::InvalidPlan(schema) => Some(schema),
         R::NotAllowed { .. }
         | R::NotHolder
+        | R::NotHolderExpired
         | R::NoClaim
         | R::ClaimLive
         | R::ClaimExpired

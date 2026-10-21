@@ -145,7 +145,7 @@ fn told(error: &BoardStoreError) -> String {
         | BoardStoreError::WriteTooLarge(why)
         | BoardStoreError::Unavailable(why)
         | BoardStoreError::TooLarge(why)
-        | BoardStoreError::FolderSetAside(why) => why.clone(),
+        | BoardStoreError::FolderSetAside { why, .. } => why.clone(),
     }
 }
 

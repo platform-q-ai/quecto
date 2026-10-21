@@ -375,8 +375,13 @@ fn other_kinds_index_but_a_set_aside_one_is_refused_until_s12() {
         assert!(
             matches!(
                 &refused,
-                Err(IndexError::Store(BoardStoreError::FolderSetAside(why)))
+                Err(IndexError::Store(BoardStoreError::FolderSetAside { why, path: named, object }))
                     if why.contains(path) && why.contains("move `quecto/board` back")
+                        // #2659: and the way out that keeps the board,
+                        // naming the file's object.
+                        && why.contains("clear_set_aside")
+                        && why.contains(&"c".repeat(40))
+                        && named == path && *object == "c".repeat(40)
             ),
             "{path}: {refused:?}"
         );

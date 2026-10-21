@@ -180,13 +180,14 @@ fn first_set_aside(
 ) -> Result<(), ProjectBoardError> {
     let blocking = quarantined
         .iter()
-        .filter_map(|file| file.key.as_ref().map(|key| (key, &file.path)))
-        .filter(|(key, _)| in_scope(key))
+        .filter_map(|file| file.key.as_ref().map(|key| (key, &file.path, &file.object)))
+        .filter(|(key, ..)| in_scope(key))
         .min();
     match blocking {
-        Some((key, path)) => Err(ProjectBoardError::Quarantined {
+        Some((key, path, object)) => Err(ProjectBoardError::Quarantined {
             key: key.clone(),
             path: path.clone(),
+            object: object.clone(),
         }),
         None => Ok(()),
     }

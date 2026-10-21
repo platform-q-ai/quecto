@@ -89,7 +89,8 @@ fn each_pause_is_added_and_a_contended_change_tells_every_attempt_lost() {
         (Some(3), Some(2), Some(80))
     );
     lose(&store, 3);
-    let (contended, facts) = renew_noted(&store, SetClock::at("10:30:00"));
+    // Past halfway again, so the renewal is due (#2656).
+    let (contended, facts) = renew_noted(&store, SetClock::at("11:30:00"));
     assert_eq!(contended, Err(ProjectBoardError::Contended { attempts: 3 }));
     assert_eq!(
         (facts.attempts, facts.lost, facts.pause_ms),

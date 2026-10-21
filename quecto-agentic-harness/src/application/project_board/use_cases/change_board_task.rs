@@ -17,7 +17,7 @@ use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::changes::Linked;
-use crate::domain::project_board::services::claims::{claim_facts, renew, take_over};
+use crate::domain::project_board::services::claims::{claim_facts, renew, renewal_due, take_over};
 use crate::domain::project_board::services::pull_requests::{add_pr, remove_pr};
 use crate::domain::project_board::services::transitions::{move_reads, move_task};
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -72,6 +72,20 @@ impl ChangeBoardTask {
         mut facts: Option<&mut OpFacts>,
     ) -> Result<Task, ProjectBoardError> {
         let actor = &self.actor;
+        // A renewal not due yet writes nothing: the task as it is (#2656).
+        if let BoardOp::Renew = op
+            && let Some((task, now)) = self.not_due(id)?
+        {
+            if let Some(facts) = facts {
+                let status = task.fields().status;
+                facts.status_from = Some(status);
+                facts.status_to = Some(status);
+                facts.claim = claim_facts(&task, actor, &now);
+                // No attempt was made: nothing was written.
+                facts.attempts = Some(0);
+            }
+            return Ok(task);
+        }
         let noting = facts.is_some();
         let mut read = None;
         let noted = facts.as_deref_mut();
@@ -112,6 +126,24 @@ impl ChangeBoardTask {
     }
 }
 
+impl ChangeBoardTask {
+    /// Task `id` as the board holds it, and the time it was judged at,
+    /// when the actor's renewal of its claim is not due yet
+    /// ([`renewal_due`]); `None` when it is, or when the renewal's own
+    /// rule must judge it.
+    ///
+    /// # Errors
+    /// The store's, or the clock's.
+    fn not_due(&self, id: &Slug) -> Result<Option<(Task, Timestamp)>, ProjectBoardError> {
+        let board = self.store.read()?;
+        let now = self.clock.now()?;
+        Ok(task_on(&board, id)
+            .ok()
+            .filter(|task| !renewal_due(task, &self.actor, &now))
+            .map(|task| (task.clone(), now)))
+    }
+}
+
 /// The board holds what `op` must see: linking a pull request needs every
 /// task's, so while a file every write carries is set aside (what it holds
 /// unknown, whether or not its task can be told) a link is refused rather
@@ -136,6 +168,7 @@ fn board_readable_for(op: &BoardOp, board: &BoardSnapshot) -> Result<(), Project
                     Some(key) => Err(ProjectBoardError::Quarantined {
                         key: key.clone(),
                         path: file.path.clone(),
+                        object: file.object.clone(),
                     }),
                     None => Err(ProjectBoardError::SetAsideFile {
                         path: file.path.clone(),

@@ -391,7 +391,10 @@ fn a_completion_waits_while_a_run_or_change_of_its_task_is_set_aside() {
             complete(&store, &host).execute(&slug("a")),
             Err(ProjectBoardError::Quarantined {
                 key,
-                path: path.into()
+                path: path.into(),
+                object: crate::infrastructure::test_support::memory_board_store::memory_object(
+                    path
+                ),
             })
         );
         assert_eq!(status(&store), TaskStatus::Review);

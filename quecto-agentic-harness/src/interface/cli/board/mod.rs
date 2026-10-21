@@ -129,6 +129,12 @@ const CLI_OPS: &[&str] = &[
     "clear_set_aside",
 ];
 
+/// The ops `quecto board` takes, as its command line spells them
+/// (`list-ready`): what `quecto help` lists, so it never drifts (#2660).
+pub(in crate::interface::cli) fn command_line_ops() -> impl Iterator<Item = String> {
+    CLI_OPS.iter().map(|op| op.replace('_', "-"))
+}
+
 /// Why `quecto board` does not take `op`, an op of the board's table it
 /// does not list.
 fn not_taken(op: &str) -> String {
