@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::install_authority_service::unit_serves_config;
 use super::negotiate_authority::{ENSURE_ATTEMPTS, NegotiateAuthority};
-use crate::application::admission::dto::authority::AuthorityReport;
+use crate::application::admission::dto::authority::{AuthorityAdminError, AuthorityReport};
 use crate::application::admission::dto::negotiation::{
     Restart, RestartError, RestartOutcome, RestartReport,
 };
@@ -65,9 +65,10 @@ impl RestartAuthority {
     /// Restart the broker this root session joined, then rejoin it. Only a
     /// root restarts: a child's capability belongs to its parent. A broker
     /// that other sessions or sub-agents share is restarted only once
-    /// `confirmed`: their sub-agents fail and must be respawned, and their
-    /// in-flight requests fail once.
-    pub fn execute(&self, confirmed: bool) -> Result<Restart, RestartError> {
+    /// confirmed for at least as many of them as are registered now
+    /// (`confirmed`: the count the user acknowledged): their sub-agents
+    /// fail and must be respawned, and their in-flight requests fail once.
+    pub fn execute(&self, confirmed: Option<usize>) -> Result<Restart, RestartError> {
         let launch = match self.session.joined() {
             Some(JoinedAuthority::Root(launch)) => launch,
             Some(JoinedAuthority::Child) => return Err(RestartError::Child),
@@ -77,18 +78,36 @@ impl RestartAuthority {
             return Err(RestartError::InProgress);
         }
         let _in_flight = InFlight(&self.in_flight);
-        let running = self.admin.inspect(&launch.directory).ok();
+        // Only a broker that is not there at all counts as "nothing
+        // running": one that does not answer its owner is not replaced on
+        // a guess.
+        let running = match self.admin.inspect(&launch.directory) {
+            Ok(report) => Some(report),
+            Err(AuthorityAdminError::NotRunning { .. }) => None,
+            Err(AuthorityAdminError::Failed { reason, .. }) => {
+                return self
+                    .restart_unanswering(&launch, &reason)
+                    .map_err(RestartError::Restart)
+                    .and_then(|outcome| self.rejoin(outcome));
+            }
+        };
         // This root is one live scope; every other is a session or a
         // sub-agent the restart breaks.
         let others = running
             .as_ref()
             .map_or(0, |report| report.live_scopes.saturating_sub(1));
-        if others > 0 && !confirmed {
+        let acknowledged = matches!(confirmed, Some(count) if count >= others);
+        if others > 0 && !acknowledged {
             return Ok(Restart::Unconfirmed { others });
         }
         let outcome = self
             .restart(&launch, running.as_ref())
             .map_err(RestartError::Restart)?;
+        self.rejoin(outcome)
+    }
+
+    /// Rejoin the restarted broker and report.
+    fn rejoin(&self, outcome: RestartOutcome) -> Result<Restart, RestartError> {
         self.session
             .rejoin()
             .map_err(|reason| RestartError::Rejoin { outcome, reason })?;
@@ -104,6 +123,38 @@ impl RestartAuthority {
     /// when it is active and is what serves; otherwise whatever serves is
     /// stopped first, and the unit (when installed for this config) or an
     /// on-demand broker is started in its place.
+    /// The broker does not answer its owner: only an active unit serving
+    /// this config can be restarted around it (systemd ends its process);
+    /// anything else is refused, naming how to stop it.
+    fn restart_unanswering(
+        &self,
+        launch: &AuthorityLaunch,
+        reason: &str,
+    ) -> Result<RestartOutcome, String> {
+        let directory = &launch.directory;
+        let unit_installed = match self.service.unit_status()? {
+            UnitStatus::Present { contents } => unit_serves_config(&contents, &launch.config),
+            UnitStatus::Absent => false,
+        };
+        if unit_installed && self.service.is_active()? {
+            self.service.restart()?;
+            self.wait_until(|| self.admin.inspect(directory).is_ok())
+                .map_err(|()| {
+                    format!(
+                        "{} was restarted but no broker answered at {}",
+                        self.service.unit_name(),
+                        directory.display()
+                    )
+                })?;
+            return Ok(RestartOutcome::ServiceRestarted);
+        }
+        Err(format!(
+            "the admission broker at {} does not answer its owner ({reason}); stop it (`fuser -k -TERM {}/authority.lock`) and restart again",
+            directory.display(),
+            directory.display()
+        ))
+    }
+
     fn restart(
         &self,
         launch: &AuthorityLaunch,
@@ -143,19 +194,20 @@ impl RestartAuthority {
                     return Ok(RestartOutcome::ServiceRestarted);
                 }
             }
-            return Err(format!(
-                "{} was restarted but no new broker answered at {}",
-                self.service.unit_name(),
-                directory.display()
-            ));
+            // The unit did not serve: a broker started on demand does.
         }
         self.negotiate.ensure_running(launch)?;
         self.wait_until(|| self.answers_anew(directory, before))
-            .map_err(|()| {
-                format!(
+            .map_err(|()| match unit_installed {
+                true => format!(
+                    "{} was restarted but no new broker answered at {}, nor did one started on demand",
+                    self.service.unit_name(),
+                    directory.display()
+                ),
+                false => format!(
                     "no new admission broker answered at {}",
                     directory.display()
-                )
+                ),
             })?;
         Ok(match running {
             Some(_) => RestartOutcome::Restarted,

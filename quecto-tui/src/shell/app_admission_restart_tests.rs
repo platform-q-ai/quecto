@@ -158,7 +158,7 @@ async fn a_shared_restart_is_confirmed_by_running_it_again() {
     assert!(
         confirmed
             .iter()
-            .any(|c| c.contains("restart_admission") && c.contains(r#""confirm":true"#)),
+            .any(|c| c.contains("restart_admission") && c.contains(r#""confirm":3"#)),
         "{confirmed:?}"
     );
     h.submit("/admission restart");
@@ -208,4 +208,42 @@ async fn the_model_outranks_the_badge_on_a_narrow_line() {
         "{wide}"
     );
     assert!(wide.contains("anthropic/claude-sonnet-4-5"), "{wide}");
+}
+
+/// #2615 review round 2: a confirmation lapses after a minute.
+#[tokio::test]
+async fn a_confirmation_lapses_after_a_minute() {
+    let mut h = TuiHarness::new().await;
+    h.event_line(&response_line(
+        true,
+        serde_json::json!({"outcome": "unconfirmed", "sharedWith": 2}),
+        None,
+    ));
+    tokio::time::pause();
+    tokio::time::advance(std::time::Duration::from_secs(61)).await;
+    h.submit("/admission restart");
+    let sent = h.drain_commands().await;
+    assert!(
+        sent.iter()
+            .any(|c| c.contains("restart_admission") && !c.contains("confirm")),
+        "past the minute nothing is confirmed: {sent:?}"
+    );
+}
+
+/// #2615 review round 2: an outcome this TUI does not know is not
+/// reported as a restart.
+#[tokio::test]
+async fn an_unknown_outcome_is_not_reported_as_a_restart() {
+    let mut h = TuiHarness::new().await;
+    h.event_line(&response_line(
+        true,
+        serde_json::json!({"outcome": "rebooted", "authorityStatus": "connected"}),
+        None,
+    ));
+    assert_eq!(
+        h.notification_messages(),
+        [
+            "The admission broker answered the restart with an unknown outcome (rebooted); check /admission"
+        ]
+    );
 }

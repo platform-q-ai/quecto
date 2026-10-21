@@ -43,8 +43,8 @@ pub(crate) struct ConnectionState {
     /// event carries none, so the badge keeps it while its queue depth moves.
     pub(crate) admission_authority: Option<String>,
     /// Until when a second `/admission restart` confirms restarting a broker
-    /// others share (#2615).
-    pub(crate) admission_restart_confirm_until: Option<tokio::time::Instant>,
+    /// shared with the acknowledged count of others (#2615).
+    pub(crate) admission_restart_confirm_until: Option<(tokio::time::Instant, u64)>,
     /// The spinner message this module last wrote, so a tool message set by
     /// someone else is never clobbered when the wait ends.
     pub(crate) admission_spinner_message: Option<String>,

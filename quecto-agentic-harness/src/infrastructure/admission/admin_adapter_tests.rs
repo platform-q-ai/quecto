@@ -27,5 +27,5 @@ fn no_authority_at_the_directory_is_not_running_for_inspect_and_reset_alike() {
             "{what}: {error}"
         );
     }
-    assert_eq!(format!("{admin:?}"), "SocketAuthorityAdmin");
+    assert!(format!("{admin:?}").starts_with("SocketAuthorityAdmin"));
 }

@@ -124,7 +124,11 @@ fn intercept_admission_restart(ctx: &ReaderDispatchCtx<'_>) -> bool {
         .get("id")
         .and_then(|id| id.as_str())
         .map(str::to_owned);
-    let confirm = value.get("confirm").and_then(|confirm| confirm.as_bool()) == Some(true);
+    // The count of other sessions and sub-agents the user acknowledged.
+    let confirm = value
+        .get("confirm")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|count| usize::try_from(count).ok());
     let (clients, client_id) = (ctx.registry.clone(), ctx.client_id);
     tokio::spawn(async move {
         let answered = tokio::task::spawn_blocking(move || respond(registered(), confirm)).await;

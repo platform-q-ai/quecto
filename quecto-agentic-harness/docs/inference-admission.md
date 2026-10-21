@@ -202,7 +202,12 @@ A restart interrupts everyone sharing the broker: every live sub-agent (of any
 session) fails closed and must be respawned, and other sessions' in-flight
 requests fail once before they reconnect. So when other sessions or sub-agents
 are registered, the first `/admission restart` names how many and restarts
-nothing; running it again within a minute confirms it.
+nothing; running it again within a minute confirms it for that many (if more
+have joined since, it asks again). If the installed unit does not serve after
+being started twice, a broker started on demand serves instead. A broker that
+does not answer its owner (stopped with SIGSTOP, say) is never taken for "not
+running": only an active unit is restarted around it; otherwise the restart
+is refused with ``stop it (`fuser -k -TERM <directory>/authority.lock`)``.
 
 The TUI footer shows the broker's health beside the model:
 `admission ✓ connected`, `admission ⟳ reconnecting` or

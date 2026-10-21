@@ -1,9 +1,12 @@
 //! `AuthorityAdmin` over the authority's admin socket (#2024 S3). Wraps the
 //! existing async `AdminConnection` behind the capability's synchronous port,
 //! running each call on a short-lived current-thread runtime so the CLI's
-//! per-command invocation needs no ambient runtime.
+//! per-command invocation needs no ambient runtime. Every call is bounded
+//! (#2615): a broker that is stopped (SIGSTOP) or wedged answers nothing,
+//! and is reported as failing, never waited on forever.
 
 use std::path::Path;
+use std::time::Duration;
 
 use super::{AdminConnection, AuthorityDirectory};
 use crate::application::admission::dto::{
@@ -12,12 +15,52 @@ use crate::application::admission::dto::{
 };
 use crate::application::admission::ports::AuthorityAdmin;
 
-#[derive(Debug, Default)]
-pub struct SocketAuthorityAdmin;
+/// How long one admin call (connect, hello, operation) may take.
+pub const ADMIN_CALL_BOUND: Duration = Duration::from_secs(5);
+
+#[derive(Debug)]
+pub struct SocketAuthorityAdmin {
+    bound: Duration,
+}
+
+impl Default for SocketAuthorityAdmin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SocketAuthorityAdmin {
     pub fn new() -> Self {
-        Self
+        Self {
+            bound: ADMIN_CALL_BOUND,
+        }
+    }
+
+    /// Bound each call by `bound` instead (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn bounded_by(bound: Duration) -> Self {
+        Self { bound }
+    }
+
+    /// Run one admin call within the bound; past it the broker is there
+    /// but not answering its owner.
+    fn within<T>(
+        &self,
+        runtime: &tokio::runtime::Runtime,
+        directory: &Path,
+        call: impl std::future::Future<Output = Result<T, AuthorityAdminError>>,
+    ) -> Result<T, AuthorityAdminError> {
+        runtime
+            .block_on(async { tokio::time::timeout(self.bound, call).await })
+            .unwrap_or_else(|_| {
+                Err(AuthorityAdminError::Failed {
+                    directory: directory.to_path_buf(),
+                    reason: format!(
+                        "no answer within {} s (is the broker stopped?)",
+                        self.bound.as_secs()
+                    ),
+                })
+            })
     }
 
     fn runtime() -> Result<tokio::runtime::Runtime, String> {
@@ -35,7 +78,7 @@ impl AuthorityAdmin for SocketAuthorityAdmin {
             directory: directory.to_path_buf(),
             reason,
         })?;
-        runtime.block_on(async {
+        self.within(&runtime, directory, async {
             let admin = AdminConnection::connect(&admin_socket).await.map_err(|e| {
                 AuthorityAdminError::NotRunning {
                     directory: directory.to_path_buf(),
@@ -83,7 +126,7 @@ impl AuthorityAdmin for SocketAuthorityAdmin {
             directory: directory.to_path_buf(),
             reason,
         })?;
-        runtime.block_on(async {
+        self.within(&runtime, directory, async {
             let admin = AdminConnection::connect(&admin_socket).await.map_err(|e| {
                 AuthorityAdminError::NotRunning {
                     directory: directory.to_path_buf(),
@@ -103,7 +146,7 @@ impl AuthorityAdmin for SocketAuthorityAdmin {
             directory: directory.to_path_buf(),
             reason,
         })?;
-        runtime.block_on(async {
+        self.within(&runtime, directory, async {
             let admin = AdminConnection::connect(&admin_socket).await.map_err(|e| {
                 AuthorityAdminError::NotRunning {
                     directory: directory.to_path_buf(),

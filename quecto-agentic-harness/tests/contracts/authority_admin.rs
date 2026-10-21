@@ -138,3 +138,27 @@ fn an_on_demand_authority_reports_itself_as_one() {
     assert!(report.on_demand);
     rt.block_on(server.shutdown());
 }
+
+/// #2615 review: a broker that accepts but never answers (stopped with
+/// SIGSTOP, say) fails each admin call within its bound, as `Failed`, never
+/// as `NotRunning` and never by waiting forever.
+#[test]
+fn a_broker_that_never_answers_fails_within_the_bound() {
+    let tmp = tempfile::tempdir().unwrap();
+    let directory = tmp.path().join("authority");
+    std::fs::create_dir_all(&directory).unwrap();
+    let _silent = std::os::unix::net::UnixListener::bind(directory.join("admin.sock")).unwrap();
+    let admin = SocketAuthorityAdmin::bounded_by(std::time::Duration::from_millis(200));
+    let started = std::time::Instant::now();
+    for result in [
+        admin.inspect(&directory).map(drop),
+        admin.stop(&directory),
+        admin.reset(&directory).map(drop),
+    ] {
+        assert!(
+            matches!(result, Err(AuthorityAdminError::Failed { ref reason, .. }) if reason.contains("no answer")),
+            "{result:?}"
+        );
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+}
