@@ -615,6 +615,7 @@ stays in `thinking` (or whatever phase it is in) and its `progress` becomes
 | `epoch` | integer \| omitted | The authority epoch this process's *current* capability was minted in; a root re-registers into the current epoch after a broker restart or reset, so it moves |
 | `connected` | boolean \| omitted | Whether the link is open *and* holds a live capability (a revoked root reads `false` until it re-registers) |
 | `authorityStatus` | string \| omitted | `connected`; `reconnecting` (the link lost its broker or its capability and this root will re-register on its next attempt); `unavailable` (a child whose parent-minted capability is gone — its parent respawns it — or a root whose bounded reconnection was exhausted, or whose broker came back with a different policy: restart required); presentation only |
+| `restartRequired` | `true` \| omitted | `true` when this root's broker came back publishing a different policy than the one the session composed against (#2615): only a session restart adopts it; absent otherwise |
 
 `directory`, `epoch`, `connected` and `authorityStatus` describe the shared
 authority itself (#2024 S3, one host-wide broker). They are read from the live
@@ -1240,7 +1241,7 @@ Restart the shared admission broker this root session uses, then rejoin it (#261
 | `type` | `"restart_admission"` | yes | |
 | `id` | string | no | Correlation ID |
 
-**Response data:** `{"outcome": "service_restarted" | "restarted" | "started", "authorityStatus": "connected" | "reconnecting" | "unavailable"}`.
+**Response data:** `{"outcome": "service_restarted" | "restarted" | "started", "authorityStatus": "connected" | "reconnecting" | "unavailable", "sessionRestartRequired": true}`. `sessionRestartRequired` is present (and `true`) only when the broker came back publishing a different policy than the one this session composed against: the broker restart succeeded, and only a session restart adopts the policy (the TUI then restarts its session).
 
 Errors (the response's `error`):
 

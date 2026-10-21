@@ -103,7 +103,7 @@ impl AuthorityView {
         snapshot.epoch = Some(self.epoch);
         snapshot.connected = Some(self.connected);
         snapshot.authority_status = Some(self.status.to_string());
-        let _ = self.restart_required;
+        snapshot.restart_required = self.restart_required.then_some(true);
     }
 }
 

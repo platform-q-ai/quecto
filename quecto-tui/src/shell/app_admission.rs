@@ -92,11 +92,12 @@ impl App {
             self.ac_mut().admission_authority = Some(status.clone());
             let was = self.ac().admission_restart_required;
             self.ac_mut().admission_restart_required = view.restart_required;
-            let _ = was;
+            if view.restart_required && !was {
+                self.offer_session_restart();
+            }
         }
-        let _ = crate::protocol::admission_payloads::RESTART_REQUIRED_BADGE;
-        let badge = match false {
-            true => None,
+        let badge = match self.ac().admission_restart_required {
+            true => Some(crate::protocol::admission_payloads::RESTART_REQUIRED_BADGE.to_string()),
             false => self.ac().admission_authority.as_deref().and_then(|status| {
                 crate::protocol::admission_payloads::authority_badge(status, view.waiting)
             }),

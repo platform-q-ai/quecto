@@ -468,7 +468,12 @@ impl AuthoritySession for CurrentProcessSession {
                 "admission is not configured for this session".into(),
             ));
         };
-        binding.rejoin(REJOIN_WAIT).map_err(RejoinRefusal::Failed)
+        binding
+            .rejoin(REJOIN_WAIT)
+            .map_err(|reason| match binding.restart_required() {
+                true => RejoinRefusal::PolicyChanged,
+                false => RejoinRefusal::Failed(reason),
+            })
     }
 
     fn health(&self) -> String {

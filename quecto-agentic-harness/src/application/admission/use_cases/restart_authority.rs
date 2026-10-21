@@ -78,12 +78,7 @@ impl RestartAuthority {
         // offers the session (#2615): reported, not refused.
         let session_restart_required = match self.session.rejoin() {
             Ok(()) => false,
-            Err(RejoinRefusal::PolicyChanged) => {
-                return Err(RestartError::Rejoin {
-                    outcome,
-                    reason: "restart required".into(),
-                });
-            }
+            Err(RejoinRefusal::PolicyChanged) => true,
             Err(RejoinRefusal::Failed(reason)) => {
                 return Err(RestartError::Rejoin { outcome, reason });
             }

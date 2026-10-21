@@ -147,7 +147,7 @@ This order keeps sessions admitted until they are restarted; the uninstall stops
 | `another admission authority owns …/authority.lock`, exit 3 (service not restarted: `RestartPreventExitStatus=3`) | a foreground `run` or an old service holds the lock | stop it, then `systemctl --user restart quecto-admission-broker.service` |
 | `install-service` → `systemctl` errors | no systemd user session (container, ssh without lingering) | `loginctl enable-linger $USER`, or supervise `quecto admission-broker run --config <abs>` yourself |
 | a new agent exits with `admission negotiation failed: the admission broker exited (…) before it answered; see …/broker.log` or `… did not answer (…)` | the broker started on demand could not serve | read `<directory>/broker.log`, fix the cause, start the agent again |
-| a session reports "restart required" | a root's own section changed on live reload, or the broker came back with a different policy | restart that session (never a child: children inherit) |
+| a session reports "restart required" | a root's own section changed on live reload, or the broker came back with a different policy | in the TUI, `/admission restart` (restarts the broker and the session); otherwise restart that session (never a child: children inherit) |
 | `journal_healthy: false` | the journal file is unwritable or corrupt | fix permissions/storage under the directory; never delete the journal to clear a queue |
 
 Recovery from a stuck or uncertain group is `quecto admission-broker reset` → `{"directory":…,"epoch":N}` plus a stderr warning; roots keep running, children are respawned — see below. An uncertain group also clears by itself 60 s after the later of the lost attempt's deadline and the loss of its client, so a reset is only needed to clear it sooner.
@@ -166,8 +166,9 @@ in flight when the broker went away fails closed exactly once with an
 down: reconnection exhausted (broker still not back: `authorityStatus:
 "unavailable"`, retried on the next attempt), or the broker came back with a
 **different policy** — the session composed against the old one, so it fails
-closed with "restart required" and stays `unavailable` until the agent is
-restarted.
+closed with "restart required" and stays `unavailable` (with
+`restartRequired: true`) until the agent is restarted; the TUI offers
+`/admission restart`, which restarts the broker and the session in one step.
 
 A **child** (spawned by a parent, bound to a parent-registered capability)
 cannot re-register on its own. After a `reset` its `authorityStatus` is

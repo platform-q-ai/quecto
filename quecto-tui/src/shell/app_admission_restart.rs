@@ -96,9 +96,8 @@ impl App {
             Some("started") => "Admission broker started",
             _ => "Admission broker restarted",
         };
-        if view.session_restart_required && done.is_empty() {
+        if view.session_restart_required {
             self.restart_session_for_policy(done);
-            self.offer_session_restart();
             return;
         }
         match view.authority_status.as_deref() {
