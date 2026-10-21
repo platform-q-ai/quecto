@@ -1,6 +1,11 @@
 //! Run and member lifecycle values: statuses, a member's process identity
 //! and how its process ended.
 
+/// How a run completed by `Workbench.complete(revision)` states its
+/// reason: this, then the revision (#2273). The teardown reads the
+/// revision back from it (#2666), so both use this one spelling.
+pub const COMPLETED_AT: &str = "completed at ";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunStatus {
     Setup,

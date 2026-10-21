@@ -271,6 +271,10 @@ pub fn outcome(
             // Whether this front end could see the run's swarm still
             // running; one that could not says what that leaves its caller.
             fields.insert("liveness".into(), json!(ended.liveness.as_str()));
+            // A success's evidence revisions the push rule did not check.
+            if let Some(unchecked) = ended.unchecked {
+                fields.insert("unchecked".into(), json!(unchecked));
+            }
             match ended.liveness {
                 LivenessCheck::Checked => {}
                 LivenessCheck::NotChecked => {
@@ -281,10 +285,15 @@ pub fn outcome(
             // from its swarm's kept board shows them in the run itself.
             let report = match (run.fields().outcome, ended.report) {
                 (
-                    Some(RunOutcome::Succeeded | RunOutcome::Stopped | RunOutcome::Failed),
+                    Some(
+                        RunOutcome::Succeeded
+                        | RunOutcome::Stopped
+                        | RunOutcome::Failed
+                        | RunOutcome::Lost,
+                    ),
                     RunReport::Unreported,
                 ) => Some(NO_SWARM_REPORT),
-                (Some(RunOutcome::Lost) | None, _) | (_, RunReport::Kept) => None,
+                (None, _) | (_, RunReport::Kept) => None,
             };
             if let Some(report) = report {
                 fields.insert("items_recorded".into(), json!(report));
@@ -356,10 +365,7 @@ fn started_fields(started: &StartedTask) -> Map<String, Value> {
 /// When the claim `task` holds is next renewed (#2656): halfway through
 /// it; `null` for a task that holds none.
 fn renew_after_json(task: &Task) -> Value {
-    match &task.fields().claim {
-        Some(claim) => json!(renew_after(claim).as_str()),
-        None => Value::Null,
-    }
+    renew_after(task).map_or(Value::Null, |at| json!(at.as_str()))
 }
 
 /// The files set aside, each with its `object` and the `copies` (every

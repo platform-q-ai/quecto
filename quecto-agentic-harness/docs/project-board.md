@@ -88,6 +88,29 @@ makes a board a read refuses, except that it leaves at most 2,048 entries in
 were markdown (a JSON file and a summary per task). A file larger than its kind's
 cap is set aside, not read.
 
+Writers in one clone share its tracking ref, `refs/remotes/<remote>/quecto/board`,
+and git locks it while one of them fetches. A fetch that finds it locked by
+another writer, or moved by one while it held it, is a race this clone lost, never
+`store_unavailable`: it fetches again after a short pause, for about 1.5 s in all.
+The write's own push is then judged as any other, and a race it lost is counted
+in `attempts` and `lost`.
+
+Every change stamps what it writes with the writer's clock, or a second past the
+artifact's own `updated` if that clock reads no later, and never before its task's
+`updated`. A plan's change (an acceptance too) is stamped no earlier than any
+plan of its task, and a change's no earlier than any change of its task, each
+within the outside time's bound (one stamped past it, by a hand edit or a clock
+that ran ahead, is left out). So, kind by kind, a task's own stamps never run
+backwards, and neither do its plans' or its changes'; a write of the task itself
+(a move, a renewal) is stamped from the task alone, and may read earlier than a
+plan or change written just before it. A quick run of changes may stamp a second
+or so ahead of the wall clock.
+
+Board text (a title, a line of prose such as a description or a plan's approach,
+and a text cell such as a task item's title or criterion) holds every backslash as
+itself: one a reader would take for an escape (before ASCII punctuation, or at the
+end, outside code) is written doubled, and read back as one.
+
 ## List
 
 `list`, `list_ready` and `list_takeable` answer the board's `head`, the
@@ -330,7 +353,9 @@ claimed by the starter (a task the starter holds has its claim renewed), moved
 to `in_progress`, and run 1 (or the next) of its accepted plan begins, all at
 one stamp. Then the run's coordinator is launched in a new container with the
 plan's brief: the run to create, its task items in dependency order, each
-title exactly as the board matches it back. The coordinator gets the plan's
+title exactly as the board matches it back, and evidence revisions as full
+commit ids, pushed before it reports a run that succeeded (see "Ending a run"). The
+coordinator gets the plan's
 `coordinator` role's model and effort; other roles' models are not applied yet,
 and the answer lists them as `not_applied`.
 
@@ -402,7 +427,9 @@ whose op reads as `start`, or a front end's own), to say why and stop. No other
 op's answer carries `steps`, and these answers carry none: the CLI's (which
 takes no `start`), a refusal of a request whose op cannot be read, and a call
 that did not finish (cancelled, or ended without an answer). The words are the
-Pocket start prompt's, moved there unchanged, so that prompt can be one line.
+Pocket start prompt's, moved there unchanged, so that prompt can be one line,
+with one step added (#2666): before closing a run that succeeded, make sure
+every commit its evidence names is on the repository's remote.
 
 ## Ending a run
 
@@ -410,13 +437,17 @@ Nothing records a started run's end by itself: the swarm never writes the
 board, and the run holds its task until it ends, since a held task leaves its
 holder only once its runs have ended. Its claim holder ends it, in this order:
 
-1. When the run is paused holding an outcome, close it: `agent_cmd`
+1. For a run that succeeded, make sure every commit its evidence names is on
+   the repository's remote (have the coordinator push any that is not): once
+   the coordinator is killed, its container and any unpushed commit are gone,
+   and `end_run` refuses the success (`not_pushed`, below).
+2. When the run is paused holding an outcome, close it: `agent_cmd`
    `swarm_control` `close` on the coordinator. A cancelled run needs no close.
-2. Stop the coordinator with `agent_cmd kill`. Until it has stopped, `end_run`
+3. Stop the coordinator with `agent_cmd kill`. Until it has stopped, `end_run`
    answers `run_live`, naming the coordinator's `agent` to kill.
-3. `end_run(task, run, outcome, expected_updated)` with `succeeded`, `stopped`
+4. `end_run(task, run, outcome, expected_updated)` with `succeeded`, `stopped`
    or `failed`.
-4. Renew the claim before it lapses: it lasts 2 hours, and nothing renews it
+5. Renew the claim before it lapses: it lasts 2 hours, and nothing renews it
    while the swarm runs. If it has expired, renew it if it is yours
    (`renew`), or take the task over if it is another's (`take_over`), then
    `end_run`.
@@ -436,14 +467,24 @@ a fold-back matches it), with its owner and evidence, and the swarm's observed
 tokens as its cost. The swarm's board lives in the coordinator's container and
 goes with it once a closed run's coordinator is killed, so the final-member
 teardown reads it first, when the run has ended (succeeded, failed,
-budget-exhausted, blocked or cancelled; never one still running or paused), and
-keeps what a fold-back reads of it in the harness's memory, under the session
+budget-exhausted, blocked or cancelled), and keeps what a fold-back reads of it
+in the harness's memory, under the session
 and the coordinator's spawn label (`board-<task>-run-<n>`; no other label's
 board is kept, so an ad-hoc swarm's never is). The agent tool's `end_run` finds
 it by that label, with no memory of the launch. A board is kept only when its
 projection holds every item (one that left items out is logged and not kept;
 members or evidence left out do not matter), only the newest 16 are kept, and
-one is dropped once its run is recorded. Where no board was kept, the run is recorded
+one is dropped once its run is recorded. A run still running or paused is kept
+only when its owner ended the coordinator on purpose (a one-shot parent's end,
+an `agent_cmd kill`; #2674), as far as it got, apart from an ended one: a
+`stopped`, `failed` or `lost` end records its items from that board (finished
+items with their owners and evidence; their evidence commits are recorded
+unchecked, as only a success is judged by where its commits are), and a
+`succeeded` end never does (it answers `items_not_done` with `report`
+`"none_kept"`). Only the newest 16 boards are kept in all, and past that a left
+board goes before any ended run's. On any other end (the
+coordinator exiting by itself, a harness shutdown) a running or paused run's
+board is not kept: it may yet change. Where no board was kept, the run is recorded
 as a swarm that ended so and reported nothing would be: each task item as todo,
 its cost unknown. That is so from the CLI, for a run another session launched,
 for a board that could not be read whole, and for the gaps a restart leaves:
@@ -461,10 +502,99 @@ board never shows a succeeded run over work it shows undone. With `report`
 refusal asks the user whether the work was done before the run is ended. A run past the board's bytes with its evidence is ended
 once more without it, as a fold-back is.
 
+A run ends as `succeeded` only over work that left the swarm's container
+(#2666): every commit the evidence of its recorded task items names must be on
+the board's remote, reached by one of its branches or tags. A revision's commit
+is its one word (split at whitespace, `@` and `/`, surrounding punctuation
+trimmed) that is wholly hex digits, 7 or more (`<sha>`, `` `<sha>`. ``, `commit
+<sha>`, `<sha> (main)`, `owner/repo@<sha>`), or, when several are, the one of
+them with 12 or more (`<sha> on 20261021`), read in lower case, so the same
+commit in two cases is asked about once; a revision with none, or with two of 12
+or more, names none. Only a full commit id of the
+repository's format (40 hex digits; 64 in a SHA-256 repository) or a prefix of
+at least 12 is checked: a 64-digit digest in a SHA-1 repository, a 7 to 11 digit
+short id, and evidence that names no commit (an artifact's digest, a red-test
+bundle, a branch or tag name, `working tree`) are accepted unchecked, so a done
+item whose evidence names no checkable commit does not refuse the success. The
+answer of a success recorded from a kept board gives `unchecked`: how many of
+its recorded items' evidence entries name no commit the push rule checked (each
+entry counted, repeats included), so a pass with nothing checked shows. Otherwise the
+end is refused (`not_pushed`, a rule refusal naming the `run` and how many
+commits, `revisions`, are not there) and nothing is written, so the board never
+shows a succeeded run over a commit made in the container and torn down with
+it. Every other rule judges the end first (the claim, the run, its items), so
+the remote is asked only for an end that passes them, and it is asked once,
+before the write begins. To judge it, the remote's branches and tags are listed
+(`ls-remote`); each commit is walked against the tips the clone holds, and only
+when they do not reach it are the tips it lacks fetched by id, moving no ref and
+writing no `FETCH_HEAD`. A remote that cannot be read refuses the end as
+unavailable; a shallow clone reads a commit past its boundary as not there.
+
+The check comes after the container is gone (the kept board is read as the
+coordinator leaves), and the kept board is the swarm's record, not its commits:
+a commit that was never pushed went with the container. So the commits are
+pushed before the run is closed: the coordinator's brief asks it to give each
+evidence revision as a full commit id and, before it reports a run that
+succeeded, to push those commits as they are to a branch on the repository's
+remote, naming that branch and its head (evidence it deliberately does not
+push, such as a red-test bundle, names the bundle, not a commit); and the
+`start` answer's steps ask the parent, before it closes a run that succeeded,
+to make sure every such commit is on a branch or tag of the board's remote. And
+the owner's kill (`agent_cmd kill`) of a board run's coordinator whose run
+ended succeeded keeps its environment (retained, as an unfinished run's is;
+`kill_container` removes it) while the commit the run completed at (`completed
+at <revision>`) is not on the board's remote, or that cannot be told: the board,
+the session's board repository or its remote cannot be read (each git call
+within 15 seconds), or the completion names no one commit the push rule checks
+(the same reading as the evidence's). The reason names the environment and its
+workspace: "board run succeeded at <revision>, which is on no branch or tag of
+the board's remote: environment <ref> kept so its work can be pushed from its
+workspace <path>; kill_container <ref> to remove it once pushed". The work
+survives, and can be fetched from that workspace and pushed. The board's remote
+is the `origin` of the repository the session's board tool works on. Only that
+kill keeps it: a run closed and then left to the session's end (its teardown of
+everything, or a harness shutdown) is torn down as before, so push first. If a
+refused end's commits can still be pushed, push them and call `end_run` again;
+if they went with the container, end the run as `failed`. Commits are judged against the board's own
+remote only: a run whose container cloned another repository (a container
+config naming another URL) is refused until its commits are on the board's
+remote too, and is otherwise ended as `stopped` or `failed`. A stop, a failure
+or a loss is never judged by it.
+
 As `lost`, the run is ended by the holder of a live claim, or by anyone when the
 task has no claim; whoever finds the claim expired takes the task over with
-`take_over` first, and then ends the run as its holder. `expected_updated` is
-optional: when given, the task must still be as it was read (`stale`).
+`take_over` first, and then ends the run as its holder. A lost run records what
+is known of it, as a stop does (#2657): its task items, owners, evidence and
+cost from its swarm's kept board, or, with none kept, each task item as todo
+and its cost unknown. (A run ended as lost by the completion that makes its
+task done records none.) `expected_updated` is optional: when given, the task
+must still be as it was read (`stale`).
+
+### A session that ends with its run open
+
+A one-shot `quecto agent -m` session that started a task, and whose reply ends
+while the run is still open, does not leave it `running` with no swarm behind
+it (#2655). Once the run ends in an orderly way (the model finished, or
+`--max-time` stopped it) and its children have settled, every run the
+session's own starts launched that the board still shows open is ended as
+`stopped`: its swarm stopped with the session that ran it, which can account
+for it, so it is not `lost`. Each end goes through the same path as an
+`end_run` from the agent tool, with its rules (the holder's live claim) and its
+liveness check (a coordinator still running keeps the run open), and its
+`board_op` record names the client `session_end`. The run's items are recorded
+from the board its swarm had reached as the session ended its coordinator, kept
+as above, so items its workers finished keep their state and evidence. The
+session says on stderr what became of each: "board: run <n> of task <task> was
+still open as this session ended: ended it as stopped", or, when the end was
+refused, "…, and ending it as stopped was refused (<code>): end it with
+end_run", `<code>` being the rule's own (`not_holder`) when the board's rules
+refused it. When the board cannot be read it says "board: the runs this session
+started could not be read as it ended (<why>): end any still open with
+end_run". A run another
+session launched, or one the board shows ended, is left alone; the task stays
+as it is, held until its claim lapses or its holder moves it. A run that
+failed (a provider error), a crash, a signal, and a harness the TUI or the
+socket protocol runs end none: such a run is still ended by hand.
 
 Never end a run whose swarm is still running. An `end_run` from the agent tool
 is refused (`run_live`, with its `task`, `run` and the running coordinator's
@@ -477,10 +607,25 @@ checked against running swarms: if the run's coordinator still runs, stop it".
 Only the run is written; the task stays as it is, for its holder to move on
 (back to `ready`, say). A run that has ended is refused (`run_ended`), as is
 one the task does not have (`no_such_run`). The answer gives the `run`, as
-`show` gives a run in full, `liveness`, and, for a run its holder ended with no
-swarm board kept, `items_recorded`: "items recorded as todo: no swarm report".
+`show` gives a run in full, `liveness`, and, for a run ended with no swarm board
+kept (as lost too), `items_recorded`: "items recorded as todo: no swarm report".
 A run recorded from its swarm's board carries no `items_recorded`: its items
 show where each stood. `quecto board end-run` takes the same fields.
+
+## Claiming and completing a task
+
+A ready task is claimed (`move(task, to claimed)`, or by a start) only once
+every task it depends on is done or archived, as `list_ready` lists it: otherwise
+the claim is refused (`dependency_not_done`), naming the tasks that hold it back:
+those not done yet in `tasks`, and those not on the board (or set aside) in
+`missing`.
+
+`complete(task)` completes a task whose linked pull requests have all merged,
+reading their states from the repository's host (GitHub, or the configured
+`GH_HOST`). A task that links no pull request has nothing to read there: it is
+refused by the rule itself (`no_prs`, whose message names the way on), with or
+without a host, and its holder finishes it by moving it from review to done. Only a task that links pull
+requests needs the host, and with none it is refused (`no_pull_request_host`).
 
 ## Archiving a task
 
@@ -498,7 +643,10 @@ and an archived task pins none that has not merged (unlink them first). Any
 task is refused while a run of it is going (`run_open`), or while a file named
 as one of its runs (or, for those three, its changes) is set aside (it may be
 the open one): end the run first (Ending a run, above), so an archive never
-races a live run. An archived task
+races a live run. A task is refused while a child task (one naming it as its
+`parent`) is claimed, in progress, in review or blocked (`children_active`,
+naming them in `tasks`): finish or release them first. It is refused too while
+a task file is set aside (`set_aside`), since that may be a child of it. An archived task
 keeps its done one's resolution (`completed`), is `superseded` when others took
 it over, and otherwise has none.
 
@@ -565,7 +713,7 @@ an older quecto ignores it.
 | `turn` | Always `null`: a board call is filed under no agent turn |
 | `op` | The op the request named: `bootstrap`, `list`, `list_ready`, `list_takeable`, `show`, `create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`, `clear_set_aside`, `propose_plan`, `edit_plan`, `accept_plan`, `discard_plan`, `end_run`, `start`; `unknown` for a request that names none, or none the board has. A request the agent tool does not take (`bootstrap`) records its op, refused, and a `quecto board` line refused as it is read records the op it named before the refusal |
 | `front_end` | `tool` (the agent `board` tool) or `cli` (`quecto board`) |
-| `client` | For the tool `agent`, for the CLI `cli`, or, for either, as `QUECTO_BOARD_CLIENT` names it: `pocket_relay` or `other` |
+| `client` | For the tool `agent`, for the CLI `cli`, or, for either, as `QUECTO_BOARD_CLIENT` names it: `pocket_relay` or `other`; `session_end` for an `end_run` the harness makes as a session ends with a run it started still open |
 | `access` | `read` or `write`: what the op does, even when it was refused before it was read |
 | `outcome` | `ok` or `refused` |
 | `code`, `rule` | For a refusal, the answer's error code (`invalid_request`, `rule`, `not_found`, `stale`, `contended`, `clock_ahead`, ...) and, for `rule`, the rule's code (`not_holder`, `claim_expired`, `not_allowed`, ...). `internal` is no answer's code: an agent tool call whose work ended without an answer (it panicked) is recorded as it unwinds, refused as `internal`. A `quecto board` panic aborts the process and writes no record |
@@ -578,7 +726,7 @@ an older quecto ignores it.
 | `plan_state_from`, `plan_state_to` | For `accept_plan` and `discard_plan`: the state of the version it named as the change last read it (`draft`, `accepted`, `superseded` or `discarded`; none when the task has no such version, or the read was refused first), and the state it wrote (`accepted` or `discarded`; none for a refused change) |
 | `run`, `run_outcome` | For `end_run`, once the request was read: the run it named and the outcome it ends it with (`succeeded`, `stopped`, `failed` or `lost`), also when the board refused the change |
 | `status_from`, `status_to` | For a write of a task (`create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`): the task's status as the write last read it (none for `create`), and the status it moved to: a `move`'s target, made or refused, otherwise the status of the task it wrote (`create`'s `draft` or `ready`, `complete`'s `done`), so a refused write other than `move` writes no `status_to`. A `link_pr` or move to `review` that completes its task records its own write's status here; what came of completing it is in `completion`. An `end_run` records only `status_from`, the status of the task whose run it ends: it writes no task |
-| `claim` | For a `move`, `renew`, `take_over`, `link_pr`, `unlink_pr` or `end_run` of a task that holds a claim, the claim as the change found it, never its holder: `held_s` (seconds since it began, below zero when the writer's clock reads before that), `left_s` (seconds until it expires, below zero once it has lapsed) and `holder_is_writer` |
+| `claim` | For a `move`, `renew`, `take_over`, `link_pr`, `unlink_pr` or `end_run` of a task that holds a claim, the claim as the change found it, never its holder: `held_s` (seconds since it began, never below zero: 0 when the writer's clock reads before that), `left_s` (seconds until it expires, below zero once it has lapsed) and `holder_is_writer` |
 | `attempts`, `lost`, `pause_ms` | For a write (every op that writes but `bootstrap`): the attempts it began (at most 3), how many of them lost the race to another writer, and, when it paused between attempts, the time it paused in milliseconds. A `link_pr` or `move` that completes its task counts only its own write's attempts here; the completion's write is counted in `completion_attempts` |
 | `completion`, `completion_code`, `completion_rule`, `prs_linked`, `prs_pending` | After a `link_pr` or a move to `review` of a task that links pull requests: `done` (every one merged), `pending` (some not merged yet, counted in `prs_pending`) or `failed` (the host, the store or a rule failed it, with its error code in `completion_code` and, for a rule, the rule's code in `completion_rule`); `prs_linked` counts the pull requests the task links. `complete` records only `done` or `pending`: a `complete` refused for any other reason records no completion, and its `code` says why |
 | `completion_attempts`, `completion_lost`, `completion_pause_ms` | For a completion run after a `link_pr` or a move to `review`, its own write's attempts, lost races and pause, as `attempts`, `lost` and `pause_ms` count the change's |

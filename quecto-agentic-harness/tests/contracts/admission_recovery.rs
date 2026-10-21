@@ -6,7 +6,7 @@ use quecto::application::admission::ports::inference_admission::{
 use quecto::application::admission::services::inference_admission::AdmissionService;
 use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, AdmissionError, Feedback, GroupId, GroupPolicy, RequestId, RequestState,
-    ScopeId, TerminalOutcome, WorkloadClass,
+    ScopeId, TerminalOutcome, UNCERTAIN_LEASE_MARGIN_MS, UncertainHold, WorkloadClass,
 };
 use std::collections::BTreeMap;
 
@@ -334,4 +334,288 @@ fn scope_limit_counts_live_scopes_and_serials_are_never_recycled() {
     let c = s.register_root(WorkloadClass::Interactive).unwrap();
     assert!(c.serial > b.serial, "serial identity is never reused");
     assert_eq!(s.high_water(a), Err(AdmissionError::UnknownScope));
+}
+
+/// #2664: one lost client must not wedge its group until an operator reset.
+/// Root one's attempt was granted at 0 with a 5 000 ms attempt deadline, so
+/// its uncertain lease clears at the deadline plus the margin.
+#[test]
+fn an_uncertain_lease_clears_itself_once_its_deadline_and_margin_pass() {
+    let (mut s, one, two) = seeded();
+    s.abandon(one, 2).unwrap();
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
+    s.enqueue(two, 2, "a", release - 1).unwrap();
+    assert_eq!(
+        s.next(&group("a"), release - 1),
+        Err(AdmissionError::Quarantined),
+        "the lease holds the group until its bound"
+    );
+    assert_eq!(
+        s.next(&group("a"), release).unwrap(),
+        Some(RequestId {
+            scope: two,
+            sequence: 2
+        }),
+        "the group grants again once the lease has cleared"
+    );
+    let a = s.snapshot(&group("a"), release).unwrap();
+    assert_eq!(
+        (a.active, a.uncertain),
+        (1, 0),
+        "only the new grant is held"
+    );
+}
+
+/// #2664: the dispatcher wakes when an uncertain lease clears, so queued work
+/// is granted then rather than at its own queue deadline.
+#[test]
+fn next_wake_includes_the_instant_an_uncertain_lease_clears() {
+    let (mut s, one, two) = seeded();
+    s.abandon(one, 2).unwrap();
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
+    s.enqueue(two, 2, "a", release - 500).unwrap();
+    assert_eq!(s.next_wake(release - 500).unwrap(), Some(release));
+}
+
+/// #2664: a late completion of a lease that already cleared is acknowledged
+/// and frees nothing a second time.
+#[test]
+fn a_late_completion_of_a_cleared_lease_frees_nothing_twice() {
+    let (mut s, one, two) = seeded();
+    s.abandon(one, 2).unwrap();
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
+    s.enqueue(two, 2, "a", release).unwrap();
+    s.next(&group("a"), release).unwrap().unwrap();
+    assert_eq!(
+        s.complete(one, 1, Feedback::Success, release + 1),
+        Ok(RequestState::Terminal(TerminalOutcome::Cancelled)),
+        "the cleared lease answers its terminal state"
+    );
+    assert_eq!(
+        s.snapshot(&group("a"), release + 1).unwrap().active,
+        1,
+        "the other root's grant still holds its slot"
+    );
+}
+
+/// #2664: an attempt orphaned by an authority restart is bounded as well: it
+/// clears no later than the attempt deadline plus the margin, measured from
+/// the restart, and keeps the group quarantined before then.
+#[test]
+fn a_restored_orphan_clears_itself_within_its_bound() {
+    let (mut s, _one, _two) = seeded();
+    let ledger = s.ledger(1).unwrap();
+    let mut restored = AdmissionService::restore(config(), &ledger, 1_000).unwrap();
+    let root = restored.register_root(WorkloadClass::Interactive).unwrap();
+    restored.enqueue(root, 1, "a", 1_001).unwrap();
+    assert_eq!(
+        restored.next(&group("a"), 1_001),
+        Err(AdmissionError::Quarantined)
+    );
+    let bound = 1_000 + 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
+    restored.enqueue(root, 2, "a", bound).unwrap();
+    assert!(
+        restored.next(&group("a"), bound).unwrap().is_some(),
+        "the orphan has cleared by its bound"
+    );
+    assert_eq!(restored.snapshot(&group("a"), bound).unwrap().uncertain, 0);
+    assert_eq!(
+        restored.ledger(bound).unwrap().outstanding.len(),
+        1,
+        "only the new grant is outstanding"
+    );
+}
+
+/// #2664: the ledger carries each outstanding attempt's remaining bound, so a
+/// restart clears it no later than it would have cleared without one.
+#[test]
+fn the_ledger_carries_each_attempts_remaining_bound_and_restore_honours_it() {
+    let (mut s, _one, _two) = seeded();
+    let ledger = s.ledger(1).unwrap();
+    let remaining = 5_000 + UNCERTAIN_LEASE_MARGIN_MS - 1;
+    assert_eq!(
+        ledger
+            .outstanding
+            .iter()
+            .map(|o| o.release_remaining_ms)
+            .collect::<Vec<_>>(),
+        vec![Some(remaining)]
+    );
+    let mut restored = AdmissionService::restore(config(), &ledger, 1_000).unwrap();
+    let root = restored.register_root(WorkloadClass::Interactive).unwrap();
+    restored
+        .enqueue(root, 1, "a", 1_000 + remaining - 1)
+        .unwrap();
+    assert_eq!(
+        restored.next(&group("a"), 1_000 + remaining - 1),
+        Err(AdmissionError::Quarantined)
+    );
+    assert_eq!(
+        restored.ledger(1_000 + remaining - 1).unwrap().outstanding[0].release_remaining_ms,
+        Some(1),
+        "a checkpoint of the orphan keeps its bound"
+    );
+    restored.enqueue(root, 2, "a", 1_000 + remaining).unwrap();
+    assert!(
+        restored
+            .next(&group("a"), 1_000 + remaining)
+            .unwrap()
+            .is_some()
+    );
+}
+
+/// #2664: a ledger written before bounds existed restores its orphans bounded
+/// by the full attempt timeout plus the margin, and a recorded bound is never
+/// trusted beyond that.
+#[test]
+fn restore_bounds_legacy_and_excessive_ledger_entries_by_the_attempt_timeout() {
+    let (mut s, _one, _two) = seeded();
+    let bound = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
+    for recorded in [None, Some(u64::MAX)] {
+        let mut ledger = s.ledger(1).unwrap();
+        ledger.outstanding[0].release_remaining_ms = recorded;
+        let mut restored = AdmissionService::restore(config(), &ledger, 1_000).unwrap();
+        assert_eq!(
+            restored.ledger(1_000).unwrap().outstanding[0].release_remaining_ms,
+            Some(bound),
+            "{recorded:?}"
+        );
+        assert_eq!(restored.next_wake(1_000).unwrap(), Some(1_000 + bound));
+        assert_eq!(
+            restored
+                .snapshot(&group("a"), 1_000 + bound)
+                .unwrap()
+                .uncertain,
+            0
+        );
+    }
+}
+
+/// #2664: a wait that expires behind uncertain leases records the hold; a
+/// wait that expires for any other reason records none.
+#[test]
+fn held_names_the_leases_a_wait_expired_behind() {
+    let (mut s, one, two) = seeded();
+    assert_eq!(s.held(two, 1, 1), Ok(None), "a queued wait has not expired");
+    s.abandon(one, 2).unwrap();
+    assert_eq!(
+        s.status(two, 1, 1_001).unwrap(),
+        RequestState::Terminal(TerminalOutcome::TimedOut)
+    );
+    assert_eq!(
+        s.held(two, 1, 1_001),
+        Ok(Some(UncertainHold {
+            group: group("a"),
+            leases: 1,
+            clears_in_ms: 5_000 + UNCERTAIN_LEASE_MARGIN_MS - 1_001,
+        }))
+    );
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
+    s.enqueue(two, 2, "b", release).unwrap();
+    s.next(&group("b"), release).unwrap().unwrap();
+    s.enqueue(two, 3, "b", release).unwrap();
+    assert_eq!(
+        s.status(two, 3, release + 1_000).unwrap(),
+        RequestState::Terminal(TerminalOutcome::TimedOut),
+        "capacity, not uncertainty, held this wait"
+    );
+    assert_eq!(s.held(two, 3, release + 1_000), Ok(None));
+}
+
+/// #2664 review: only an uncertain lease clears on time. An attempt whose
+/// owner is still connected keeps its slot past its deadline plus the margin
+/// (it was told to stop, but may still be streaming), so freeing it would
+/// double-spend the slot.
+#[test]
+fn a_connected_attempt_keeps_its_slot_past_its_deadline_and_margin() {
+    let (mut s, one, two) = seeded();
+    let later = 5_000 + UNCERTAIN_LEASE_MARGIN_MS + 1;
+    s.enqueue(two, 2, "a", later).unwrap();
+    s.next(&group("a"), later).unwrap().unwrap();
+    s.enqueue(two, 3, "a", later).unwrap();
+    assert!(
+        matches!(
+            s.status(one, 1, later).unwrap(),
+            RequestState::Active { .. }
+        ),
+        "the connected attempt is still active"
+    );
+    assert_eq!(
+        s.next(&group("a"), later).unwrap(),
+        None,
+        "and holds its slot"
+    );
+    let a = s.snapshot(&group("a"), later).unwrap();
+    assert_eq!((a.active, a.uncertain, a.queued), (2, 0, 1));
+}
+
+/// #2664 review: the margin runs from the later of the deadline and the loss
+/// of the owner, so an owner lost long after its deadline still gets the whole
+/// margin to tear its transport down.
+#[test]
+fn a_lease_lost_after_its_deadline_holds_for_the_margin_from_the_loss() {
+    let (mut s, one, two) = seeded();
+    let lost = 5_000 + 2 * UNCERTAIN_LEASE_MARGIN_MS;
+    s.abandon(one, lost).unwrap();
+    let release = lost + UNCERTAIN_LEASE_MARGIN_MS;
+    assert_eq!(
+        s.ledger(lost + 10).unwrap().outstanding[0].release_remaining_ms,
+        Some(UNCERTAIN_LEASE_MARGIN_MS - 10),
+        "a restart keeps the margin counted from the loss"
+    );
+    s.enqueue(two, 2, "a", release - 1).unwrap();
+    s.enqueue(two, 3, "a", release - 1).unwrap();
+    assert_eq!(
+        s.next(&group("a"), release - 1),
+        Err(AdmissionError::Quarantined)
+    );
+    assert!(s.next(&group("a"), release).unwrap().is_some());
+}
+
+/// #2664 review: a restart loses every connected owner too, so an attempt
+/// past its deadline whose owner was still connected keeps the whole margin
+/// from the ledger write, never a zero remainder.
+#[test]
+fn a_connected_attempt_past_its_deadline_keeps_the_margin_across_a_restart() {
+    let (mut s, _one, _two) = seeded();
+    let ledger = s.ledger(5_000 + 2 * UNCERTAIN_LEASE_MARGIN_MS).unwrap();
+    assert_eq!(
+        ledger.outstanding[0].release_remaining_ms,
+        Some(UNCERTAIN_LEASE_MARGIN_MS)
+    );
+}
+
+/// #2664 review: with several leases holding a group, the wait reports when
+/// the latest clears, since the group stays held until then.
+#[test]
+fn a_hold_reports_the_latest_of_several_leases() {
+    let (mut s, one, two) = seeded();
+    s.next(&group("a"), 10).unwrap().unwrap();
+    s.abandon(one, 20).unwrap();
+    s.abandon(two, 20).unwrap();
+    let three = s.register_root(WorkloadClass::Interactive).unwrap();
+    s.enqueue(three, 1, "a", 100).unwrap();
+    assert_eq!(
+        s.held(three, 1, 1_100),
+        Ok(Some(UncertainHold {
+            group: group("a"),
+            leases: 2,
+            clears_in_ms: 5_010 + UNCERTAIN_LEASE_MARGIN_MS - 1_100,
+        }))
+    );
+}
+
+/// #2664 review: a lease clears before waits expire at the same instant, so a
+/// wait whose deadline is the release instant is not reported as held.
+#[test]
+fn a_wait_expiring_as_the_lease_clears_is_not_held() {
+    let (mut s, one, two) = seeded();
+    s.abandon(one, 2).unwrap();
+    let release = 5_000 + UNCERTAIN_LEASE_MARGIN_MS;
+    s.enqueue(two, 2, "a", release - 1_000).unwrap();
+    assert_eq!(
+        s.status(two, 2, release).unwrap(),
+        RequestState::Terminal(TerminalOutcome::TimedOut)
+    );
+    assert_eq!(s.held(two, 2, release), Ok(None));
 }

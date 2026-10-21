@@ -530,3 +530,21 @@ async fn a_start_the_strict_read_refuses_still_says_to_stop() {
         );
     }
 }
+
+impl crate::application::project_board::ports::StartedRuns for Launching {
+    fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
+        vec![]
+    }
+}
+
+impl crate::application::project_board::ports::StartedRuns for Failing {
+    fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
+        vec![]
+    }
+}
+
+impl crate::application::project_board::ports::StartedRuns for StillRunning {
+    fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
+        vec![]
+    }
+}

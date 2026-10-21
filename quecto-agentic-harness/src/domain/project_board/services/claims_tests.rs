@@ -140,8 +140,14 @@ fn a_task_at_the_last_spellable_second_takes_no_further_stamp() {
     let mut fields = task(Draft).into_fields();
     fields.updated = last.clone();
     let at_the_end = Task::new(fields).unwrap();
-    let moved =
-        super::super::transitions::move_task(&at_the_end, Ready, &person("Ada"), &[], &[], &last);
+    let moved = super::super::transitions::move_task(
+        &at_the_end,
+        Ready,
+        &person("Ada"),
+        (&[], &[]),
+        &[],
+        &last,
+    );
     assert!(
         matches!(moved, Err(BoardRuleError::Invalid(_))),
         "{moved:?}"
@@ -190,9 +196,11 @@ fn claim_facts_count_from_its_start_to_its_expiry() {
         "expires now"
     );
     assert_eq!(facts("Bob", "11:00:01"), fact(7201, -1, false), "lapsed");
+    // #2662: a stamp may run up to a second ahead of the wall clock, so a
+    // clock behind the claim's start finds it held for no time, never less.
     assert_eq!(
         facts("Bob", "08:59:00"),
-        fact(-60, 7260, false),
+        fact(0, 7260, false),
         "a clock behind"
     );
     let shouting = Identity {
@@ -219,8 +227,8 @@ fn a_renewal_is_due_from_halfway_through_the_claims_own_lease() {
     let claim = fields.claim.as_mut().unwrap();
     claim.expires = at("10:00:00");
     let short = Task::new(fields).unwrap();
-    let held = short.fields().claim.as_ref().unwrap();
-    assert_eq!(renew_after(held), at("09:30:00"));
+    assert_eq!(renew_after(&short), Some(at("09:30:00")));
+    assert_eq!(renew_after(&task(Ready)), None, "no claim, no renewal");
     let ada = person("Ada");
     assert!(!renewal_due(&short, &ada, &at("09:29:59")));
     assert!(renewal_due(&short, &ada, &at("09:30:00")));

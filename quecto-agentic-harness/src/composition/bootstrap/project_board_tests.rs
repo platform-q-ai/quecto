@@ -5,7 +5,8 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Command;
 
-fn sh(dir: &Path, args: &[&str]) {
+/// Test-side git in `dir`; its trimmed output.
+pub(super) fn sh(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .current_dir(dir)
         .args(args)
@@ -28,6 +29,9 @@ fn sh(dir: &Path, args: &[&str]) {
         "git {args:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    String::from_utf8_lossy(&output.stdout)
+        .trim_end()
+        .to_string()
 }
 
 /// A clone of a bare remote whose committer is configured in the clone.
@@ -106,9 +110,13 @@ fn the_board_runs_end_to_end_over_git_and_the_index() {
     );
     assert_eq!(summarised.get("summary_skipped"), None, "{summarised}");
     let complete = ops(json!({"op": "complete", "task": "a"}));
+    // No pull request host, and none linked: the rule's own answer (#2658).
     assert_eq!(
-        complete["error"]["code"],
-        json!("no_pull_request_host"),
+        (
+            &complete["error"]["code"],
+            &complete["error"]["rule"]["code"]
+        ),
+        (&json!("rule"), &json!("no_prs")),
         "{complete}"
     );
 }
@@ -678,4 +686,10 @@ fn a_composed_start_asks_whether_its_coordinator_still_runs() {
         ),
         "{started}"
     );
+}
+
+impl crate::application::project_board::ports::StartedRuns for FailedButRunning {
+    fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
+        vec![]
+    }
 }

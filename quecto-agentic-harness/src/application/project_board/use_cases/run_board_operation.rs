@@ -44,6 +44,22 @@ impl RunBoardOperation {
         Self { parts }
     }
 
+    /// The ends this front end owes as its session ends (#2655): each run
+    /// its starts launched that the board still shows open, to be ended as
+    /// [`ListLeftRuns`](super::ListLeftRuns) says; none for a front end
+    /// that launches none.
+    ///
+    /// # Errors
+    /// The store's.
+    pub fn left_runs(
+        &self,
+    ) -> Result<Vec<crate::application::project_board::dto::RunEnd>, ProjectBoardError> {
+        match &self.parts.left_runs {
+            Some(left) => left.execute(),
+            None => Ok(vec![]),
+        }
+    }
+
     /// What `request` comes to.
     ///
     /// # Errors
@@ -254,16 +270,11 @@ impl RunBoardOperation {
         Ok(BoardOutcome::Listing(Listed::skipped(listing, skipped)))
     }
 
-    /// Task `id` completed, noted in `facts` when given; with no pull
-    /// request host, a task not on the board is answered as such first.
+    /// Task `id` completed, noted in `facts` when given: with no pull
+    /// request host, a task not on the board, or one linking none, is
+    /// answered as such first (#2658).
     fn complete(&self, id: &Slug, facts: Option<&mut OpFacts>) -> Result<Task, ProjectBoardError> {
-        match &self.parts.complete {
-            Ok(complete) => complete.execute_noted(id, facts),
-            Err(why) => {
-                self.parts.query.task(id)?;
-                Err(ProjectBoardError::NoPullRequestHost(why.clone()))
-            }
-        }
+        self.parts.complete.execute_noted(id, facts)
     }
 }
 

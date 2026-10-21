@@ -95,6 +95,8 @@ const KNOWN_KINDS: &[&str] = &[
     "cli",
     "agent",
     "pocket_relay",
+    // The harness ending the runs a session left open (#2655).
+    "session_end",
     "read",
     "write",
     "missing",
@@ -196,6 +198,9 @@ const KNOWN_KINDS: &[&str] = &[
     "not_draft",
     "no_edit",
     "superseded",
+    // A dependency not done, children still active (#2661).
+    "dependency_not_done",
+    "children_active",
     "issue_shared",
     "issue_is_pr",
     "own_pr_referenced",
@@ -239,6 +244,8 @@ const KNOWN_KINDS: &[&str] = &[
     "lost",
     // A success refused while a task item is not done (#2481 follow-up).
     "items_not_done",
+    // A success refused while its evidence is not on the remote (#2666).
+    "not_pushed",
     // Schema fields and pseudo-fields.
     "task",
     "title",

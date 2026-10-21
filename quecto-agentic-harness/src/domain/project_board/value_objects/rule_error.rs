@@ -88,6 +88,12 @@ pub enum BoardRuleError {
         items: Vec<Slug>,
         report: SwarmReport,
     },
+    /// The run would end as succeeded while `revisions` of the commits its
+    /// task items' evidence names (by full id or a 12-digit prefix) are
+    /// not on the board's remote, on a branch or tag there (#2666): its
+    /// work never left the swarm's container, so a success is not
+    /// recorded over it. Evidence that names no commit is not counted.
+    NotPushed { run: u32, revisions: usize },
     /// The change was stamped by a clock running ahead of the outside
     /// time: building on it would drag the board ahead too.
     ChangeAhead { change: u32, updated: Timestamp },
@@ -161,6 +167,17 @@ pub enum BoardRuleError {
     /// Other tasks took this one over (`by`): it is archived as
     /// superseded, never done.
     Superseded { by: Vec<Slug> },
+    /// These tasks the task depends on are not done or archived (or not on
+    /// the board): it is claimed or started only once each is (#2661).
+    DependencyNotDone {
+        /// On the board, not done or archived.
+        undone: Vec<Slug>,
+        /// Not on the board, or set aside.
+        missing: Vec<Slug>,
+    },
+    /// These child tasks of the task are held (claimed, in progress, in
+    /// review or blocked): it is archived only once none is (#2661).
+    ChildrenActive(Vec<Slug>),
     /// Two tasks name the same issue.
     IssueShared { issue: u64, tasks: [Slug; 2] },
     /// `task`'s issue is a pull request `pr_holder` links on the board
@@ -280,6 +297,13 @@ impl fmt::Display for BoardRuleError {
                  task items done (the coordinator was not torn down here, or this session \
                  restarted); ask the user whether the work was done before ending it"
             ),
+            Self::NotPushed { run, revisions } => write!(
+                f,
+                "run {run} cannot end as succeeded: {revisions} commit(s) its evidence names \
+                 are on no branch or tag of the board's remote, so its work has not left the \
+                 swarm's container; push them and call end_run again, or, if they went with \
+                 the container, end it as \"failed\" and tell the user"
+            ),
             Self::ChangeAhead { change, updated } => write!(
                 f,
                 "change {change} was stamped {} by a clock that ran ahead",
@@ -338,7 +362,10 @@ impl fmt::Display for BoardRuleError {
                 write!(f, "a {} task cannot be taken over", status.as_str())
             }
             Self::AlreadyHolder => f.write_str("the holder renews rather than takes over"),
-            Self::NoPrs => f.write_str("the task links no pull request"),
+            Self::NoPrs => f.write_str(
+                "the task links no pull request; its holder finishes it with move(task, to done) \
+                 from review",
+            ),
             Self::PrsUnmerged(open) => write!(f, "pull requests {open:?} are not merged"),
             Self::PrsLinked(prs) => write!(
                 f,
@@ -359,6 +386,44 @@ impl fmt::Display for BoardRuleError {
                     f,
                     "other tasks took this one over ({}): archive it as superseded instead",
                     by.join(", ")
+                )
+            }
+            Self::DependencyNotDone { undone, missing } => {
+                let named = |tasks: &[Slug]| {
+                    tasks
+                        .iter()
+                        .map(Slug::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                let missing_text = |ids: &[Slug]| {
+                    format!(
+                        "tasks not on the board or set aside: {} (add or mend them first)",
+                        named(ids)
+                    )
+                };
+                let held = match (undone.as_slice(), missing.as_slice()) {
+                    ([_, ..], []) => format!("tasks not done yet: {}", named(undone)),
+                    ([], [_, ..]) => missing_text(missing),
+                    (_, _) => format!(
+                        "tasks not done yet: {}, and on {}",
+                        named(undone),
+                        missing_text(missing)
+                    ),
+                };
+                write!(
+                    f,
+                    "the task depends on {held}; it can be claimed or started once each is done \
+                     or archived"
+                )
+            }
+            Self::ChildrenActive(tasks) => {
+                let tasks: Vec<&str> = tasks.iter().map(Slug::as_str).collect();
+                write!(
+                    f,
+                    "its child tasks are still being worked on: {}; finish or release them \
+                     before archiving it",
+                    tasks.join(", ")
                 )
             }
             Self::IssueShared { issue, tasks } => write!(

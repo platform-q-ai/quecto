@@ -22,6 +22,7 @@ use crate::domain::project_board::services::pull_requests::{add_pr, remove_pr};
 use crate::domain::project_board::services::transitions::{move_reads, move_task};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
+use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
 pub struct ChangeBoardTask {
     store: Arc<dyn ProjectBoardStore>,
@@ -73,13 +74,13 @@ impl ChangeBoardTask {
         let actor = &self.actor;
         // A renewal not due yet writes nothing: the task as it is (#2656).
         if let BoardOp::Renew = op
-            && let Some(task) = self.not_due(id)?
+            && let Some((task, now)) = self.not_due(id)?
         {
             if let Some(facts) = facts {
                 let status = task.fields().status;
                 facts.status_from = Some(status);
                 facts.status_to = Some(status);
-                facts.claim = claim_facts(&task, actor, &self.clock.now()?);
+                facts.claim = claim_facts(&task, actor, &now);
                 // No attempt was made: nothing was written.
                 facts.attempts = Some(0);
             }
@@ -126,19 +127,20 @@ impl ChangeBoardTask {
 }
 
 impl ChangeBoardTask {
-    /// Task `id` as the board holds it, when the actor's renewal of its
-    /// claim is not due yet ([`renewal_due`]); `None` when it is, or when
-    /// the renewal's own rule must judge it.
+    /// Task `id` as the board holds it, and the time it was judged at,
+    /// when the actor's renewal of its claim is not due yet
+    /// ([`renewal_due`]); `None` when it is, or when the renewal's own
+    /// rule must judge it.
     ///
     /// # Errors
     /// The store's, or the clock's.
-    fn not_due(&self, id: &Slug) -> Result<Option<Task>, ProjectBoardError> {
+    fn not_due(&self, id: &Slug) -> Result<Option<(Task, Timestamp)>, ProjectBoardError> {
         let board = self.store.read()?;
         let now = self.clock.now()?;
         Ok(task_on(&board, id)
             .ok()
             .filter(|task| !renewal_due(task, &self.actor, &now))
-            .cloned())
+            .map(|task| (task.clone(), now)))
     }
 }
 
@@ -206,7 +208,14 @@ fn apply(
                 true => owned(board_view::changes_of(board, id)?),
                 false => vec![],
             };
-            move_task(task, *to, actor, &runs, &changes, now)
+            // The tasks it relates to may hold the move back (#2661).
+            let moved = move_task(task, *to, actor, (&runs, &changes), &board.tasks, now)?;
+            // Once the rules allow it, a task file set aside may still be a
+            // child an archive waits for.
+            if *to == TaskStatus::Archived {
+                board_view::tasks_clear(board)?;
+            }
+            Ok(moved)
         }
         BoardOp::AddPr(pr) => {
             let changes = owned(board_view::all_changes(board)?);

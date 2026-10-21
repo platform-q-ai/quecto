@@ -20,13 +20,13 @@ use std::time::SystemTime;
 use crate::application::project_board::operations::{BoardOperationParts, NoPullRequestHost};
 use crate::application::project_board::ports::{
     BoardClock, BoardStoreError, CoordinatorLaunch, ProjectBoardStore, PullRequestStates,
-    PullRequestStatesError, RunLiveness, SwarmRunReports,
+    PullRequestStatesError, RemoteRevisions, RunLiveness, StartedRuns, SwarmRunReports,
 };
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
-    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ProposePlan, QueryBoard, RunBoardOperation,
-    StartBoardTask, UpdateDraftTask,
+    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ListLeftRuns, ProposePlan, QueryBoard,
+    RunBoardOperation, StartBoardTask, UpdateDraftTask,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
@@ -113,16 +113,13 @@ fn build_with_warnings(
         Arc::clone(&store) as _,
     ));
     let prs = pull_request_states(&url, &environment.vars);
+    let revisions: Arc<dyn RemoteRevisions> = Arc::clone(&store) as _;
     let store: Arc<dyn ProjectBoardStore> = store;
     let built = |error: crate::application::project_board::dto::ProjectBoardError| {
         unavailable(error.to_string())
     };
-    let complete = match prs {
-        Ok(prs) => Ok(
-            CompleteMergedTask::new(Arc::clone(&store), Arc::clone(&clock), prs).map_err(built)?,
-        ),
-        Err(why) => Err(why),
-    };
+    let complete =
+        CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs).map_err(built)?;
     let parts = BoardOperationParts {
         bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
         create: CreateBoardTask::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
@@ -136,6 +133,9 @@ fn build_with_warnings(
             Arc::clone(&store),
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
+            // A success is judged by the revisions the board's own remote
+            // holds (#2666).
+            Arc::clone(&revisions),
             environment
                 .launcher
                 .clone()
@@ -167,6 +167,11 @@ fn build_with_warnings(
                 .clone()
                 .map(|swarms| swarms as Arc<dyn RunLiveness>),
         ),
+        // A session's end ends the runs its starts left open (#2655).
+        left_runs: environment
+            .launcher
+            .clone()
+            .map(|swarms| ListLeftRuns::new(Arc::clone(&store), swarms as Arc<dyn StartedRuns>)),
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         complete,
         clock,
@@ -176,6 +181,27 @@ fn build_with_warnings(
     Ok(ProjectBoardHandles {
         operations: RunBoardOperation::new(parts),
     })
+}
+
+/// How long one git call of a teardown's completion check may take: past
+/// it the completion is unknown, and the box is kept.
+const TEARDOWN_READ: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// The revisions the board of the repository at `repo` holds on its
+/// `origin` (#2666), read as the board's own store reads them, each git
+/// call within [`TEARDOWN_READ`]: what the teardown asks of a succeeded
+/// board run's completion. Or why there are none here (no repository, no
+/// `origin`).
+///
+/// # Errors
+/// git cannot run at `repo`, or it has no `origin`.
+pub fn board_remote_revisions(repo: &Path) -> Result<Arc<dyn RemoteRevisions>, String> {
+    let vars = GitEnvironment::allowlisted(std::env::vars_os());
+    let git = Git::reader(repo, vars)
+        .map_err(|error| format!("git cannot run here: {error}"))?
+        .bounded(TEARDOWN_READ);
+    let store = GitBoardStore::new(git, "origin").map_err(|error| store_reason(&error))?;
+    Ok(Arc::new(store))
 }
 
 /// Pull request states of the remote at `url`, read with `gh` when it is

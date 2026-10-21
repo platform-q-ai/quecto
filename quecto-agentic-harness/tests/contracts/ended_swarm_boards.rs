@@ -84,3 +84,86 @@ fn only_the_newest_boards_are_kept() {
         "the newest stays"
     );
 }
+
+/// #2674: the board a run had reached as its owner ended its coordinator
+/// while it ran or was paused is kept as left, apart from an ended one;
+/// one of any other status is not; and either replaces the other.
+#[test]
+fn a_running_or_paused_runs_board_is_kept_as_left() {
+    let kept = KeptSwarmBoards::default();
+    let port: &dyn EndedSwarmBoards = &kept;
+    port.keep_left("s1", "board-a-run-1", board("running", 5));
+    assert_eq!(kept.view("s1", "board-a-run-1"), None, "not an ended run");
+    let left = kept.left_view("s1", "board-a-run-1").expect("kept as left");
+    assert_eq!((left.end, left.observed_tokens), (SwarmEnd::Cancelled, 5));
+    port.keep_left("s1", "board-a-run-2", board("paused", 6));
+    assert!(kept.left_view("s1", "board-a-run-2").is_some());
+    for status in ["succeeded", "setup", "odd"] {
+        port.keep_left("s1", "board-a-run-3", board(status, 7));
+        assert_eq!(kept.left_view("s1", "board-a-run-3"), None, "{status}");
+    }
+    port.keep_left("s1", "my-ad-hoc-swarm", board("running", 8));
+    assert_eq!(kept.left_view("s1", "my-ad-hoc-swarm"), None);
+    port.keep("s1", "board-a-run-1", board("cancelled", 9));
+    assert_eq!(kept.left_view("s1", "board-a-run-1"), None, "replaced");
+    assert_eq!(spent(&kept, "s1", "board-a-run-1"), Some(9));
+}
+
+/// #2674 round 2: past the bound, a left board goes before any ended one,
+/// so boards runs only reached never evict ended runs' boards.
+#[test]
+fn left_boards_are_evicted_before_ended_ones() {
+    let kept = KeptSwarmBoards::default();
+    kept.keep_left("s1", "board-left-run-1", board("running", 0));
+    for member in 0..MAX_KEPT - 1 {
+        kept.keep(
+            "s1",
+            &format!("board-e{member}-run-1"),
+            board("succeeded", 1),
+        );
+    }
+    kept.keep("s1", "board-last-run-1", board("succeeded", 2));
+    assert_eq!(
+        kept.left_view("s1", "board-left-run-1"),
+        None,
+        "the left board went"
+    );
+    assert_eq!(
+        spent(&kept, "s1", "board-e0-run-1"),
+        Some(1),
+        "the oldest ended one stays"
+    );
+    assert_eq!(spent(&kept, "s1", "board-last-run-1"), Some(2));
+    kept.keep_left("s1", "board-new-left-run-1", board("paused", 3));
+    assert_eq!(
+        spent(&kept, "s1", "board-e0-run-1"),
+        Some(1),
+        "a left board never evicts an ended one"
+    );
+}
+
+/// Round 3 (#2674): of two left boards in a full store, the older goes
+/// first.
+#[test]
+fn the_oldest_left_board_goes_first() {
+    let kept = KeptSwarmBoards::default();
+    kept.keep_left("s1", "board-old-run-1", board("running", 0));
+    kept.keep_left("s1", "board-young-run-1", board("paused", 1));
+    for member in 0..MAX_KEPT - 2 {
+        kept.keep(
+            "s1",
+            &format!("board-e{member}-run-1"),
+            board("succeeded", 2),
+        );
+    }
+    kept.keep("s1", "board-last-run-1", board("succeeded", 3));
+    assert_eq!(
+        kept.left_view("s1", "board-old-run-1"),
+        None,
+        "the older left board went"
+    );
+    assert!(
+        kept.left_view("s1", "board-young-run-1").is_some(),
+        "the younger stays"
+    );
+}

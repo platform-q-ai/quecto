@@ -79,10 +79,10 @@ fn a_task_is_claimed_worked_linked_and_completed_when_its_pr_merges() {
     );
     let host = MemoryPullRequests::default();
     host.set(7, PullRequestState::Merged);
-    let system = CompleteMergedTask::new(
+    let system = CompleteMergedTask::reading(
         Arc::new(store.client_as(person("Bob"))),
         SetClock::at("10:20:00"),
-        Arc::new(host),
+        Ok(Arc::new(host)),
     )
     .unwrap();
     let done = system.execute(&a).unwrap();
@@ -325,10 +325,10 @@ fn a_store_with_an_invalid_writer_is_refused_when_built() {
         Err(ProjectBoardError::InvalidWriter(_))
     ));
     assert!(matches!(
-        CompleteMergedTask::new(
+        CompleteMergedTask::reading(
             invalid(),
             SetClock::at("10:00:00"),
-            Arc::new(MemoryPullRequests::default())
+            Ok(Arc::new(MemoryPullRequests::default())),
         ),
         Err(ProjectBoardError::InvalidWriter(_))
     ));
@@ -659,6 +659,8 @@ fn a_pull_request_another_tasks_change_links_is_not_linked_again() {
 /// Epic #2481 T4: what a noted change saw.
 #[path = "change_board_task_noted_tests.rs"]
 mod noted;
+#[path = "change_board_task_renew_tests.rs"]
+mod renew;
 
 /// The real case (Pocket's Delete on a reviewed task): a task in review
 /// whose run succeeded, and whose holder's claim lapsed hours ago, is
@@ -709,39 +711,35 @@ fn anyone_archives_a_reviewed_task_whose_run_ended_and_claim_lapsed() {
     );
 }
 
-/// #2656: a renewal while the claim still has more than half its two
-/// hours left writes nothing and answers the task as it is; from halfway
-/// on, it renews.
+/// #2661 review round 1: an archive waits while a task file is set aside,
+/// as it may be a child still being worked on.
 #[test]
-fn a_renewal_before_halfway_writes_nothing() {
+fn an_archive_waits_while_a_task_file_is_set_aside() {
     let store = board();
-    seed(&store, held_by_ada(TaskStatus::InProgress));
-    let a = slug("a");
-    let writes = store.writes();
-    let early = change(&store, "Ada", "09:30:00")
-        .execute(&a, &BoardOp::Renew)
-        .unwrap();
-    assert_eq!(store.writes(), writes, "nothing written before halfway");
-    let mut facts = crate::application::project_board::telemetry::OpFacts::default();
-    change(&store, "Ada", "09:31:00")
-        .execute_noted(&a, &BoardOp::Renew, Some(&mut facts))
-        .unwrap();
-    assert_eq!(facts.attempts, Some(0), "no attempt made");
-    assert!(facts.claim.is_some_and(|claim| claim.holder_is_writer));
+    seed(&store, fields("epic"));
+    seed(&store, fields("kid"));
+    store.quarantine("kid", "malformed");
     assert_eq!(
-        early.fields().claim.as_ref().unwrap().expires,
-        at("11:00:00")
+        change(&store, "Ada", "10:00:00")
+            .execute(&slug("epic"), &BoardOp::Move(TaskStatus::Archived)),
+        Err(set_aside_task("kid"))
     );
-    let halfway = change(&store, "Ada", "10:00:00")
-        .execute(&a, &BoardOp::Renew)
-        .unwrap();
-    assert_eq!(
-        halfway.fields().claim.as_ref().unwrap().expires,
-        at("12:00:00")
+    // The move's own rules answer first (#2661 review round 2): a ready
+    // task, which the table lets anyone archive, with a child at work is
+    // refused as children_active, never as the file set aside.
+    seed(&store, fields("a"));
+    seed(
+        &store,
+        TaskFields {
+            id: slug("child"),
+            parent: Some(slug("a")),
+            ..held_by_ada(TaskStatus::InProgress)
+        },
     );
-    // Another's renewal is refused as ever, before halfway too.
     assert_eq!(
-        change(&store, "Bob", "10:01:00").execute(&a, &BoardOp::Renew),
-        Err(ProjectBoardError::Rule(BoardRuleError::NotHolder))
+        change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived)),
+        Err(ProjectBoardError::Rule(BoardRuleError::ChildrenActive(
+            vec![slug("child")]
+        )))
     );
 }

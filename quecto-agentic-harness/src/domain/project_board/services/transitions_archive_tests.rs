@@ -3,6 +3,7 @@ use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::services::fixtures_tests::{
     at, change, commit, open_run, person, task, without_claim, without_prs,
 };
+use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::RunOutcome;
 
 /// Ada's claim runs 09:00 to 11:00: live at 10:00, lapsed hours ago at
@@ -38,7 +39,7 @@ fn a_reviewed_task_is_archived_by_its_live_holder_or_by_anyone_once_nobody_holds
             held,
             Archived,
             &actor,
-            std::slice::from_ref(&ended),
+            (std::slice::from_ref(&ended), &[]),
             &[],
             &now,
         )
@@ -62,7 +63,7 @@ fn a_reviewed_task_is_archived_by_its_live_holder_or_by_anyone_once_nobody_holds
             &reviewed,
             Archived,
             &bob,
-            std::slice::from_ref(&ended),
+            (std::slice::from_ref(&ended), &[]),
             &[],
             &live()
         ),
@@ -89,7 +90,7 @@ fn a_run_going_holds_a_reviewed_task_back_from_archive() {
                 held,
                 Archived,
                 &actor,
-                std::slice::from_ref(&running),
+                (std::slice::from_ref(&running), &[]),
                 &[],
                 &now
             ),
@@ -112,7 +113,7 @@ fn a_reviewed_task_linking_pull_requests_is_not_archived() {
             "{actor:?}: refused before anything is read"
         );
         assert_eq!(
-            move_task(&task(Review), Archived, &actor, &[], &[], &now),
+            move_task(&task(Review), Archived, &actor, (&[], &[]), &[], &now),
             Err(linked.clone()),
             "{actor:?}"
         );
@@ -144,7 +145,7 @@ fn a_reviewed_task_a_change_links_is_not_archived() {
     ];
     for (actor, now) in [(person("Ada"), live()), (person("Bob"), lapsed())] {
         assert_eq!(
-            move_task(&reviewed, Archived, &actor, &[], &changes, &now),
+            move_task(&reviewed, Archived, &actor, (&[], &changes), &[], &now),
             Err(BoardRuleError::ChangesLinked(vec![1, 2])),
             "{actor:?}"
         );
@@ -153,8 +154,8 @@ fn a_reviewed_task_a_change_links_is_not_archived() {
         &reviewed,
         Archived,
         &person("Bob"),
+        (&[], std::slice::from_ref(&gone)),
         &[],
-        std::slice::from_ref(&gone),
         &lapsed(),
     )
     .unwrap();
@@ -169,13 +170,13 @@ fn a_reviewed_task_a_change_links_is_not_archived() {
 fn a_released_task_is_not_archived_while_it_links_pull_requests_or_changes() {
     let changes = [change(1, Some(7))];
     for (actor, now) in [(person("Ada"), live()), (person("Bob"), lapsed())] {
-        let ready = move_task(&task(Review), Ready, &actor, &[], &[], &now).unwrap();
+        let ready = move_task(&task(Review), Ready, &actor, (&[], &[]), &[], &now).unwrap();
         assert_eq!(
             (ready.fields().status, &ready.fields().prs),
             (Ready, &vec![2482, 2483]),
             "{actor:?}: the release keeps the links"
         );
-        let draft = move_task(&ready, Draft, &actor, &[], &[], &now).unwrap();
+        let draft = move_task(&ready, Draft, &actor, (&[], &[]), &[], &now).unwrap();
         for released in [&ready, &draft] {
             let from = released.fields().status;
             assert_eq!(
@@ -184,13 +185,20 @@ fn a_released_task_is_not_archived_while_it_links_pull_requests_or_changes() {
                 "{actor:?} {from:?}: refused before anything is read"
             );
             assert_eq!(
-                move_task(released, Archived, &actor, &[], &[], &now),
+                move_task(released, Archived, &actor, (&[], &[]), &[], &now),
                 Err(BoardRuleError::PrsLinked(vec![2482, 2483])),
                 "{actor:?} {from:?}"
             );
         }
-        let unlinked =
-            move_task(&without_prs(task(Review)), Ready, &actor, &[], &[], &now).unwrap();
+        let unlinked = move_task(
+            &without_prs(task(Review)),
+            Ready,
+            &actor,
+            (&[], &[]),
+            &[],
+            &now,
+        )
+        .unwrap();
         assert_eq!(
             move_reads(&unlinked, Archived, &actor, &now),
             Ok(MoveReads {
@@ -199,11 +207,80 @@ fn a_released_task_is_not_archived_while_it_links_pull_requests_or_changes() {
             })
         );
         assert_eq!(
-            move_task(&unlinked, Archived, &actor, &[], &changes, &now),
+            move_task(&unlinked, Archived, &actor, (&[], &changes), &[], &now),
             Err(BoardRuleError::ChangesLinked(vec![1])),
             "{actor:?}: a change linked holds it too"
         );
-        let archived = move_task(&unlinked, Archived, &actor, &[], &[], &now).unwrap();
+        let archived = move_task(&unlinked, Archived, &actor, (&[], &[]), &[], &now).unwrap();
         assert_eq!(archived.fields().status, Archived, "{actor:?}");
+    }
+}
+
+/// A task others took over is archived as superseded, never done: its
+/// holder's move and the completion by merged pull requests are refused,
+/// naming who took it over.
+#[test]
+fn a_superseded_task_is_never_done() {
+    let superseded = |task: Task| {
+        let mut fields = task.into_fields();
+        fields.superseded_by = vec![Slug::parse("next").unwrap()];
+        Task::new(fields).unwrap()
+    };
+    let refused = Err(BoardRuleError::Superseded {
+        by: vec![Slug::parse("next").unwrap()],
+    });
+    let now = at("10:00:00");
+    let review = superseded(without_prs(task(Review)));
+    assert_eq!(
+        move_task(&review, Done, &person("Ada"), (&[], &[]), &[], &now),
+        refused
+    );
+    let merged = BTreeSet::from([2482, 2483]);
+    let linked = superseded(task(Review));
+    assert_eq!(
+        complete_merged(&linked, &merged, &[], &[], &now).map(|done| done.task),
+        refused
+    );
+    assert!(move_task(&review, InProgress, &person("Ada"), (&[], &[]), &[], &now).is_ok());
+    let linking = superseded(task(Review));
+    assert_eq!(
+        move_task(&linking, Done, &person("Ada"), (&[], &[]), &[], &now),
+        refused,
+        "superseded is said before the pull requests it links"
+    );
+}
+
+/// A task others took over is archived as superseded, as the refusal of
+/// its completion advises; one archived otherwise is unresolved.
+#[test]
+fn a_superseded_task_is_archived_as_superseded() {
+    let now = at("10:00:00");
+    for status in [Ready, Draft, Review] {
+        let mut fields = without_prs(task(status)).into_fields();
+        fields.superseded_by = vec![Slug::parse("next").unwrap()];
+        let archived = move_task(
+            &Task::new(fields).unwrap(),
+            Archived,
+            &person("Ada"),
+            (&[], &[]),
+            &[],
+            &now,
+        )
+        .unwrap();
+        assert_eq!(
+            archived.fields().resolution,
+            Some(Resolution::Superseded),
+            "{status:?}"
+        );
+        let plain = move_task(
+            &without_prs(task(status)),
+            Archived,
+            &person("Ada"),
+            (&[], &[]),
+            &[],
+            &now,
+        )
+        .unwrap();
+        assert_eq!(plain.fields().resolution, None, "{status:?}");
     }
 }

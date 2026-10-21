@@ -408,6 +408,8 @@ board_rules! {
     R::NotDraft(_) => R::NotDraft(TaskStatus::Ready), "not_draft", ["status"];
     R::NoEdit => R::NoEdit, "no_edit", [];
     R::Superseded { .. } => R::Superseded { by: vec![Slug::parse("next").unwrap()] }, "superseded", ["by"];
+    R::DependencyNotDone { .. } => R::DependencyNotDone { undone: vec![Slug::parse("dep").unwrap()], missing: vec![] }, "dependency_not_done", ["tasks", "missing"];
+    R::ChildrenActive(_) => R::ChildrenActive(vec![Slug::parse("kid").unwrap()]), "children_active", ["tasks"];
     R::IssueShared { .. } => R::IssueShared { issue: 7, tasks: [Slug::parse("a").unwrap(), Slug::parse("b").unwrap()] }, "issue_shared", ["issue", "tasks"];
     R::IssueIsPr { .. } => R::IssueIsPr { issue: 7, task: Slug::parse("a").unwrap(), pr_holder: Slug::parse("b").unwrap() }, "issue_is_pr", ["issue", "task", "pr_holder"];
     R::OwnPrReferenced { .. } => R::OwnPrReferenced { task: Slug::parse("a").unwrap(), pr: 7, change: 1 }, "own_pr_referenced", ["task", "pr", "change"];
@@ -415,6 +417,7 @@ board_rules! {
     R::NoSuchChange(_) => R::NoSuchChange(4), "no_such_change", ["change"];
     R::NoSuchRun(_) => R::NoSuchRun(4), "no_such_run", ["run"];
     R::ItemsNotDone { .. } => R::ItemsNotDone { run: 1, items: vec![Slug::parse("api").unwrap()], report: crate::domain::project_board::value_objects::rule_error::SwarmReport::NoneKept }, "items_not_done", ["run", "items", "report"];
+    R::NotPushed { .. } => R::NotPushed { run: 1, revisions: 2 }, "not_pushed", ["run", "revisions"];
     R::ChangeAhead { .. } => R::ChangeAhead { change: 1, updated: at("10:00:00") }, "change_ahead", ["change", "updated"];
     R::DiscussionClosed(_) => R::DiscussionClosed(Slug::parse("chat").unwrap()), "discussion_closed", ["discussion"];
     R::DiscussionLinked { .. } => R::DiscussionLinked { discussion: Slug::parse("chat").unwrap(), task: Slug::parse("board-store").unwrap() }, "discussion_linked", ["discussion", "task"];

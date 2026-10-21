@@ -16,7 +16,7 @@ use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
 use super::claims::{new_claim, renew, settle, stamp};
 use super::runs::begin_run;
-use super::transitions::move_reads;
+use super::transitions::{move_reads, relations_allow};
 
 /// A task started: in progress, held by its starter, and a run of its
 /// accepted plan begun. Only [`start`] builds one, so holding one proves
@@ -70,12 +70,15 @@ impl Started {
 /// at which the claim's liveness is judged.
 ///
 /// # Errors
-/// A draft, done or archived task (`not_allowed`); a claim `actor` does not
+/// A draft, done or archived task (`not_allowed`); a ready task a task it
+/// depends on (of `tasks`, every task the board holds) holds back
+/// (`dependency_not_done`); a claim `actor` does not
 /// hold, live or not (`not_holder`, `no_claim`); no accepted plan, or its
 /// file missing, or another plan given; a run still going, or runs that
 /// contradict each other; a stamp or a run number the board cannot spell.
 pub fn start(
     task: &Task,
+    tasks: &[Task],
     runs: &[Run],
     plan: Option<&Plan>,
     actor: &Identity,
@@ -89,6 +92,8 @@ pub fn start(
     let mut next = match from {
         Ready => {
             move_reads(task, Claimed, actor, &at)?;
+            // Claimed as a move to claimed is: once its dependencies are done.
+            relations_allow(task, Claimed, tasks)?;
             let mut next = task.fields().clone();
             next.claim = Some(new_claim(actor, &at)?);
             next

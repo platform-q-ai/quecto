@@ -215,3 +215,9 @@ fn a_coordinator_seen_running_after_a_failed_launch_leaves_the_start_as_it_is() 
         );
     }
 }
+
+impl crate::application::project_board::ports::StartedRuns for Seen {
+    fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
+        vec![]
+    }
+}

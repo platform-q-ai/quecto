@@ -10,7 +10,7 @@ fn accepted() -> Plan {
 }
 
 fn start_at(task: &Task, runs: &[Run], by: &str, now: &str) -> Result<Started, BoardRuleError> {
-    start(task, runs, Some(&accepted()), &person(by), &at(now))
+    start(task, &[], runs, Some(&accepted()), &person(by), &at(now))
 }
 
 /// A state a start may find: the task, its runs, the starter, the time,
@@ -135,6 +135,7 @@ fn a_start_runs_only_the_tasks_accepted_plan() {
             start(
                 &unplanned,
                 &[],
+                &[],
                 given.as_ref(),
                 &person("Bob"),
                 &at("10:00:00")
@@ -143,7 +144,14 @@ fn a_start_runs_only_the_tasks_accepted_plan() {
         );
     }
     assert_eq!(
-        start(&task(Ready), &[], None, &person("Bob"), &at("10:00:00")),
+        start(
+            &task(Ready),
+            &[],
+            &[],
+            None,
+            &person("Bob"),
+            &at("10:00:00")
+        ),
         Err(BoardRuleError::UnknownPlanVersion(1))
     );
     for (given, refused) in [
@@ -159,6 +167,7 @@ fn a_start_runs_only_the_tasks_accepted_plan() {
         assert_eq!(
             start(
                 &task(Ready),
+                &[],
                 &[],
                 Some(&given),
                 &person("Bob"),

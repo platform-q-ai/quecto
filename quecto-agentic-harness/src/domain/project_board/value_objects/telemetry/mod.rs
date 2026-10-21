@@ -84,7 +84,14 @@ impl OpKind {
 }
 
 kinds!(FrontEnd { Tool => "tool", Cli => "cli" });
-kinds!(Client { Agent => "agent", PocketRelay => "pocket_relay", Cli => "cli", Other => "other" });
+kinds!(
+    /// Who a call acts for: `session_end` is the harness itself, ending the
+    /// runs a session leaves open as it ends (#2655).
+    Client {
+        Agent => "agent", PocketRelay => "pocket_relay", Cli => "cli", Other => "other",
+        SessionEnd => "session_end",
+    }
+);
 kinds!(Access { Read => "read", Write => "write" });
 kinds!(
     /// How a request's field was wrong.
@@ -241,8 +248,8 @@ pub struct ListingCounts {
 
 /// A task's claim as a change found it (T4), never its holder: how long
 /// it had been held and had left, in seconds (`left_s` below zero once it
-/// lapsed; `held_s` below zero when the writer's clock reads before the
-/// claim began), and whether the writer holds it.
+/// lapsed; `held_s` never below zero, 0 when the writer's clock reads
+/// before the claim began), and whether the writer holds it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ClaimFacts {
     pub held_s: i64,
