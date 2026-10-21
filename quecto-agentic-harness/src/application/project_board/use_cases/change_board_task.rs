@@ -234,3 +234,7 @@ fn apply(
 #[cfg(test)]
 #[path = "change_board_task_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "change_board_task_holder_tests.rs"]
+mod holder_tests;

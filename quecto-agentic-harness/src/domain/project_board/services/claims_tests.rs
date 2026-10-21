@@ -247,3 +247,20 @@ fn a_renewal_is_due_from_halfway_through_the_claims_own_lease() {
     assert!(renewal_due(&short, &ada, &at("12:00:00")), "expired");
     assert!(renewal_due(&short, &person("Bob"), &at("09:00:00")));
 }
+
+/// #2683: renewing another's expired claim is refused with the same way
+/// on as every other holder-only action: take the task over first. A live
+/// one is still plainly not the renewer's.
+#[test]
+fn another_renewing_an_expired_claim_is_told_to_take_it_over() {
+    assert_eq!(
+        renew(&task(InProgress), &person("Bob"), &at("14:00:00")),
+        Err(BoardRuleError::NotHolderExpired)
+    );
+    assert_eq!(
+        renew(&task(InProgress), &person("Bob"), &at("10:30:00")),
+        Err(BoardRuleError::NotHolder)
+    );
+    // The holder still renews its own expired claim.
+    assert!(renew(&task(InProgress), &person("Ada"), &at("14:00:00")).is_ok());
+}
