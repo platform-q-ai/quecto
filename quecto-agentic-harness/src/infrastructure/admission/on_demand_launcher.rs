@@ -22,6 +22,9 @@ use crate::infrastructure::processes::local::detached_process::{
 const BROKER_PROGRAM: &str = "quecto";
 /// The broker's log, in the admission directory.
 const LOG_FILE: &str = "broker.log";
+/// Every line a broker writes, whatever stops it, names the admission
+/// broker or authority.
+const BROKER_RAN_MARKER: &str = "admission";
 /// Resolved on the broker's `PATH`; absent or without a user manager, the
 /// broker starts plainly in its own session.
 const SYSTEMD_RUN: &str = "systemd-run";
@@ -73,12 +76,14 @@ pub struct DetachedAuthorityLauncher {
 }
 
 impl DetachedAuthorityLauncher {
-    /// Start brokers from `program`.
+    /// Start brokers from `program`, plainly in their own session (never
+    /// through the user manager: production opts in with
+    /// [`for_current_exe`](Self::for_current_exe)).
     pub fn new(program: PathBuf) -> Self {
         Self {
             program: Ok(program),
             tether: Tether::Detached,
-            scope: Scope::SystemdRun(PathBuf::from(SYSTEMD_RUN)),
+            scope: Scope::None,
         }
     }
 
@@ -101,22 +106,6 @@ impl DetachedAuthorityLauncher {
             tether: Tether::DiesWithLaunchingThread,
             scope: Scope::None,
         }
-    }
-
-    /// Start plainly, never through `systemd-run` (tests: a fake broker
-    /// never touches the real user manager).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn without_scope(mut self) -> Self {
-        self.scope = Scope::None;
-        self
-    }
-
-    /// Leave the launcher's cgroup through `runner` instead of `systemd-run`
-    /// (tests stand a script in for it).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn with_scope_runner(mut self, runner: PathBuf) -> Self {
-        self.scope = Scope::SystemdRun(runner);
-        self
     }
 
     /// Where a broker started for `directory` logs.
@@ -168,6 +157,7 @@ impl AuthorityLauncher for DetachedAuthorityLauncher {
             log: log.clone(),
             tether: self.tether,
             scope: self.scope.clone(),
+            ran_marker: BROKER_RAN_MARKER.into(),
         })?;
         Ok(Box::new(LaunchedBroker { process, log }))
     }

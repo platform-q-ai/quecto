@@ -214,7 +214,7 @@ async fn connect(negotiation: &Negotiation) -> Result<(AuthorityConnection, Path
             // Clients only validate; they never create authority state.
             let dir = AuthorityDirectory::existing(directory).map_err(|e| {
                 format!(
-                    "admission authority unreachable: directory {} ({e}); its broker's log is {}/broker.log",
+                    "admission authority unreachable: directory {} ({e}); if it was started on demand, its log is {}/broker.log",
                     directory.display(),
                     directory.display()
                 )
@@ -222,7 +222,7 @@ async fn connect(negotiation: &Negotiation) -> Result<(AuthorityConnection, Path
             let endpoint = dir.client_socket();
             let connection = AuthorityConnection::connect(&endpoint).await.map_err(|e| {
                 format!(
-                    "admission authority unreachable at {} ({e}); its broker's log is {}/broker.log",
+                    "admission authority unreachable at {} ({e}); if it was started on demand, its log is {}/broker.log",
                     endpoint.display(),
                     directory.display()
                 )

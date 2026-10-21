@@ -403,3 +403,36 @@ fn run_without_composed_handles_refuses_before_serving() {
     assert!(!err.contains("serving authority directory"), "{err}");
     assert!(!authority.exists(), "nothing was opened");
 }
+
+/// #2615 review round 2: only a broker started on demand caps its log, at
+/// 1 MiB checked every minute, and the capping task empties a log past it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_on_demand_broker_keeps_its_log_capped() {
+    assert_eq!(log_cap_plan(AuthorityLifetime::AlwaysOn), None);
+    let plan = log_cap_plan(AuthorityLifetime::StopWhenIdle(
+        IdleWatch::new(AUTHORITY_IDLE_STOP_MS).unwrap(),
+    ))
+    .expect("an on-demand broker caps its log");
+    assert_eq!(plan.cap, 1 << 20);
+    assert_eq!(plan.interval, std::time::Duration::from_secs(60));
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("broker.log");
+    std::fs::write(&path, vec![b'x'; 65]).unwrap();
+    let log = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    let task = tokio::spawn(keep_log_capped(
+        log,
+        LogCapPlan {
+            interval: std::time::Duration::from_millis(10),
+            cap: 64,
+        },
+    ));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::fs::metadata(&path).unwrap().len() > 64 {
+        assert!(std::time::Instant::now() < deadline, "never capped");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    task.abort();
+}

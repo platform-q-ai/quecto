@@ -72,6 +72,9 @@ impl AuthorityServiceManager for FakeManager {
         self.calls.lock().unwrap().push("restart".into());
         Ok(())
     }
+    fn is_active(&self) -> Result<bool, String> {
+        Ok(false)
+    }
 }
 
 fn dir() -> PathBuf {

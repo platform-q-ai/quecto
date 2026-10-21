@@ -91,7 +91,7 @@ fn only_the_quecto_binary_is_started() {
 #[test]
 fn a_broker_is_started_to_serve_the_launch_and_a_busy_exit_lost_the_race() {
     let temp = tempfile::tempdir().unwrap();
-    let launcher = DetachedAuthorityLauncher::new(fake_quecto(temp.path(), 3)).without_scope();
+    let launcher = DetachedAuthorityLauncher::new(fake_quecto(temp.path(), 3));
     let mut broker = launcher.launch(&launch_for(temp.path())).unwrap();
     assert_eq!(
         settled(&mut broker),
@@ -122,7 +122,7 @@ fn a_broker_is_started_to_serve_the_launch_and_a_busy_exit_lost_the_race() {
 #[test]
 fn a_broker_that_exits_otherwise_failed_and_names_its_log() {
     let temp = tempfile::tempdir().unwrap();
-    let launcher = DetachedAuthorityLauncher::new(fake_quecto(temp.path(), 1)).without_scope();
+    let launcher = DetachedAuthorityLauncher::new(fake_quecto(temp.path(), 1));
     let mut broker = launcher.launch(&launch_for(temp.path())).unwrap();
     let LaunchState::Failed { reason } = settled(&mut broker) else {
         panic!("an exit other than Busy is a failure");
@@ -139,7 +139,7 @@ fn a_shared_directory_is_refused_before_anything_runs() {
     let directory = temp.path().join("admission");
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let launcher = DetachedAuthorityLauncher::new(fake_quecto(temp.path(), 3)).without_scope();
+    let launcher = DetachedAuthorityLauncher::new(fake_quecto(temp.path(), 3));
     let error = launcher.launch(&launch_for(temp.path())).err().unwrap();
     assert!(error.contains("0700"), "{error}");
     assert!(log(temp.path()).is_empty(), "nothing ran");
@@ -197,7 +197,7 @@ fn the_broker_environment_is_an_allowlist() {
 #[test]
 fn a_started_broker_sees_only_the_allowlisted_environment() {
     let temp = tempfile::tempdir().unwrap();
-    let launcher = DetachedAuthorityLauncher::new(fake_quecto(temp.path(), 3)).without_scope();
+    let launcher = DetachedAuthorityLauncher::new(fake_quecto(temp.path(), 3));
     let mut broker = launcher.launch(&launch_for(temp.path())).unwrap();
     assert_eq!(settled(&mut broker), LaunchState::LostRace);
     let log = log(temp.path());

@@ -67,6 +67,9 @@ pub trait AuthorityServiceManager: Send + Sync {
     fn disable_now(&self) -> Result<bool, String>;
     /// `systemctl --user restart <unit>`: pick up a rewritten unit.
     fn restart(&self) -> Result<(), String>;
+    /// `systemctl --user is-active <unit>`: whether its broker is running
+    /// (#2615); a stopped, failed or unknown unit is `Ok(false)`.
+    fn is_active(&self) -> Result<bool, String>;
 }
 
 /// What starting a broker on demand needs (#2615): the directory it must

@@ -12,8 +12,8 @@
 use std::path::PathBuf;
 
 use crate::application::admission::dto::{
-    authority::AuthorityAdminError, service::InstallServiceRequest, service::ServiceAction,
-    service::ServiceReport,
+    authority::AuthorityAdminError, authority::StandIn, service::InstallServiceRequest,
+    service::ServiceAction, service::ServiceReport,
 };
 use crate::domain::admission::value_objects::authority_idle::{
     AUTHORITY_IDLE_STOP_MS, AuthorityLifetime, IdleWatch,
@@ -249,11 +249,17 @@ fn cmd_status(
         Ok(report) => {
             stdout.push_str(&status_json(&report).to_string());
             stdout.push('\n');
-            if let Some(unit) = handles.inspect.stood_down_unit(&report) {
-                stderr.push_str(&format!(
+            let config = global_config_path(ctx, opts);
+            match handles.inspect.standing_in(&report, &config) {
+                Some(StandIn::UnitStopped { unit }) => stderr.push_str(&format!(
                     "admission-broker: service unit {unit} stopped; an on-demand broker is serving {} (it stops itself after an hour idle; then `systemctl --user restart {unit}`)\n",
                     report.directory.display()
-                ));
+                )),
+                Some(StandIn::UnitElsewhere { unit }) => stderr.push_str(&format!(
+                    "admission-broker: an on-demand broker is serving {}; service unit {unit} is installed but is not stopped in its favour (check `systemctl --user status {unit}`)\n",
+                    report.directory.display()
+                )),
+                None => {}
             }
             0
         }
@@ -559,10 +565,15 @@ async fn run(start: BrokerStart, stdout: &mut String, stderr: &mut String) -> i3
     };
     // A broker started on demand writes to its log as its stderr (#2615):
     // keep that log within its cap for as long as it runs.
-    let log_cap = match start.lifetime {
-        AuthorityLifetime::StopWhenIdle(_) => Some(tokio::spawn(keep_log_capped())),
-        AuthorityLifetime::AlwaysOn => None,
-    };
+    let log_cap = log_cap_plan(start.lifetime).and_then(|plan| {
+        match crate::infrastructure::processes::local::detached_process::own_stderr() {
+            Ok(log) => Some(tokio::spawn(keep_log_capped(log, plan))),
+            Err(error) => {
+                tracing::warn!(%error, "admission broker log cannot be capped");
+                None
+            }
+        }
+    });
     let code = run_until(start, stop, stdout, stderr).await;
     if let Some(task) = log_cap {
         task.abort();
@@ -573,14 +584,33 @@ async fn run(start: BrokerStart, stdout: &mut String, stderr: &mut String) -> i3
 /// How often a broker started on demand checks its log's size.
 const LOG_CAP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
-async fn keep_log_capped() {
-    use crate::infrastructure::processes::local::detached_process::{
-        LOG_CAP_BYTES, cap_own_stderr_log,
-    };
-    let mut interval = tokio::time::interval(LOG_CAP_INTERVAL);
+/// How a broker keeps its log (its stderr) within bounds while it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LogCapPlan {
+    pub(crate) interval: std::time::Duration,
+    pub(crate) cap: u64,
+}
+
+/// A broker started on demand writes to its log as its stderr (#2615) and
+/// keeps it capped; an always-on broker's stderr is the service journal or
+/// a terminal, and is left alone.
+pub(crate) fn log_cap_plan(lifetime: AuthorityLifetime) -> Option<LogCapPlan> {
+    match lifetime {
+        AuthorityLifetime::StopWhenIdle(_) => Some(LogCapPlan {
+            interval: LOG_CAP_INTERVAL,
+            cap: crate::infrastructure::processes::local::detached_process::LOG_CAP_BYTES,
+        }),
+        AuthorityLifetime::AlwaysOn => None,
+    }
+}
+
+/// Keep `log` within `plan.cap`, checking every `plan.interval`.
+pub(crate) async fn keep_log_capped(log: std::fs::File, plan: LogCapPlan) {
+    use crate::infrastructure::processes::local::detached_process::cap_log;
+    let mut interval = tokio::time::interval(plan.interval);
     loop {
         interval.tick().await;
-        if let Err(error) = cap_own_stderr_log(LOG_CAP_BYTES) {
+        if let Err(error) = cap_log(&log, plan.cap) {
             tracing::warn!(%error, "admission broker log could not be capped");
         }
     }

@@ -18,7 +18,7 @@ impl AuthorityAdmin for Admin {
     }
 }
 
-struct Manager(Result<UnitStatus, String>);
+struct Manager(Result<UnitStatus, String>, Result<bool, String>);
 
 impl AuthorityServiceManager for Manager {
     fn unit_path(&self) -> PathBuf {
@@ -48,6 +48,9 @@ impl AuthorityServiceManager for Manager {
     fn restart(&self) -> Result<(), String> {
         unreachable!()
     }
+    fn is_active(&self) -> Result<bool, String> {
+        self.1.clone()
+    }
 }
 
 fn report(on_demand: bool) -> AuthorityReport {
@@ -61,32 +64,56 @@ fn report(on_demand: bool) -> AuthorityReport {
     }
 }
 
-fn inspect(unit: Result<UnitStatus, String>) -> InspectAuthority {
-    InspectAuthority::new(Arc::new(Admin), Arc::new(Manager(unit)))
+fn inspect(unit: Result<UnitStatus, String>, active: Result<bool, String>) -> InspectAuthority {
+    InspectAuthority::new(Arc::new(Admin), Arc::new(Manager(unit, active)))
 }
 
+const CONFIG: &str = "/home/me/.quecto/config.json";
+
+fn unit_for(config: &str) -> Result<UnitStatus, String> {
+    use crate::application::admission::dto::service::InstallServiceRequest;
+    Ok(UnitStatus::Present {
+        contents: crate::application::admission::use_cases::InstallAuthorityService::unit_contents(
+            &InstallServiceRequest {
+                binary: PathBuf::from("/usr/bin/quecto"),
+                config: PathBuf::from(config),
+                directory: PathBuf::from("/ignored"),
+                dry_run: false,
+            },
+        ),
+    })
+}
+
+/// #2615 review round 2: "stopped" only when the unit serves this config
+/// and is inactive; any other installed unit is named without that claim.
 #[test]
-fn an_on_demand_broker_serving_over_an_installed_unit_names_it() {
-    let installed = || {
-        Ok(UnitStatus::Present {
-            contents: "[Unit]\n".into(),
-        })
-    };
+fn an_on_demand_broker_names_the_unit_it_stands_in_for() {
+    let config = Path::new(CONFIG);
+    let stood = |unit, active| inspect(unit, active).standing_in(&report(true), config);
     assert_eq!(
-        inspect(installed()).stood_down_unit(&report(true)),
-        Some("quecto-admission-broker.service".into())
+        stood(unit_for(CONFIG), Ok(false)),
+        Some(StandIn::UnitStopped {
+            unit: "quecto-admission-broker.service".into()
+        })
+    );
+    let elsewhere = Some(StandIn::UnitElsewhere {
+        unit: "quecto-admission-broker.service".into(),
+    });
+    assert_eq!(
+        stood(unit_for("/elsewhere/config.json"), Ok(false)),
+        elsewhere
     );
     assert_eq!(
-        inspect(installed()).stood_down_unit(&report(false)),
+        stood(unit_for(CONFIG), Ok(true)),
+        elsewhere,
+        "active: not stopped"
+    );
+    assert_eq!(stood(unit_for(CONFIG), Err("no bus".into())), elsewhere);
+    assert_eq!(stood(Ok(UnitStatus::Absent), Ok(false)), None);
+    assert_eq!(stood(Err("unreadable".into()), Ok(false)), None);
+    assert_eq!(
+        inspect(unit_for(CONFIG), Ok(false)).standing_in(&report(false), config),
         None,
         "the unit serves"
-    );
-    assert_eq!(
-        inspect(Ok(UnitStatus::Absent)).stood_down_unit(&report(true)),
-        None
-    );
-    assert_eq!(
-        inspect(Err("unreadable".into())).stood_down_unit(&report(true)),
-        None
     );
 }
