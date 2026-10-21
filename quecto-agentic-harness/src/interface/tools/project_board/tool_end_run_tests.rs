@@ -112,7 +112,7 @@ pub(super) fn ready_with_plan() -> (Task, Plan) {
 fn started_now() -> Started {
     let (task, plan) = ready_with_plan();
     let now = SystemBoardClock::default().now().unwrap();
-    start(&task, &[], Some(&plan), &ada(), &now).unwrap()
+    start(&task, &[], &[], Some(&plan), &ada(), &now).unwrap()
 }
 
 /// The boards this test's teardown keeps, as composition keeps one store

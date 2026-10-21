@@ -280,7 +280,7 @@ impl StartBoardTask {
                         .into_iter()
                         .find(|plan| plan.fields().version == accepted)
                 });
-                let started = start(task, &runs, plan, actor, &when.now)?;
+                let started = start(task, &board.tasks, &runs, plan, actor, &when.now)?;
                 let brief = brief_of(&started)?;
                 // The text the coordinator gets, measured before the write.
                 let text = render(&brief);

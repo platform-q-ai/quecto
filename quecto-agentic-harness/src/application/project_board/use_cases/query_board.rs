@@ -19,6 +19,7 @@ use crate::domain::project_board::entities::review::Review;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::claims::is_live;
+use crate::domain::project_board::services::transitions::relations_allow;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -40,14 +41,11 @@ impl QueryBoard {
     /// # Errors
     /// The store's.
     pub fn ready(&self) -> Result<BoardListing, ProjectBoardError> {
+        // The claim rule itself (#2661): a ready task its dependencies let
+        // anyone claim.
         self.matching(|task, board| {
-            let satisfied = |id: &Slug| {
-                board.iter().any(|other| {
-                    other.fields().id == *id && other.fields().status.releases_dependents()
-                })
-            };
             task.fields().status == TaskStatus::Ready
-                && task.fields().depends_on.iter().all(satisfied)
+                && relations_allow(task, TaskStatus::Claimed, board).is_ok()
         })
     }
 

@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use super::board_change::{checked_writer, commit, owned, task_on, written_task};
 use super::board_view;
-use crate::application::project_board::dto::ProjectBoardError;
+use crate::application::project_board::dto::{NoPullRequestHost, ProjectBoardError};
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, ProjectBoardStore, PullRequestState, PullRequestStates,
     PullRequestStatesError,
@@ -50,17 +50,24 @@ pub const READ_BUDGET: Duration = Duration::from_secs(30);
 pub struct CompleteMergedTask {
     store: Arc<dyn ProjectBoardStore>,
     clock: Arc<dyn BoardClock>,
-    prs: Arc<dyn PullRequestStates>,
+    /// The host pull request states are read from, or why there is none:
+    /// a completion asks it only about a task that links pull requests
+    /// (#2658).
+    prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
     read_budget: Duration,
 }
 
 impl CompleteMergedTask {
+    /// A completion reading `prs`, or with none, `prs`'s reason: then a
+    /// task that links pull requests is refused as `no_pull_request_host`,
+    /// and any other is judged by the rule alone (#2658).
+    ///
     /// # Errors
     /// The store writes as an invalid identity.
-    pub fn new(
+    pub fn reading(
         store: Arc<dyn ProjectBoardStore>,
         clock: Arc<dyn BoardClock>,
-        prs: Arc<dyn PullRequestStates>,
+        prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
     ) -> Result<Self, ProjectBoardError> {
         checked_writer(&*store)?;
         Ok(Self {
@@ -133,8 +140,17 @@ impl CompleteMergedTask {
             // change holds, is refused by the rule first.
             let linked: BTreeSet<u64> = task.fields().prs.iter().copied().collect();
             complete_merged(task, &linked, &changes, &runs, &when.now)?;
+            // Only now is there a pull request to ask a host about.
+            let host = self
+                .prs
+                .as_ref()
+                .map_err(|why| ProjectBoardError::NoPullRequestHost(why.clone()))?;
+            assert!(
+                !linked.is_empty(),
+                "the rule asks the host only about links"
+            );
             let reads = Reads {
-                host: &*self.prs,
+                host: &**host,
                 clock: &*self.clock,
                 deadline,
                 budget: self.read_budget,

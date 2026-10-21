@@ -267,5 +267,5 @@ pub struct BoardOperationParts {
     /// as its session ends (#2655); `None` for one that launches none.
     pub left_runs: Option<ListLeftRuns>,
     pub clear: ClearSetAside,
-    pub complete: Result<CompleteMergedTask, NoPullRequestHost>,
+    pub complete: CompleteMergedTask,
 }

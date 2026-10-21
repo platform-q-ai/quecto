@@ -43,9 +43,16 @@ fn board() -> &'static MemoryBoardStore {
         let now =
             crate::application::project_board::ports::BoardClock::now(&SystemBoardClock::default())
                 .unwrap();
-        let (task, run) = start(&task, &[], Some(&plan), &super::end_run_tests::ada(), &now)
-            .unwrap()
-            .into_writes();
+        let (task, run) = start(
+            &task,
+            &[],
+            &[],
+            Some(&plan),
+            &super::end_run_tests::ada(),
+            &now,
+        )
+        .unwrap()
+        .into_writes();
         let head = store.read().unwrap().head;
         let seed = [
             BoardArtifact::Task(task),
@@ -178,7 +185,7 @@ fn bobs_board() -> &'static MemoryBoardStore {
             name: "Bob".into(),
             email: "bob@example.com".into(),
         };
-        let (task, run) = start(&task, &[], Some(&plan), &bob, &now)
+        let (task, run) = start(&task, &[], &[], Some(&plan), &bob, &now)
             .unwrap()
             .into_writes();
         let head = store.read().unwrap().head;

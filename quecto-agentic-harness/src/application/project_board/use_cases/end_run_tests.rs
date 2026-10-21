@@ -34,6 +34,7 @@ fn stranded() -> (MemoryBoardStore, Task) {
     let (task, run) = start(
         &ready,
         &[],
+        &[],
         Some(&accepted),
         &person("Ada"),
         &at("10:00:00"),

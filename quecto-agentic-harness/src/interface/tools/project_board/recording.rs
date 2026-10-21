@@ -522,6 +522,8 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         | R::NotDraft(..)
         | R::NoEdit
         | R::Superseded { .. }
+        | R::DependencyNotDone { .. }
+        | R::ChildrenActive(..)
         | R::IssueShared { .. }
         | R::IssueIsPr { .. }
         | R::OwnPrReferenced { .. } => None,
