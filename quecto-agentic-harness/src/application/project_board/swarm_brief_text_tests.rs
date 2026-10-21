@@ -286,3 +286,17 @@ fn the_coordinator_playbook_names_the_briefs_shape() {
         assert!(section.contains(field.as_str()), "{field}");
     }
 }
+
+/// #2665: the brief tells the coordinator that the plan describes the
+/// work, and that running it is decided only by its start and the swarm
+/// controls.
+#[test]
+fn the_brief_keeps_run_control_out_of_the_plan() {
+    let text = render(&brief(vec![item("api", &["works"], &[])]));
+    let fixed = text.split("=== BEGIN").next().unwrap();
+    assert!(fixed.contains("The plan describes the work"), "{fixed}");
+    assert!(
+        fixed.contains("only by your start and the swarm controls"),
+        "{fixed}"
+    );
+}
