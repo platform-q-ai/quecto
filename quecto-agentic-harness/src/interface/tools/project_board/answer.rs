@@ -37,6 +37,8 @@
 //! present (`null` or `[]` when unset), in a fixed order.
 use serde_json::{Map, Value, json};
 
+use crate::domain::project_board::services::claims::renew_after;
+
 use super::request::RequestError;
 use crate::application::project_board::dto::{LivenessCheck, ProjectBoardError, RunReport};
 use crate::application::project_board::operations::{BoardOutcome, Completion};
@@ -241,6 +243,10 @@ pub fn outcome(
         },
         BoardOutcome::Changed { task, completion } => {
             fields.insert("task".into(), task_json(task));
+            // A renewal says when the next one is due (#2656).
+            if op == "renew" {
+                fields.insert("renew_after".into(), renew_after_json(task));
+            }
             if let Some(completion) = completion {
                 let completion = match completion {
                     Completion::Done(task) => json!({"done": true, "task": task_json(task)}),
@@ -349,7 +355,16 @@ fn started_fields(started: &StartedTask) -> Map<String, Value> {
         ),
         ("not_applied", Value::Array(not_applied)),
         ("claim", json!(started.claim.as_str())),
+        // When to renew the claim: halfway through it (#2656). A started
+        // task is held by its starter.
+        ("renew_after", renew_after_json(&started.task)),
     ])
+}
+
+/// When the claim `task` holds is next renewed (#2656): halfway through
+/// it; `null` for a task that holds none.
+fn renew_after_json(task: &Task) -> Value {
+    renew_after(task).map_or(Value::Null, |at| json!(at.as_str()))
 }
 
 /// The files set aside, each with its `object` and the `copies` (every

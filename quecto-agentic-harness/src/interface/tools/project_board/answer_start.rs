@@ -59,9 +59,9 @@ pub fn running(task: &Slug, run: u32) -> String {
     let task = task.as_str();
     format!(
         "Once it has started, you hold the task and you end its run as your playbook's \
-         \"Board task plans and swarm runs\" says. Each time you are woken while the swarm \
-         runs, renew(task \"{task}\"); while agent_cmd swarm_control status shows the run \
-         running, do nothing but renew. On \"not_holder\" from renew or end_run, stop the \
+         \"Board task plans and swarm runs\" says. Renew the claim with renew(task \"{task}\") \
+         once renew_after has passed; while agent_cmd swarm_control status shows the run \
+         running, do nothing else. On \"not_holder\" from renew or end_run, stop the \
          coordinator with agent_cmd kill, do not end the run or move the task, and tell the \
          user here. When the coordinator reports, read its report with get_messages and \
          export what the run must keep. {PUSH_STEP} A run paused as blocked waits for the user: ask them \

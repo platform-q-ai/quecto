@@ -20,9 +20,9 @@ const PROMPT: &str = "Start the swarm for board task a on its accepted plan, ver
      outcome \"failed\"); then, if released is false, move(task \"a\", to \"ready\"), or, if \
      released is null and restored.moved is false, move(task \"a\", to restored.status); say \
      why the launch failed, and stop. Once it has started, you hold the task and you end its \
-     run as your playbook's \"Board task plans and swarm runs\" says. Each time you are woken \
-     while the swarm runs, renew(task \"a\"); while agent_cmd swarm_control status shows the \
-     run running, do nothing but renew. On \"not_holder\" from renew or end_run, stop the \
+     run as your playbook's \"Board task plans and swarm runs\" says. Renew the claim with \
+     renew(task \"a\") once renew_after has passed; while agent_cmd swarm_control status \
+     shows the run running, do nothing else. On \"not_holder\" from renew or end_run, stop the \
      coordinator with agent_cmd kill, do not end the run or move the task, and tell the user \
      here. When the coordinator reports, read its report with get_messages and export what \
      the run must keep. A run paused as blocked waits for the user: ask them here before you \
