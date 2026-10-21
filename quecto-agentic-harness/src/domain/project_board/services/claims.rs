@@ -81,7 +81,19 @@ pub(super) fn held_live_by<'a>(
     actor: &Identity,
     now: &Timestamp,
 ) -> Result<&'a Claim, BoardRuleError> {
-    let claim = held_by(task, actor)?;
+    // Another's expired claim has a way on: take the task over (#2659).
+    let claim = match held_by(task, actor) {
+        Err(BoardRuleError::NotHolder)
+            if task
+                .fields()
+                .claim
+                .as_ref()
+                .is_some_and(|claim| !is_live(claim, now)) =>
+        {
+            return Err(BoardRuleError::NotHolderExpired);
+        }
+        held => held?,
+    };
     if is_live(claim, now) {
         Ok(claim)
     } else {

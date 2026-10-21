@@ -594,7 +594,10 @@ fn a_move_that_reads_a_set_aside_run_or_change_of_its_task_waits() {
             moved,
             Err(ProjectBoardError::Quarantined {
                 key,
-                path: path.into()
+                path: path.into(),
+                object: crate::infrastructure::test_support::memory_board_store::memory_object(
+                    path
+                ),
             })
         );
     }

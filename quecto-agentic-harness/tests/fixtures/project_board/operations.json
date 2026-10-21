@@ -886,9 +886,9 @@
           "path": "tasks/ghost.md",
           "id": "ghost",
           "reason": "malformed",
-          "object": "0000000000000000000000000000000000000018",
+          "object": "0000000000000000000000006c8b4832f52e7118",
           "copies": [
-            "0000000000000000000000000000000000000018"
+            "0000000000000000000000006c8b4832f52e7118"
           ]
         }
       ]
@@ -1102,7 +1102,9 @@
       "op": "show",
       "error": {
         "code": "set_aside",
-        "message": "task late is set aside as unreadable; mend its file",
+        "message": "task late is set aside as unreadable; mend its file, or discard it with clear_set_aside(path \"tasks/late.md\", object \"0000000000000000000000006d8fbafe020afc45\")",
+        "path": "tasks/late.md",
+        "object": "0000000000000000000000006d8fbafe020afc45",
         "task": "late"
       }
     }
@@ -1208,7 +1210,9 @@
       "op": "link_pr",
       "error": {
         "code": "set_aside",
-        "message": "task ghost is set aside as unreadable; mend its file",
+        "message": "task ghost is set aside as unreadable; mend its file, or discard it with clear_set_aside(path \"tasks/ghost.md\", object \"0000000000000000000000006c8b4832f52e7118\")",
+        "path": "tasks/ghost.md",
+        "object": "0000000000000000000000006c8b4832f52e7118",
         "task": "ghost"
       }
     }
@@ -1241,7 +1245,9 @@
       "op": "link_pr",
       "error": {
         "code": "set_aside",
-        "message": "task ghost is set aside as unreadable; mend its file",
+        "message": "task ghost is set aside as unreadable; mend its file, or discard it with clear_set_aside(path \"tasks/ghost.md\", object \"0000000000000000000000006c8b4832f52e7118\")",
+        "path": "tasks/ghost.md",
+        "object": "0000000000000000000000006c8b4832f52e7118",
         "task": "ghost"
       }
     }
@@ -1274,7 +1280,9 @@
       "op": "link_pr",
       "error": {
         "code": "set_aside",
-        "message": "task ghost is set aside as unreadable; mend its file",
+        "message": "task ghost is set aside as unreadable; mend its file, or discard it with clear_set_aside(path \"tasks/ghost.md\", object \"0000000000000000000000006c8b4832f52e7118\")",
+        "path": "tasks/ghost.md",
+        "object": "0000000000000000000000006c8b4832f52e7118",
         "task": "ghost"
       }
     }

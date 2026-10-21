@@ -218,6 +218,18 @@ fn claim_facts_count_from_its_start_to_its_expiry() {
     );
 }
 
+/// #2659: another's claim that has expired is refused with the way on:
+/// take it over first.
+#[test]
+fn another_on_an_expired_claim_is_told_to_take_it_over() {
+    let held = task(InProgress);
+    let lapsed = held_live_by(&held, &person("Bob"), &at("14:00:00"));
+    assert_eq!(lapsed.map(|_| ()), Err(BoardRuleError::NotHolderExpired));
+    // While it is live, there is no way on for anyone else.
+    let live = held_live_by(&held, &person("Bob"), &at("10:00:00"));
+    assert_eq!(live.map(|_| ()), Err(BoardRuleError::NotHolder));
+}
+
 /// #2656 review round 1: halfway is the claim's own lease's, and a
 /// renewal is due from then, an expired claim's too; another's is the
 /// renewal's own rule to refuse.

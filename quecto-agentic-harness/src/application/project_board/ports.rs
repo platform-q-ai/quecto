@@ -274,7 +274,13 @@ pub enum BoardStoreError {
     /// A file set aside outside `tasks/` holds the board where an index
     /// cannot yet judge it: no listing is given while one names an artifact
     /// other than a task (an index that does not yet hold that kind).
-    FolderSetAside(String),
+    FolderSetAside {
+        why: String,
+        /// The file set aside, by its path and object, as `clear_set_aside`
+        /// names it (#2659).
+        path: String,
+        object: String,
+    },
 }
 
 /// Where a project's board lives. Blocking: callers run it off the async

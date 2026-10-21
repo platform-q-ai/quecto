@@ -142,9 +142,10 @@ fn a_read_needs_no_committer_and_a_write_says_none_is_configured() {
     );
     let mut nowhere = environment(&work, Access::Read);
     nowhere.remote = "nowhere".into();
+    // #2659: a remote the clone lacks is the request's mistake.
     assert!(matches!(
         build_project_board_handles(&nowhere),
-        Err(BuildError::Unavailable(_))
+        Err(BuildError::NoSuchRemote(_))
     ));
 }
 
@@ -692,4 +693,48 @@ impl crate::application::project_board::ports::StartedRuns for FailedButRunning 
     fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
         vec![]
     }
+}
+
+/// #2659: a remote the clone does not have is the caller's mistake, not
+/// a store that cannot be reached: answered as an invalid request naming
+/// the `remote` field.
+#[test]
+fn a_remote_the_clone_lacks_is_an_invalid_request() {
+    let (_dir, work) = repository();
+    let mut missing = environment(&work, Access::Read);
+    missing.remote = "nope".into();
+    assert!(
+        !matches!(
+            build_project_board_handles(&missing),
+            Err(BuildError::Unavailable(_))
+        ),
+        "a missing remote is no store unavailable"
+    );
+    let site = crate::interface::tools::project_board::site::BoardSite {
+        repo: work.clone(),
+        remote: "nope".into(),
+        build: Some(build_project_board_handles),
+        launcher: None,
+        swarm_session: None,
+    };
+    use crate::domain::project_board::value_objects::telemetry::{Client, FrontEnd};
+    use crate::interface::tools::project_board::recording::BoardCall;
+    let answered = |front_end, client| {
+        crate::interface::tools::project_board::site::answer(
+            &site,
+            r#"{"op": "list"}"#,
+            None,
+            &mut BoardCall::start(None, front_end, client),
+        )
+    };
+    // The command line names the remote (`--remote`): its mistake.
+    let cli = answered(FrontEnd::Cli, Client::Cli);
+    assert_eq!(
+        (&cli["error"]["code"], &cli["error"]["field"]),
+        (&json!("invalid_request"), &json!("remote")),
+        "{cli}"
+    );
+    // The agent tool names none (its board is `origin`): out of reach.
+    let tool = answered(FrontEnd::Tool, Client::Agent);
+    assert_eq!(tool["error"]["code"], json!("store_unavailable"), "{tool}");
 }

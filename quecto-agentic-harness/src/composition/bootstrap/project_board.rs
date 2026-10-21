@@ -41,7 +41,7 @@ use crate::infrastructure::persistence::project_board::gh_pull_requests::{
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment, GitError};
 use crate::infrastructure::persistence::project_board::index::BoardIndex;
 use crate::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
-use crate::infrastructure::persistence::project_board::store::GitBoardStore;
+use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use crate::infrastructure::time::remote_time::ReferencedBoardClock;
 use crate::infrastructure::tools::agents::coordinator_launch::KeptRunReports;
@@ -93,8 +93,10 @@ fn build_with_warnings(
         Access::Read => Git::reader(&environment.repo, vars)
             .map_err(|error| unavailable(format!("git cannot run here: {error}")))?,
     };
-    let board = GitBoardStore::new(git, &environment.remote)
-        .map_err(|error| unavailable(store_reason(&error)))?;
+    let board = GitBoardStore::new(git, &environment.remote).map_err(|error| match error {
+        StoreOpenError::NoSuchRemote(why) => BuildError::NoSuchRemote(why),
+        StoreOpenError::Unavailable(error) => unavailable(store_reason(&error)),
+    })?;
     // A start's undo writes past the call's cancel, so no run is stranded.
     let undo_store: Arc<dyn ProjectBoardStore> = Arc::new(board.without_cancel());
     let store = Arc::new(board.with_cancel(environment.cancelled.clone()));
@@ -205,7 +207,10 @@ pub fn board_remote_revisions(repo: &Path) -> Result<Arc<dyn RemoteRevisions>, S
     let git = Git::reader(repo, vars)
         .map_err(|error| format!("git cannot run here: {error}"))?
         .bounded(TEARDOWN_READ);
-    let store = GitBoardStore::new(git, "origin").map_err(|error| store_reason(&error))?;
+    let store = GitBoardStore::new(git, "origin").map_err(|error| match error {
+        StoreOpenError::NoSuchRemote(why) => why,
+        StoreOpenError::Unavailable(error) => store_reason(&error),
+    })?;
     Ok(Arc::new(store))
 }
 
@@ -292,7 +297,7 @@ fn store_reason(error: &BoardStoreError) -> String {
         | BoardStoreError::WriteTooLarge(why)
         | BoardStoreError::Unavailable(why)
         | BoardStoreError::TooLarge(why)
-        | BoardStoreError::FolderSetAside(why) => why.clone(),
+        | BoardStoreError::FolderSetAside { why, .. } => why.clone(),
     }
 }
 

@@ -339,7 +339,7 @@ fn another_ends_a_stranded_run_as_lost_once_they_hold_the_task() {
     }
     assert_eq!(
         ender(&store, "Bob", "12:00:00").execute(&ending(RunEndOutcome::Lost)),
-        Err(ProjectBoardError::Rule(BoardRuleError::NotHolder)),
+        Err(ProjectBoardError::Rule(BoardRuleError::NotHolderExpired)),
         "an expired claim is taken over first"
     );
     ChangeBoardTask::new(
