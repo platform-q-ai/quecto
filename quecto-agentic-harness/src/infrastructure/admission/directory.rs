@@ -118,9 +118,23 @@ fn ensure_private_dir(path: &Path) -> io::Result<()> {
             check_private(path, &meta)
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            fs::create_dir(path)?;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-            check_private(path, &fs::symlink_metadata(path)?)
+            // Created owner-only in one step, so a concurrent opener (two
+            // sessions starting the broker on demand, #2615) never sees it
+            // shared; whoever loses the creation checks the winner's.
+            use std::os::unix::fs::DirBuilderExt;
+            match fs::DirBuilder::new().mode(0o700).create(path) {
+                Ok(()) => fs::set_permissions(path, fs::Permissions::from_mode(0o700))?,
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e),
+            }
+            let meta = fs::symlink_metadata(path)?;
+            if !meta.is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("{} exists and is not a directory", path.display()),
+                ));
+            }
+            check_private(path, &meta)
         }
         Err(e) => Err(e),
     }
