@@ -565,7 +565,7 @@ async fn an_explicit_follow_up_re_arms_a_provider_suspended_idle_member() {
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
     assert_eq!(
         ctx.session.control_receipt_status("f1"),
-        Some(crate::interface::cli::protocol::ControlStatus::Completed)
+        Some(crate::interface::uds::wire::protocol::ControlStatus::Completed)
     );
 }
 
@@ -587,7 +587,7 @@ async fn an_idle_suspended_member_executes_a_forwarded_follow_up() {
     assert!(ctx.session.automatic_turns_allowed());
     assert_eq!(
         ctx.session.control_receipt_status("p1"),
-        Some(crate::interface::cli::protocol::ControlStatus::Completed)
+        Some(crate::interface::uds::wire::protocol::ControlStatus::Completed)
     );
 }
 
@@ -627,7 +627,7 @@ async fn only_an_admitted_explicit_instruction_re_arms() {
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     assert_eq!(
         ctx.session.control_receipt_status("f2"),
-        Some(crate::interface::cli::protocol::ControlStatus::Queued)
+        Some(crate::interface::uds::wire::protocol::ControlStatus::Queued)
     );
     // A swarm wake nudge queued behind a steer is automatic, not explicit.
     ctx.turn_control.mark_steer();

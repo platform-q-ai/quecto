@@ -9,7 +9,7 @@ use crate::domain::sessions::entities::session_home::{
     AssociationProvenance, SessionHome, WorkspaceGroup,
 };
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::interface::cli::protocol::AgentCommand;
+use crate::interface::uds::wire::protocol::AgentCommand;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 
@@ -456,7 +456,7 @@ async fn limit_and_generation_are_read_leniently_and_a_non_number_is_a_correlate
 
 /// The answer to a RAW protocol line, through the production line parser.
 async fn answer_to_line(fx: &mut Fixture, id: &str, raw: &str) -> serde_json::Value {
-    let command = crate::interface::cli::protocol::parse_command_line(raw).expect(raw);
+    let command = crate::interface::uds::wire::protocol::parse_command_line(raw).expect(raw);
     let (tx, mut rx) = tokio::sync::broadcast::channel(64);
     let mut ctx = fx.ctx();
     ctx.broadcast_tx = Some(tx);
@@ -503,7 +503,7 @@ async fn a_number_no_float_can_hold_is_still_answered_under_the_requests_id() {
     let data = answer_to_line(&mut fx, "big", &line(r#""limit":[1e400]"#)).await["data"].clone();
     assert_eq!(data["refused"], "limit must be a number");
     // Only a search is rescued, and only when the rest of it decodes.
-    use crate::interface::cli::protocol::parse_command_line;
+    use crate::interface::uds::wire::protocol::parse_command_line;
     for raw in [
         r#"{"type":"list_sessions","id":"x","query":"q","limit":1e400}"#.to_string(),
         r#"{"type":"search_session_metadata","id":"x","generation":1e400}"#.to_string(),
@@ -529,7 +529,7 @@ async fn an_unknown_field_is_ignored_by_the_rescue_whatever_it_holds() {
         let data = answer_to_line(&mut fx, "u1", &line).await["data"].clone();
         assert!(data["refused"].is_null(), "{data}");
         let other = format!(r#"{{"type":"list_sessions","id":"u1","zzz":{unknown}}}"#);
-        let error = crate::interface::cli::protocol::parse_command_line(&other).unwrap_err();
+        let error = crate::interface::uds::wire::protocol::parse_command_line(&other).unwrap_err();
         assert!(error.starts_with("parse error: "), "{error}");
     }
 }

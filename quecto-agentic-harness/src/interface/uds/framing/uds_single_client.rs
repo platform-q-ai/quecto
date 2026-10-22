@@ -1,0 +1,129 @@
+//! The single-client UDS loop: one pre-connected stream (tests) served by
+//! the same dispatch loop as the multi-client server, minus the accept
+//! loop and broadcast. Split out of `uds_lifecycle` (#1845).
+
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
+use crate::application::sessions::dto::SaveTrigger;
+use crate::domain::conversation::value_objects::message::Message;
+use crate::interface::cli::uds::{DispatchCtx, run_command_loop};
+use crate::interface::cli::uds_cancel::{CancelSlot, TurnControl};
+use crate::interface::cli::uds_session::history_session_stats;
+use crate::interface::cli::uds_session_handles::SessionHandles;
+use crate::interface::cli::{uds_ext_protocol, uds_extensions::ExtRegistry, uds_lifecycle};
+
+pub(in crate::interface) struct SingleClientArgs<'a> {
+    pub(in crate::interface) agent: AgentLoopImpl,
+    pub(in crate::interface) turn_session: crate::interface::cli::TurnSessionBuilder,
+    pub(in crate::interface) workspace: &'a std::path::Path,
+    pub(in crate::interface) messages: Vec<Message>,
+    pub(in crate::interface) model: String,
+    pub(in crate::interface) admission_slots: Vec<String>,
+    pub(in crate::interface) session_key: String,
+    pub(in crate::interface) system_prompt: String,
+    pub(in crate::interface) ext_registry: Option<ExtRegistry>,
+    pub(in crate::interface) subagent_registry:
+        Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
+    pub(in crate::interface) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+}
+
+pub(in crate::interface) async fn single_client_loop(
+    args: SingleClientArgs<'_>,
+    std_stream: std::os::unix::net::UnixStream,
+    sessions: &SessionHandles,
+    catalogue: &crate::interface::cli::controllers::catalogue_handles::CatalogueHandles,
+) -> i32 {
+    let SingleClientArgs {
+        mut agent,
+        turn_session,
+        workspace,
+        mut messages,
+        model,
+        session_key,
+        system_prompt,
+        admission_slots,
+        ext_registry,
+        subagent_registry,
+        workflow_state,
+    } = args;
+    std_stream
+        .set_nonblocking(true)
+        .expect("set_nonblocking failed for test socket");
+    let tokio_stream = tokio::net::UnixStream::from_std(std_stream).expect("std→tokio UnixStream");
+    let (r, w) = tokio::io::split(tokio_stream);
+    let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(r);
+    let mut writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(w);
+
+    let wire_mode = super::uds_wire::ConnectionWireMode::legacy();
+    let workspace_event = super::super::wire::protocol::AgentEvent::Workspace {
+        path: workspace.display().to_string(),
+    };
+    let line = workspace_event.to_json_line() + "\n";
+    let _ = super::uds_wire::write_event_line(&mut writer, &line, &wire_mode).await;
+
+    uds_lifecycle::inject_system_prompt(&mut messages, &system_prompt);
+
+    let mut agent_session = turn_session(model);
+    agent_session.set_admission_warnings(&admission_slots);
+    agent_session.set_startup_warnings(&catalogue.startup_warnings);
+    agent_session.observe_runtime(catalogue.runtime_store.clone());
+    let effort = catalogue.effort_view(agent.effort(), agent_session.model());
+    let initial_state =
+        agent_session.state_snapshot(&session_key, 0, None, agent.max_context_tokens(), effort);
+    let initial_stats = history_session_stats(&session_key, &messages);
+    let session_reads = sessions.read_handles();
+    let _ = session_reads
+        .active_session
+        .write()
+        .await
+        .publish(&messages);
+
+    run_command_loop(
+        reader,
+        &mut DispatchCtx {
+            wire_mode,
+            agent: &mut agent,
+            messages: &mut messages,
+            sessions: session_reads.clone(),
+            state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_state)),
+            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
+            session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+            tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            session: &mut agent_session,
+            stdout: Some(&mut *writer),
+            system_prompt: &system_prompt,
+            cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
+            turn_control: std::sync::Arc::<TurnControl>::default(),
+            broadcast_tx: None,
+            _ext_registry: ext_registry,
+            client_tool_registry: uds_ext_protocol::new_client_tool_registry(),
+            current_client_id: 0,
+            subagent_registry: subagent_registry.clone(),
+            notification_rx: None,
+            workflow_state: workflow_state.clone(),
+            workflow_config: None,
+            fleet_teardown: None,
+            discovery: sessions.discovery.clone(),
+            save_session: sessions.save_session.clone(),
+            rewrite: sessions.rewrite.clone(),
+            switch: sessions.switch.clone(),
+            catalogue: catalogue.clone(),
+        },
+    )
+    .await;
+
+    // The final save of an ordinary exit (#1860): the transaction decides
+    // whether there is anything to save.
+    if let Err(err) = sessions
+        .save_session
+        .save(&mut messages, SaveTrigger::OrdinaryExit)
+        .await
+    {
+        tracing::warn!("failed to persist session on exit: {err}");
+    }
+    crate::interface::cli::controllers::launch_rollback_wait::await_launch_rollbacks(
+        crate::interface::cli::controllers::launch_rollback_wait::LAUNCH_ROLLBACK_LIMIT,
+    )
+    .await;
+    0
+}

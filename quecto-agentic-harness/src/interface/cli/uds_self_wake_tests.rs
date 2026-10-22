@@ -3,8 +3,8 @@
 //! sender on the loop's channel and sends nothing while the process ends;
 //! a paused run's wake re-arms no recoverable failure.
 use super::*;
-use crate::interface::cli::uds_multi::ClientMessage;
 use crate::interface::cli::uds_swarm_control::date_provider_suspension;
+use crate::interface::uds::framing::uds_multi::ClientMessage;
 
 /// A running run whose store is locked for the first `status` status reads
 /// and the first `wake` wake claims; a wake claims no generation.

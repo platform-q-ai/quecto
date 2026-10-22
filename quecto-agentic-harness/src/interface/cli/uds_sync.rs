@@ -6,7 +6,6 @@
 //! wire field names, the history frame budget a delta is cut at and the
 //! frame-limit refusal are this module's; reset-or-delta and where a cut
 //! delta continues are the application's.
-use super::protocol::AgentEvent;
 use super::uds_session::{
     HISTORY_PAGE_JSON_BUDGET, HISTORY_PAGE_SIZE, history_page_json,
     message_to_json_for_history_page,
@@ -17,6 +16,7 @@ use crate::domain::conversation::value_objects::message::Message;
 use crate::interface::uds::sessions::synchronize_transcript_controller::{
     SyncFields, SynchronizeTranscriptController,
 };
+use crate::interface::uds::wire::protocol::AgentEvent;
 
 pub(super) const SYNC_OVERSIZED_ERROR: &str =
     "sync response exceeds the protocol frame limit; retry with nextRev to continue";

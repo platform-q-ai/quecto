@@ -1,8 +1,8 @@
-use super::protocol::SessionState;
 use super::uds_execution_state::{ExecutionSnapshot, ProgressSummary, ToolSummary};
 use super::uds_state_projection::{
     slim_progress, slim_state_projection, slim_state_response_data, slim_workflow,
 };
+use crate::interface::uds::wire::protocol::SessionState;
 
 fn state_with_execution(activity_generation: u64, progress_state: &str) -> SessionState {
     SessionState {

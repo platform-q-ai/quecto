@@ -5,7 +5,6 @@ use crate::domain::sessions::entities::session::{Session, SpillEntry, SpillIndex
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
 use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
-use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::dispatch_session_roster_tests::{
     catalogue_handles, handles_over, read_handles_for, resolve_message,
 };
@@ -13,6 +12,7 @@ use crate::interface::cli::uds::{DispatchCtx, dispatch_command};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::{AgentSession, history_session_stats};
+use crate::interface::uds::wire::protocol::AgentCommand;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 #[derive(Debug, Default)]
@@ -193,7 +193,7 @@ impl Fixture {
             .publish(&self.messages);
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
-            wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
+            wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
             agent: &mut self.agent,
             messages: &mut self.messages,
             sessions: handles.read_handles(),
@@ -283,7 +283,7 @@ impl TestRangeAccumulator {
 
     fn apply_response(&mut self, line: &str, message_id: &str, failure_context: &str) -> bool {
         assert!(
-            line.len() <= crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES,
+            line.len() <= crate::interface::uds::wire::protocol::EVENT_LINE_CAP_BYTES,
             "each get_message range response must fit in one protocol frame"
         );
         let response: serde_json::Value = serde_json::from_str(line).expect("response is json");
@@ -323,7 +323,7 @@ impl TestRangeAccumulator {
 }
 #[tokio::test]
 async fn get_message_idle_reassembles_all_bounded_pages_for_oversized_message() {
-    let content_len = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES + 1024;
+    let content_len = crate::interface::uds::wire::protocol::EVENT_LINE_CAP_BYTES + 1024;
     let oversized = patterned_content(content_len);
     let mut msg = Message::assistant(oversized.clone(), vec![]);
     let message_id = msg.id().to_string();
@@ -331,7 +331,7 @@ async fn get_message_idle_reassembles_all_bounded_pages_for_oversized_message() 
     let mut fx = Fixture::new(None);
     fx.messages.push(msg);
     let (tx, mut rx) = tokio::sync::broadcast::channel(8);
-    let page_limit = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES / 2;
+    let page_limit = crate::interface::uds::wire::protocol::EVENT_LINE_CAP_BYTES / 2;
     let mut range = TestRangeAccumulator::new(oversized);
 
     loop {
@@ -360,7 +360,7 @@ async fn get_message_idle_reassembles_all_bounded_pages_for_oversized_message() 
 }
 #[tokio::test]
 async fn get_message_busy_reassembles_all_bounded_pages_for_oversized_snapshot_message() {
-    let content_len = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES + 1024;
+    let content_len = crate::interface::uds::wire::protocol::EVENT_LINE_CAP_BYTES + 1024;
     let oversized = patterned_content(content_len);
     let mut msg = Message::assistant(oversized.clone(), vec![]);
     let message_id = msg.id().to_string();
@@ -369,7 +369,7 @@ async fn get_message_busy_reassembles_all_bounded_pages_for_oversized_snapshot_m
     let registry = new_client_tool_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     crate::interface::cli::uds_ext_protocol::register_client_writer(&registry, 7, tx);
-    let page_limit = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES / 2;
+    let page_limit = crate::interface::uds::wire::protocol::EVENT_LINE_CAP_BYTES / 2;
     let mut range = TestRangeAccumulator::new(oversized);
 
     loop {
@@ -401,7 +401,7 @@ async fn get_message_busy_reassembles_all_bounded_pages_for_oversized_snapshot_m
 }
 #[tokio::test]
 async fn get_message_idle_paginates_message_one_byte_over_frame_cap() {
-    let content_len = crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES + 1;
+    let content_len = crate::interface::uds::wire::protocol::EVENT_LINE_CAP_BYTES + 1;
     let oversized = patterned_content(content_len);
     let mut msg = Message::assistant(oversized, vec![]);
     let message_id = msg.id().to_string();
@@ -415,14 +415,14 @@ async fn get_message_idle_paginates_message_one_byte_over_frame_cap() {
         "id": "gm-just-over-cap",
         "messageId": message_id,
         "offset": 0,
-        "limit": crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES / 2,
+        "limit": crate::interface::uds::wire::protocol::EVENT_LINE_CAP_BYTES / 2,
     }))
     .expect("range get_message parses");
 
     assert!(!dispatch_command(cmd, &mut fx.ctx(Some(tx))).await);
 
     let line = rx.recv().await.expect("dispatch emits a response");
-    assert!(line.len() <= crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES);
+    assert!(line.len() <= crate::interface::uds::wire::protocol::EVENT_LINE_CAP_BYTES);
     let response: serde_json::Value = serde_json::from_str(&line).expect("response is json");
     assert_eq!(response["success"], true);
     assert_eq!(response["data"]["hasMoreContent"], true);
@@ -458,7 +458,7 @@ async fn get_message_metadata_too_large_returns_error_and_keeps_connection_usabl
 
     let line = rx.recv().await.expect("dispatch emits frame-limit error");
     assert!(
-        line.len() <= crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES,
+        line.len() <= crate::interface::uds::wire::protocol::EVENT_LINE_CAP_BYTES,
         "outer guard must replace oversized success frames with a bounded error"
     );
     let response: serde_json::Value = serde_json::from_str(&line).expect("response is json");

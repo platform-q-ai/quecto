@@ -55,7 +55,8 @@ Important invariants before Phase 1:
 ## UDS dispatch
 
 **Primary code:** `src/interface/cli/uds.rs`, `uds_dispatch.rs`,
-`uds_reader.rs`, `uds_responses.rs`, `protocol.rs`, and UDS regression tests.
+`src/interface/uds/framing/uds_reader.rs`, `src/interface/uds/wire/protocol.rs`,
+and UDS regression tests.
 
 UDS mode is the stable protocol boundary for TUI/API clients, subagents, and
 external automation. The top-level dispatcher accepts framed JSON commands,
@@ -519,6 +520,6 @@ cap.
 
 Current largest production/library files are at the 750-line cap, including
 `src/interface/cli/uds_snapshots.rs`, `src/interface/cli/uds_dispatch.rs`,
-`src/interface/cli/uds.rs`, `src/interface/cli/protocol.rs`,
+`src/interface/cli/uds.rs`, `src/interface/uds/wire/protocol.rs`,
 `src/infrastructure/tools/agents/subagent_monitor.rs`, and
 `src/application/agent_turn/agent_loop/mod.rs`.

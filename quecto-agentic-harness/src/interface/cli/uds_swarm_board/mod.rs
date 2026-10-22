@@ -29,11 +29,11 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use super::protocol::AgentEvent;
 use super::uds_ext_protocol::ClientToolRegistry;
 use crate::application::environments::dto::{BoardSighting, HostedBoardRevision};
 use crate::application::environments::use_cases::ReadSwarmBoard;
 use crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry;
+use crate::interface::uds::wire::protocol::AgentEvent;
 
 /// How often the boards are polled: no swarm is hinted more than once in
 /// this time.
@@ -46,7 +46,7 @@ const IN_FLIGHT: usize = 2;
 const BUSY: &str = "get_swarm_board is busy: at most 2 requests in flight per connection";
 
 /// One connection's board requests in flight (#2488 round 2 M3).
-pub(super) fn board_requests() -> Arc<tokio::sync::Semaphore> {
+pub(in crate::interface) fn board_requests() -> Arc<tokio::sync::Semaphore> {
     Arc::new(tokio::sync::Semaphore::new(IN_FLIGHT))
 }
 
@@ -97,19 +97,19 @@ struct Command {
 }
 
 /// What a connection's reader hands the board view.
-pub(super) struct BoardViewCtx<'a> {
-    pub(super) boards: Option<&'a SwarmBoards>,
-    pub(super) clients: &'a ClientToolRegistry,
-    pub(super) subagents: &'a Option<SubagentRegistry>,
-    pub(super) client_id: u64,
+pub(in crate::interface) struct BoardViewCtx<'a> {
+    pub(in crate::interface) boards: Option<&'a SwarmBoards>,
+    pub(in crate::interface) clients: &'a ClientToolRegistry,
+    pub(in crate::interface) subagents: &'a Option<SubagentRegistry>,
+    pub(in crate::interface) client_id: u64,
     /// This connection's board requests in flight ([`board_requests`]).
-    pub(super) in_flight: &'a Arc<tokio::sync::Semaphore>,
+    pub(in crate::interface) in_flight: &'a Arc<tokio::sync::Semaphore>,
 }
 
 /// A connection's line, taken here when it is a `get_swarm_board`: `true`
 /// when it was. Its answer is made and written by a task of its own (as
 /// `swarm_control` routes are), so the reader goes on to its next line.
-pub(super) fn intercept(line: &str, ctx: BoardViewCtx<'_>) -> bool {
+pub(in crate::interface) fn intercept(line: &str, ctx: BoardViewCtx<'_>) -> bool {
     match serde_json::from_str::<Tagged<'_>>(line) {
         Ok(tagged) if tagged.kind == COMMAND => {}
         Ok(_) | Err(_) => return false,
@@ -368,7 +368,7 @@ pub(super) fn changes(
 /// connected and publishes each change ([`BoardHints::publish`]); with no
 /// client connected, what was seen is forgotten. The poll ends only with
 /// its owner ([`AbortOnDrop`], the accept loop).
-pub(super) fn spawn_change_hints(
+pub(in crate::interface) fn spawn_change_hints(
     boards: SwarmBoards,
     hints: BoardHints,
     broadcast_tx: tokio::sync::broadcast::Sender<String>,
@@ -395,7 +395,9 @@ pub(super) fn spawn_change_hints(
 
 /// Ends the hint poll when its owner (the accept loop) ends, aborted or
 /// not.
-pub(super) struct AbortOnDrop(pub(super) Option<tokio::task::JoinHandle<()>>);
+pub(in crate::interface) struct AbortOnDrop(
+    pub(in crate::interface) Option<tokio::task::JoinHandle<()>>,
+);
 
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {

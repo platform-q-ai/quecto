@@ -19,11 +19,11 @@ use super::{AgentCommand, AgentEvent, DispatchCtx, emit_event_to_broadcast_or_wr
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::sessions::entities::session::SubagentRestoreReason;
 use crate::domain::tool_policy::value_objects::tool;
-use crate::interface::cli::protocol::{
-    ToolPolicyApplyModeCommand, ToolPolicyMutationCommand, ToolPolicyOperationCommand,
-};
 use crate::interface::cli::uds_ext_protocol;
 use crate::interface::uds::sessions::resume_session_controller::ResumeFields;
+use crate::interface::uds::wire::protocol::{
+    ToolPolicyApplyModeCommand, ToolPolicyMutationCommand, ToolPolicyOperationCommand,
+};
 use tool::{ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation, ToolPolicyRequest};
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     if let Some(result) = try_forward_subagent_targeted_command(&cmd, ctx).await {

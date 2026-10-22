@@ -2,7 +2,7 @@ use super::*;
 
 /// Images a reader admitted for the command it hands to dispatch (#2422):
 /// dispatch runs them as admitted, so a message's images are decoded once.
-pub(in crate::interface::cli) type AdmittedImages =
+pub(in crate::interface) type AdmittedImages =
     Vec<crate::domain::conversation::value_objects::message::UserImageBlock>;
 
 /// Admit a message's images through `quecto_image`, the one place images
@@ -17,7 +17,7 @@ pub(in crate::interface::cli) fn admit_images(
 /// A steer's admitted images; `None` when `trimmed` is not a steer, or is
 /// one whose images dispatch would refuse (#2422): such a steer must never
 /// cancel the running turn before it is refused.
-pub(in crate::interface::cli) fn steer_images(trimmed: &str) -> Option<AdmittedImages> {
+pub(in crate::interface) fn steer_images(trimmed: &str) -> Option<AdmittedImages> {
     match serde_json::from_str::<AgentCommand>(trimmed) {
         Ok(
             AgentCommand::Steer { images, .. }
@@ -38,18 +38,18 @@ pub(in crate::interface::cli) fn is_steer_command(trimmed: &str) -> bool {
 
 /// Record the `Rejected` receipt of a control the reader refused itself
 /// (#2422), as dispatch does for one it refuses.
-pub(in crate::interface::cli) async fn record_rejected(
+pub(in crate::interface) async fn record_rejected(
     ctx: &mut DispatchCtx<'_>,
     id: &str,
     command: &str,
 ) {
-    let rejected = crate::interface::cli::protocol::ControlStatus::Rejected;
+    let rejected = crate::interface::uds::wire::protocol::ControlStatus::Rejected;
     ctx.session.record_control(Some(id), command, rejected);
     crate::interface::cli::uds_snapshots::refresh_busy_snapshots(ctx).await;
 }
 
 /// Run a parsed command, with the images its reader admitted, if any.
-pub(in crate::interface::cli) async fn dispatch_parsed(
+pub(in crate::interface) async fn dispatch_parsed(
     cmd: AgentCommand,
     admitted: Option<AdmittedImages>,
     ctx: &mut DispatchCtx<'_>,
@@ -109,11 +109,11 @@ pub(super) async fn arm_prompt_cancel(
 
 pub(super) fn control_status(
     outcome: &PromptOutcome,
-) -> crate::interface::cli::protocol::ControlStatus {
+) -> crate::interface::uds::wire::protocol::ControlStatus {
     match outcome {
-        PromptOutcome::Success => crate::interface::cli::protocol::ControlStatus::Completed,
-        PromptOutcome::Error => crate::interface::cli::protocol::ControlStatus::Failed,
-        PromptOutcome::Cancelled => crate::interface::cli::protocol::ControlStatus::Cancelled,
+        PromptOutcome::Success => crate::interface::uds::wire::protocol::ControlStatus::Completed,
+        PromptOutcome::Error => crate::interface::uds::wire::protocol::ControlStatus::Failed,
+        PromptOutcome::Cancelled => crate::interface::uds::wire::protocol::ControlStatus::Cancelled,
     }
 }
 
@@ -152,7 +152,7 @@ pub(super) async fn handle_busy_prompt(
             ctx.session.record_control(
                 id,
                 type_name,
-                crate::interface::cli::protocol::ControlStatus::Rejected,
+                crate::interface::uds::wire::protocol::ControlStatus::Rejected,
             );
             ctx.turn_control.client_instruction_refused();
             let msg = "agent is running; provide streamingBehavior";
@@ -222,7 +222,7 @@ async fn admit_prompt_body(
             ctx.session.record_control(
                 id,
                 type_name,
-                crate::interface::cli::protocol::ControlStatus::Rejected,
+                crate::interface::uds::wire::protocol::ControlStatus::Rejected,
             );
             let ev = AgentEvent::err(id, type_name, refusal.to_string());
             emit_event_to_broadcast_or_writer(ctx, &ev).await;

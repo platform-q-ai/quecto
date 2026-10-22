@@ -1,9 +1,9 @@
-use super::protocol::{SessionState, SessionStats, TokenStats};
 use crate::application::agent_turn::agent_loop::UsageTotals;
 use crate::application::agent_turn::use_cases::inspect_session_usage::InspectSessionUsage;
 use crate::domain::conversation::services::visible_thinking::has_visible_thinking;
 /// UDS session state — in-memory tracker and statistics for an active UDS connection.
 use crate::domain::conversation::value_objects::message::{Message, Role};
+use crate::interface::uds::wire::protocol::{SessionState, SessionStats, TokenStats};
 // ─── Session state tracker ────────────────────────────────────────────────────
 /// In-memory state for an active UDS session.
 #[path = "uds_session_notify.rs"]
@@ -36,7 +36,7 @@ pub struct AgentSession {
     context_tokens: usize,
     /// `VecDeque` supports O(1) push_back (enqueue) and push_front (prepend/steer).
     pending: std::collections::VecDeque<PendingMessage>,
-    control_receipts: Vec<super::protocol::ControlReceipt>,
+    control_receipts: Vec<crate::interface::uds::wire::protocol::ControlReceipt>,
     last_subagent_notification: std::collections::HashMap<String, u64>,
     last_failure_notifications: std::collections::HashMap<String, String>,
     repeated_failure_notifications: u64,
@@ -388,7 +388,7 @@ impl AgentSession {
                 self.record_control(
                     Some(&id),
                     &command,
-                    super::protocol::ControlStatus::Cancelled,
+                    crate::interface::uds::wire::protocol::ControlStatus::Cancelled,
                 );
             }
         }
@@ -567,8 +567,7 @@ mod prompt_images;
 pub(crate) use prompt_images::{PromptBody, add_image_summary, command_message};
 #[path = "uds_session_message_range.rs"]
 mod uds_session_message_range;
-#[path = "uds_visible_thinking_wire.rs"]
-mod uds_visible_thinking_wire;
+use crate::interface::uds::wire::uds_visible_thinking_wire;
 pub(crate) use uds_session_message_range::recovered_content_json;
 #[cfg(test)]
 #[path = "uds_session_coalesce_tests.rs"]

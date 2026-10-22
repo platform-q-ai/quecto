@@ -29,6 +29,8 @@ mod bdd_lanes;
 mod dependency_scan;
 #[path = "architecture/layout.rs"]
 mod layout;
+#[path = "architecture/uds_canonical_modules.rs"]
+mod uds_canonical_modules;
 
 use quote::ToTokens;
 use std::collections::{BTreeMap, BTreeSet};
@@ -3455,8 +3457,8 @@ fn cargo_toml_section_contains_dependency(section: &str, dependency: &str) -> bo
 #[test]
 fn all_four_socket_consumers_read_via_the_shared_frame_reader() {
     let consumers = [
-        "src/interface/cli/uds_reader.rs",
-        "src/interface/cli/uds_multi_client.rs",
+        "src/interface/uds/framing/uds_reader.rs",
+        "src/interface/uds/framing/uds_multi/client.rs",
         "src/infrastructure/tools/agents/subagent_monitor.rs",
         // The parent→child query path (agent tool + TUI inspector poll) is a
         // socket consumer too; it must not be stranded on legacy NDJSON reads
@@ -3499,8 +3501,8 @@ fn multi_client_agent_announces_protocol_version_via_shared_helper() {
     );
     // And the helper itself must include the version token, so the emitted
     // announcement is never just the legacy socket line.
-    let wire = fs::read_to_string("src/interface/cli/uds_wire.rs")
-        .expect("read src/interface/cli/uds_wire.rs");
+    let wire = fs::read_to_string("src/interface/uds/framing/uds_wire.rs")
+        .expect("read src/interface/uds/framing/uds_wire.rs");
     assert!(
         wire.contains("PROTOCOL_ANNOUNCE_PREFIX") && wire.contains("PROTOCOL_VERSION"),
         "socket_announcement must include the PROTOCOL_ANNOUNCE_PREFIX + PROTOCOL_VERSION token"
@@ -5435,7 +5437,11 @@ fn sessions_interface_only_parses_maps_and_presents() {
         "src/interface/uds/sessions",
         sessions_interface_dependency_allowed,
     );
-    // Every UDS edge directory is covered by exactly one of the edge rules.
+    // Every UDS edge directory is covered by exactly one of the edge rules;
+    // `framing` and `wire` are the delivery adapter's transport roles
+    // (#2368), held to the layout policy (`MIGRATED`) and the socket rules
+    // (`all_four_socket_consumers_read_via_the_shared_frame_reader`,
+    // `multi_client_agent_announces_protocol_version_via_shared_helper`).
     let mut edges: Vec<_> = fs::read_dir("src/interface/uds")
         .unwrap()
         .filter_map(|e| e.ok())
@@ -5448,9 +5454,11 @@ fn sessions_interface_only_parses_maps_and_presents() {
         [
             "admission",
             "catalogue",
+            "framing",
             "parent_control",
             "sessions",
-            "subagent_teardown"
+            "subagent_teardown",
+            "wire"
         ]
     );
 }
@@ -5916,12 +5924,12 @@ const SUBAGENT_PROCESS_MODULES: &[&str] = &[
     "src/infrastructure/processes/direct_child_routing.rs",
     "src/infrastructure/processes/owned_child_termination.rs",
     "src/infrastructure/processes/parent_control.rs",
-    "src/interface/cli/uds_multi.rs",
-    "src/interface/cli/uds_multi_client.rs",
+    "src/interface/uds/framing/uds_multi.rs",
+    "src/interface/uds/framing/uds_multi/client.rs",
     "src/interface/cli/uds_parent_control.rs",
     "src/interface/cli/uds_teardown_adapters.rs",
     "src/interface/cli/uds_teardown_handles.rs",
-    "src/interface/cli/uds_shutdown.rs",
+    "src/interface/uds/framing/uds_shutdown.rs",
     "src/interface/cli/uds_delete_all_subagents.rs",
     "src/interface/cli/uds_busy_subagents.rs",
     "src/interface/cli/uds_dispatch_session.rs",
@@ -6081,7 +6089,7 @@ fn processes_dependency_allowed(file: &str, path: &str) -> bool {
 fn process_adapters_depend_only_inward() {
     assert_dependencies_by_file("src/infrastructure/processes", processes_dependency_allowed);
     for dep in [
-        "crate::interface::cli::uds_multi::BusyFlag",
+        "crate::interface::uds::framing::uds_multi::BusyFlag",
         "crate::composition::processes::owned_child_supervisor",
         "crate::application::subagents::use_cases::ExecuteHarnessShutdown",
         "crate::infrastructure::tools::agents::spawn::SpawnTool",
@@ -6212,9 +6220,9 @@ fn termination_paths_never_consult_a_lease_or_a_pid() {
         "src/infrastructure/tools/agents/process_tree.rs",
         "src/interface/cli/uds_delete_all_subagents.rs",
         "src/interface/cli/uds_busy_subagents.rs",
-        "src/interface/cli/uds_shutdown.rs",
+        "src/interface/uds/framing/uds_shutdown.rs",
         "src/interface/cli/uds_dispatch_session.rs",
-        "src/interface/cli/uds_multi.rs",
+        "src/interface/uds/framing/uds_multi.rs",
         "src/composition/subagent_teardown.rs",
         "src/application/subagents/use_cases/observe_owned_child_exit.rs",
         "src/application/subagents/use_cases/compensate_failed_launch.rs",
@@ -6531,10 +6539,10 @@ fn no_interface_registry_drain_remains_after_the_fleet_teardown() {
     for path in [
         "src/interface/cli/uds_delete_all_subagents.rs",
         "src/interface/cli/uds_busy_subagents.rs",
-        "src/interface/cli/uds_shutdown.rs",
+        "src/interface/uds/framing/uds_shutdown.rs",
         "src/interface/cli/uds_dispatch_session.rs",
-        "src/interface/cli/uds_multi.rs",
-        "src/interface/cli/uds_multi_client.rs",
+        "src/interface/uds/framing/uds_multi.rs",
+        "src/interface/uds/framing/uds_multi/client.rs",
         "src/interface/cli/uds_query.rs",
     ] {
         let source = production_source(path);
@@ -6618,7 +6626,7 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
     let composition = production_source("src/composition/subagent_teardown.rs");
     assert!(composition.contains("children: fleet.clone()"));
     // The signal watcher and the last client deliver to the controller.
-    let shutdown = production_source("src/interface/cli/uds_shutdown.rs");
+    let shutdown = production_source("src/interface/uds/framing/uds_shutdown.rs");
     assert!(shutdown.contains(".termination_signal("));
     assert!(shutdown.contains(".last_client_disconnected("));
     // Session transitions settle the fleet before anything is replaced
@@ -6967,7 +6975,7 @@ fn external_agent_application_depends_only_inward() {
     }
     for dep in [
         "crate::infrastructure::external_agents::claude_code::stream_json::StreamJsonDecoder",
-        "crate::interface::cli::protocol::SessionStats",
+        "crate::interface::uds::wire::protocol::SessionStats",
         "crate::application::subagents::ports::child_routing::DirectChildRouting",
         "tokio::process::Command",
         "std::process::Command",

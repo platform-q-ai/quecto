@@ -72,7 +72,7 @@ fn teardown_graph_and_shutdown_delivery_are_composed_in_composition() {
             .any(|(_, l)| l.contains("pub fn install_termination_owners"))
     );
     // Signal delivery reaches the controller through the graph only.
-    let shutdown = production_code("src/interface/cli/uds_shutdown.rs");
+    let shutdown = production_code("src/interface/uds/framing/uds_shutdown.rs");
     assert!(
         shutdown
             .iter()
@@ -520,7 +520,7 @@ fn teardown_interface_only_parses_maps_and_presents() {
             "src/interface/tools/agent_cmd_kill.rs",
             "src/interface/cli/uds_delete_all_subagents.rs",
             "src/interface/cli/uds_busy_subagents.rs",
-            "src/interface/cli/uds_shutdown.rs",
+            "src/interface/uds/framing/uds_shutdown.rs",
             "src/interface/cli/uds_dispatch_session.rs",
             "src/interface/cli/uds_parent_control.rs",
             "src/interface/cli/uds_teardown_handles.rs",

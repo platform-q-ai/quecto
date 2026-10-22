@@ -4,9 +4,10 @@
 //! or the `test-support` feature.
 
 use super::{
-    protocol, uds_admission_projection, uds_cancel, uds_execution_state, uds_ext_protocol,
+    uds_admission_projection, uds_cancel, uds_execution_state, uds_ext_protocol,
     uds_reader_dispatch, uds_session_handles, uds_state_projection,
 };
+use crate::interface::uds::wire::protocol;
 
 pub fn live_execution_state_for_events(
     events: &[crate::domain::agents::value_objects::agent::AgentProgressEvent],

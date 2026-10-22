@@ -21,9 +21,9 @@ use crate::infrastructure::tools::agents::subagent_registry::{NotificationTx, Su
 use crate::interface::uds::subagent_teardown::controller::SubagentTeardownController;
 
 use super::uds_cancel::{CancelHandle, TurnControlHandle};
-use super::uds_multi::BusyFlag;
 use super::uds_parent_control::ConnectionTeardown;
 use super::uds_teardown_adapters::{DeferredLoopPersistence, LoopExitReadiness};
+use crate::interface::uds::framing::uds_multi::BusyFlag;
 
 /// The runtime inputs of one dispatch loop that the teardown handles are
 /// composed over.

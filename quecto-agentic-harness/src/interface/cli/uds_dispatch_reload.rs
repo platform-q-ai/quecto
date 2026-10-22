@@ -64,16 +64,18 @@ pub(super) async fn poll_reload(ctx: &mut DispatchCtx<'_>) -> ReloadOutcome {
 /// reach, so a provider configured since the last poll is offered when
 /// `/model` opens rather than after the next prompt. A prompt and
 /// `set_model` poll in their own handlers; nothing else polls.
-pub(super) fn polls_before_reply(cmd: &crate::interface::cli::protocol::AgentCommand) -> bool {
+pub(super) fn polls_before_reply(
+    cmd: &crate::interface::uds::wire::protocol::AgentCommand,
+) -> bool {
     matches!(
         cmd,
-        crate::interface::cli::protocol::AgentCommand::ListModels { .. }
+        crate::interface::uds::wire::protocol::AgentCommand::ListModels { .. }
     )
 }
 
 /// The poll before a command that [`polls_before_reply`].
 pub(super) async fn poll_before_listing(
-    cmd: &crate::interface::cli::protocol::AgentCommand,
+    cmd: &crate::interface::uds::wire::protocol::AgentCommand,
     ctx: &mut DispatchCtx<'_>,
 ) {
     if polls_before_reply(cmd) {

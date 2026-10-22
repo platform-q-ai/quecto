@@ -159,8 +159,8 @@ async fn approval_exchange(busy: bool) {
     ctx.workflow_config = None;
     let (commands, mut received) = tokio::sync::mpsc::channel(8);
     let (broadcast, _) = tokio::sync::broadcast::channel(16);
-    let accept = crate::interface::cli::uds_multi::spawn_accept_loop(
-        crate::interface::cli::uds_multi::AcceptLoopArgs {
+    let accept = crate::interface::uds::framing::uds_multi::spawn_accept_loop(
+        crate::interface::uds::framing::uds_multi::AcceptLoopArgs {
             extensions: Default::default(),
             swarm_boards: None,
             listener: tokio::net::UnixListener::bind(&socket).unwrap(),
@@ -220,7 +220,7 @@ async fn approval_exchange(busy: bool) {
         .await
         .unwrap()
         .unwrap();
-    let crate::interface::cli::uds_multi::ClientMessage::Command(command) = command else {
+    let crate::interface::uds::framing::uds_multi::ClientMessage::Command(command) = command else {
         panic!("expected approval command")
     };
     assert_eq!(
@@ -262,20 +262,22 @@ async fn rejected_socket_steer_does_not_cancel_but_explicit_abort_does() {
     let ctx = env.ctx();
     let (commands, _received) = tokio::sync::mpsc::channel(1);
     commands
-        .send(crate::interface::cli::uds_multi::ClientMessage::Command(
-            crate::interface::cli::uds_multi::ClientCommand {
-                line: "occupied".into(),
-                client_id: 0,
-                admitted: None,
-            },
-        ))
+        .send(
+            crate::interface::uds::framing::uds_multi::ClientMessage::Command(
+                crate::interface::uds::framing::uds_multi::ClientCommand {
+                    line: "occupied".into(),
+                    client_id: 0,
+                    admitted: None,
+                },
+            ),
+        )
         .await
         .unwrap();
     let (broadcast, _) = tokio::sync::broadcast::channel(16);
     let (cancel, mut cancelled) = tokio::sync::oneshot::channel();
     *ctx.cancel_handle.lock().unwrap() = super::CancelSlot::Armed(cancel);
-    let accept = crate::interface::cli::uds_multi::spawn_accept_loop(
-        crate::interface::cli::uds_multi::AcceptLoopArgs {
+    let accept = crate::interface::uds::framing::uds_multi::spawn_accept_loop(
+        crate::interface::uds::framing::uds_multi::AcceptLoopArgs {
             extensions: Default::default(),
             swarm_boards: None,
             listener: tokio::net::UnixListener::bind(&socket).unwrap(),

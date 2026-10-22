@@ -143,7 +143,7 @@ fn production_code_reads_past_an_early_cfg_test_use() {
             "libc::kill(-(pid as libc::pid_t), libc::SIGKILL)",
         ),
         (
-            "src/interface/cli/uds_multi.rs",
+            "src/interface/uds/framing/uds_multi.rs",
             "async fn handle_client_msg(",
         ),
     ] {
@@ -325,7 +325,7 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
         "this process's own executable digest via `/proc/<self>/exe`",
     ),
     (
-        "src/interface/cli/uds_socket.rs",
+        "src/interface/uds/framing/uds_socket.rs",
         &["/proc/"],
         "the kernel's unix-socket table (`/proc/net/unix`) for socket liveness",
     ),
@@ -476,7 +476,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/interface/uds/subagent_teardown/presenter.rs",
     "src/interface/cli/uds_delete_all_subagents.rs",
     "src/interface/cli/uds_busy_subagents.rs",
-    "src/interface/cli/uds_shutdown.rs",
+    "src/interface/uds/framing/uds_shutdown.rs",
     "src/interface/cli/uds_dispatch_session.rs",
     "src/interface/cli/uds_teardown_adapters.rs",
     "src/interface/cli/uds_teardown_handles.rs",

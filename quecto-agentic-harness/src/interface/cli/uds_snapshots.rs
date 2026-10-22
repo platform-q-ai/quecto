@@ -10,17 +10,17 @@
 //! (`uds_sync`, #1973), `get_report` through the composed export controller
 //! (#1974); the rewind's ledger reset and the session switch are the
 //! transactions' own (#1975, #1976).
-use super::protocol::{AgentEvent, SessionState};
 use super::uds::DispatchCtx;
 use super::uds_session::{HISTORY_PAGE_SIZE, history_page_json, present_session_stats};
 use super::uds_session_handles::SessionReadHandles;
 use crate::application::sessions::dto::HistoryPage;
 use crate::domain::conversation::services::conversation_view::user_visible_messages;
+use crate::interface::uds::wire::protocol::{AgentEvent, SessionState};
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
 
 pub(crate) type SessionStatsSnapshot =
-    std::sync::Arc<tokio::sync::RwLock<crate::interface::cli::protocol::SessionStats>>;
+    std::sync::Arc<tokio::sync::RwLock<crate::interface::uds::wire::protocol::SessionStats>>;
 
 /// Refresh every busy-child snapshot (state / conversation / session_stats /
 /// extensions) at once. Called per INNER turn inside the drain/nudge loop so a
@@ -36,7 +36,7 @@ pub(super) async fn refresh_busy_snapshots(ctx: &DispatchCtx<'_>) {
     refresh_tool_catalogue_snapshot(ctx).await;
 }
 
-pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
+pub(in crate::interface) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
     let mut session = ctx.sessions.active_session.write().await;
     let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
     let advance = session.publish(&visible_messages);
@@ -52,7 +52,7 @@ pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
     }
 }
 
-pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
+pub(in crate::interface) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
     let workflow = ctx.workflow_state.as_ref().map(|ws| {
         let engine = crate::domain::workflow::lock_engine(ws);
         let mut value = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
@@ -76,7 +76,7 @@ pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
     *ctx.state_snapshot.write().await = state;
 }
 
-pub(super) async fn refresh_session_stats_snapshot(ctx: &DispatchCtx<'_>) {
+pub(in crate::interface) async fn refresh_session_stats_snapshot(ctx: &DispatchCtx<'_>) {
     let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
     let session_key = ctx.sessions.current_session_key().await;
     let stats = present_session_stats(ctx.session.usage_report(
@@ -87,7 +87,7 @@ pub(super) async fn refresh_session_stats_snapshot(ctx: &DispatchCtx<'_>) {
     *ctx.session_stats_snapshot.write().await = stats;
 }
 
-pub(super) async fn refresh_tool_catalogue_snapshot(ctx: &DispatchCtx<'_>) {
+pub(in crate::interface) async fn refresh_tool_catalogue_snapshot(ctx: &DispatchCtx<'_>) {
     let mut snap = ctx.tool_catalogue_snapshot.write().await;
     *snap = ctx
         .agent
@@ -134,7 +134,7 @@ pub(crate) fn build_get_subagents_line(
 }
 
 pub(crate) fn build_get_session_stats_line(
-    stats: &crate::interface::cli::protocol::SessionStats,
+    stats: &crate::interface::uds::wire::protocol::SessionStats,
 ) -> String {
     let mut data = serde_json::to_value(stats).unwrap_or_default();
     if let Some(obj) = data.as_object_mut() {

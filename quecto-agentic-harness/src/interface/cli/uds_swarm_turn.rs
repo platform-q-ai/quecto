@@ -164,7 +164,9 @@ impl TurnControl {
     /// weakly so it never keeps the loop alive; the first binding stands.
     pub(crate) fn bind_self_waker(
         &self,
-        waker: tokio::sync::mpsc::WeakSender<crate::interface::cli::uds_multi::ClientMessage>,
+        waker: tokio::sync::mpsc::WeakSender<
+            crate::interface::uds::framing::uds_multi::ClientMessage,
+        >,
     ) {
         let _ = self.self_waker.set(waker);
     }
@@ -209,8 +211,9 @@ impl TurnControl {
             };
             let generation = control.control_generation().unwrap_or(0);
             if control.queue_self_wake(generation, epoch) {
-                let message =
-                    crate::interface::cli::uds_multi::ClientMessage::SwarmWake { generation };
+                let message = crate::interface::uds::framing::uds_multi::ClientMessage::SwarmWake {
+                    generation,
+                };
                 if sender.send(message).await.is_err() {
                     // The loop ended while sending: release the slot.
                     control.release_swarm_wake();

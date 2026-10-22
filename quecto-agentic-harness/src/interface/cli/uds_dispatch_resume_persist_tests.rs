@@ -22,9 +22,9 @@ use crate::domain::sessions::entities::session::{Session, SubagentLiveness};
 use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
-use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::{inject_system_prompt, remove_injected_system_prompt};
 use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
+use crate::interface::uds::wire::protocol::AgentCommand;
 
 fn prompt(message: &str) -> AgentCommand {
     serde_json::from_value(serde_json::json!({"type": "prompt", "message": message})).unwrap()

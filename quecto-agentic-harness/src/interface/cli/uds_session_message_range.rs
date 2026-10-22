@@ -12,7 +12,7 @@ use crate::application::sessions::dto::{RecoveredContent, Utf8Range};
 use crate::domain::conversation::services::visible_thinking as thinking;
 use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 use crate::infrastructure::{persistence::file::turn_origin_names as names, processes::line_cap};
-use crate::interface::cli::protocol::AgentEvent;
+use crate::interface::uds::wire::protocol::AgentEvent;
 
 #[cfg(test)]
 #[path = "uds_session_message_range/tests.rs"]

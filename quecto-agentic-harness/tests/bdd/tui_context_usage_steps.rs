@@ -12,8 +12,8 @@ use quecto::application::agent_turn::agent_loop::AgentLoopConfig;
 use quecto::application::agent_turn::agent_loop::UsageTotals;
 use quecto::application::agent_turn::context::context_pruning::estimate_total_tokens;
 use quecto::domain::conversation::value_objects::message::UsageInfo;
-use quecto::interface::cli::protocol::SessionStats as WireSessionStats;
 use quecto::interface::cli::uds_session::present_session_stats;
+use quecto::interface::uds::wire::protocol::SessionStats as WireSessionStats;
 use quecto_tui::protocol::client::Event;
 use quecto_tui::shell::app::tui_harness::TuiHarness;
 

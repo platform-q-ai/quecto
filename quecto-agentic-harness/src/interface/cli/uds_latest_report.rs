@@ -2,8 +2,8 @@
 //! report and its raw-export receipt, and the busy reader task's parse of
 //! the parent-local command. Selection, preview, export and admission are
 //! the composed report owner's (`SessionReadHandles::export_report`).
-use super::protocol::AgentEvent;
 use crate::application::sessions::dto::{ReportError, SessionReport};
+use crate::interface::uds::wire::protocol::AgentEvent;
 use serde_json::{Value, json};
 
 /// The `get_report` response data: the report (or `null`), its recovery
@@ -43,7 +43,7 @@ pub(super) fn report_event(
 /// refused) by the report owner and answered from a detached task when it
 /// completes, so the reader stays available for pause/abort meanwhile.
 pub(super) async fn intercept(ctx: &super::uds_busy_get_message::BusyCommandCtx<'_>) -> bool {
-    let Ok(super::protocol::AgentCommand::GetReport {
+    let Ok(crate::interface::uds::wire::protocol::AgentCommand::GetReport {
         id,
         agent_id: None,
         export_raw,

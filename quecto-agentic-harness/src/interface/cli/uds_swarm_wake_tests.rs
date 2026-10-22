@@ -380,7 +380,9 @@ async fn a_member_no_one_wakes_wakes_itself_after_a_recoverable_failure() {
         "not before the delay"
     );
     let woken = tokio::time::timeout(RECOVERABLE_SELF_WAKE_DELAY, wakes.recv()).await;
-    let Ok(Some(crate::interface::cli::uds_multi::ClientMessage::SwarmWake { generation })) = woken
+    let Ok(Some(crate::interface::uds::framing::uds_multi::ClientMessage::SwarmWake {
+        generation,
+    })) = woken
     else {
         panic!("a self-wake after the delay");
     };

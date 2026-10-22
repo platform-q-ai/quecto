@@ -19,7 +19,7 @@ use crate::domain::tool_policy::value_objects::extension_tool::ExtensionToolTime
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::extensions::uds_tool::create_uds_tool;
 
-use super::protocol::{AgentEvent, ToolRegistration, WireImageBlocks};
+use crate::interface::uds::wire::protocol::{AgentEvent, ToolRegistration, WireImageBlocks};
 
 /// Handle to a spawned forwarder task. Stored alongside a
 /// cooperative shutdown `oneshot` so unregister / disconnect can ask

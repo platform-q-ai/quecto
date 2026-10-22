@@ -25,8 +25,8 @@ pub(super) fn publish_startup_warnings(
 }
 
 /// Overlay the latest published generation for a busy/connect-time inspector read.
-pub(super) fn overlay_current(
-    state: &mut super::protocol::SessionState,
+pub(in crate::interface) fn overlay_current(
+    state: &mut crate::interface::uds::wire::protocol::SessionState,
     store: &crate::application::provider_runtime::RuntimeSnapshotStore,
 ) {
     if let Some(runtime) = store.current() {

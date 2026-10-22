@@ -5,7 +5,7 @@ use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult
 use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::config::{Config, ToolPolicyEntryConfig};
 use crate::interface::cli::controllers::catalogue_handles::RuntimeConfigurationInputs;
-use crate::interface::cli::protocol::{AgentCommand, ToolPolicyApplyModeCommand};
+use crate::interface::uds::wire::protocol::{AgentCommand, ToolPolicyApplyModeCommand};
 
 #[derive(Debug)]
 struct NamedTool(&'static str);
@@ -47,14 +47,16 @@ async fn dispatch_set_tool_policy_applies_and_catalogue_reflects_scope() {
         .register_runtime_tool(std::sync::Arc::new(NamedTool("alpha")));
     let cmd = AgentCommand::SetToolPolicy {
         id: Some("pol".into()),
-        mutations: vec![crate::interface::cli::protocol::ToolPolicyMutationCommand {
-            tool_id: None,
-            name: Some("alpha".into()),
-            scope: ProfileAvailabilityScope::Child,
-            reason: Some("test".into()),
-        }],
+        mutations: vec![
+            crate::interface::uds::wire::protocol::ToolPolicyMutationCommand {
+                tool_id: None,
+                name: Some("alpha".into()),
+                scope: ProfileAvailabilityScope::Child,
+                reason: Some("test".into()),
+            },
+        ],
         mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
-        operation: crate::interface::cli::protocol::ToolPolicyOperationCommand::Patch,
+        operation: crate::interface::uds::wire::protocol::ToolPolicyOperationCommand::Patch,
         unlisted_scope: None,
         persist: false,
     };
@@ -92,14 +94,16 @@ async fn dispatch_set_tool_policy_prefers_tool_id_when_name_also_present() {
 
     let cmd = AgentCommand::SetToolPolicy {
         id: Some("pol".into()),
-        mutations: vec![crate::interface::cli::protocol::ToolPolicyMutationCommand {
-            tool_id: Some(beta_id),
-            name: Some("alpha".into()),
-            scope: ProfileAvailabilityScope::Child,
-            reason: Some("test".into()),
-        }],
+        mutations: vec![
+            crate::interface::uds::wire::protocol::ToolPolicyMutationCommand {
+                tool_id: Some(beta_id),
+                name: Some("alpha".into()),
+                scope: ProfileAvailabilityScope::Child,
+                reason: Some("test".into()),
+            },
+        ],
         mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
-        operation: crate::interface::cli::protocol::ToolPolicyOperationCommand::Patch,
+        operation: crate::interface::uds::wire::protocol::ToolPolicyOperationCommand::Patch,
         unlisted_scope: None,
         persist: false,
     };
@@ -139,14 +143,16 @@ async fn dispatch_set_tool_policy_tool_id_only_still_applies() {
 
     let cmd = AgentCommand::SetToolPolicy {
         id: Some("pol".into()),
-        mutations: vec![crate::interface::cli::protocol::ToolPolicyMutationCommand {
-            tool_id: Some(alpha_id),
-            name: None,
-            scope: ProfileAvailabilityScope::Child,
-            reason: Some("test".into()),
-        }],
+        mutations: vec![
+            crate::interface::uds::wire::protocol::ToolPolicyMutationCommand {
+                tool_id: Some(alpha_id),
+                name: None,
+                scope: ProfileAvailabilityScope::Child,
+                reason: Some("test".into()),
+            },
+        ],
         mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
-        operation: crate::interface::cli::protocol::ToolPolicyOperationCommand::Patch,
+        operation: crate::interface::uds::wire::protocol::ToolPolicyOperationCommand::Patch,
         unlisted_scope: None,
         persist: false,
     };
@@ -181,14 +187,16 @@ async fn immediate_persist_failure_dispatch_returns_error_without_retained_polic
 
     let cmd = AgentCommand::SetToolPolicy {
         id: Some("pol".into()),
-        mutations: vec![crate::interface::cli::protocol::ToolPolicyMutationCommand {
-            tool_id: None,
-            name: Some("alpha".into()),
-            scope: ProfileAvailabilityScope::Child,
-            reason: Some("durable".into()),
-        }],
+        mutations: vec![
+            crate::interface::uds::wire::protocol::ToolPolicyMutationCommand {
+                tool_id: None,
+                name: Some("alpha".into()),
+                scope: ProfileAvailabilityScope::Child,
+                reason: Some("durable".into()),
+            },
+        ],
         mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
-        operation: crate::interface::cli::protocol::ToolPolicyOperationCommand::Patch,
+        operation: crate::interface::uds::wire::protocol::ToolPolicyOperationCommand::Patch,
         unlisted_scope: None,
         persist: true,
     };
@@ -286,14 +294,16 @@ async fn queued_persist_tool_policy_is_written_when_boundary_drains() {
 
     let cmd = AgentCommand::SetToolPolicy {
         id: Some("pol".into()),
-        mutations: vec![crate::interface::cli::protocol::ToolPolicyMutationCommand {
-            tool_id: None,
-            name: Some("alpha".into()),
-            scope: ProfileAvailabilityScope::Child,
-            reason: Some("durable".into()),
-        }],
+        mutations: vec![
+            crate::interface::uds::wire::protocol::ToolPolicyMutationCommand {
+                tool_id: None,
+                name: Some("alpha".into()),
+                scope: ProfileAvailabilityScope::Child,
+                reason: Some("durable".into()),
+            },
+        ],
         mode: ToolPolicyApplyModeCommand::AtNextTurnBoundary,
-        operation: crate::interface::cli::protocol::ToolPolicyOperationCommand::Patch,
+        operation: crate::interface::uds::wire::protocol::ToolPolicyOperationCommand::Patch,
         unlisted_scope: None,
         persist: true,
     };

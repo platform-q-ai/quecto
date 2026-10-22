@@ -1,7 +1,7 @@
-use super::uds_multi::{ClientCommand, ClientMessage};
 use super::uds_session_handles::SessionReadHandles;
+use crate::interface::uds::framing::uds_multi::{ClientCommand, ClientMessage};
 
-pub(super) struct ReaderDispatchCtx<'a> {
+pub(in crate::interface) struct ReaderDispatchCtx<'a> {
     pub line: String,
     pub cancel_handle: &'a super::uds_cancel::CancelHandle,
     pub turn_control: &'a super::uds_cancel::TurnControl,
@@ -18,7 +18,7 @@ pub(super) struct ReaderDispatchCtx<'a> {
 }
 
 /// Dispatch one decoded client command. Returns false when the command channel closed.
-pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
+pub(in crate::interface) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
     if super::uds_swarm_control::intercept(&ctx).await {
         return true;
     }
@@ -72,7 +72,7 @@ pub(super) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
             } else {
                 let request: serde_json::Value =
                     serde_json::from_str(&ctx.line).expect("validated control JSON");
-                ctrl.ack_line = super::protocol::AgentEvent::err(
+                ctrl.ack_line = crate::interface::uds::wire::protocol::AgentEvent::err(
                     request["id"].as_str(), request["type"].as_str().unwrap_or("prompt"),
                     "control queue is full or closed; message was not queued; inspect agent state before retrying",
                 ).to_json_line() + "\n";
@@ -130,9 +130,13 @@ fn intercept_admission_restart(ctx: &ReaderDispatchCtx<'_>) -> bool {
         let answered = tokio::task::spawn_blocking(move || respond(registered(), confirm)).await;
         let id = id.as_deref();
         let event = match answered {
-            Ok(Ok(data)) => super::protocol::AgentEvent::ok(id, COMMAND, Some(data)),
-            Ok(Err(error)) => super::protocol::AgentEvent::err(id, COMMAND, error),
-            Err(error) => super::protocol::AgentEvent::err(
+            Ok(Ok(data)) => {
+                crate::interface::uds::wire::protocol::AgentEvent::ok(id, COMMAND, Some(data))
+            }
+            Ok(Err(error)) => {
+                crate::interface::uds::wire::protocol::AgentEvent::err(id, COMMAND, error)
+            }
+            Err(error) => crate::interface::uds::wire::protocol::AgentEvent::err(
                 id,
                 COMMAND,
                 format!("admission restart task failed: {error}"),

@@ -16,7 +16,7 @@ use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::ImageBlock;
-use crate::interface::cli::protocol::AgentCommand;
+use crate::interface::uds::wire::protocol::AgentCommand;
 
 use quecto_image::{ImageMime, samples};
 

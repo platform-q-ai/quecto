@@ -1,7 +1,7 @@
-use super::protocol::AgentCommand;
 use super::uds::DispatchCtx;
 use super::uds_session::{HISTORY_PAGE_SIZE, history_page_json, present_session_stats};
 use crate::domain::conversation::services::conversation_view::user_visible_messages;
+use crate::interface::uds::wire::protocol::AgentCommand;
 
 #[cfg(test)]
 pub(super) fn query_response_data(
@@ -137,7 +137,7 @@ mod tests;
 #[cfg(test)]
 mod cov2_tests {
     use super::{query_response_data, tests::Fx};
-    use crate::interface::cli::protocol::AgentCommand;
+    use crate::interface::uds::wire::protocol::AgentCommand;
 
     #[test]
     fn get_state_query_recovers_poisoned_workflow_lock() {

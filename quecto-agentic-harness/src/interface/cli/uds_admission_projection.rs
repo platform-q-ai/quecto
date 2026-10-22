@@ -195,7 +195,8 @@ pub(crate) fn admission_event_hook(
 }
 
 fn broadcast(broadcast_tx: &tokio::sync::broadcast::Sender<String>, admission: AdmissionSnapshot) {
-    let event = super::protocol::AgentEvent::AdmissionStateChanged { admission };
+    let event =
+        crate::interface::uds::wire::protocol::AgentEvent::AdmissionStateChanged { admission };
     if let Ok(line) = serde_json::to_string(&event) {
         // No receiver means no connected client; nothing to deliver.
         let _ = broadcast_tx.send(line);

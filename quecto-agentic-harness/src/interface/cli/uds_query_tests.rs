@@ -62,8 +62,8 @@ impl Tool for CatalogueFixtureTool {
         })
     }
 }
-use crate::interface::cli::protocol::{AgentCommand, HISTORY_PAGE_SIZE};
 use crate::interface::uds::sessions::recover_message_controller::GetMessageFields;
+use crate::interface::uds::wire::protocol::{AgentCommand, HISTORY_PAGE_SIZE};
 
 /// The idle `get_message` path: the composed recovery owner over the rig's
 /// live conversation, presented by the range presenter.
@@ -170,7 +170,7 @@ impl Fx {
             );
         crate::interface::cli::uds::DispatchCtx {
             execution_state: self.execution_state.clone(),
-            wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
+            wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
             agent: &mut self.agent,
             messages: &mut self.messages,
             sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_over(

@@ -24,7 +24,7 @@
 //! behaviour to the `agent_cmd` forward path only, so interactive TUI/CLI
 //! clients (which never set it) see no protocol change.
 
-use super::protocol::AgentEvent;
+use crate::interface::uds::wire::protocol::AgentEvent;
 
 /// A flagged control command the reader accepted on the child's behalf.
 pub(super) struct AcceptedControl {
@@ -46,8 +46,8 @@ pub(super) struct AcceptedControl {
 
 /// A forwarded control refused before dispatch: its id and command name.
 pub(crate) struct RefusedControl {
-    pub(super) id: String,
-    pub(super) command: String,
+    pub(in crate::interface) id: String,
+    pub(in crate::interface) command: String,
 }
 
 /// Inspect a raw client line: if it is an `agent_cmd` control forward (carries
@@ -80,7 +80,9 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
     };
     let admitted = match carries_message {
         true => {
-            let command = serde_json::from_str::<super::protocol::AgentCommand>(line).ok()?;
+            let command =
+                serde_json::from_str::<crate::interface::uds::wire::protocol::AgentCommand>(line)
+                    .ok()?;
             match admit_forwarded_images(command, cmd_type) {
                 Ok(images) => Some(images),
                 Err(refused) => return Some(*refused),
@@ -157,10 +159,10 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
 /// refused steer never cancels the running turn, and dispatch records its
 /// `Rejected` receipt.
 fn admit_forwarded_images(
-    command: super::protocol::AgentCommand,
+    command: crate::interface::uds::wire::protocol::AgentCommand,
     cmd_type: &str,
 ) -> Result<super::uds::AdmittedImages, Box<AcceptedControl>> {
-    use super::protocol::AgentCommand;
+    use crate::interface::uds::wire::protocol::AgentCommand;
     let id = command.id().map(str::to_owned);
     let images = match command {
         AgentCommand::Prompt { images, .. }

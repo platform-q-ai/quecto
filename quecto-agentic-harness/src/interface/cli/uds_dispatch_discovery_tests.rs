@@ -2,7 +2,7 @@ use super::*;
 use crate::application::sessions::dto::{ListSessionsResult, ListedSession};
 use crate::domain::sessions::entities::session::SessionSummary;
 use crate::domain::sessions::entities::session_home::SessionHomeScope;
-use crate::interface::cli::protocol::SessionListScopeCommand;
+use crate::interface::uds::wire::protocol::SessionListScopeCommand;
 
 #[test]
 fn discovery_preserves_identity_and_authoritative_admission() {

@@ -183,7 +183,7 @@ async fn without_a_swarm_nothing_is_reported() {
 
 #[test]
 fn swarm_state_is_sent_as_a_typed_event() {
-    let event = super::super::super::protocol::AgentEvent::SwarmState {
+    let event = crate::interface::uds::wire::protocol::AgentEvent::SwarmState {
         wake: crate::domain::swarm::services::parent_wake::WakeKind::Finished,
         status: Some("succeeded".into()),
         prompted: false,

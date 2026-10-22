@@ -96,13 +96,13 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
         let event = match ctx.turn_control.swarm_control.as_ref() {
             Some(control) => {
                 control.nudge_watch();
-                super::protocol::AgentEvent::ok(
+                crate::interface::uds::wire::protocol::AgentEvent::ok(
                     id.as_deref(),
                     "swarm_control",
                     Some(serde_json::json!({"status":"nudged"})),
                 )
             }
-            None => super::protocol::AgentEvent::err(
+            None => crate::interface::uds::wire::protocol::AgentEvent::err(
                 id.as_deref(),
                 "swarm_control",
                 "watch unavailable",
@@ -127,9 +127,13 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
         ) {
             (Some(generation), Some(_), Ok(permit)) => {
                 if ctx.turn_control.queue_swarm_wake(generation) {
-                    permit.send(super::uds_multi::ClientMessage::SwarmWake { generation });
+                    permit.send(
+                        crate::interface::uds::framing::uds_multi::ClientMessage::SwarmWake {
+                            generation,
+                        },
+                    );
                 }
-                super::protocol::AgentEvent::ok(
+                crate::interface::uds::wire::protocol::AgentEvent::ok(
                     id.as_deref(),
                     "swarm_control",
                     Some(serde_json::json!({"status":"accepted"})),
@@ -142,22 +146,24 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
                 // join and the check are one step under the slot's lock, so
                 // a refused wake never touches a concurrent rider (#2626).
                 if ctx.turn_control.join_pending_swarm_wake(generation) {
-                    super::protocol::AgentEvent::ok(
+                    crate::interface::uds::wire::protocol::AgentEvent::ok(
                         id.as_deref(),
                         "swarm_control",
                         Some(serde_json::json!({"status":"coalesced"})),
                     )
                 } else {
-                    super::protocol::AgentEvent::err(
+                    crate::interface::uds::wire::protocol::AgentEvent::err(
                         id.as_deref(),
                         "swarm_control",
                         "wake queue full; the durable inbox remains authoritative",
                     )
                 }
             }
-            _ => {
-                super::protocol::AgentEvent::err(id.as_deref(), "swarm_control", "wake unavailable")
-            }
+            _ => crate::interface::uds::wire::protocol::AgentEvent::err(
+                id.as_deref(),
+                "swarm_control",
+                "wake unavailable",
+            ),
         };
         if let Some(writer) = super::uds_ext_protocol::client_writer_tx(ctx.registry, ctx.client_id)
         {
@@ -174,7 +180,7 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
         Action::Extend => match deadline_seconds {
             Some(seconds) if seconds > 0 => RunControlAction::ExtendDeadline { seconds },
             _ => {
-                let event = super::protocol::AgentEvent::err(
+                let event = crate::interface::uds::wire::protocol::AgentEvent::err(
                     id.as_deref(),
                     "swarm_control",
                     "deadline_seconds is required and must be positive",
@@ -223,11 +229,17 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
             if !receipt.resume_blockers.is_empty() {
                 data["resume_blockers"] = serde_json::Value::from(receipt.resume_blockers);
             }
-            super::protocol::AgentEvent::ok(id.as_deref(), "swarm_control", Some(data))
+            crate::interface::uds::wire::protocol::AgentEvent::ok(
+                id.as_deref(),
+                "swarm_control",
+                Some(data),
+            )
         }
-        Err(error) => {
-            super::protocol::AgentEvent::err(id.as_deref(), "swarm_control", error.to_string())
-        }
+        Err(error) => crate::interface::uds::wire::protocol::AgentEvent::err(
+            id.as_deref(),
+            "swarm_control",
+            error.to_string(),
+        ),
     };
     if let Some(writer) = super::uds_ext_protocol::client_writer_tx(ctx.registry, ctx.client_id) {
         let _ = writer.send(event.to_json_line() + "\n").await;
@@ -242,7 +254,11 @@ fn self_wake(ctx: &ReaderDispatchCtx<'_>, generation: u64) -> Option<String> {
     match ctx.cmd_tx.try_reserve() {
         Ok(permit) => {
             if ctx.turn_control.queue_swarm_wake(generation) {
-                permit.send(super::uds_multi::ClientMessage::SwarmWake { generation });
+                permit.send(
+                    crate::interface::uds::framing::uds_multi::ClientMessage::SwarmWake {
+                        generation,
+                    },
+                );
             }
             None
         }
@@ -275,12 +291,15 @@ fn status_name(status: RunStatus) -> &'static str {
     }
 }
 
-pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generation: u64) -> bool {
-    use super::protocol::AgentEvent;
+pub(in crate::interface) async fn handle_wake(
+    ctx: &mut super::uds::DispatchCtx<'_>,
+    generation: u64,
+) -> bool {
     use super::uds::emit_event_to_broadcast_or_writer;
     use crate::domain::swarm::{
         value_objects::lifecycle::RunStatus, value_objects::run_control::RunControlAction,
     };
+    use crate::interface::uds::wire::protocol::AgentEvent;
 
     let (generation, self_wake_epoch) = ctx.turn_control.take_swarm_wake_from(generation);
     let Some(control) = ctx.turn_control.swarm_control.clone() else {
@@ -513,7 +532,9 @@ fn keep_self_waking(ctx: &mut super::uds::DispatchCtx<'_>) -> bool {
 
 /// This process's turn control: its swarm's run control when it runs under
 /// a container contract, launched as its coordinator or not (#2467).
-pub(super) fn process_turn_control(coordinator: bool) -> super::uds_cancel::TurnControlHandle {
+pub(in crate::interface) fn process_turn_control(
+    coordinator: bool,
+) -> super::uds_cancel::TurnControlHandle {
     let swarm_control = crate::interface::tool_runtime::swarm_context().map(|context| {
         std::sync::Arc::new(context)
             as std::sync::Arc<dyn crate::application::swarm::ports::lifecycle::SwarmRunControl>
@@ -545,12 +566,12 @@ pub(super) async fn at_idle_boundary(ctx: &mut super::uds::DispatchCtx<'_>) {
 /// wakes on every turn end, hears the reply.
 fn member_reply_ready(
     turn_control: &super::uds_cancel::TurnControlHandle,
-) -> Option<super::protocol::AgentEvent> {
+) -> Option<crate::interface::uds::wire::protocol::AgentEvent> {
     match (
         turn_control.swarm_control.is_some(),
         turn_control.take_client_instructions(),
     ) {
-        (true, true) => Some(super::protocol::AgentEvent::ReplyReady),
+        (true, true) => Some(crate::interface::uds::wire::protocol::AgentEvent::ReplyReady),
         (true, false) | (false, _) => None,
     }
 }
@@ -561,7 +582,7 @@ fn member_reply_ready(
 /// is never left waiting for a state that will not come.
 async fn coordinator_swarm_state(
     turn_control: &super::uds_cancel::TurnControlHandle,
-) -> Option<super::protocol::AgentEvent> {
+) -> Option<crate::interface::uds::wire::protocol::AgentEvent> {
     use crate::domain::swarm::services::parent_wake::parent_wake;
     use std::sync::atomic::Ordering;
     let control = match turn_control.launched_coordinator {
@@ -584,11 +605,13 @@ async fn coordinator_swarm_state(
         Ok(None) | Err(_) => return None,
     };
     let prompted = turn_control.take_client_instructions();
-    Some(super::protocol::AgentEvent::SwarmState {
-        wake: wake.kind(),
-        status: wake.status().map(|status| status_name(status).to_owned()),
-        prompted,
-    })
+    Some(
+        crate::interface::uds::wire::protocol::AgentEvent::SwarmState {
+            wake: wake.kind(),
+            status: wake.status().map(|status| status_name(status).to_owned()),
+            prompted,
+        },
+    )
 }
 
 /// How a coordination-store failure is treated by automatic turns.

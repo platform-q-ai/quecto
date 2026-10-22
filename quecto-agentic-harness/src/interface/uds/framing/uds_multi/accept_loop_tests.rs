@@ -1,0 +1,438 @@
+//! Integration tests for the connect-time snapshot push in [`spawn_accept_loop`]
+//! (#874). Earlier coverage exercised the line builder
+//! (`build_get_subagents_line`) and the parent reader's acceptance predicate in
+//! isolation; these tests drive the REAL busy-gated accept loop over a live Unix
+//! socket and assert what a freshly connected client actually receives on the
+//! wire — closing the gap where the production push path
+//! (`uds_multi.rs` busy branch) was only covered indirectly via the builder and
+//! a hand-written BDD mock.
+
+use super::*;
+use crate::interface::cli::uds::MAX_FRAME_PAYLOAD_BYTES;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+use crate::domain::conversation::value_objects::message::Message;
+use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentStatus};
+use crate::interface::cli::uds_cancel::CancelSlot;
+use crate::interface::uds::wire::protocol::SessionState;
+
+/// Build `AcceptLoopArgs` wired to a listener at `socket_path`, with the given
+/// busy flag and subagent registry. Returns the args plus the broadcast/cmd
+/// senders so the caller keeps them alive for the duration of the test.
+pub(super) fn make_args(
+    socket_path: &std::path::Path,
+    busy: bool,
+    subagent_registry: Option<
+        crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry,
+    >,
+) -> (
+    AcceptLoopArgs,
+    tokio::sync::broadcast::Sender<String>,
+    tokio::sync::mpsc::Sender<ClientMessage>,
+    tokio::sync::mpsc::Receiver<ClientMessage>,
+) {
+    let listener = tokio::net::UnixListener::bind(socket_path).expect("bind test socket");
+    let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<String>(16);
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(16);
+    let busy_flag: BusyFlag = Arc::new(std::sync::atomic::AtomicBool::new(busy));
+    let args = AcceptLoopArgs {
+        extensions: Default::default(),
+        swarm_boards: None,
+        execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
+        listener,
+        broadcast_tx: broadcast_tx.clone(),
+        cmd_tx: cmd_tx.clone(),
+        disconnect_tx: tokio::sync::mpsc::unbounded_channel().0,
+        cancel_handle: Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
+        turn_control: Arc::default(),
+        live_clients: Arc::new(AtomicU32::new(0)),
+        client_tool_registry: crate::interface::cli::uds_ext_protocol::new_client_tool_registry(),
+        session: crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(
+            &[Message::user("hello")],
+        ),
+        runtime_store: Default::default(),
+        state_snapshot: Arc::new(tokio::sync::RwLock::new(SessionState {
+            admission_warnings: Vec::new(),
+            startup_warnings: Vec::new(),
+            control_receipts: Vec::new(),
+            automatic_turns_suspended: false,
+            repeated_failure_notifications: 0,
+            execution: None,
+            model: "mock-model".into(),
+            generation: 1,
+            is_streaming: true,
+            session_key: "cli:test".into(),
+            message_count: 0,
+            pending_message_count: 0,
+            max_context_tokens: 0,
+            effort: None,
+            effort_levels: Vec::new(),
+            workflow: None,
+            sync: 1,
+        })),
+        session_stats_snapshot: Arc::new(tokio::sync::RwLock::new(
+            crate::interface::cli::uds_session::history_session_stats(
+                "cli:test",
+                &[Message::user("hello")],
+            ),
+        )),
+        tool_catalogue_snapshot: Arc::new(tokio::sync::RwLock::new(vec![serde_json::json!({
+            "name": "weather",
+            "description": "Weather lookup",
+        })])),
+        busy: busy_flag,
+        subagent_registry,
+        workflow_state: None,
+        workspace_path: std::env::current_dir().unwrap(),
+        teardown: None,
+    };
+    (args, broadcast_tx, cmd_tx, cmd_rx)
+}
+
+/// Read whatever bytes a freshly connected client receives within `timeout`,
+/// stopping once the read either blocks past the deadline or the peer is idle.
+pub(super) async fn read_available(
+    stream: &mut tokio::net::UnixStream,
+    timeout: std::time::Duration,
+) -> String {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match tokio::time::timeout(timeout, stream.read(&mut chunk)).await {
+            Ok(Ok(0)) => break, // EOF
+            Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
+            Ok(Err(_)) => break, // read error
+            Err(_) => break,     // no more bytes before deadline
+        }
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// BUSY accept loop: a newly connected client receives the connect-time
+/// snapshots, INCLUDING a `get_subagents` snapshot reflecting the registry, with
+/// no request sent. This is the production push at `uds_multi.rs` busy branch.
+#[tokio::test]
+async fn busy_accept_loop_pushes_get_subagents_snapshot() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket_path = dir.path().join("busy.sock");
+
+    let mut entry = SubagentEntry::new("/tmp/gc.sock".into(), 4321);
+    entry.status = SubagentStatus::Running;
+    let registry: crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry =
+        Arc::new(std::sync::Mutex::new(std::collections::HashMap::from([(
+            "grandchild".to_string(),
+            entry,
+        )])));
+
+    let (args, _bcast, _cmd_tx, _cmd_rx) =
+        make_args(&socket_path, /* busy */ true, Some(registry));
+    let handle = spawn_accept_loop(args);
+
+    let mut client = tokio::net::UnixStream::connect(&socket_path)
+        .await
+        .expect("connect to busy accept loop");
+    let received = read_available(&mut client, std::time::Duration::from_millis(500)).await;
+
+    handle.abort();
+
+    let subagents_line = received
+        .lines()
+        .find(|l| l.contains("\"command\":\"get_subagents\""))
+        .expect("busy client must receive a get_subagents snapshot");
+    let v: serde_json::Value = serde_json::from_str(subagents_line).expect("valid JSON line");
+    assert_eq!(v["type"], "response");
+    assert_eq!(v["command"], "get_subagents");
+    assert_eq!(v["success"], true);
+    assert_eq!(v["data"]["snapshot"], true);
+    let agents = v["data"]["subagents"].as_array().expect("subagents array");
+    assert_eq!(agents.len(), 1, "registry view served: {received}");
+    assert_eq!(agents[0]["agentId"], "grandchild");
+
+    // The state + messages snapshots are pushed too (existing #842 path).
+    assert!(
+        received.contains("\"command\":\"get_state\""),
+        "state snapshot also pushed: {received}"
+    );
+    assert!(
+        received.contains("\"command\":\"get_messages\""),
+        "messages snapshot also pushed: {received}"
+    );
+}
+
+/// BUSY accept loop: remaining pure reads are also pushed as connect-time
+/// snapshots, independent of the blocked dispatch loop (#880).
+#[tokio::test]
+async fn busy_accept_loop_pushes_session_stats_and_extensions_snapshots() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket_path = dir.path().join("busy-remaining.sock");
+
+    let (args, _bcast, _cmd_tx, _cmd_rx) = make_args(&socket_path, /* busy */ true, None);
+    let handle = spawn_accept_loop(args);
+
+    let mut client = tokio::net::UnixStream::connect(&socket_path)
+        .await
+        .expect("connect to busy accept loop");
+    let received = read_available(&mut client, std::time::Duration::from_millis(500)).await;
+
+    handle.abort();
+
+    let stats_line = received
+        .lines()
+        .find(|l| l.contains("\"command\":\"get_session_stats\""))
+        .expect("busy client must receive stats snapshot");
+    let stats: serde_json::Value = serde_json::from_str(stats_line).expect("valid stats JSON");
+    assert_eq!(stats["type"], "response");
+    assert_eq!(stats["command"], "get_session_stats");
+    assert_eq!(stats["success"], true);
+    assert_eq!(stats["data"]["snapshot"], true);
+    assert_eq!(stats["data"]["userMessages"], 1);
+
+    let tools_line = received
+        .lines()
+        .find(|l| l.contains("\"command\":\"get_tool_catalogue\""))
+        .expect("busy client must receive extensions snapshot");
+    let tools: serde_json::Value = serde_json::from_str(tools_line).expect("valid tools JSON");
+    assert_eq!(tools["type"], "response");
+    assert_eq!(tools["command"], "get_tool_catalogue");
+    assert_eq!(tools["success"], true);
+    assert_eq!(tools["data"]["snapshot"], true);
+    let list = tools["data"]["tools"].as_array().expect("extensions array");
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0]["name"], "weather");
+}
+
+/// IDLE accept loop: a newly connected client receives workspace plus the
+/// canonical state projection. `get_state` therefore never depends on the
+/// serialized dispatch loop, even when the busy flag races a new turn.
+#[tokio::test]
+async fn idle_accept_loop_pushes_workspace_and_state_before_client_input() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket_path = dir.path().join("idle.sock");
+
+    let registry: crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry =
+        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+
+    let (args, _bcast, _cmd_tx, _cmd_rx) =
+        make_args(&socket_path, /* busy */ false, Some(registry));
+    let handle = spawn_accept_loop(args);
+
+    let mut client = tokio::net::UnixStream::connect(&socket_path)
+        .await
+        .expect("connect to idle accept loop");
+    // Send nothing; the idle loop must still announce workspace and state
+    // before any client input, but not the other busy-only snapshots.
+    let received = read_available(&mut client, std::time::Duration::from_millis(300)).await;
+
+    let _ = client.flush().await;
+    handle.abort();
+
+    let lines: Vec<_> = received.lines().collect();
+    assert_eq!(
+        lines.len(),
+        2,
+        "idle client got unexpected events: {received}"
+    );
+    let workspace: serde_json::Value = serde_json::from_str(lines[0]).expect("workspace json");
+    assert_eq!(workspace["type"], "workspace");
+    assert!(workspace["path"].as_str().is_some());
+    let state: serde_json::Value = serde_json::from_str(lines[1]).expect("state json");
+    assert_eq!(state["command"], "get_state");
+    assert_eq!(state["data"]["state"], "idle");
+    assert!(state["data"]["sessionKey"].as_str().is_some());
+    assert!(!received.contains("\"command\":\"get_messages\""));
+}
+
+// --- bounded read at read time (#1003) ---
+//
+// The client reader loop in `multi_client_loop` now reads lines through the
+// shared `quecto_line_io::read_bounded_line` helper rather than
+// `AsyncBufReadExt::lines()`/`next_line()`, so a client sending one giant
+// unterminated line is capped *while being read* rather than fully buffered
+// and only checked/dropped afterward. This exercises the real reader loop
+// over a live socket and asserts on the one thing an external observer can
+// see: which commands actually reach the dispatch mpsc.
+#[tokio::test]
+async fn multi_client_loop_drops_oversized_command_but_dispatches_the_next_valid_one() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket_path = dir.path().join("oversized.sock");
+
+    let (args, _bcast, _cmd_tx, mut cmd_rx) = make_args(&socket_path, /* busy */ false, None);
+    let handle = spawn_accept_loop(args);
+
+    let mut client = tokio::net::UnixStream::connect(&socket_path)
+        .await
+        .expect("connect to idle accept loop");
+
+    // Derive the oversized payload from the real cap (`uds::MAX_FRAME_PAYLOAD_BYTES`,
+    // re-exported into scope via `uds_multi`'s imports) so the test cannot
+    // silently under-shoot if the cap ever grows.
+    let oversized = format!(
+        "{{\"command\":\"prompt\",\"task\":\"{}\"}}\n",
+        "x".repeat(MAX_FRAME_PAYLOAD_BYTES + 65_536)
+    );
+    let valid = "{\"command\":\"get_state\"}\n";
+    client
+        .write_all(oversized.as_bytes())
+        .await
+        .expect("write oversized line");
+    client
+        .write_all(valid.as_bytes())
+        .await
+        .expect("write valid line");
+    client.flush().await.expect("flush");
+
+    let received = tokio::time::timeout(std::time::Duration::from_secs(2), cmd_rx.recv())
+        .await
+        .expect("dispatch loop should still receive the valid command within 2s")
+        .expect("cmd channel open");
+
+    handle.abort();
+
+    match received {
+        ClientMessage::Command(cmd) => {
+            assert_eq!(
+                cmd.line.trim(),
+                valid.trim(),
+                "the oversized line must never reach dispatch, only the valid command that follows it"
+            );
+        }
+        _other => panic!("expected a Command message, got something else"),
+    }
+}
+
+/// #1626: `delete_all_subagents` sent to a BUSY harness over a live socket is
+/// answered by the reader task while the dispatch loop is blocked — here the
+/// dispatch channel is deliberately never drained, standing in for a parent
+/// turn that has not ended. Before the fix the command sat in `cmd_rx` and no
+/// response (nor the empty roster broadcast) reached the client until the
+/// turn finished.
+#[tokio::test]
+async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket_path = dir.path().join("busy-delete.sock");
+
+    // A child this harness launched (a launch generation, keyed by uuid)
+    // whose socket never existed: the fleet teardown's protocol attempt is
+    // negative at once, nothing is owned, and it is compensated unobserved.
+    let uuid = crate::domain::identity::ids::AgentUuid::mint();
+    let mut entry = SubagentEntry::with_identity(
+        uuid.clone(),
+        "worker".into(),
+        "/nonexistent/worker.sock".into(),
+        0,
+    );
+    entry.status = SubagentStatus::Running;
+    entry.launch_generation =
+        Some(crate::domain::agents::services::subagent_teardown::LaunchGeneration::new(1));
+    let registry = crate::infrastructure::tools::agents::subagent_registry::new_registry();
+    registry.lock().unwrap().insert(uuid.into_string(), entry);
+
+    let (mut args, bcast, _cmd_tx, mut cmd_rx) =
+        make_args(&socket_path, /* busy */ true, Some(registry.clone()));
+    // The composed teardown graph is what carries the fleet teardown to
+    // every connection (#1938).
+    let graph = crate::composition::subagent_teardown::build_teardown_graph(
+        crate::interface::cli::uds_teardown_handles::TeardownLoopInputs {
+            owner: crate::domain::identity::ids::AgentUuid::new("root"),
+            registry: Some(registry.clone()),
+            harness_lifecycle: None,
+            broadcast_tx: Some(bcast.clone()),
+            notify_tx: None,
+            cancel_handle: args.cancel_handle.clone(),
+            turn_control: args.turn_control.clone(),
+            busy: args.busy.clone(),
+            exit_notify: Arc::new(tokio::sync::Notify::new()),
+            binding:
+                crate::domain::agents::entities::parent_control::ParentControlBinding::unlaunched(),
+            owner_exit: crate::infrastructure::tools::agents::owner_exit::OwnerExitFlag::new(),
+            environment_control: None,
+        },
+    );
+    args.teardown = Some(graph.connections.clone());
+    let handle = spawn_accept_loop(args);
+
+    let mut client = tokio::net::UnixStream::connect(&socket_path)
+        .await
+        .expect("connect to busy accept loop");
+    // Discard the connect-time snapshots; they predate the delete.
+    let _ = read_available(&mut client, std::time::Duration::from_millis(300)).await;
+
+    client
+        .write_all(b"{\"type\":\"delete_all_subagents\",\"id\":\"del-live\"}\n")
+        .await
+        .expect("send delete");
+    // The fleet settles within its bound (a negative attempt against a
+    // missing socket is immediate); wait for the correlated response.
+    let mut received = String::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !received.contains("\"command\":\"delete_all_subagents\"")
+        && std::time::Instant::now() < deadline
+    {
+        received
+            .push_str(&read_available(&mut client, std::time::Duration::from_millis(500)).await);
+    }
+    handle.abort();
+
+    let response = received
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["command"] == "delete_all_subagents")
+        .unwrap_or_else(|| {
+            panic!("delete response must not wait for the dispatch loop: {received}")
+        });
+    assert_eq!(response["id"], "del-live");
+    assert_eq!(response["success"], true, "{response}");
+    assert_eq!(response["data"]["removed"], 1);
+    assert_eq!(response["data"]["settled"][0]["result"], "unobserved");
+    assert!(
+        registry.lock().unwrap().is_empty(),
+        "the fleet settled while the dispatch loop is still blocked"
+    );
+
+    // The authoritative empty survivor set reaches the client on the same
+    // connection, so later roster refreshes cannot resurrect the rows.
+    let state_changed = received
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["type"] == "subagent_state_changed")
+        .unwrap_or_else(|| panic!("empty roster broadcast expected: {received}"));
+    assert_eq!(
+        state_changed["subagents"].as_array().map(Vec::len),
+        Some(0),
+        "{state_changed}"
+    );
+
+    // Nothing was queued behind the (blocked) dispatch loop.
+    assert!(
+        cmd_rx.try_recv().is_err(),
+        "delete_all_subagents must not be forwarded to the dispatch channel"
+    );
+}
+
+/// Given serialized dispatch is held, inspection must use the real connect projection.
+#[tokio::test]
+async fn busy_inspection_accepts_production_projection_without_dispatch() {
+    use crate::infrastructure::tools::agents::subagent_registry::send_subagent_uds_command_with_timeout;
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("inspection.sock");
+    let (args, _broadcast, _commands, _held_dispatch) = make_args(&socket, true, None);
+    let accept = spawn_accept_loop(args);
+    let result = send_subagent_uds_command_with_timeout(
+        &socket,
+        r#"{"type":"get_state"}"#,
+        std::time::Duration::from_millis(250),
+    )
+    .await;
+    accept.abort();
+    let response: serde_json::Value =
+        serde_json::from_str(&result.expect("real busy snapshot must answer without dispatch"))
+            .unwrap();
+    assert_eq!(response["command"], "get_state");
+    assert!(response.get("id").is_none());
+    assert_eq!(response["data"]["automaticTurnsSuspended"], false);
+    assert_eq!(response["data"]["repeatedFailureNotifications"], 0);
+}
+
+mod owner_exit_tests;

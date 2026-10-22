@@ -2,7 +2,7 @@
 //
 // Connects to child agent UDS sockets directly from Rust — no ncat, no socat,
 // no bash intermediary.  Uses the framed JSON protocol from
-// `src/interface/cli/protocol.rs`.
+// `src/interface/uds/wire/protocol.rs`.
 
 use crate::application::tools::ports::Tool;
 use crate::domain::shared::error::DomainError;

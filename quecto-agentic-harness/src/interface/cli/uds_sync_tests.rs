@@ -1,10 +1,10 @@
-use super::protocol::AgentEvent;
 use super::uds_sync::{SYNC_OVERSIZED_ERROR, bounded_response_line, intercept, sync_data};
 use crate::application::sessions::conversation_ledger::LedgerAdvance;
 use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 use crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles;
 use crate::interface::cli::uds_session::HISTORY_PAGE_JSON_BUDGET;
 use crate::interface::cli::uds_session_handles::SessionReadHandles;
+use crate::interface::uds::wire::protocol::AgentEvent;
 
 fn publish(handles: &SessionReadHandles, messages: &[Message]) -> LedgerAdvance {
     handles
@@ -138,7 +138,7 @@ async fn a_stale_epoch_is_presented_as_a_resync_at_the_current_position() {
 #[tokio::test]
 async fn a_resync_carries_the_history_page_cursors() {
     let handles = ephemeral_read_handles(&[]);
-    let messages: Vec<_> = (0..(super::protocol::HISTORY_PAGE_SIZE + 1))
+    let messages: Vec<_> = (0..(crate::interface::uds::wire::protocol::HISTORY_PAGE_SIZE + 1))
         .map(|i| Message::user(format!("message-{i}")))
         .collect();
     publish(&handles, &messages);
@@ -153,7 +153,7 @@ async fn a_resync_carries_the_history_page_cursors() {
     );
     assert_eq!(
         stale["messages"].as_array().unwrap().len(),
-        super::protocol::HISTORY_PAGE_SIZE
+        crate::interface::uds::wire::protocol::HISTORY_PAGE_SIZE
     );
 }
 

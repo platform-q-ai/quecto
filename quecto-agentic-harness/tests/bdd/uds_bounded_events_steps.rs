@@ -6,7 +6,7 @@
 //! re-stamped sub-agent path.
 
 use super::*;
-use quecto::interface::cli::protocol::EVENT_LINE_CAP_BYTES;
+use quecto::interface::uds::wire::protocol::EVENT_LINE_CAP_BYTES;
 use quecto_line_io::PROTOCOL_FRAME_CAP_BYTES;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};

@@ -16,7 +16,7 @@ use crate::domain::conversation::value_objects::message::{LlmResponse, Message, 
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
-use crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES;
+use crate::interface::uds::wire::protocol::EVENT_LINE_CAP_BYTES;
 
 #[derive(Debug)]
 pub(super) struct ScriptedProvider {

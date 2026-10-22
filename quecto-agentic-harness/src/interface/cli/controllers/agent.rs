@@ -611,7 +611,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     let workflow_available = flags.uds_mode && !flags.workflow_disabled;
     let broadcast_tx = if workflow_available {
         let (tx, _) = tokio::sync::broadcast::channel::<String>(
-            crate::interface::cli::uds_multi::BROADCAST_CHANNEL_CAPACITY,
+            crate::interface::uds::framing::uds_multi::BROADCAST_CHANNEL_CAPACITY,
         );
         Some(tx)
     } else {

@@ -46,7 +46,7 @@ pub(super) fn wire_member(
     wire_agent(agent, crate::interface::tool_runtime::swarm_context())
 }
 
-pub(in crate::interface::cli) fn bind_suspension(
+pub(in crate::interface) fn bind_suspension(
     cancel: &super::super::uds_cancel::CancelHandle,
     context: Option<SwarmContext>,
 ) {

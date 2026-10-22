@@ -26,16 +26,16 @@ pub(in crate::interface::cli) fn listed_row_json(row: &ListedSession) -> serde_j
 /// Present only application-approved metadata; never infer resume eligibility here.
 pub(in crate::interface::cli) fn discovery_json(
     result: &ListSessionsResult,
-    scope: crate::interface::cli::protocol::SessionListScopeCommand,
+    scope: crate::interface::uds::wire::protocol::SessionListScopeCommand,
 ) -> serde_json::Value {
     let sessions: Vec<_> = result.sessions.iter().map(listed_row_json).collect();
     let body = serde_json::json!({"sessions": sessions, "scope": scope});
     freshened(body, &result.diagnostics, result.rebuilt)
 }
 
-#[path = "uds_freshness_json.rs"]
-mod uds_freshness_json;
-pub(in crate::interface::cli) use uds_freshness_json::{freshened, safe_display};
+pub(in crate::interface::cli) use crate::interface::uds::wire::uds_freshness_json::{
+    freshened, safe_display,
+};
 
 #[cfg(test)]
 #[path = "uds_dispatch_discovery_tests.rs"]
