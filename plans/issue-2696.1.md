@@ -5,10 +5,12 @@
 |---|---|
 | Task | issue-2696 |
 | Version | 1 |
-| State | draft |
+| State | accepted |
 | Proposed by | SQ (`shane@platformq.co.uk`) |
+| Accepted by | SQ (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-22T00:09:26Z |
 | Created | 2026-10-22T00:08:46Z |
-| Updated | 2026-10-22T00:08:46Z |
+| Updated | 2026-10-22T00:09:26Z |
 
 ## Approach
 One self-contained child PR fixing #2696: preflight existing StartedRuns before exit board composition. Preserve started cleanup, refusal and warning semantics. Separate planning, red-test bundle, delivery and independent PR reviews; human merges. Target at most500 changed lines, hard cap900. Baseline ef17b93e0d5058e07fdd3e54f05e6c86f3e31243. Durable planning: /home/swq/.quecto/artifacts/issue-2696/planning/handoff.md. Fixed small pools with member_limit25, only one member builds at a time. Clean Architecture, affirmative guards, TDD/BDD. Required version bump in final commit; no process artifacts in PR.
