@@ -123,6 +123,10 @@ fn accepting_names_the_draft_and_supersedes_the_plan_accepted_before() {
         plan_version: Some(2),
         plan_state_from: Some(PlanState::Draft),
         plan_state_to: Some(PlanState::Accepted),
+        // The commit the write made (#2663).
+        head: Some(crate::application::project_board::ports::BoardHead(
+            "r3".into(),
+        )),
         ..OpFacts::default()
     };
     assert_eq!(facts, want);
@@ -211,7 +215,10 @@ fn a_held_tasks_plan_is_its_holders_and_a_set_aside_run_holds_it() {
         accept_as(&store, "Ada").execute(&of(1, None)).map(|_| ()),
         Err(ProjectBoardError::Quarantined {
             key,
-            path: "runs/a.1.md".into()
+            path: "runs/a.1.md".into(),
+            object: crate::infrastructure::test_support::memory_board_store::memory_object(
+                "runs/a.1.md"
+            ),
         })
     );
 }

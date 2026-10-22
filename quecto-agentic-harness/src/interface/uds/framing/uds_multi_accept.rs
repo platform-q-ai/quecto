@@ -69,6 +69,8 @@ pub(in crate::interface) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::ta
         extensions,
         swarm_boards,
     } = args;
+    // A recoverable failure's self-wake (#2531) rides the loop's channel.
+    turn_control.bind_self_waker(cmd_tx.downgrade());
     tokio::spawn(async move {
         // The board view's change hints (#2478) live as long as the loop;
         // what they have seen is told to each new connection.

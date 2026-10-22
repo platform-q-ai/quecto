@@ -100,7 +100,7 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("domain/tool_policy", &["value_objects", "services"]),
     Capability("domain/catalogue", &["entities", "value_objects", "services"]),
     Capability("domain/swarm", &["entities", "value_objects", "services", "events"]),
-    Capability("application/agent_turn", &["agent_loop", "context", "ports", "use_cases"]),
+    Capability("application/agent_turn", &["agent_loop", "context", "dto", "ports", "use_cases"]),
     Capability("domain/audit", &[]),
     Capability("domain/sessions", &["entities", "value_objects", "services"]),
     Capability("domain/inference", &["value_objects", "services", "events"]),
@@ -110,6 +110,7 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("domain/project_board", &["entities", "value_objects", "services"]),
     Capability("infrastructure/tools", &["agents", "native", "registry", "swarm"]),
     Capability("infrastructure/persistence", &["file", "sqlite", "project_board"]),
+    Capability("infrastructure/providers", &["anthropic", "catalogue", "codex", "openai", "routing", "transport"]),
     Capability("application/auth", &["use_cases", "ports", "dto"]),
     Capability("application/catalogue", &["use_cases", "ports", "dto", "services"]),
     Capability("application/configuration", &["use_cases", "ports", "dto", "services"]),
@@ -124,7 +125,7 @@ const MIGRATED: &[Capability<'_>] = &[
     // capability-split folders stay until L11/L12 fold them into the roles.
     Capability(
         "interface/uds",
-        &["framing", "wire", "catalogue", "parent_control", "sessions", "subagent_teardown"],
+        &["framing", "wire", "admission", "catalogue", "parent_control", "sessions", "subagent_teardown"],
     ),
 ];
 // Wiki target-source-tree anchors define allowed future names; Transitional rows must exist.

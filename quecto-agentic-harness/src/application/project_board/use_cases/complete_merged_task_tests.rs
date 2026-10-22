@@ -39,10 +39,10 @@ fn seeded(prs: &[u64]) -> MemoryBoardStore {
 
 /// The system's completion, run by Bob's machine, reading `host`.
 fn complete(store: &MemoryBoardStore, host: &MemoryPullRequests) -> CompleteMergedTask {
-    CompleteMergedTask::new(
+    CompleteMergedTask::reading(
         Arc::new(store.client_as(person("Bob"))),
         SetClock::at("10:00:00"),
-        Arc::new(host.clone()),
+        Ok(Arc::new(host.clone())),
     )
     .unwrap()
 }
@@ -299,10 +299,10 @@ fn a_lost_write_does_not_restart_the_budget() {
             .write_tasks(&head, &[other], "another writer")
             .unwrap();
     });
-    let completion = CompleteMergedTask::new(
+    let completion = CompleteMergedTask::reading(
         Arc::new(store.client_as(person("Bob"))),
         clock.clone(),
-        Arc::new(host.clone()),
+        Ok(Arc::new(host.clone())),
     )
     .unwrap()
     .with_read_budget(std::time::Duration::from_secs(30));
@@ -391,7 +391,10 @@ fn a_completion_waits_while_a_run_or_change_of_its_task_is_set_aside() {
             complete(&store, &host).execute(&slug("a")),
             Err(ProjectBoardError::Quarantined {
                 key,
-                path: path.into()
+                path: path.into(),
+                object: crate::infrastructure::test_support::memory_board_store::memory_object(
+                    path
+                ),
             })
         );
         assert_eq!(status(&store), TaskStatus::Review);

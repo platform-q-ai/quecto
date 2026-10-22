@@ -23,6 +23,22 @@ use crate::domain::swarm::entities::records::{RunState, TaskState};
 
 /// The view of `board`, a kept board's projection, when its run ended.
 pub fn swarm_run_view(board: &Value) -> Option<SwarmRunView> {
+    view_of(board, |status| SwarmEnd::of(&RunState::new(status)))
+}
+
+/// The view of `board`, a kept board's projection, when its run still ran
+/// or was paused (an allowlist) as its owner ended its coordinator
+/// (#2674): as far as it got, read as a swarm cancelled there, so a stop
+/// records the items it had finished.
+pub fn left_run_view(board: &Value) -> Option<SwarmRunView> {
+    view_of(board, |status| match status {
+        "running" | "paused" => Some(SwarmEnd::Cancelled),
+        _ => None,
+    })
+}
+
+/// The view of `board` when `end` reads its run's status as one it takes.
+fn view_of(board: &Value, end: impl Fn(&str) -> Option<SwarmEnd>) -> Option<SwarmRunView> {
     // Only a projection that holds every item (an allowlist): one past a
     // row limit or its byte budget on its items cannot tell an item the
     // swarm never seeded from one left out. Members or evidence left out
@@ -41,7 +57,7 @@ pub fn swarm_run_view(board: &Value) -> Option<SwarmRunView> {
         }
     }
     let run = board.get("run")?.as_object()?;
-    let end = SwarmEnd::of(&RunState::new(run.get("status")?.as_str()?))?;
+    let end = end(run.get("status")?.as_str()?)?;
     let observed_tokens = run.get("budget")?.get("observed_tokens")?.as_u64()?;
     let items = listed.iter().filter_map(item).collect();
     Some(SwarmRunView {
@@ -51,22 +67,28 @@ pub fn swarm_run_view(board: &Value) -> Option<SwarmRunView> {
     })
 }
 
-/// One of the board's items, when its title and state can be read.
+/// One of the board's items, when its title and state can be read, with
+/// where it stood before a confirmed death blocked it (#2685,
+/// [`SwarmItemState::before_death`], told by the evidence the board stores,
+/// whatever its entries' shape).
 fn item(item: &Value) -> Option<SwarmItemView> {
     let title = item.get("title")?.as_str()?.to_owned();
     let state = SwarmItemState::of(&TaskState::new(item.get("state")?.as_str()?))?;
+    let entries = item.get("evidence").and_then(Value::as_array);
+    let stood_before_death = state.before_death(
+        item.get("blocker").and_then(Value::as_str),
+        entries.is_some_and(|entries| !entries.is_empty()),
+    );
     let owner = item.get("owner").and_then(Value::as_str).map(str::to_owned);
-    let evidence = item
-        .get("evidence")
-        .and_then(Value::as_array)
-        .map_or_else(Vec::new, |entries| {
-            entries.iter().filter_map(evidence).collect()
-        });
+    let evidence = entries.map_or_else(Vec::new, |entries| {
+        entries.iter().filter_map(evidence).collect()
+    });
     Some(SwarmItemView {
         title,
         state,
         owner,
         evidence,
+        stood_before_death,
     })
 }
 

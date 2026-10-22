@@ -165,10 +165,7 @@ impl DispatchTestEnv {
             latch,
             agent,
             messages: Vec::new(),
-            session: AgentSession::new(
-                "stub".into(),
-                super::dispatch_session_roster_tests::automatic_turns(),
-            ),
+            session: super::dispatch_session_roster_tests::turn_session("stub".into()),
             session_key: "cli:test".to_string(),
             store,
             sessions,
@@ -225,7 +222,7 @@ impl DispatchTestEnv {
     }
 
     pub(super) fn ctx(&mut self) -> DispatchCtx<'_> {
-        let initial_stats = crate::interface::cli::uds_session::compute_session_stats(
+        let initial_stats = crate::interface::cli::uds_session::history_session_stats(
             &self.session_key,
             &self.messages,
         );

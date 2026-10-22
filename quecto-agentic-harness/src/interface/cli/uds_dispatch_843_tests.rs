@@ -62,7 +62,7 @@ impl Fx {
                     crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
             }),
             messages: Vec::new(),
-            session: AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new()),
+            session: crate::composition::bootstrap::agent_turn::build_turn_session("stub".into()),
             session_key: "cli:test".into(),
             store: std::sync::Arc::new(store),
             _tmp: tmp,
@@ -71,7 +71,7 @@ impl Fx {
     }
 
     pub(super) fn ctx(&mut self) -> DispatchCtx<'_> {
-        let initial_stats = crate::interface::cli::uds_session::compute_session_stats(
+        let initial_stats = crate::interface::cli::uds_session::history_session_stats(
             &self.session_key,
             &self.messages,
         );

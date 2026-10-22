@@ -20,7 +20,10 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         if ctx.turn_control.is_steer_pending() {
             return;
         }
-        let pending = if ctx.session.automatic_turns_allowed() {
+        // #2531: a recoverable failure is re-armed by the next automatic
+        // note (bounded), so the domain decides, not the allowed flag.
+        let automatic = crate::domain::inference::services::turn_suspension::Work::Automatic;
+        let pending = if ctx.session.automatic_turns().admits(automatic) {
             crate::interface::cli::uds_session::coalesce_pending(ctx.session.drain_pending())
         } else {
             // #1712: a suspended member still obeys explicit instructions

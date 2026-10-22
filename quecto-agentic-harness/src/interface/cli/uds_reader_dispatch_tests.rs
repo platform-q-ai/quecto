@@ -542,3 +542,208 @@ async fn a_wake_without_a_generation_nudges_nothing() {
 
 #[path = "uds_reader_dispatch_image_tests.rs"]
 mod image_tests;
+
+/// Dispatch `line` with a full command channel over `turn_control`;
+/// returns the reply.
+async fn dispatched_on_a_full_channel(
+    turn_control: &super::super::uds_cancel::TurnControl,
+    line: &str,
+) -> serde_json::Value {
+    let registry = super::super::uds_ext_protocol::new_client_tool_registry();
+    let (writer, mut replies) = tokio::sync::mpsc::channel(4);
+    super::super::uds_ext_protocol::register_client_writer(&registry, 1, writer);
+    let (commands, _received) = tokio::sync::mpsc::channel(1);
+    commands
+        .try_send(ClientMessage::SwarmWake { generation: 0 })
+        .expect("fill the channel");
+    let session =
+        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
+    let cancel = std::sync::Arc::new(std::sync::Mutex::new(
+        super::super::uds_cancel::CancelSlot::Idle,
+    ));
+    dispatch(ReaderDispatchCtx {
+        line: line.into(),
+        cancel_handle: &cancel,
+        turn_control,
+        session: &session,
+        registry: &registry,
+        subagent_registry: &None,
+        fleet: None,
+        client_id: 1,
+        cmd_tx: &commands,
+    })
+    .await;
+    let reply = tokio::time::timeout(std::time::Duration::from_secs(2), replies.recv())
+        .await
+        .expect("a reply")
+        .expect("a reply line");
+    serde_json::from_str(&reply).unwrap()
+}
+
+fn watched_turn_control() -> super::super::uds_cancel::TurnControl {
+    super::super::uds_cancel::TurnControl::with_swarm_control(Some(std::sync::Arc::new(
+        WatchedControl::default(),
+    )))
+}
+
+/// #2626 review round 4 (#2531): a wake the full command channel cannot
+/// carry leaves the slot alone; a deferred outside wake's generation is
+/// kept for the next wake, not wiped.
+#[tokio::test]
+async fn a_wake_refused_on_a_full_channel_keeps_a_deferred_wake() {
+    let turn_control = watched_turn_control();
+    turn_control.defer_swarm_wake(41);
+    let reply = dispatched_on_a_full_channel(
+        &turn_control,
+        r#"{"type":"swarm_control","action":"wake","generation":3,"id":"wake-1"}"#,
+    )
+    .await;
+    assert_eq!(reply["success"], false, "the queue was full: {reply}");
+    assert_eq!(
+        turn_control.take_swarm_wake(0),
+        41,
+        "the deferred wake is kept"
+    );
+}
+
+/// #2626 review round 5: a resume's own self-wake on a full channel keeps
+/// a deferred outside wake too.
+#[tokio::test]
+async fn a_resume_self_wake_refused_on_a_full_channel_keeps_a_deferred_wake() {
+    let turn_control = watched_turn_control();
+    turn_control.defer_swarm_wake(41);
+    let reply = dispatched_on_a_full_channel(
+        &turn_control,
+        r#"{"type":"swarm_control","action":"resume","id":"resume-1"}"#,
+    )
+    .await;
+    assert!(
+        reply["data"]["warning"]
+            .as_str()
+            .is_some_and(|warning| warning.contains("self-wake queue full")),
+        "{reply}"
+    );
+    assert_eq!(
+        turn_control.take_swarm_wake(0),
+        41,
+        "the deferred wake is kept"
+    );
+}
+
+/// #2626 review round 5: on a full channel a wake rides a pending wake
+/// message (its generation folds in, and the message is then an outside
+/// wake, round 6) and is refused when none is pending, without ever
+/// occupying the slot.
+#[tokio::test]
+async fn a_full_channel_wake_rides_a_pending_message_or_leaves_the_slot_empty() {
+    let turn_control = watched_turn_control();
+    let reply = dispatched_on_a_full_channel(
+        &turn_control,
+        r#"{"type":"swarm_control","action":"wake","generation":3,"id":"wake-1"}"#,
+    )
+    .await;
+    assert_eq!(reply["success"], false, "{reply}");
+    assert_eq!(
+        turn_control.take_swarm_wake_from(0),
+        (0, None),
+        "slot never occupied"
+    );
+    assert!(
+        turn_control.queue_swarm_wake(2),
+        "a rider's own pending message"
+    );
+    let reply = dispatched_on_a_full_channel(
+        &turn_control,
+        r#"{"type":"swarm_control","action":"wake","generation":9,"id":"wake-2"}"#,
+    )
+    .await;
+    assert_eq!(reply["data"]["status"], "coalesced", "{reply}");
+    assert_eq!(
+        turn_control.take_swarm_wake_from(0),
+        (9, None),
+        "the rider kept, folded"
+    );
+}
+
+/// #2615 review: `restart_admission` is answered on the reader task, its
+/// reply correlated by id, whether the agent is idle or mid-turn (the
+/// dispatch queue held by the running turn, its cancel armed and untouched).
+#[tokio::test]
+async fn restart_admission_is_answered_on_the_reader_idle_or_mid_turn() {
+    for mid_turn in [false, true] {
+        let registry = super::super::uds_ext_protocol::new_client_tool_registry();
+        let (writer, mut replies) = tokio::sync::mpsc::channel(4);
+        super::super::uds_ext_protocol::register_client_writer(&registry, 1, writer);
+        let (commands, mut received) = tokio::sync::mpsc::channel(1);
+        if mid_turn {
+            commands
+                .send(ClientMessage::Command(ClientCommand {
+                    line: "the running turn".into(),
+                    client_id: 1,
+                    admitted: None,
+                }))
+                .await
+                .unwrap();
+        }
+        let session =
+            crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
+        let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
+        let cancel = std::sync::Arc::new(std::sync::Mutex::new(
+            super::super::uds_cancel::CancelSlot::Armed(cancel_tx),
+        ));
+        let control = super::super::uds_cancel::TurnControl::default();
+        let delivered = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            dispatch(ReaderDispatchCtx {
+                line: r#"{"type":"restart_admission","id":"adm-7"}"#.into(),
+                cancel_handle: &cancel,
+                turn_control: &control,
+                session: &session,
+                registry: &registry,
+                subagent_registry: &None,
+                fleet: None,
+                client_id: 1,
+                cmd_tx: &commands,
+            }),
+        )
+        .await
+        .expect("never waits behind the queue");
+        assert!(delivered);
+        let line = tokio::time::timeout(std::time::Duration::from_secs(5), replies.recv())
+            .await
+            .expect("answered")
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(reply["type"], "response", "{reply}");
+        assert_eq!(reply["command"], "restart_admission", "{reply}");
+        assert_eq!(reply["id"], "adm-7", "{reply}");
+        assert_eq!(reply["success"], false, "{reply}");
+        assert_eq!(
+            reply["error"], "admission is not configured for this session",
+            "{reply}"
+        );
+        // Never queued to dispatch, never cancelling the turn.
+        let queued = match mid_turn {
+            true => 1,
+            false => 0,
+        };
+        let mut seen = 0;
+        while received.try_recv().is_ok() {
+            seen += 1;
+        }
+        assert_eq!(seen, queued, "mid_turn {mid_turn}");
+        assert!(cancel_rx.try_recv().is_err(), "the turn was not cancelled");
+        assert!(!control.is_steer_pending());
+    }
+}
+
+/// #2615 review round 3: `confirm` is the acknowledged count, a
+/// non-negative integer; anything else confirms nothing.
+#[test]
+fn the_acknowledged_count_is_a_non_negative_integer() {
+    let count = |request: serde_json::Value| acknowledged_count(&request);
+    assert_eq!(count(serde_json::json!({"confirm": 3})), Some(3));
+    assert_eq!(count(serde_json::json!({"confirm": true})), None);
+    assert_eq!(count(serde_json::json!({"confirm": -1})), None);
+    assert_eq!(count(serde_json::json!({})), None);
+}

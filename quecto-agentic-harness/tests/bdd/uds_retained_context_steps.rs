@@ -202,7 +202,7 @@ fn when_model_recalls(world: &mut QuectoWorld) {
             broadcast_tx: None,
             parent_control: None,
             teardown_graph: None,
-            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
+            turn_session: quecto::composition::bootstrap::agent_turn::build_turn_session,
             environment_control: None,
         })
     });

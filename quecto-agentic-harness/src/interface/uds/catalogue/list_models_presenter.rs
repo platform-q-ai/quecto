@@ -47,12 +47,9 @@ fn render_listing(listing: &ModelCatalogueListing) -> serde_json::Value {
                 "contextWindow": entry.model.capabilities.context_window,
                 "maxTokens": entry.model.capabilities.max_output_tokens,
                 "input": entry.model.capabilities.input_modalities,
-                "cost": {
-                    "input": entry.model.capabilities.cost.input,
-                    "output": entry.model.capabilities.cost.output,
-                    "cacheRead": entry.model.capabilities.cost.cache_read,
-                    "cacheWrite": entry.model.capabilities.cost.cache_write,
-                },
+                // The rates billing uses, or null for a model nobody priced
+                // (#2630 review round 4): never zeros that read as free.
+                "cost": priced_cost(&entry.model.capabilities.cost),
                 "reasoning": entry.model.capabilities.reasoning,
                 "effortLevels": entry.model.capabilities.effort_levels,
                 "configured": listed.runnable,
@@ -72,3 +69,19 @@ fn render_listing(listing: &ModelCatalogueListing) -> serde_json::Value {
 #[cfg(test)]
 #[path = "list_models_presenter_tests.rs"]
 mod tests;
+
+/// A model's listed cost: its stated rates when they are a price, else
+/// `null`, exactly as usage is billed (#1855).
+fn priced_cost(
+    cost: &crate::domain::catalogue::value_objects::model_facts::ModelCost,
+) -> serde_json::Value {
+    match crate::domain::inference::value_objects::model_price::ModelPrice::of(cost) {
+        Some(_) => serde_json::json!({
+            "input": cost.input,
+            "output": cost.output,
+            "cacheRead": cost.cache_read,
+            "cacheWrite": cost.cache_write,
+        }),
+        None => serde_json::Value::Null,
+    }
+}

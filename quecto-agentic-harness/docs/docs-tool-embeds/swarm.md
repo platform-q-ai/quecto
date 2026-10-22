@@ -368,8 +368,12 @@ container until the user authorizes teardown.
 Paused instructions remain queued; resume restores admission and the deadline.
 A resume also wakes every live member, and a member whose automatic turns were
 suspended by a provider failure re-arms on it and continues its work without a
-prompt or steer. Do not pause a run because one member failed: resume the run
-and, only if the member is still stuck, steer it. For a member that holds a
+prompt or steer. A swarm wake also re-arms a member suspended by a recoverable
+provider failure (a rate limit, a server or network failure, a stalled stream).
+If no wake comes, the member wakes itself 30 seconds later. This happens at most
+twice before a turn succeeds. A terminal provider failure still needs an
+instruction or a resume. Do not pause a run because one member failed: resume
+the run and, only if the member is still stuck, steer it. For a member that holds a
 claim it will not finish, no process is prescribed: an explicit `agent_cmd`
 `steer`/`follow_up` re-arms a provider-suspended member (#1712), `agent_cmd`
 `set_model` moves it off a failing provider, `op=revoke` reassigns its

@@ -11,7 +11,7 @@ use crate::interface::cli::uds::dispatch_session_roster_tests::{
 use crate::interface::cli::uds::{DispatchCtx, dispatch_command};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
-use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
+use crate::interface::cli::uds_session::{AgentSession, history_session_stats};
 use crate::interface::uds::wire::protocol::AgentCommand;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -171,7 +171,7 @@ impl Fixture {
                 tool_profile_context: ToolProfileContext::Parent,
             }),
             messages: Vec::new(),
-            session: AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new()),
+            session: crate::composition::bootstrap::agent_turn::build_turn_session("stub".into()),
             session_key: "cli:test".into(),
             store,
             handles,
@@ -184,7 +184,7 @@ impl Fixture {
         &mut self,
         broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     ) -> DispatchCtx<'_> {
-        let initial_stats = compute_session_stats(&self.session_key, &self.messages);
+        let initial_stats = history_session_stats(&self.session_key, &self.messages);
         let handles = &self.handles;
         let _ = handles
             .active_session

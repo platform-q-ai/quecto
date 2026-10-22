@@ -5,6 +5,7 @@ use crate::domain::catalogue::value_objects::availability::UnavailableReason;
 use crate::domain::catalogue::value_objects::identity::ModelRef;
 use crate::domain::catalogue::value_objects::model_facts::PromptLimit;
 use crate::domain::conversation::services::image_input::ImageInput;
+use crate::domain::inference::value_objects::model_price::ModelPrice;
 
 /// The per-model limits the loop clamps to, each `None` unless the
 /// catalogue declared it explicitly (a synthesized default never clamps),
@@ -19,6 +20,9 @@ pub struct ModelLimits {
     /// its catalogue entry declares `image` input. A model with no entry
     /// takes none.
     pub image_input: ImageInput,
+    /// The model's catalogue price, the one price authority its usage is
+    /// costed at (#1855); `None` when the catalogue declares none.
+    pub price: Option<ModelPrice>,
 }
 
 /// What the published runtime generation says about the requested model.

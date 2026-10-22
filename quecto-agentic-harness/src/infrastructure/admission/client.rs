@@ -35,7 +35,9 @@ pub enum ClientError {
     Admission(String),
     JournalUnavailable,
     Cancelled,
-    Timeout,
+    /// The queue wait expired; the authority's reason, which may say what
+    /// held the group (#2664).
+    Timeout(String),
     EpochReset,
     Closed,
     Protocol(String),
@@ -50,7 +52,14 @@ impl std::fmt::Display for ClientError {
             Self::Admission(m) => write!(f, "admission refused: {m}"),
             Self::JournalUnavailable => f.write_str("admission ledger not durable"),
             Self::Cancelled => f.write_str("admission request cancelled"),
-            Self::Timeout => f.write_str("admission queue wait deadline elapsed"),
+            // Only a reason that extends the plain timeout adds detail; any
+            // other reads as the plain timeout every client knows.
+            Self::Timeout(reason) => match reason.strip_prefix(QUEUE_TIMEOUT_REASON) {
+                Some(detail) if detail.starts_with(": ") => {
+                    write!(f, "admission {QUEUE_TIMEOUT_REASON}{detail}")
+                }
+                _ => write!(f, "admission {QUEUE_TIMEOUT_REASON}"),
+            },
             Self::EpochReset => f.write_str("admission authority was reset"),
             Self::Closed => f.write_str("admission authority connection closed"),
             Self::Protocol(m) => write!(f, "admission protocol violation: {m}"),
@@ -113,7 +122,7 @@ fn map_error(code: ErrorCode, reason: String) -> ClientError {
         ErrorCode::Malformed => ClientError::Protocol(reason),
         ErrorCode::Admission => ClientError::Admission(reason),
         ErrorCode::Cancelled => ClientError::Cancelled,
-        ErrorCode::Timeout => ClientError::Timeout,
+        ErrorCode::Timeout => ClientError::Timeout(reason),
         ErrorCode::EpochReset => ClientError::EpochReset,
     }
 }
@@ -659,6 +668,16 @@ impl Drop for AdminConnection {
     }
 }
 
+/// What `status` reads from the admin socket (#2615).
+#[derive(Debug, Clone)]
+pub struct AdminStatus {
+    pub status: AuthorityStatus,
+    /// Started on demand: it stops itself when idle.
+    pub on_demand: bool,
+    /// This run of the authority.
+    pub instance: u64,
+}
+
 impl AdminConnection {
     pub async fn connect(path: &Path) -> Result<Self, ClientError> {
         let (inner, io) = open(path, PROTOCOL_VERSION).await?;
@@ -674,17 +693,39 @@ impl AdminConnection {
     }
 
     pub async fn inspect(&self) -> Result<AuthorityStatus, ClientError> {
+        self.status().await.map(|status| status.status)
+    }
+
+    /// The authority's state, and whether it was started on demand (it
+    /// stops itself when idle, #2615).
+    pub async fn status(&self) -> Result<AdminStatus, ClientError> {
         match self.inner.call(Op::Inspect).await? {
             Body::Status {
                 epoch,
                 journal_healthy,
                 live_scopes,
                 groups,
+                on_demand,
+                instance,
             } => status_from_body(epoch, journal_healthy, live_scopes, groups)
+                .map(|status| AdminStatus {
+                    status,
+                    on_demand,
+                    instance,
+                })
                 .map_err(|e| ClientError::Protocol(format!("status: {e:?}"))),
             other => Err(ClientError::Protocol(format!(
                 "expected status, got {other:?}"
             ))),
+        }
+    }
+
+    /// Ask the authority to stop serving (#2615): it answers, then stops as
+    /// SIGTERM would, keeping outstanding work journaled.
+    pub async fn stop(&self) -> Result<(), ClientError> {
+        match self.inner.call(Op::Stop).await? {
+            Body::Ok => Ok(()),
+            other => Err(ClientError::Protocol(format!("expected ok, got {other:?}"))),
         }
     }
 

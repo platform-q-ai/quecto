@@ -88,7 +88,9 @@ impl SwarmRunControl for Rising {
 /// dispatch loop dates it after the failure (#1721).
 pub(super) async fn suspend_failed_at(ctx: &mut DispatchCtx<'_>, generation: u64) {
     let turns = ctx.session.automatic_turns();
-    turns.suspend_after_failure();
+    turns.suspend_after_failure(&crate::domain::shared::error::DomainError::Provider(
+        "provider error (401): invalid credentials".into(),
+    ));
     turns
         .date_suspension(Some(&super::RunningAt(generation)))
         .await;
@@ -103,13 +105,13 @@ pub(super) fn suspend_rejected_at(ctx: &mut DispatchCtx<'_>, generation: u64) {
 
 /// Whether a wake at `generation` re-arms the suspended session by a resume.
 pub(super) async fn resumed_at(ctx: &mut DispatchCtx<'_>, generation: u64) -> bool {
-    use crate::application::agent_turn::use_cases::resume_after_provider_failure::SuspendedProbe;
+    use crate::domain::inference::services::turn_suspension::WakeOutcome;
     let probe = ctx
         .session
         .automatic_turns()
         .probe_while_suspended(&super::RunningAt(generation))
         .await;
-    matches!(probe, Ok(SuspendedProbe::Rearmed { .. }))
+    matches!(probe, Ok(probe) if probe.outcome == WakeOutcome::RearmedByResume)
 }
 
 fn prompt(text: &str) -> super::PromptCommand {

@@ -143,7 +143,7 @@ fn loop_args(base: &std::path::Path, agent: AgentLoopImpl) -> MultiClientArgs<'_
         broadcast_tx: None,
         parent_control: None,
         teardown_graph: None,
-        automatic_turns: crate::composition::bootstrap::agent_turn::build_automatic_turns,
+        turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
         environment_control: None,
     }
 }

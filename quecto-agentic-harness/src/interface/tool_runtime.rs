@@ -5,6 +5,8 @@ use crate::infrastructure::tools::agents::{
     subagent_registry,
 };
 use crate::infrastructure::tools::swarm::{swarm_bridge, swarm_lifecycle};
+use crate::interface::tools::project_board::{site::BoardSite, tool::BoardTool};
+use std::sync::Arc;
 
 /// Entrypoint policy selector for the shared tool runtime/catalogue builder.
 ///
@@ -190,6 +192,8 @@ pub(crate) struct ToolRuntimeBuild {
     pub subagent_registry: Option<subagent_registry::SubagentRegistry>,
     /// The harness lifecycle cell the spawn tool admits against (#1938).
     pub harness_lifecycle: Option<harness_lifecycle::SharedHarnessLifecycle>,
+    /// The parent's `board` tool: it ends the runs left open (#2655).
+    pub board_tool: Option<Arc<BoardTool>>,
     /// The environment control slot (#2070) the dispatch loop hands the
     /// teardown, for the emptied `retained` environments an owner exit ends.
     pub environment_control: Option<agent_cmd_containers::EnvironmentControlSlot>,
@@ -392,6 +396,7 @@ pub(crate) fn build_tool_runtime(
     let notify_rx = agent_control.notification_rx;
     let _ = agent_control.notification_tx;
     // The project board (#2477): a parent's tool, on its workspace's repo.
+    let mut board_tool = None;
     if let (ToolRuntimeProfileContext::Parent, Some(build)) = (profile_context, project_board) {
         // A start launches through this session's own spawn while its policy
         // allows it (S4c); an end reads the boards its teardown kept.
@@ -401,19 +406,13 @@ pub(crate) fn build_tool_runtime(
             &agent_control.agent_cmd_tool,
             &agent_control.subagent_registry,
         );
-        let board = crate::interface::tools::project_board::tool::BoardTool::new(
-            crate::interface::tools::project_board::site::BoardSite::agent(
-                board_repo,
-                build,
-                std::sync::Arc::new(launcher),
-                &agent_control.environment_registry,
-            ),
-        );
-        register_bundled_native_tools_with_scope(
-            &mut registry,
-            build_project_board_tool_extension(std::sync::Arc::new(board)),
-            Some(ProfileAvailabilityScope::Parent),
-        );
+        let environments = &agent_control.environment_registry;
+        let site = BoardSite::agent(board_repo, build, Arc::new(launcher), environments);
+        let board = Arc::new(BoardTool::new(site));
+        let extension = build_project_board_tool_extension(Arc::clone(&board) as _);
+        let scope = Some(ProfileAvailabilityScope::Parent);
+        register_bundled_native_tools_with_scope(&mut registry, extension, scope);
+        board_tool = Some(board);
     }
     let subagent_registry_for_protocol = agent_control.subagent_registry;
     let harness_lifecycle = agent_control.harness_lifecycle;
@@ -527,6 +526,7 @@ pub(crate) fn build_tool_runtime(
         notification_rx: Some(notify_rx),
         subagent_registry: Some(subagent_registry_for_protocol),
         harness_lifecycle: Some(harness_lifecycle),
+        board_tool,
         environment_control: Some(environment_control),
         workflow_state: wf_state,
         policy_state,

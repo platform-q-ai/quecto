@@ -110,7 +110,6 @@ untracked_nouns = [
   # Message sub-types — Message itself is the tracked aggregate
   "CostInfo",
   "LlmResponse",
-  "ModelPricing",
   "StopReason",
   "ThinkingBlock",
   "UsageInfo",
@@ -175,8 +174,8 @@ support_modules = [
   "src/infrastructure/persistence/memory_store.rs",
   "src/infrastructure/providers/anthropic/anthropic_sse.rs",
   "src/infrastructure/providers/error.rs",
-  "src/infrastructure/providers/mod.rs",
   "src/infrastructure/providers/openai/openai_sse.rs",
+  "src/infrastructure/providers/routing/provider_factory.rs",
   "src/infrastructure/security/sandbox.rs",
   "src/infrastructure/tools/native/bash/nsjail.rs",
   "src/infrastructure/tools/agents/subagent_registry.rs",

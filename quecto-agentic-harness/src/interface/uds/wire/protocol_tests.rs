@@ -647,7 +647,8 @@ fn test_session_stats_serializes() {
             total: 1200,
         },
         cost: 0.42,
-        cost_micro_usd: 420_000,
+        cost_micro_usd: Some(420_000),
+        unpriced_attempts: 0,
         cache_hit_ratio: Some(800.0 / 1900.0),
         context_tokens: 12_000,
         max_context_tokens: 200_000,
@@ -687,7 +688,8 @@ fn test_session_stats_deserializes_without_cost() {
     assert_eq!(stats.session_key, "cli:test");
     assert_eq!(stats.tokens.total, 1200);
     assert_eq!(stats.cost, 0.0);
-    assert_eq!(stats.cost_micro_usd, 0);
+    assert_eq!(stats.cost_micro_usd, None, "no cost was reported");
+    assert_eq!(stats.unpriced_attempts, 0);
     assert_eq!(stats.cache_hit_ratio, None);
 }
 

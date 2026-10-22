@@ -384,6 +384,7 @@ fn a_start_that_cannot_launch_writes_nothing() {
         let (_, run) = crate::domain::project_board::services::starts::start(
             &task,
             &[],
+            &[],
             Some(&plan(1, PlanState::Accepted)),
             &person("Ada"),
             &at("09:30:00"),
@@ -550,3 +551,6 @@ mod stuck;
 
 #[path = "start_board_task_undo_tests.rs"]
 mod undo;
+
+#[path = "start_board_task_dependency_tests.rs"]
+mod dependency;

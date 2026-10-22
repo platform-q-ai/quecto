@@ -11,6 +11,7 @@ use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };
 use crate::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
+use crate::infrastructure::workspace::checkout_history::GitCheckoutHistory;
 use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 struct Fixed(f64);
@@ -51,6 +52,7 @@ pub(super) fn board_and_repository(
         Arc::new(Fixed(now)),
         Arc::new(Counter::default()),
         Arc::new(ResolvedCheckout::new(&location.checkout)),
+        Arc::new(GitCheckoutHistory::new(&location.checkout)),
     );
     (dir, handles, repository)
 }
@@ -76,6 +78,7 @@ pub(super) fn metered_board_and_repository(
         Arc::new(Fixed(now)),
         Arc::new(Counter::default()),
         Arc::new(ResolvedCheckout::new(&location.checkout)),
+        Arc::new(GitCheckoutHistory::new(&location.checkout)),
         Arc::new(Discarded),
     );
     assert!(handles.telemetry.is_some(), "the calls are metered");

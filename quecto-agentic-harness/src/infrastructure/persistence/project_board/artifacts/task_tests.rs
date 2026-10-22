@@ -630,3 +630,30 @@ fn a_description_with_chat_spaces_is_held_once_normalised() {
         );
     }
 }
+
+/// #2668 review round 1: a task's title and description (a paragraph's
+/// line opening with them, and a list item) of awkward characters (a
+/// backslash before punctuation or at the end, an escaped pipe, a code
+/// span holding one) are written, read back as themselves, and shown by
+/// both readers of the oracle as written.
+#[test]
+fn awkward_titles_and_descriptions_round_trip() {
+    let pieces = [
+        "x", "\\", "\\\\", "\\|", "\\*", "\\#", "C:\\temp", "`a\\\\b`", "\\`c`", "1\\.", "\\-",
+    ];
+    for first in pieces {
+        for second in pieces {
+            let text = format!("x {first}{second}");
+            let fields = TaskFields {
+                title: text.clone(),
+                description: format!("{first}{second} x\n{text}\n\n- {first}{second}"),
+                ..example()
+            };
+            let task = Task::new(fields).unwrap_or_else(|error| panic!("{text:?}: {error:?}"));
+            let file =
+                encode::<TaskCodec>(&task).unwrap_or_else(|error| panic!("{text:?}: {error}"));
+            assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(task), "{text:?}");
+            read_by_the_oracle(&file);
+        }
+    }
+}

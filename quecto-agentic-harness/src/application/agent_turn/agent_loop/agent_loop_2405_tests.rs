@@ -29,6 +29,7 @@ fn limits(
         context_window,
         prompt_limit,
         image_input: Default::default(),
+        price: None,
     }
 }
 

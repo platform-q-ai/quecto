@@ -554,6 +554,7 @@ fn an_end_runs_answer_says_whether_its_swarm_was_looked_for() {
                 run: run(1, 1, 0),
                 liveness,
                 report: RunReport::Unreported,
+                unchecked: None,
             }),
             None,
             None,
@@ -590,6 +591,7 @@ fn an_end_from_its_swarms_board_says_no_items_were_recorded_as_todo() {
                 run: run(1, 1, 0),
                 liveness: LivenessCheck::Checked,
                 report,
+                unchecked: None,
             }),
             None,
             None,
@@ -602,4 +604,35 @@ fn an_end_from_its_swarms_board_says_no_items_were_recorded_as_todo() {
         answered(RunReport::Unreported)["items_recorded"],
         json!("items recorded as todo: no swarm report")
     );
+}
+
+/// #2657: a run ended as lost with no swarm board kept records its items
+/// as todo, and says so as a stop does; one from a kept board says
+/// nothing.
+#[test]
+fn a_lost_end_says_its_items_were_recorded_as_todo() {
+    use crate::application::project_board::dto::{EndedRun, LivenessCheck, RunReport};
+    let mut lost = run(1, 1, 0).into_fields();
+    lost.outcome = Some(RunOutcome::Lost);
+    lost.cost = None;
+    let lost = Run::new(lost).unwrap();
+    let answered = |report| {
+        crate::interface::tools::project_board::answer::outcome(
+            "end_run",
+            &BoardOutcome::RunEnded(EndedRun {
+                run: lost.clone(),
+                liveness: LivenessCheck::Checked,
+                report,
+                unchecked: None,
+            }),
+            None,
+            None,
+        )
+    };
+    assert_eq!(
+        answered(RunReport::Unreported)["items_recorded"],
+        json!("items recorded as todo: no swarm report")
+    );
+    let kept = answered(RunReport::Kept);
+    assert_eq!(kept.get("items_recorded"), None, "{kept}");
 }

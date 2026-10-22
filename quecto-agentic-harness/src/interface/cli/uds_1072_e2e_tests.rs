@@ -20,7 +20,6 @@ use crate::domain::conversation::value_objects::message::{LlmResponse, Message, 
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
-use crate::interface::cli::uds_session::AgentSession;
 
 /// Provider returning a scripted FIFO of responses.
 #[derive(Debug)]
@@ -223,7 +222,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
     let mut messages: Vec<Message> = (1..=8).map(droppable_history_message).collect();
     let pre_turn_len = messages.len() + 1; // history + the incoming prompt
 
-    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;
@@ -361,7 +360,7 @@ async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
         Message::assistant("prior", vec![]),
     ];
 
-    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;

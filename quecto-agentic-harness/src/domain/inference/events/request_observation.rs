@@ -34,6 +34,8 @@ pub struct RequestTrace {
     input_prefix: Mutex<Option<InputPrefix>>,
     /// The session's input baseline the provider compares with (#2398).
     input_baseline: std::sync::OnceLock<InputBaseline>,
+    /// The model's catalogue price usage is costed at (#1855).
+    price: std::sync::OnceLock<crate::domain::inference::value_objects::model_price::ModelPrice>,
     /// The attempt in flight, until it ends and is reported (#2436).
     pub(super) attempt_clock: Mutex<super::request_completion::AttemptClock>,
     /// Where each attempt is reported as it ends (#2436).
@@ -62,12 +64,25 @@ impl RequestTrace {
     pub fn input_prefix(&self) -> Option<InputPrefix> {
         *self.input_prefix.lock().unwrap_or_else(|e| e.into_inner())
     }
+    /// Cost this request's usage at `price`, the model's catalogue price
+    /// (#1855); the first set stays.
+    pub fn set_price(
+        &self,
+        price: crate::domain::inference::value_objects::model_price::ModelPrice,
+    ) {
+        let _ = self.price.set(price);
+    }
     /// An attempt was cut short after its provider reported `usage` (#2249
-    /// review): those tokens were spent, so they are still counted.
+    /// review): those tokens were spent, so they are still counted, costed
+    /// at the request's price when it has one.
     pub fn record_unfinished_usage(
         &self,
-        usage: crate::domain::conversation::value_objects::message::UsageInfo,
+        mut usage: crate::domain::conversation::value_objects::message::UsageInfo,
     ) {
+        crate::domain::inference::services::usage_accounting::price(
+            &mut usage,
+            self.price.get().copied(),
+        );
         self.unfinished_usage
             .lock()
             .unwrap_or_else(|e| e.into_inner())

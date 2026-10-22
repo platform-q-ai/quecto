@@ -80,10 +80,13 @@ fn a_git_dir_in_the_environment_does_not_redirect_the_question() {
     let dir = tempfile::TempDir::new().unwrap();
     git(dir.path(), &["init", "-q"]);
     // The adapter under test must ignore it regardless of who else reads it.
-    // SAFETY: the variable is set and removed within this test.
+    let _env = crate::GIT_ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // SAFETY: GIT_ENV_LOCK serialises this process-wide mutation.
     unsafe { std::env::set_var("GIT_DIR", other.path().join(".git")) };
     let answer = port().origin(dir.path());
-    // SAFETY: restores the environment this test changed above.
+    // SAFETY: GIT_ENV_LOCK is still held; this restores the environment.
     unsafe { std::env::remove_var("GIT_DIR") };
     assert_eq!(answer.unwrap(), None);
 }

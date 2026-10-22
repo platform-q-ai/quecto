@@ -1,5 +1,5 @@
 use super::uds::DispatchCtx;
-use super::uds_session::{HISTORY_PAGE_SIZE, compute_session_stats_with_usage, history_page_json};
+use super::uds_session::{HISTORY_PAGE_SIZE, history_page_json, present_session_stats};
 use crate::domain::conversation::services::conversation_view::user_visible_messages;
 use crate::interface::uds::wire::protocol::AgentCommand;
 
@@ -102,13 +102,11 @@ pub(super) fn query_response_data_result(
         AgentCommand::PersistSession { .. } => None,
         AgentCommand::GetSessionStats { .. } => {
             let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
-            let stats = compute_session_stats_with_usage(
+            let stats = present_session_stats(ctx.session.usage_report(
                 session_key,
                 &visible_messages,
-                ctx.session.usage_snapshot(),
-                ctx.session.context_tokens(),
                 ctx.agent.max_context_tokens(),
-            );
+            ));
             Some(serde_json::to_value(&stats).unwrap_or_default())
         }
         AgentCommand::GetToolCatalogue { .. } => Some(serde_json::json!({

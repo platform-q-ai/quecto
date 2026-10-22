@@ -6,9 +6,7 @@ use super::uds_cancel::{
 };
 use super::uds_session::AgentSession;
 #[cfg(test)]
-use super::uds_session::{
-    compute_session_stats, compute_session_stats_with_usage, messages_page_json,
-};
+use super::uds_session::{history_session_stats, messages_page_json, present_session_stats};
 use super::uds_workflow_nudge::{
     has_active_workflow_descendant, workflow_nudge_message, workflow_progress_fingerprint,
 };

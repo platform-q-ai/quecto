@@ -156,9 +156,10 @@ pub type SessionHandlesBuilder =
 /// store or the recall graph.
 pub type RetentionHandlesBuilder = fn(&std::path::Path) -> retention_handles::RetentionHandles;
 
-/// Composition's builder of a session's automatic turns (#1909): the
-/// resume-after-a-provider-failure use case a UDS loop's session holds.
-pub type AutomaticTurnsBuilder = fn() -> crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure;
+/// Composition's builder of a UDS loop's session tracker for a model
+/// (#1909, #1855): it holds the agent-turn use cases composition builds,
+/// resume-after-a-provider-failure and inspect-session-usage.
+pub type TurnSessionBuilder = fn(String) -> uds_session::AgentSession;
 
 /// Composition's builder of the fresh user-chat identity generator (D7
 /// #1976): the one source of a fresh key, for the startup identity of an
@@ -250,9 +251,9 @@ pub struct CliContext {
     /// refuses to start without it, since the interface never constructs
     /// a session store.
     pub sessions: Option<SessionHandlesBuilder>,
-    /// Composition's automatic-turns builder (#1909); a UDS loop refuses to
-    /// start without it.
-    pub automatic_turns: Option<AutomaticTurnsBuilder>,
+    /// Composition's turn-session builder (#1909, #1855); a UDS loop
+    /// refuses to start without it.
+    pub turn_session: Option<TurnSessionBuilder>,
     /// Composition's retained-context handles builder (#1978). Supplied by
     /// the binary's `main` through [`run`]'s [`CliComposition`]; an agent
     /// run refuses to start without it, since the interface never
@@ -406,7 +407,7 @@ pub struct CliComposition {
     pub teardown_graph: TeardownHandlesBuilder,
     pub kill_tool: crate::interface::cli::KillToolBuilder,
     pub sessions: SessionHandlesBuilder,
-    pub automatic_turns: AutomaticTurnsBuilder,
+    pub turn_session: TurnSessionBuilder,
     pub retention: RetentionHandlesBuilder,
     pub fresh_session_identity: FreshSessionIdentityBuilder,
     pub configuration: ConfigurationHandlesBuilder,
@@ -496,7 +497,7 @@ fn composed_context(
         teardown_graph: Some(composition.teardown_graph),
         kill_tool: Some(composition.kill_tool),
         sessions: Some(composition.sessions),
-        automatic_turns: Some(composition.automatic_turns),
+        turn_session: Some(composition.turn_session),
         retention: Some(composition.retention),
         fresh_session_identity: Some(composition.fresh_session_identity),
         configuration: Some(composition.configuration),

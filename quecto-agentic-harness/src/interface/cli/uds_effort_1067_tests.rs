@@ -67,7 +67,9 @@ impl EffortFx {
         Self {
             agent: make_effort_test_agent(effort),
             messages: Vec::new(),
-            session: AgentSession::new(super::uds_dispatch::fixture_tests::RIG_MODEL.into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new()),
+            session: crate::composition::bootstrap::agent_turn::build_turn_session(
+                super::uds_dispatch::fixture_tests::RIG_MODEL.into(),
+            ),
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
             _tmp: tmp,
@@ -76,7 +78,7 @@ impl EffortFx {
     }
 
     fn ctx(&mut self) -> DispatchCtx<'_> {
-        let initial_stats = crate::interface::cli::uds_session::compute_session_stats(
+        let initial_stats = crate::interface::cli::uds_session::history_session_stats(
             &self.session_key,
             &self.messages,
         );

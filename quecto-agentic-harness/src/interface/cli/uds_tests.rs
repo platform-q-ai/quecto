@@ -3,7 +3,7 @@ use super::*;
 /// Unit tests for the UDS agent loop — session state, stats, and dispatch helpers.
 ///
 /// This file is compiled as `mod tests` inside `uds.rs`, so `super` = `uds`.
-/// Session-layer types (`AgentSession`, `compute_session_stats`, etc.) are
+/// Session-layer types (`AgentSession`, `history_session_stats`, etc.) are
 /// re-exported from `uds` via `uds_session`.  Protocol types are imported from
 /// `interface::uds::wire::protocol`.
 use crate::application::agent_turn::agent_loop::UsageTotals;
@@ -13,20 +13,23 @@ use crate::interface::uds::wire::protocol::*;
 
 #[test]
 fn test_initial_state_not_streaming() {
-    let session = AgentSession::new("gpt-5".to_string(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let session =
+        crate::composition::bootstrap::agent_turn::build_turn_session("gpt-5".to_string());
     assert!(!session.is_streaming());
 }
 
 #[test]
 fn test_set_model_changes_model() {
-    let mut session = AgentSession::new("gpt-5".to_string(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session =
+        crate::composition::bootstrap::agent_turn::build_turn_session("gpt-5".to_string());
     session.set_model("gpt-5-mini".to_string());
     assert_eq!(session.model(), "gpt-5-mini");
 }
 
 #[test]
 fn test_session_state_snapshot() {
-    let session = AgentSession::new("gpt-5".to_string(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let session =
+        crate::composition::bootstrap::agent_turn::build_turn_session("gpt-5".to_string());
     let state = session.state_snapshot("cli:my", 4, None, 200_000, None);
     assert_eq!(state.model, "gpt-5");
     assert!(!state.is_streaming);
@@ -38,7 +41,8 @@ fn test_session_state_snapshot() {
 
 #[test]
 fn test_pending_message_count_after_enqueue() {
-    let mut session = AgentSession::new("m".to_string(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session =
+        crate::composition::bootstrap::agent_turn::build_turn_session("m".to_string());
     session.enqueue_pending("first".to_string());
     session.enqueue_pending("second".to_string());
     let state = session.state_snapshot("cli:test", 0, None, 0, None);
@@ -47,7 +51,8 @@ fn test_pending_message_count_after_enqueue() {
 
 #[test]
 fn test_drain_pending_messages() {
-    let mut session = AgentSession::new("m".to_string(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session =
+        crate::composition::bootstrap::agent_turn::build_turn_session("m".to_string());
     session.enqueue_pending("a".to_string());
     session.enqueue_pending("b".to_string());
     let drained = session.drain_pending();
@@ -64,67 +69,42 @@ fn test_drain_pending_messages() {
     );
 }
 
-// ─── compute_session_stats ───────────────────────────────────────────────────
+// ─── session stats presenter (#1855: counting is the use case's) ─────────────
 
 #[test]
-fn test_stats_empty_messages() {
+fn test_stats_present_the_history_of_a_session_that_used_nothing() {
     use crate::domain::conversation::value_objects::message::Message;
-    let msgs: Vec<Message> = vec![];
-    let stats = compute_session_stats("cli:test", &msgs);
-    assert_eq!(stats.user_messages, 0);
-    assert_eq!(stats.assistant_messages, 0);
-    assert_eq!(stats.tool_calls, 0);
-    assert_eq!(stats.tool_results, 0);
-    assert_eq!(stats.total_messages, 0);
+    let msgs = vec![Message::user("hello"), Message::assistant("hi", vec![])];
+    let stats = history_session_stats("cli:test", &msgs);
+    assert_eq!(stats.session_key, "cli:test");
+    assert_eq!((stats.user_messages, stats.assistant_messages), (1, 1));
+    assert_eq!(stats.total_messages, 2);
     assert_eq!(stats.cost, 0.0);
+    assert!(stats.runtime.is_some(), "the process's runtime identity");
 }
 
+/// #1855 review L1: unpriced usage is `null` on the wire, never `0`, and
+/// the unpriced reply count is always present.
 #[test]
-fn test_stats_counts_user_and_assistant() {
-    use crate::domain::conversation::value_objects::message::Message;
-    let msgs = vec![
-        Message::user("hello".to_string()),
-        Message::assistant("hi".to_string(), vec![]),
-        Message::user("bye".to_string()),
-    ];
-    let stats = compute_session_stats("k", &msgs);
-    assert_eq!(stats.user_messages, 2);
-    assert_eq!(stats.assistant_messages, 1);
-    assert_eq!(stats.total_messages, 3);
-}
-
-#[test]
-fn test_stats_counts_tool_calls_and_results() {
-    use crate::domain::conversation::value_objects::message::{Message, ToolCall};
-    let msgs = vec![
-        Message::user("hi".to_string()),
-        Message::assistant(
-            String::new(),
-            vec![
-                ToolCall {
-                    id: "c1".to_string(),
-                    name: "bash".to_string(),
-                    arguments: "{}".to_string(),
-                },
-                ToolCall {
-                    id: "c2".to_string(),
-                    name: "read".to_string(),
-                    arguments: "{}".to_string(),
-                },
-            ],
-        ),
-        Message::tool("c1".to_string(), "out1".to_string()),
-        Message::tool("c2".to_string(), "out2".to_string()),
-    ];
-    let stats = compute_session_stats("k", &msgs);
-    assert_eq!(stats.tool_calls, 2);
-    assert_eq!(stats.tool_results, 2);
-    assert_eq!(stats.total_messages, 4);
+fn test_stats_present_unpriced_usage_as_null() {
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("m".into());
+    session.record_usage(
+        "cli:test",
+        UsageTotals {
+            unpriced_attempts: 2,
+            ..UsageTotals::billed(100, 25, 0, 0, 0)
+        },
+    );
+    let stats = present_session_stats(session.usage_report("k", &[], 0));
+    let wire = serde_json::to_value(&stats).unwrap();
+    assert!(wire["costMicroUsd"].is_null(), "{wire}");
+    assert_eq!(wire["unpricedAttempts"], 2);
 }
 
 #[test]
 fn test_session_records_cumulative_token_usage_and_cost() {
-    let mut session = AgentSession::new("gpt-5".to_string(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session =
+        crate::composition::bootstrap::agent_turn::build_turn_session("gpt-5".to_string());
 
     session.record_usage("cli:test", UsageTotals::billed(10, 2, 3, 4, 1_000));
     session.record_usage("cli:test", UsageTotals::billed(20, 5, 6, 7, 2_500));
@@ -146,10 +126,12 @@ fn test_stats_include_session_usage_snapshot() {
         Message::user("hi".to_string()),
         Message::assistant("reply".to_string(), vec![]),
     ];
-    let mut session = AgentSession::new("gpt-5".to_string(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session =
+        crate::composition::bootstrap::agent_turn::build_turn_session("gpt-5".to_string());
     session.record_usage("cli:test", UsageTotals::billed(100, 25, 10, 5, 12_300));
 
-    let stats = compute_session_stats_with_usage("k", &msgs, session.usage_snapshot(), 42, 0);
+    session.set_context_tokens(42);
+    let stats = present_session_stats(session.usage_report("k", &msgs, 0));
 
     assert_eq!(stats.tokens.input, 100);
     assert_eq!(stats.tokens.output, 25);
@@ -157,14 +139,15 @@ fn test_stats_include_session_usage_snapshot() {
     assert_eq!(stats.tokens.cache_write, 5);
     assert_eq!(stats.tokens.total, 125);
     assert!((stats.cost - 0.0123).abs() < f64::EPSILON);
-    assert_eq!(stats.cost_micro_usd, 12_300);
+    assert_eq!(stats.cost_micro_usd, Some(12_300));
     assert!((stats.cache_hit_ratio.unwrap() - (10.0 / 115.0)).abs() < 1e-9);
     assert_eq!(stats.context_tokens, 42);
 }
 
 #[test]
 fn test_session_tracks_context_tokens() {
-    let mut session = AgentSession::new("gpt-5".to_string(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session =
+        crate::composition::bootstrap::agent_turn::build_turn_session("gpt-5".to_string());
     session.set_context_tokens(77);
     assert_eq!(session.context_tokens(), 77);
 
@@ -182,7 +165,8 @@ fn test_session_tracks_context_tokens() {
 
 #[test]
 fn test_session_change_clears_usage() {
-    let mut session = AgentSession::new("gpt-5".to_string(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session =
+        crate::composition::bootstrap::agent_turn::build_turn_session("gpt-5".to_string());
     session.record_usage("cli:test", UsageTotals::billed(10, 2, 3, 4, 1_000));
     session.set_context_tokens(99);
 
@@ -275,7 +259,7 @@ fn test_stats_user_plus_assistant_equals_exchange() {
         Message::user("hello"),
         Message::assistant("hi there", vec![]),
     ];
-    let stats = compute_session_stats("cli:test", &messages);
+    let stats = history_session_stats("cli:test", &messages);
     assert_eq!(stats.user_messages, 1);
     assert_eq!(stats.assistant_messages, 1);
     assert_eq!(stats.total_messages, 2);
@@ -315,7 +299,7 @@ fn test_agent_event_parse_error_response_shape() {
 
 #[test]
 fn test_enqueue_pending_respects_cap() {
-    let mut session = AgentSession::new("model".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("model".into());
     for i in 0..AgentSession::MAX_PENDING + 10 {
         session.enqueue_pending(format!("msg-{i}"));
     }
@@ -343,7 +327,7 @@ fn test_resolve_set_model_target_from_provider_and_model_id() {
 
 #[test]
 fn test_set_model_is_reflected_in_state_snapshot() {
-    let mut session = AgentSession::new("gpt-4".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("gpt-4".into());
     let before = session.state_snapshot("cli:test", 0, None, 0, None);
     session.set_model("claude-opus-5".into());
     let snap = session.state_snapshot("cli:test", 0, None, 0, None);

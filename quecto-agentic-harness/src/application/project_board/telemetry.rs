@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use super::dto::BoardOp;
 use super::operations::{BoardRequest, Completion};
-use super::ports::ProjectBoardOpLog;
+use super::ports::{BoardHead, ProjectBoardOpLog};
+use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{
     Access, BoardOpRecord, BoardStartRecord, ClaimFacts, CompletionFacts, CompletionKind,
@@ -130,6 +131,16 @@ pub struct OpFacts {
     /// The attempts the write began, and how many lost the race.
     pub attempts: Option<u64>,
     pub lost: Option<u64>,
+    /// How many times the write's fetches found the board's tracking ref
+    /// locked by another writer in the same clone (#2663).
+    pub lock_races: Option<u64>,
+    /// The commit the write made, when it wrote (#2663).
+    pub head: Option<BoardHead>,
+    /// Whether an `end_run` that wrote found a swarm board kept (#2663).
+    pub swarm_report: Option<ReportSeen>,
+    /// An `end_run`'s fold-back, for its own `board_fold_back` record
+    /// (#2667).
+    pub fold_back: Option<super::start::NotedFoldBack>,
     /// The time the write paused between attempts, when it did.
     pub pause_ms: Option<u64>,
     /// What came of completing the task.
@@ -178,7 +189,21 @@ impl OpFacts {
         );
         put(&mut record.claim, self.claim.as_ref());
         put(&mut record.attempts, self.attempts.as_ref());
-        put(&mut record.lost, self.lost.as_ref());
+        put(&mut record.races_lost, self.lost.as_ref());
+        put(&mut record.lock_races, self.lock_races.as_ref());
+        put(
+            &mut record.head,
+            self.head
+                .as_ref()
+                .and_then(|head| CommitId::parse(&head.0).ok())
+                .as_ref(),
+        );
+        put(
+            &mut record.swarm_report,
+            self.swarm_report
+                .map(|seen| StaticKind::new(seen.as_str()))
+                .as_ref(),
+        );
         put(&mut record.pause_ms, self.pause_ms.as_ref());
         put(&mut record.completion, self.completion.as_ref());
         put(&mut record.normalised, self.normalised.as_ref());
@@ -204,6 +229,34 @@ impl OpFacts {
     }
 }
 
+/// What an `end_run` found of the swarm board its front end keeps (#2663):
+/// one kept, none kept, or no keeper to ask (the CLI).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportSeen {
+    Kept,
+    NoneKept,
+    NotChecked,
+}
+
+impl ReportSeen {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Kept => "kept",
+            Self::NoneKept => "none_kept",
+            Self::NotChecked => "not_checked",
+        }
+    }
+}
+
+/// Two passes' counts as one (a write done again smaller): their sum when
+/// either noted one, none when neither did.
+pub fn summed(one: Option<u64>, two: Option<u64>) -> Option<u64> {
+    match (one, two) {
+        (None, None) => None,
+        (one, two) => Some(one.unwrap_or(0).saturating_add(two.unwrap_or(0))),
+    }
+}
+
 /// A count as a record holds it.
 pub fn counted(count: usize) -> u64 {
     u64::try_from(count).unwrap_or(u64::MAX)
@@ -226,7 +279,7 @@ pub fn completion_facts(
         prs_linked: count(linked),
         prs_pending: pending.map(count),
         completion_attempts: None,
-        completion_lost: None,
+        completion_races_lost: None,
         completion_pause_ms: None,
     }
 }

@@ -4137,6 +4137,17 @@ fn the_authority_surface_is_an_exhaustive_allowlist() {
         "disconnect",
         "cancellation_due",
         "next_wake",
+        // #2664: a rebound scope is live again, a lost scope whose lease
+        // cleared is released, and a held wait says what held it.
+        "attach",
+        "release_idle_detached",
+        "held",
+        // #2664 review: a lease that clears on time is checkpointed.
+        "record_durable",
+        "checkpoint_due",
+        // #2615: a settling turn reports whether the authority holds
+        // anything, for the idle stop of a broker started on demand.
+        "holds_anything",
     ];
     let source = production_source("src/application/admission/services/inference_authority.rs");
     let file = syn::parse_file(&source).expect("the authority parses");
@@ -4350,10 +4361,34 @@ fn the_authority_server_neither_reads_the_journal_nor_builds_the_authority() {
         "src/infrastructure/admission/server_actor.rs",
     ] {
         let source = production_source(file);
-        for needle in ["FileJournal", "AdmissionAuthority::", ".checkpoint"] {
+        for needle in [
+            "FileJournal",
+            "AdmissionAuthority::",
+            "authority.checkpoint",
+            "CheckpointLedger",
+        ] {
             assert!(!source.contains(needle), "{file} names `{needle}`");
         }
     }
+    // #2664: the actor checkpoints the ledger as it stops only through the
+    // settle use case, never by touching the journal or the authority.
+    let actor: String = production_source("src/infrastructure/admission/server_actor.rs")
+        .split_whitespace()
+        .collect();
+    assert_eq!(
+        actor.matches("checkpoint").count(),
+        actor
+            .matches("use_cases.settle.checkpoint_on_stop(&mutself.authority,")
+            .count(),
+        "every checkpoint in the actor goes through use_cases.settle"
+    );
+    assert_eq!(
+        actor
+            .matches("use_cases.settle.checkpoint_on_stop(&mutself.authority,")
+            .count(),
+        1,
+        "the actor checkpoints once, as it stops"
+    );
     let compact: String = server.split_whitespace().collect();
     assert!(
         compact.contains("use_cases.restore.execute("),
@@ -5182,6 +5217,8 @@ const TEARDOWN_PORTS: &[&str] = &[
     "OwnedChildTermination",
     "DelegatedAgentRegistry",
     "TeardownCompensation",
+    // The environments a selected termination kept (#2681).
+    "KeptEnvironments",
     // Container config selection at launch (#2024 S4a): the launch
     // policy's read of the configuration capability's effective container
     // configs for the launching agent's checkout.
@@ -5354,6 +5391,36 @@ fn catalogue_interface_dependency_allowed(path: &str) -> bool {
     }
 }
 
+/// The admission edge (#2615) may name only the domain, the admission
+/// capability's DTOs and use cases, and itself — it invokes the restart use
+/// case and presents its report; the binding and the broker stay behind
+/// the use case's ports.
+fn admission_interface_dependency_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "domain", ..]
+        | ["crate", "application", "admission", "dto" | "use_cases", ..]
+        | ["crate", "interface", "uds", "admission", ..] => true,
+        ["crate", ..] => false,
+        ["super", "super", "super", ..] => false,
+        ["tokio" | "quecto_line_io" | "reqwest" | "futures", ..] => false,
+        [
+            "std",
+            "fs" | "io" | "net" | "os" | "process" | "env" | "thread" | "time",
+            ..,
+        ] => false,
+        _ => true,
+    }
+}
+
+#[test]
+fn admission_interface_only_parses_maps_and_presents() {
+    assert_dependencies(
+        "src/interface/uds/admission",
+        admission_interface_dependency_allowed,
+    );
+}
+
 #[test]
 fn catalogue_interface_only_parses_maps_and_presents() {
     assert_dependencies(
@@ -5383,6 +5450,7 @@ fn sessions_interface_only_parses_maps_and_presents() {
     assert_eq!(
         edges,
         [
+            "admission",
             "catalogue",
             "framing",
             "parent_control",
@@ -5486,6 +5554,7 @@ const SUBAGENT_PORT_FILES: &[&str] = &[
     "delegated_agent_registry.rs",
     "ended_child_records.rs",
     "harness_shutdown.rs",
+    "kept_environments.rs",
     "mod.rs",
     "owned_child_termination.rs",
     "teardown_compensation.rs",
@@ -6657,6 +6726,9 @@ fn catalogue_defaults_mapping_is_pure_and_implements_both_ports() {
 const ENVIRONMENT_PORTS: &[&str] = &[
     "EnvironmentProcessCommands",
     "HostedSwarmRunObservation",
+    // Where a succeeded board run's completion went, judged on its
+    // owner's kill (#2666): an undelivered run keeps its box.
+    "CompletionDeliveryCheck",
     // The hosted board the parent socket's board view reads (#2478).
     "HostedSwarmBoard",
     // The same store read synchronously for the restore and the collector
@@ -7240,6 +7312,9 @@ const SWARM_BOARD_PORTS: &[&str] = &[
     // reservations normalise paths in the checkout, an effect (#2275).
     "BoardMessages",
     "CheckoutPaths",
+    // Verification carries a submission's evidence to the coordinator's
+    // commit when the checkout's history confirms it (#2687), an effect.
+    "CheckoutHistory",
     // The wake frontiers (#2276): notification and wake cursors.
     "BoardWakes",
     // The usage report the control receipt carries (#2273; S9 adds the

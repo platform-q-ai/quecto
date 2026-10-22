@@ -18,6 +18,7 @@ use crate::domain::swarm::{
     entities::records::{RunRecord, RunState},
     services::policy::status_is_alive,
     value_objects::board_error::BoardError,
+    value_objects::lifecycle::MemberExit,
     value_objects::python_value::{python_equal, python_truthy},
 };
 
@@ -27,12 +28,11 @@ pub(crate) const LOSS_GRACE: f64 = 10.0;
 
 /// `Workbench.ABRUPT_BLOCKER`: the blocker of a member's work after an
 /// abrupt exit, whose reservations are retained.
-pub(crate) const ABRUPT_BLOCKER: &str =
-    "worker death confirmed (abrupt exit; reservations retained); coordinator recovery required";
+pub(crate) const ABRUPT_BLOCKER: &str = MemberExit::Abrupt.blocker();
 
 /// `Workbench.ORDERLY_BLOCKER`: the blocker of a member's work after an
 /// orderly exit.
-pub(crate) const ORDERLY_BLOCKER: &str = "worker death confirmed; coordinator recovery required";
+pub(crate) const ORDERLY_BLOCKER: &str = MemberExit::Orderly.blocker();
 
 /// The reason a `scope_unknown` event records.
 pub(crate) const SCOPE_UNKNOWN: &str =

@@ -135,8 +135,8 @@ fn carries_command(world: &mut QuectoWorld) {
     let folder = foreign_folder(world);
     assert_eq!(
         data["command"],
-        format!("cd '{folder}' && quecto-tui"),
-        "quecto-tui takes no session flag: {data}"
+        format!("cd '{folder}' && quecto-tui --resume='cli:foreign'"),
+        "quecto-tui resumes it there: {data}"
     );
     assert_eq!(data["resume"], "/resume cli:foreign", "{data}");
     assert!(
@@ -193,8 +193,9 @@ fn notice_titled(world: &mut QuectoWorld, title: String) {
         );
     }
     // On an ordinary and on a small terminal the same real answer is whole:
-    // the title, the command character for character (wrapped at the column,
-    // never elided), the resume step, and the footer inside the border.
+    // the title, the command (which resumes the session there) character for
+    // character (wrapped at the column, never elided), and the footer inside
+    // the border.
     let command = answer(world)["data"]["command"]
         .as_str()
         .expect("command")
@@ -209,13 +210,13 @@ fn notice_titled(world: &mut QuectoWorld, title: String) {
         let said: Vec<String> = frame.lines().filter_map(inside).collect();
         let joined = said.join("");
         assert!(
-            joined.contains(&command.replace(' ', "")) || said.join(" ").contains(&command),
+            // Wrapped at the column, so compared with the spaces gone.
+            joined.replace(' ', "").contains(&command.replace(' ', ""))
+                || said.join(" ").contains(&command),
             "{columns}x{rows}: {command:?} whole: {frame}"
         );
-        assert!(
-            said.join(" ").contains("/resume cli:foreign"),
-            "{columns}x{rows}: {frame}"
-        );
+        // #2615: the command itself resumes the session there.
+        assert!(command.ends_with("--resume='cli:foreign'"), "{command}");
         let bottom = frame.lines().position(|l| l.contains('└'));
         let footer = frame.lines().position(|l| l.contains(NOTICE_OPEN));
         assert!(

@@ -171,10 +171,9 @@ impl CodexProvider {
         }
     }
 
-    /// Cost the response, and stamp its reasoning items with the origin
-    /// they are replayed to (#2162).
-    pub(super) fn finish_response(response: &mut LlmResponse, model: &str, origin: &str) {
-        crate::domain::inference::services::usage_accounting::attach_cost(response, model);
+    /// Stamp the response's reasoning items with the origin they are
+    /// replayed to (#2162). Usage is costed by the agent turn (#1855).
+    pub(super) fn finish_response(response: &mut LlmResponse, origin: &str) {
         for block in &mut response.thinking_blocks {
             if let ThinkingBlock::EncryptedReasoning {
                 origin: stamped, ..

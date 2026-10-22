@@ -1,10 +1,10 @@
-//! The shell command that opens quecto in a session's own folder (#2045).
-//! `quecto-tui` takes no session flag, so resuming is a second step typed
-//! inside it ([`resume_step`]); the command only gets the user there.
+//! The shell command that opens quecto in a session's folder, resuming it (#2045, #2615).
 
-/// `cd '<dir>' && quecto-tui` for a POSIX shell.
-pub fn open_there_command(dir: &std::path::Path) -> Option<String> {
-    Some(format!("{} && quecto-tui", cd_there_command(dir)?))
+/// `cd '<dir>' && quecto-tui --resume='<key>'`, or `None` if either would not read as it runs.
+pub fn open_there_command(dir: &std::path::Path, session: &str) -> Option<String> {
+    let cd = cd_there_command(dir).filter(|_| reads_as_it_runs(session))?;
+    let key = shell_quote(session);
+    Some(format!("{cd} && quecto-tui --resume={key}"))
 }
 
 /// `cd '<dir>'` — or `None` when the command would not read the way it runs:

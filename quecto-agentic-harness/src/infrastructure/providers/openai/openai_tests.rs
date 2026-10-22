@@ -134,10 +134,8 @@ async fn test_chat_text_response() {
     assert_eq!(usage.completion_tokens, 5);
     // Context occupancy is provider prompt/input, not total prompt+completion.
     assert_eq!(usage.context_tokens, Some(10));
-    assert_eq!(
-        usage.cost.expect("gpt-5.6 pricing").total_cost_micro_usd,
-        40
-    );
+    // #1855: the provider reports usage; the turn prices it.
+    assert!(usage.cost.is_none(), "the provider prices nothing");
 }
 
 #[tokio::test]

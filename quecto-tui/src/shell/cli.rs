@@ -7,7 +7,7 @@ pub(crate) use super::socket_path::validate_socket_path;
 #[cfg(test)]
 use super::socket_path::{canonical_allowed_socket_roots, canonicalize_socket_roots};
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CliFlags {
     pub(crate) socket_path: Option<PathBuf>,
     pub(crate) workflow: bool,
@@ -15,6 +15,9 @@ pub(crate) struct CliFlags {
     pub(crate) workflow_disabled: bool,
     pub(crate) config_path: Option<PathBuf>,
     pub(crate) system_prompt: Option<String>,
+    /// How the user gave the system prompt, for a relaunch (#2615).
+    pub(crate) system_literal: bool,
+    pub(crate) system_file: Option<PathBuf>,
     pub(crate) disable_tools: Vec<String>,
     pub(crate) persist: bool,
     pub(crate) kill_on_exit: bool,
@@ -23,6 +26,9 @@ pub(crate) struct CliFlags {
     pub(crate) model: Option<String>,
     /// `--effort <e>`: the spawned agent's startup effort for this run.
     pub(crate) effort: Option<String>,
+    /// `--resume <session>`: resume this persisted session at startup
+    /// (#2615: how a session restart carries its conversation over).
+    pub(crate) resume: Option<String>,
 }
 
 pub fn run(args: Vec<String>) -> i32 {
@@ -48,13 +54,15 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
         workflow_disabled: false,
         config_path: None,
         system_prompt: None,
+        system_literal: false,
+        system_file: None,
         disable_tools: Vec::new(),
         persist: true,
         kill_on_exit: true,
         model: None,
         effort: None,
+        resume: None,
     };
-    let mut system_literal_seen = false;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -74,19 +82,30 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
                 flags.effort = Some(args[i + 1].clone());
                 i += 2;
             }
-            flag @ ("--model" | "--effort") => {
+            "--resume" if i + 1 < args.len() && !args[i + 1].starts_with("--") => {
+                flags.resume = Some(args[i + 1].clone());
+                i += 2;
+            }
+            arg if session_restart::resume_key(arg).is_some() => {
+                flags.resume = session_restart::resume_key(arg);
+                i += 1;
+            }
+            flag @ ("--model" | "--effort" | "--resume") => {
                 eprintln!("warning: {flag} requires a value; ignoring it");
                 i += 1;
             }
             "--system" if i + 1 < args.len() => {
                 flags.system_prompt = Some(args[i + 1].clone());
-                system_literal_seen = true;
+                (flags.system_literal, flags.system_file) = (true, None);
                 i += 2;
             }
             "--system-file" if i + 1 < args.len() => {
-                if !system_literal_seen {
+                if !flags.system_literal {
                     match std::fs::read_to_string(&args[i + 1]) {
-                        Ok(content) => flags.system_prompt = Some(content),
+                        Ok(content) => {
+                            flags.system_prompt = Some(content);
+                            flags.system_file = Some(PathBuf::from(&args[i + 1]));
+                        }
                         Err(e) => eprintln!(
                             "quecto-tui: failed to read --system-file '{}': {e}",
                             args[i + 1]
@@ -155,11 +174,13 @@ fn apply_workflow_defaults(flags: &mut CliFlags) {
 }
 
 async fn run_tui(flags: CliFlags) -> i32 {
+    // What a session restart relaunches with (#2615).
+    let relaunch_flags = flags.clone();
     // From here on SIGHUP/SIGTERM/SIGINT are ours (#2053): a signal during
     // the startup window is kept and answered once there is something to
     // end; one in the loop takes the ordinary exit.
     let mut termination_rx = crate::shell::signals::termination_stream();
-    let (socket, child_watch, announced_protocol) = match flags.socket_path {
+    let (socket, child_watch, announced_protocol) = match flags.socket_path.clone() {
         Some(path) => (path, None, None),
         None => match spawn_agent(&flags, &mut termination_rx).await {
             Ok((path, child, stderr_tail, announced_protocol)) => {
@@ -254,7 +275,7 @@ async fn run_tui(flags: CliFlags) -> i32 {
     if let Some(watch) = &child_watch {
         app.set_child_exit_watch(watch.clone());
     }
-    app.set_ordinary_exit_kill_owned(flags.kill_on_exit);
+    session_restart::apply_startup_flags(&mut app, &flags);
     app.set_termination_stream(termination_rx);
     let exit_code = app.run().await;
     if let Some(signal) = app.termination_signal() {
@@ -268,6 +289,10 @@ async fn run_tui(flags: CliFlags) -> i32 {
     }
 
     drop(child_watch);
+    // #2615: the owned agent has ended; a fresh TUI resumes the session.
+    if let Some(code) = session_restart::after_exit(&app, &relaunch_flags) {
+        return code;
+    }
 
     exit_code
 }
@@ -707,6 +732,8 @@ fn format_agent_startup_failure(reason: &str, stderr_lines: &[String]) -> String
 #[path = "cli_cov_tests.rs"]
 mod cli_cov_tests;
 
+#[path = "cli_session_restart.rs"]
+mod session_restart;
 #[path = "cli_termination.rs"]
 mod termination;
 use termination::{

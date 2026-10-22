@@ -64,3 +64,18 @@ fn a_runs_swarm_is_reported_from_the_board_kept_under_its_label() {
         "dropped once recorded"
     );
 }
+
+/// #2674: a run's board as far as it got, kept as left, is reported as
+/// left (never as ended), and dropped once recorded.
+#[test]
+fn a_runs_left_board_is_reported_as_left_only() {
+    let kept = Arc::new(KeptSwarmBoards::default());
+    kept.keep_left("s1", "board-light-well-tanking-run-1", board("paused"));
+    let reports = launcher(&kept, "s1");
+    assert_eq!(reports.ended_run(&task(), 1), None, "not ended");
+    let view = reports.left_run(&task(), 1).expect("left");
+    assert_eq!(view.items[0].state, SwarmItemState::Completed);
+    assert_eq!(launcher(&kept, "s2").left_run(&task(), 1), None);
+    reports.recorded(&task(), 1);
+    assert_eq!(reports.left_run(&task(), 1), None, "dropped once recorded");
+}

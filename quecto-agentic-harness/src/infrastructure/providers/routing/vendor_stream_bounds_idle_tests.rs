@@ -6,10 +6,12 @@
 //! given a short bound, in real time (a paused clock races loopback I/O).
 use std::sync::Arc;
 
-use super::anthropic::AnthropicProvider;
-use super::codex::CodexProvider;
-use super::openai::OpenAiProvider;
-use super::transport::stream_idle::tests::{GAP, LIVE, SILENT, bounded, servers};
+use crate::infrastructure::providers::anthropic::AnthropicProvider;
+use crate::infrastructure::providers::codex::CodexProvider;
+use crate::infrastructure::providers::openai::OpenAiProvider;
+use crate::infrastructure::providers::transport::stream_idle::tests::{
+    GAP, LIVE, SILENT, bounded, servers,
+};
 
 /// The total bound for a whole reply: past the idle bound, so a reply the
 /// idle bound would end still arrives within it.
@@ -54,8 +56,9 @@ impl crate::application::admission::ports::inference_attempt::AttemptAdmission f
         })
     }
 }
-pub(super) fn single_attempt() -> super::transport::single_attempt_client::SingleAttemptClient {
-    super::transport::single_attempt_client::SingleAttemptClient::build(
+pub(super) fn single_attempt()
+-> crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient {
+    crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
         reqwest::Client::builder().no_proxy(),
     )
     .unwrap()
@@ -95,7 +98,9 @@ impl Vendor {
         gated: bool,
         bound: std::time::Duration,
     ) -> Arc<dyn LlmProvider> {
-        let bounds = super::transport::stream_idle::StreamIdle::new(bound).with_total(WHOLE);
+        let bounds =
+            crate::infrastructure::providers::transport::stream_idle::StreamIdle::new(bound)
+                .with_total(WHOLE);
         self.bounded_provider(url, gated, bounds)
     }
 
@@ -104,7 +109,7 @@ impl Vendor {
         self,
         url: String,
         gated: bool,
-        bounds: super::transport::stream_idle::StreamIdle,
+        bounds: crate::infrastructure::providers::transport::stream_idle::StreamIdle,
     ) -> Arc<dyn LlmProvider> {
         let client = reqwest::Client::new();
         let gate = || (Arc::new(Grant), single_attempt());
@@ -148,7 +153,10 @@ impl Vendor {
     }
 }
 
-pub(super) fn request<'a>(messages: &'a [Message], trace: &Arc<RequestTrace>) -> ChatRequest<'a> {
+pub(in crate::infrastructure::providers) fn request<'a>(
+    messages: &'a [Message],
+    trace: &Arc<RequestTrace>,
+) -> ChatRequest<'a> {
     ChatRequest {
         trace: Some(trace.clone()),
         admission: None,
@@ -166,7 +174,7 @@ pub(super) fn request<'a>(messages: &'a [Message], trace: &Arc<RequestTrace>) ->
     }
 }
 
-pub(super) fn traced() -> Arc<RequestTrace> {
+pub(in crate::infrastructure::providers) fn traced() -> Arc<RequestTrace> {
     let trace = Arc::new(RequestTrace::default());
     trace.start();
     trace
@@ -224,12 +232,12 @@ pub(super) fn terminations(trace: &RequestTrace) -> Vec<Termination> {
 
 /// The idle error of an SSE body for the [`SILENT`] bound: no event came.
 fn idle_message() -> String {
-    super::transport::stream_idle::tests::no_event_message(SILENT)
+    crate::infrastructure::providers::transport::stream_idle::tests::no_event_message(SILENT)
 }
 
 /// The idle error of a send no response head answered: nothing came.
 fn send_idle_message() -> String {
-    super::transport::stream_idle::tests::idle_message(SILENT)
+    crate::infrastructure::providers::transport::stream_idle::tests::idle_message(SILENT)
 }
 
 fn is_idle_event(event: &Option<StreamEvent>) -> bool {
@@ -469,7 +477,8 @@ async fn a_whole_reply_is_bounded_in_total_not_by_silence() {
 /// bound, as a timeout, recorded as `Termination::TimedOut` where observed.
 #[tokio::test]
 async fn a_whole_reply_that_never_arrives_is_abandoned_at_the_total_limit() {
-    let expected = super::transport::stream_idle::tests::timed_out_message(WHOLE);
+    let expected =
+        crate::infrastructure::providers::transport::stream_idle::tests::timed_out_message(WHOLE);
     for vendor in [Vendor::OpenAi, Vendor::Anthropic] {
         for gated in [false, true] {
             let url = servers::never_answering().await;

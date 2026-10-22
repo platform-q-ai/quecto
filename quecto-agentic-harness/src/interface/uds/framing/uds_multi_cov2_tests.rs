@@ -121,7 +121,7 @@ fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
         broadcast_tx: None,
         parent_control: None,
         teardown_graph: None,
-        automatic_turns: crate::composition::bootstrap::agent_turn::build_automatic_turns,
+        turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
         environment_control: None,
     }
 }
@@ -296,7 +296,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         .unwrap();
     drop(cmd_tx);
 
-    let mut session = crate::interface::cli::uds_session::AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
     let mut messages = vec![Message::user("seed")];
     let session_key = "cli:cov".to_string();
     let mut writer = tokio::io::sink();
@@ -319,7 +319,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
             session.state_snapshot("cli:test", 0, None, 0, None),
         )),
         session_stats_snapshot: Arc::new(tokio::sync::RwLock::new(
-            crate::interface::cli::uds_session::compute_session_stats("cli:cov", &[]),
+            crate::interface::cli::uds_session::history_session_stats("cli:cov", &[]),
         )),
         tool_catalogue_snapshot: Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),

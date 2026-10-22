@@ -6,6 +6,7 @@ use crate::domain::swarm::{
     value_objects::lifecycle::RunStatus,
     value_objects::run_control::{RunControlAction, RunControlReceipt},
 };
+use crate::interface::cli::controllers::swarm_composition;
 struct Control(RunStatus);
 impl SwarmRunControl for Control {
     fn coordinator_board(
@@ -91,10 +92,7 @@ async fn terminal_notifications_do_not_create_extra_report_turns() {
 async fn production_swarm_wiring_accounts_for_a_turn_and_denies_paused_inference() {
     let (_directory, context) = crate::swarm_control_fixture::context();
     let mut env = Env::with_unselected_workflow();
-    env.agent = crate::interface::cli::controllers::swarm_composition::wire_agent(
-        env.agent,
-        Some(context.clone()),
-    );
+    env.agent = swarm_composition::wire_agent(env.agent, Some(context.clone()));
     let mut ctx = env.ctx();
     handle_prompt(
         &mut ctx,
@@ -172,10 +170,7 @@ fn composed_suspension_rechecks_durable_generation_before_cancelling() {
         RunStatus::Running,
         0,
     )));
-    let suspend = crate::interface::cli::controllers::swarm_composition::suspension_callback(
-        &handle,
-        context.clone(),
-    );
+    let suspend = swarm_composition::suspension_callback(&handle, context.clone());
     suspend(RunStatus::Paused, generation);
     assert_eq!(
         receiver.try_recv(),
@@ -270,7 +265,7 @@ async fn a_resume_wake_re_arms_a_provider_suspended_member() {
         crate::interface::cli::uds_swarm_control::RESUMED_WAKE
     );
     assert!(
-        !ctx.session.automatic_turns().take_owed_turn(),
+        ctx.session.automatic_turns().take_owed_turn().is_none(),
         "the owed turn was consumed"
     );
     abort_tests::suspend_rejected_at(&mut ctx, 7);
@@ -404,7 +399,11 @@ async fn a_provider_suspension_is_dated_after_the_failed_turn() {
     ctx.session
         .automatic_turns()
         .observe_control_generation(Some(4));
-    ctx.session.automatic_turns().suspend_after_failure();
+    ctx.session.automatic_turns().suspend_after_failure(
+        &crate::domain::shared::error::DomainError::Provider(
+            "provider error (401): invalid credentials".into(),
+        ),
+    );
     with_control(&mut ctx, Answer(Ok((RunStatus::Running, 6))));
     crate::interface::cli::uds_swarm_control::date_provider_suspension(&mut ctx).await;
     assert_eq!(ctx.turn_control.control_generation(), Some(6));
@@ -438,7 +437,8 @@ async fn a_provider_suspension_is_dated_after_the_failed_turn() {
     assert!(ctx.session.automatic_turns_allowed());
 }
 
-/// A provider that always fails terminally.
+/// A provider that always fails terminally (#2531: a credential failure,
+/// not a retryable class, which a wake would re-arm).
 #[derive(Debug)]
 struct FailingProvider;
 impl crate::application::providers::ports::LlmProvider for FailingProvider {
@@ -467,7 +467,7 @@ impl crate::application::providers::ports::LlmProvider for FailingProvider {
     > {
         Box::pin(async {
             Err(crate::domain::shared::error::DomainError::Provider(
-                "provider error (500): boom".into(),
+                "provider error (401): invalid credentials".into(),
             ))
         })
     }
@@ -719,8 +719,8 @@ impl crate::application::providers::ports::LlmProvider for CountingProvider {
 /// id-less prompt stays a user instruction.
 #[test]
 fn wake_nudges_queue_as_automatic_messages() {
-    use crate::interface::cli::uds_session::{AgentSession, PendingMessage};
-    let mut session = AgentSession::new("m".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    use crate::interface::cli::uds_session::PendingMessage;
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("m".into());
     assert!(session.enqueue_control(
         None,
         crate::interface::cli::uds_swarm_control::SWARM_WAKE,
