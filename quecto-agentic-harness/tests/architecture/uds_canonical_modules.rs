@@ -1,4 +1,6 @@
 //! Resolve the migrated UDS module graph using Rust's canonical filenames.
+//! All syntactic declarations (even inactive cfg) require checked-in readable
+//! canonical files; generated/optional absent modules and item include! are unsupported.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -47,6 +49,14 @@ impl<F: Fn(&Path) -> Result<String, String>> Resolver<F> {
 
     fn items(&mut self, items: &[syn::Item], owner: &Path, directory: &Path) {
         for item in items {
+            if let syn::Item::Macro(item_macro) = item {
+                if item_macro.mac.path.is_ident("include") {
+                    self.violations.push(format!(
+                        "{}: item include! is unsupported in the owned canonical module graph; declare modules explicitly",
+                        owner.display()
+                    ));
+                }
+            }
             if let syn::Item::Mod(module) = item {
                 let name = module.ident.to_string();
                 let canonical = [
@@ -85,7 +95,7 @@ impl<F: Fn(&Path) -> Result<String, String>> Resolver<F> {
                         self.file(&target);
                     } else {
                         self.violations.push(format!(
-                            "{}: module {name} has {} readable canonical files (expected one)",
+                            "{}: module {name} has {} readable canonical files (expected one); all syntactic declarations, including inactive cfg, require one checked-in readable canonical file; generated/optional absent modules are unsupported",
                             owner.display(),
                             candidates.len()
                         ));
@@ -467,4 +477,46 @@ fn canonical_controller_scan_inventory_preserves_every_production_node() {
     );
     assert_eq!(selected, 34);
     assert_eq!(removed.len(), 26);
+}
+
+#[test]
+fn ownership_rejects_item_includes_in_files_and_inline_modules() {
+    for source in [
+        "include!(\"included.rs\");",
+        "include!(concat!(env!(\"OUT_DIR\"), \"/included.rs\"));",
+        "mod inline { include!(\"included.rs\"); }",
+        "mod inline { include!(concat!(\"included\", \".rs\")); }",
+    ] {
+        let violations = owned_fixture("mod framing; mod wire; mod controllers;", source);
+        assert_eq!(violations.len(), 1, "{source}: {violations:?}");
+        assert_eq!(
+            violations[0],
+            "interface/uds/controllers/mod.rs: item include! is unsupported in the owned canonical module graph; declare modules explicitly"
+        );
+    }
+}
+
+#[test]
+fn ownership_keeps_includes_in_unowned_modules_out_of_scope() {
+    assert!(
+        owned_fixture(
+            "mod framing; mod wire; mod controllers; mod sessions { include!(\"legacy.rs\"); }",
+            "const TEXT: &str = \"include!(ignored)\";",
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn resolver_requires_materialized_files_even_for_inactive_cfg_modules() {
+    let violations = fixture(&[("slice/mod.rs", "#[cfg(any())] mod optional;")]);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(violations[0].contains("all syntactic declarations, including inactive cfg, require one checked-in readable canonical file"), "{violations:?}");
+    assert!(
+        fixture(&[
+            ("slice/mod.rs", "#[cfg(any())] mod optional;"),
+            ("slice/optional.rs", ""),
+        ])
+        .is_empty()
+    );
 }

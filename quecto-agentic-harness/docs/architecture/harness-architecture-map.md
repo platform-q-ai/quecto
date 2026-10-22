@@ -278,7 +278,7 @@ actions, their capability set and its composition were removed (#2045). The
 command that opens quecto in the session's folder is the pure
 `src/domain/sessions/value_objects/session_open_command.rs`; the wire edge is
 `interface/uds/sessions/resume_session_controller.rs` and
-`interface/uds/controllers/uds_dispatch_resume.rs`.
+`interface/uds/controllers/uds/uds_dispatch_session/uds_dispatch_resume.rs`.
 
 Session persistence stores conversation messages, tool-call identity, durable
 context bookkeeping, workflow state, and enough metadata to resume or inspect a
@@ -523,3 +523,15 @@ Current largest production/library files are at the 750-line cap, including
 `src/interface/uds/controllers/uds.rs`, `src/interface/uds/wire/protocol.rs`,
 `src/infrastructure/tools/agents/subagent_monitor.rs`, and
 `src/application/agent_turn/agent_loop/mod.rs`.
+
+### Canonical UDS module declarations
+
+The architecture checker owns the UDS `controllers`, `framing`, and `wire`
+module graphs and CLI interception. It checks every syntactic module declaration,
+including inactive `cfg` declarations, without evaluating the build configuration.
+Each out-of-line declaration must have exactly one checked-in readable canonical
+file (`name.rs` or `name/mod.rs`). Generated or optional absent modules are not
+supported, even when rustc would accept their absence under an inactive `cfg`.
+Item `include!` is rejected in these graphs, including inside inline modules and
+with nonliteral arguments: declare modules explicitly so ownership cannot bypass
+canonical-path checks. Unowned UDS capabilities retain their existing policy.

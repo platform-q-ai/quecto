@@ -559,7 +559,7 @@ for every home state, cold and index-seeded, and that a well-formed lying
 index yields only `StaleHomeVersion`; `resume_refusal.rs` pins every kind, the
 no-effect invariants and the single ownership over the real adapters. The UDS edge is `interface/uds/sessions/
 resume_session_controller.rs` (wire fields → request) and
-`interface/uds/controllers/uds_dispatch_resume.rs` (typed answers, untrusted text made
+`interface/uds/controllers/uds/uds_dispatch_session/uds_dispatch_resume.rs` (typed answers, untrusted text made
 safe); the TUI shows the refusal as a plain notice
 (`sessions/resume_decision.rs`) that sends nothing, and a selection sends
 identity + the listed version — never an action.
