@@ -322,3 +322,85 @@ fn a_board_that_cannot_be_read_says_so() {
         ]
     );
 }
+
+/// A session that has never launched a board run.
+struct NeverStarted;
+
+impl CoordinatorLaunch for NeverStarted {
+    fn may_launch(&self) -> bool {
+        false
+    }
+
+    fn launch(
+        &self,
+        _: &CoordinatorRequest,
+        _: &std::sync::atomic::AtomicBool,
+    ) -> Result<LaunchedCoordinator, LaunchRefused> {
+        panic!("a session's end launches nothing")
+    }
+}
+
+impl RunLiveness for NeverStarted {
+    fn running_coordinator(&self, _: &Slug, _: u32) -> Option<String> {
+        None
+    }
+}
+
+impl StartedRuns for NeverStarted {
+    fn started(&self) -> Vec<(Slug, u32)> {
+        vec![]
+    }
+}
+
+#[test]
+fn an_empty_started_ledger_ends_quietly_without_building_a_board() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static BUILDS: AtomicUsize = AtomicUsize::new(0);
+    fn forbidden_build(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
+        BUILDS.fetch_add(1, Ordering::SeqCst);
+        Err(BuildError::Unavailable(
+            "empty session built a board".into(),
+        ))
+    }
+
+    let tool = super::tests::tool(BoardSite::agent(
+        ".".into(),
+        forbidden_build,
+        Arc::new(NeverStarted),
+        &EnvironmentRegistry::new(),
+    ));
+    let lines = tool.end_left_runs();
+    assert_eq!(
+        (lines, BUILDS.load(Ordering::SeqCst)),
+        (Vec::<String>::new(), 0),
+        "an empty session must emit nothing and never compose a board"
+    );
+}
+
+#[test]
+fn a_site_without_a_launcher_ends_quietly_without_building_a_board() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static BUILDS: AtomicUsize = AtomicUsize::new(0);
+    fn forbidden_build(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
+        BUILDS.fetch_add(1, Ordering::SeqCst);
+        Err(BuildError::Unavailable(
+            "launcherless session built a board".into(),
+        ))
+    }
+
+    let tool = super::tests::tool(BoardSite {
+        repo: ".".into(),
+        remote: "origin".into(),
+        build: Some(forbidden_build),
+        launcher: None,
+        swarm_session: None,
+    });
+    let lines = tool.end_left_runs();
+    assert_eq!(
+        (lines, BUILDS.load(Ordering::SeqCst)),
+        (Vec::<String>::new(), 0),
+        "a session without a launcher must emit nothing and never compose a board"
+    );
+}
