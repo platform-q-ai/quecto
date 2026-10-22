@@ -29,6 +29,8 @@ mod bdd_lanes;
 mod dependency_scan;
 #[path = "architecture/layout.rs"]
 mod layout;
+#[path = "architecture/uds_canonical_modules.rs"]
+mod uds_canonical_modules;
 
 use quote::ToTokens;
 use std::collections::{BTreeMap, BTreeSet};
