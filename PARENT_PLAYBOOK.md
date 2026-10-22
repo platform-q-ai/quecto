@@ -40,19 +40,19 @@ Run each independent review in a fresh swarm with its own container/checkout, bo
 
 Run each remediation pass in a separate, fresh fix swarm, distinct from the review swarm. Give it the PR, current head SHA, and unresolved threads. Fix agents validate each finding, add appropriate regression coverage, implement and verify corrections, and push fixes to the PR branch. Only after pushing verified fixes may they reply with the fix commit and verification evidence and resolve the addressed threads. Escalate disputed findings to the parent for an explicit decision.
 
-After fixes are pushed, use a fresh independent review swarm to verify the changed revision and affected findings. Repeat review and remediation subject to the repeated remediation escalation checkpoint below. Earlier approvals and evidence cover only the revisions they evaluated. Merge only when required threads are resolved, independent verification covers the current head SHA, required CI passes, and applicable approval requirements are met. Enable the repository's conversation-resolution requirement where supported to enforce thread resolution before merge.
+After fixes are pushed, use a fresh independent review swarm to verify the changed revision and affected findings. Repeat review and remediation subject to the repeated remediation checkpoint below. Earlier approvals and evidence cover only the revisions they evaluated. Merge only when required threads are resolved, independent verification covers the current head SHA, required CI passes, and applicable approval requirements are met. Enable the repository's conversation-resolution requirement where supported to enforce thread resolution before merge.
 
-#### Repeated remediation escalation
-If a PR requires **more than two remediation rounds**, pause before starting the third round and escalate to the human. A remediation round is one fix pass responding to an independent review, followed by independent re-review; individual findings or commits do not count as separate rounds.
+#### Repeated remediation checkpoint
+This checkpoint exists to judge whether the PR should be split, not to cut review short: whichever course is chosen, independent review and remediation continue until the resulting PR or PRs are clean. If a PR requires **more than two remediation rounds**, pause before starting the third round and decide how to proceed. A remediation round is one fix pass responding to an independent review, followed by independent re-review; individual findings or commits do not count as separate rounds.
 
-The escalation must include:
+Record the decision on the PR before continuing. It must include:
 - The PR's scope, changed-line count, and remediation history.
 - Remaining findings and the parent's assessment of why they persist.
 - Whether scope, complexity, or coupled responsibilities warrant splitting the PR.
-- A recommended course of action: continue with a bounded fix plan, split into smaller complete vertical slices, or replan the approach.
-- The proposed slices and dependency order if splitting is recommended.
+- The chosen course of action: continue with a bounded fix plan, split into smaller complete vertical slices, or replan the approach.
+- The slices and dependency order if splitting.
 
-Proceed only after explicit human approval, and record the decision and rationale on the PR. Any split must preserve regression coverage, satisfy the red-first requirements for each resulting PR, carry forward unresolved findings to the relevant resulting PRs, and receive fresh independent review at each exact head SHA. Maintain the remediation history across splits so the escalation checkpoint remains effective.
+Inform the human of the decision and its rationale in your next report, then proceed without waiting for approval. Any split must preserve regression coverage, satisfy the red-first requirements for each resulting PR, carry forward unresolved findings to the relevant resulting PRs, and receive fresh independent review at each exact head SHA. Maintain the remediation history across splits so the checkpoint remains effective.
 
 ### Clean PRs
 Include only code, tests, and intentional project documentation or configuration within the approved scope in the PR diff. Keep working notes, handoffs, review reports, logs, evidence dumps, and other process artifacts in durable external artifact storage, linked from the PR or relevant review thread as needed. Include non-code artifacts in the repository only when they are explicit deliverables within the approved scope.
