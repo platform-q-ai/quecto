@@ -5,10 +5,12 @@
 |---|---|
 | Task | land-layout-2641 |
 | Version | 1 |
-| State | draft |
+| State | accepted |
 | Proposed by | SQ (`shane@platformq.co.uk`) |
+| Accepted by | SQ (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-22T13:27:03Z |
 | Created | 2026-10-22T13:26:32Z |
-| Updated | 2026-10-22T13:26:32Z |
+| Updated | 2026-10-22T13:27:03Z |
 
 ## Approach
 Refresh existing L11 layout branch by merging current master without rebasing; preserve original red history and master's source at each canonical destination. Retain test assertions and production behavior while adapting architecture ownership checks to canonical controller paths with focused structural red/green evidence. Keep all production nodes guarded and unrelated collector behavior unchanged. Run targeted gates serially, publish final master+1 version-only commit and accurate four-section PR evidence. Independently review exact published head, remediate separately as necessary, retarget #2652 to master, and merge serially after required CI and resolved conversations.
