@@ -240,6 +240,10 @@ fn environment_of(
 pub fn left_runs(
     site: &BoardSite,
 ) -> Result<Vec<crate::application::project_board::dto::RunEnd>, String> {
+    match site.launcher.as_ref() {
+        Some(launcher) if !launcher.started().is_empty() => {}
+        _ => return Ok(vec![]),
+    }
     let Some(build) = site.build else {
         return Ok(vec![]);
     };
