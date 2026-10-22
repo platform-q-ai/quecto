@@ -519,7 +519,7 @@ cap.
 | 763 | `tests/bdd/audit_log_steps.rs` |
 
 Current largest production/library files are at the 750-line cap, including
-`src/interface/cli/uds_snapshots.rs`, `src/interface/uds/controllers/uds_dispatch.rs`,
+`src/interface/cli/uds_snapshots.rs`, `src/interface/uds/controllers/uds/uds_dispatch.rs`,
 `src/interface/uds/controllers/uds.rs`, `src/interface/uds/wire/protocol.rs`,
 `src/infrastructure/tools/agents/subagent_monitor.rs`, and
 `src/application/agent_turn/agent_loop/mod.rs`.

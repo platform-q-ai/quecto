@@ -309,5 +309,4 @@ pub(crate) async fn bind_deadline_passed(
 }
 
 #[cfg(test)]
-#[path = "uds_parent_control_tests.rs"]
 mod tests;

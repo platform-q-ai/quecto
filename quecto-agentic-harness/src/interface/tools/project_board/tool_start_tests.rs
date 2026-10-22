@@ -111,7 +111,10 @@ fn launching_board(
             .map(|swarms| swarms as Arc<dyn crate::application::project_board::ports::RunLiveness>),
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
-    Ok(ProjectBoardHandles { operations })
+    Ok(ProjectBoardHandles {
+        operations,
+        board: None,
+    })
 }
 
 /// A launcher that launches every coordinator it is asked to.
@@ -186,6 +189,16 @@ async fn the_tool_starts_a_task_with_its_sessions_launcher() {
         answer["not_applied"],
         json!([{"role": "builder", "model": "gpt-5.5", "effort": "high"}])
     );
+    // #2656: when to renew the claim: halfway through its two hours.
+    let since = answer["task"]["claim"]["since"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let halfway = crate::domain::project_board::value_objects::timestamp::Timestamp::parse(&since)
+        .unwrap()
+        .plus_seconds(60 * 60)
+        .unwrap();
+    assert_eq!(answer["renew_after"], json!(halfway.as_str()), "{answer}");
     // The steps for running it, the start prompt's words for its run.
     assert_eq!(answer["steps"], json!(steps::running(&slug_of("a"), 1)));
     let ops = records.taken();
@@ -518,5 +531,23 @@ async fn a_start_the_strict_read_refuses_still_says_to_stop() {
             "site: {}",
             &text[..40]
         );
+    }
+}
+
+impl crate::application::project_board::ports::StartedRuns for Launching {
+    fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
+        vec![]
+    }
+}
+
+impl crate::application::project_board::ports::StartedRuns for Failing {
+    fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
+        vec![]
+    }
+}
+
+impl crate::application::project_board::ports::StartedRuns for StillRunning {
+    fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
+        vec![]
     }
 }

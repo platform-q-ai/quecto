@@ -129,10 +129,12 @@ fn whole_crate_dependency_direction_holds() {
     for (layer, outward) in forbidden {
         let mut files = Vec::new();
         walk(Path::new(layer), &mut files);
-        for path in files
-            .iter()
-            .filter(|p| !p.ends_with("_tests.rs") && !p.contains("/tests/"))
-        {
+        for path in files.iter().filter(|p| {
+            super::uds_canonical_modules::production_scan_file(
+                p,
+                !p.ends_with("_tests.rs") && !p.contains("/tests/"),
+            )
+        }) {
             for (line_no, line) in production_code(path) {
                 for dependency in *outward {
                     if !line.contains(dependency) {
@@ -521,7 +523,7 @@ fn teardown_interface_only_parses_maps_and_presents() {
             "src/interface/uds/controllers/uds_delete_all_subagents.rs",
             "src/interface/cli/uds_busy_subagents.rs",
             "src/interface/uds/framing/uds_shutdown.rs",
-            "src/interface/uds/controllers/uds_dispatch_session.rs",
+            "src/interface/uds/controllers/uds/uds_dispatch_session.rs",
             "src/interface/uds/controllers/uds_parent_control.rs",
             "src/interface/cli/uds_teardown_handles.rs",
         ]

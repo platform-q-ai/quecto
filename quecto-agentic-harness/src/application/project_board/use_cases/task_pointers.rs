@@ -25,7 +25,10 @@ pub(super) fn pointers_hold(
     board: &BoardSnapshot,
     refs: &Pointers<'_>,
 ) -> Result<(), ProjectBoardError> {
-    for reference in refs.parent.into_iter().chain(refs.depends_on) {
+    // A pointer to itself is the task schema's to refuse, in its own words
+    // (#2659): only pointers to other tasks are looked up.
+    let others = refs.parent.into_iter().chain(refs.depends_on);
+    for reference in others.filter(|reference| *reference != refs.id) {
         match board_view::task(board, reference) {
             Ok(_) => {}
             Err(ProjectBoardError::NotFound(_)) => {

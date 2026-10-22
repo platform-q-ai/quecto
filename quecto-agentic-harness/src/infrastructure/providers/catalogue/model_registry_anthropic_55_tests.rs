@@ -75,7 +75,8 @@ fn builtin_claude_sonnet_5_5_api_has_sourced_metadata_and_costs() {
         "Claude Sonnet 5.5 (API key)",
         AuthMode::ApiKey,
         None,
-        (2.0, 10.0, 0.20, 2.50),
+        // Cache hits are 0.05x input (Anthropic pricing, footnote 2).
+        (2.0, 10.0, 0.10, 2.50),
     );
 }
 
@@ -87,6 +88,7 @@ fn builtin_claude_sonnet_5_5_oauth_has_sourced_metadata_and_costs() {
         "Claude Sonnet 5.5 (OAuth)",
         AuthMode::OAuth,
         Some("anthropic"),
-        (2.0, 10.0, 0.20, 2.50),
+        // Cache hits are 0.05x input (Anthropic pricing, footnote 2).
+        (2.0, 10.0, 0.10, 2.50),
     );
 }

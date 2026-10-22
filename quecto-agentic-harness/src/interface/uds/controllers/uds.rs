@@ -16,7 +16,7 @@ use crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles;
 use crate::interface::cli::uds_session::AgentSession;
 #[cfg(test)]
 use crate::interface::cli::uds_session::{
-    compute_session_stats, compute_session_stats_with_usage, messages_page_json,
+    history_session_stats, messages_page_json, present_session_stats,
 };
 #[cfg(test)]
 use crate::interface::uds::framing::uds_socket::bind_secure_socket;
@@ -251,19 +251,12 @@ pub(super) async fn emit_response_or_frame_limit_error_with_message(
     }
 }
 
-#[path = "uds_dispatch.rs"]
 mod uds_dispatch;
-#[path = "uds_dispatch_forwarding.rs"]
 mod uds_dispatch_forwarding;
-#[path = "uds_dispatch_get_message_forward.rs"]
 mod uds_dispatch_get_message_forward;
-#[path = "uds_dispatch_query.rs"]
 mod uds_dispatch_query;
-#[path = "uds_dispatch_runtime.rs"]
 mod uds_dispatch_runtime;
-#[path = "uds_dispatch_session.rs"]
 pub(crate) mod uds_dispatch_session;
-#[path = "uds_dispatch_sync_forward.rs"]
 mod uds_dispatch_sync_forward;
 pub(crate) use uds_dispatch::dispatch_command;
 #[cfg(test)]
@@ -363,7 +356,6 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     false
 }
 
-#[path = "uds_prompt_admission.rs"]
 mod prompt_admission;
 use prompt_admission::{arm_prompt_cancel, control_status, emit_pre_cancelled};
 
@@ -374,7 +366,6 @@ use prompt_admission::{arm_prompt_cancel, control_status, emit_pre_cancelled};
 const MAX_WORKFLOW_NUDGES: usize = 128;
 
 #[cfg(test)]
-#[path = "uds_turn_test_hooks.rs"]
 mod turn_test_hooks;
 #[cfg(test)]
 use turn_test_hooks::{
@@ -551,7 +542,6 @@ async fn run_prompt_dispatch(
     })
     .await
 }
-#[path = "uds_pending.rs"]
 mod pending;
 use pending::drain_and_run_pending;
 
@@ -646,44 +636,30 @@ async fn run_drained_message_guarded(
     outcome
 }
 #[cfg(test)]
-#[path = "uds_abort_steer_tests.rs"]
 mod abort_steer_tests;
 #[cfg(test)]
-#[path = "uds_bounded_read_tests.rs"]
 mod bounded_read_tests;
 #[cfg(test)]
-#[path = "uds_dispatch_session_roster_tests.rs"]
 pub(crate) mod dispatch_session_roster_tests;
 #[cfg(test)]
-#[path = "uds_dispatch_test_env.rs"]
 mod dispatch_test_env;
 #[cfg(test)]
-#[path = "uds_effort_1067_tests.rs"]
 mod effort_1067_tests;
 #[cfg(test)]
-#[path = "uds_issue1567_tests.rs"]
 mod issue1567_tests;
 #[cfg(test)]
-#[path = "uds_926_act_tests.rs"]
 mod issue_926_act_tests;
 #[cfg(test)]
-#[path = "uds_nudge_tolerance_tests.rs"]
 mod nudge_tolerance_tests;
 #[cfg(test)]
-#[path = "uds_parse_tests.rs"]
 mod parse_tests;
 #[cfg(test)]
-#[path = "uds_pending_swarm_tests.rs"]
 mod pending_swarm_tests;
 #[cfg(test)]
-#[path = "uds_prompt_images_tests.rs"]
 mod prompt_images_tests;
 #[cfg(test)]
-#[path = "uds_swarm_feedback_tests.rs"]
 mod swarm_feedback_tests;
 #[cfg(test)]
-#[path = "uds_tests.rs"]
 mod tests;
 #[cfg(test)]
-#[path = "uds_workflow_automation_tests.rs"]
 mod workflow_automation_tests;

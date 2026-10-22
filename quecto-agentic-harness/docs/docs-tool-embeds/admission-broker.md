@@ -3,7 +3,10 @@
 Shared inference admission bounds outbound provider attempts across cooperating
 sessions and subagents for one user on one host. It is **disabled by default**:
 omitting `admission` leaves inference unbounded by this broker. When configured,
-an unreachable authority is an error, never an unbounded fallback.
+a root session whose broker does not answer starts it on demand (it runs
+detached, logs to `<directory>/broker.log`, and stops itself after an hour
+holding nothing); a broker that can be neither reached nor started is an error,
+never an unbounded fallback.
 
 ## Configuration reference
 
@@ -120,7 +123,7 @@ broker you address. Every output names the directory it addressed.
 quecto admission-broker status
 ```
 
-Expected: `{"directory":"/home/me/.quecto/admission","epoch":1,"journal_healthy":true,"live_scopes":0,"groups":{"shared":{"active":0,"queued":0,"uncertain":0,"cooldown_until_ms":0,"unavailable":false}}}`, exit 0 (`epoch` grows by one per `reset`; `live_scopes` counts registered sessions). Then `systemctl --user status quecto-admission-broker.service` → `active (running)`. Optionally (one paid model call, for an operator at a terminal rather than from inside a session) a fresh `quecto agent --no-session -m "Reply with exactly OK"` prints `OK`, and `status` shows `live_scopes` back to 0 after it exits. In a session, `get_state.admission` carries `directory`, `epoch`, `connected: true`, `authorityStatus: "connected"`; the TUI footer shows the broker health.
+Expected: `{"directory":"/home/me/.quecto/admission","epoch":1,"journal_healthy":true,"live_scopes":0,"on_demand":false,"groups":{"shared":{"active":0,"queued":0,"uncertain":0,"cooldown_until_ms":0,"unavailable":false}}}`, exit 0 (`epoch` grows by one per `reset`; `live_scopes` counts registered sessions). Then `systemctl --user status quecto-admission-broker.service` → `active (running)`. Optionally (one paid model call, for an operator at a terminal rather than from inside a session) a fresh `quecto agent --no-session -m "Reply with exactly OK"` prints `OK`, and `status` shows `live_scopes` back to 0 after it exits. In a session, `get_state.admission` carries `directory`, `epoch`, `connected: true`, `authorityStatus: "connected"`; the TUI footer shows the broker health.
 
 ## Rollback
 
@@ -143,18 +146,20 @@ This order keeps sessions admitted until they are restarted; the uninstall stops
 | `… path must be shorter than SUN_LEN` | the admission directory path is too long for a Unix socket | set `admission.directory` to a short absolute path outside the base dir's ancestors, reinstall |
 | `another admission authority owns …/authority.lock`, exit 3 (service not restarted: `RestartPreventExitStatus=3`) | a foreground `run` or an old service holds the lock | stop it, then `systemctl --user restart quecto-admission-broker.service` |
 | `install-service` → `systemctl` errors | no systemd user session (container, ssh without lingering) | `loginctl enable-linger $USER`, or supervise `quecto admission-broker run --config <abs>` yourself |
-| a new agent exits with ``admission negotiation failed: admission authority unreachable at …/client/admission.sock … start `quecto admission-broker run` or remove the admission section`` | section present, broker down | start the service, or roll back |
-| a session reports "restart required" | a root's own section changed on live reload, or the broker came back with a different policy | restart that session (never a child: children inherit) |
+| a new agent exits with `admission negotiation failed: the admission broker exited (…) before it answered; see …/broker.log` or `… did not answer (…)` | the broker started on demand could not serve | read `<directory>/broker.log`, fix the cause, start the agent again |
+| a new agent exits with `admission negotiation failed: admission authority unreachable at …/client/admission.sock (…); if it was started on demand, its log is …/broker.log` | the broker answered the start-up probe, then went away before this agent registered | read `<directory>/broker.log` (a service-managed broker logs to `journalctl --user -u quecto-admission-broker.service`), start the agent again |
+| `status` says ``service unit quecto-admission-broker.service stopped; an on-demand broker is serving …`` | a session started a broker before the service did; the service exited 3 and is not restarted | once that broker stops (an hour idle, or SIGTERM), `systemctl --user restart quecto-admission-broker.service` |
+| a session reports "restart required" | a root's own section changed on live reload, or the broker came back with a different policy | in the TUI, `/admission restart` (restarts this session, and the broker unless it already serves the new policy); otherwise restart that session (never a child: children inherit) |
 | `journal_healthy: false` | the journal file is unwritable or corrupt | fix permissions/storage under the directory; never delete the journal to clear a queue |
 
-Recovery from a stuck or uncertain group is `quecto admission-broker reset` → `{"directory":…,"epoch":N}` plus a stderr warning; roots keep running, children are respawned — see below.
+Recovery from a stuck or uncertain group is `quecto admission-broker reset` → `{"directory":…,"epoch":N}` plus a stderr warning; roots keep running, children are respawned — see below. An uncertain group also clears by itself 60 s after the later of the lost attempt's deadline and the loss of its client, so a reset is only needed to clear it sooner.
 
 ## Recovery: reset and broker restart (what each process does, what you see)
 
 A **root session** (a top-level `quecto agent`) survives both a broker restart
 and a `reset` without being restarted. Its link notices the loss at once —
 `get_state.admission` and the pushed `admission_state_changed` carry
-`authorityStatus: "reconnecting"` (TUI footer `admission ⟳`) — and its next
+`authorityStatus: "reconnecting"` (TUI footer `admission ⟳ reconnecting`) — and its next
 prompt (or spawn) re-registers with the owner token on disk, with bounded,
 jittered backoff (8 tries, about ten seconds), then runs: `authorityStatus:
 "connected"`, and after a reset `epoch` is the new one. An attempt that was
@@ -163,8 +168,9 @@ in flight when the broker went away fails closed exactly once with an
 down: reconnection exhausted (broker still not back: `authorityStatus:
 "unavailable"`, retried on the next attempt), or the broker came back with a
 **different policy** — the session composed against the old one, so it fails
-closed with "restart required" and stays `unavailable` until the agent is
-restarted.
+closed with "restart required" and stays `unavailable` (with
+`restartRequired: true`) until the agent is restarted; the TUI offers
+`/admission restart`, which restarts the broker and the session in one step.
 
 A **child** (spawned by a parent, bound to a parent-registered capability)
 cannot re-register on its own. After a `reset` its `authorityStatus` is
@@ -285,6 +291,11 @@ broker's clock domain, not Unix wall time; prefer session cooldown
   run remotely. A surviving session reconnecting with the same capability and
   completing its attempt can clear uncertainty. Closing a socket does not
   cancel remote computation; an attempt timeout is not proof of remote completion.
+  The quarantine still ends by itself 60 s after the later of the attempt's
+  deadline and the loss of its client, and
+  a queued request that times out meanwhile says ``… is held by N uncertain
+  lease(s) …; it clears by itself in about S s, or `quecto admission-broker
+  reset` clears it now …``.
 - `unavailable` can mean provider cooldown advice exceeded `max_cooldown_ms`;
   treat this as a provider incident. Ordinary cooldown requires waiting, not reset.
 

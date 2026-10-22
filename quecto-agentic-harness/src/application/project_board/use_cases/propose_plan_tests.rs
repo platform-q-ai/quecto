@@ -101,6 +101,10 @@ fn crlf_in_the_approach_is_normalised_and_noted() {
         plan_version: Some(1),
         items: Some(2),
         roles: Some(1),
+        // The commit the write made (#2663).
+        head: Some(crate::application::project_board::ports::BoardHead(
+            "r3".into(),
+        )),
         ..OpFacts::default()
     };
     assert_eq!(facts, want);
@@ -138,7 +142,10 @@ fn a_plan_set_aside_holds_proposals_and_a_missing_task_is_refused() {
         propose(&store).execute(&proposal("a")),
         Err(ProjectBoardError::Quarantined {
             key,
-            path: "plans/a.2.md".into()
+            path: "plans/a.2.md".into(),
+            object: crate::infrastructure::test_support::memory_board_store::memory_object(
+                "plans/a.2.md"
+            ),
         })
     );
     assert_eq!(

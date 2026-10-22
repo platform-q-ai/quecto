@@ -625,7 +625,6 @@ pub(super) mod admission_probe {
 }
 
 // Re-export dispatch helpers into this module for existing call sites.
-#[path = "uds_ext_protocol_dispatch.rs"]
 mod dispatch;
 pub(in crate::interface::uds::controllers) use dispatch::{
     dispatch_register_tools, dispatch_tool_result, dispatch_unregister_tools,
@@ -634,21 +633,16 @@ pub(in crate::interface::uds::controllers) use dispatch::{
 pub(super) use dispatch::{forward_tool_requests, handle_one_request};
 
 #[cfg(test)]
-#[path = "uds_ext_protocol_cov_tests.rs"]
 mod cov_tests;
 
 #[cfg(test)]
-#[path = "uds_ext_protocol_dispatch_cov_tests.rs"]
 mod dispatch_cov_tests;
 
 #[cfg(test)]
-#[path = "uds_ext_protocol_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "uds_ext_protocol_images_tests.rs"]
 mod images_tests;
 
 #[cfg(test)]
-#[path = "uds_ext_images_e2e_tests.rs"]
 mod images_e2e_tests;

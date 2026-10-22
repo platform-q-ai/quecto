@@ -20,7 +20,7 @@ const INTERFACE_SESSION_MODULES: &[&str] = &[
     "src/interface/uds/sessions/export_report_controller.rs",
     "src/interface/uds/sessions/synchronize_transcript_controller.rs",
     "src/interface/uds/sessions/rewind_conversation_controller.rs",
-    "src/interface/uds/controllers/uds_dispatch_session.rs",
+    "src/interface/uds/controllers/uds/uds_dispatch_session.rs",
     "src/interface/cli/uds_session_history.rs",
     "src/interface/cli/uds_session_message_range.rs",
     "src/interface/cli/uds_latest_report.rs",

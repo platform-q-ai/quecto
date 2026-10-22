@@ -80,3 +80,7 @@ pub fn parse_codex_usage(obj: &Map<String, Value>) -> UsageInfo {
 #[cfg(test)]
 #[path = "usage_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "usage_efficiency_996_tests.rs"]
+mod efficiency_996_tests;

@@ -287,5 +287,4 @@ pub mod test_support {
 }
 
 #[cfg(test)]
-#[path = "uds_shutdown_tests.rs"]
-mod tests;
+mod uds_shutdown_tests;

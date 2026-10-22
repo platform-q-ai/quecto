@@ -207,6 +207,26 @@ pub fn redact_url_userinfo(input: &str) -> String {
     URL_USERINFO.replace_all(input, "${1}***@").into_owned()
 }
 
+/// The most characters of free text one field shows the model.
+pub const MODEL_TEXT_CHARS: usize = 400;
+
+/// Free text for the model: URL userinfo and known secret shapes
+/// redacted, then clipped to [`MODEL_TEXT_CHARS`].
+pub fn model_safe_text(text: &str) -> String {
+    clip_chars(
+        &redact_secrets(&redact_url_userinfo(text)),
+        MODEL_TEXT_CHARS,
+    )
+}
+
+/// `text` cut to `max_chars` characters, an ellipsis marking a cut.
+pub fn clip_chars(text: &str, max_chars: usize) -> String {
+    match text.char_indices().nth(max_chars) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None => text.to_string(),
+    }
+}
+
 #[cfg(test)]
 #[path = "redaction_tests.rs"]
 mod tests;

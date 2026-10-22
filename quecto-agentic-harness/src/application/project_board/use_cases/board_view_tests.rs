@@ -65,7 +65,11 @@ fn keyed(key: ArtifactKey) -> QuarantinedFile {
 
 fn refused(key: ArtifactKey) -> ProjectBoardError {
     let path = path_of(&key);
-    ProjectBoardError::Quarantined { key, path }
+    ProjectBoardError::Quarantined {
+        object: "0".repeat(40),
+        key,
+        path,
+    }
 }
 
 fn numbers<T>(items: &[&T], number: impl Fn(&T) -> (String, u32)) -> Vec<(String, u32)> {

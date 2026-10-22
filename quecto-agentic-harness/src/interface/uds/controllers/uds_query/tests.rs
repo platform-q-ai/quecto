@@ -1,0 +1,739 @@
+use super::*;
+use crate::application::agent_turn::agent_loop::UsageTotals;
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::tools::ports::Tool;
+use crate::domain::conversation::value_objects::message::{Message, ToolCall};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
+use crate::domain::workflow::{
+    WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
+};
+use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
+use crate::infrastructure::test_support::message_contents;
+use crate::infrastructure::tools::registry::registration::ToolRegistration;
+use crate::interface::cli::uds_session::present_session_stats;
+use crate::interface::uds::controllers::uds::dispatch_session_roster_tests::list_handle;
+use std::{future::Future, pin::Pin, sync::Arc};
+
+struct CatalogueFixtureTool {
+    def: ToolDefinition,
+}
+
+impl CatalogueFixtureTool {
+    fn new(name: &str) -> Self {
+        Self {
+            def: ToolDefinition {
+                name: name.to_string().into(),
+                description: format!("Fixture {name} tool").into(),
+                parameters_schema: r#"{"type":"object"}"#.into(),
+            },
+        }
+    }
+}
+
+impl std::fmt::Debug for CatalogueFixtureTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CatalogueFixtureTool")
+            .field("name", &self.def.name)
+            .finish()
+    }
+}
+
+impl Tool for CatalogueFixtureTool {
+    fn definition(&self) -> ToolDefinition {
+        self.def.clone()
+    }
+
+    fn execute(
+        &self,
+        _arguments: &str,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<ToolResult, crate::domain::shared::error::DomainError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async move {
+            Ok(ToolResult {
+                content: "ok".into(),
+                is_error: false,
+                image_blocks: vec![],
+                delivery_metadata: None,
+            })
+        })
+    }
+}
+use crate::interface::uds::sessions::recover_message_controller::GetMessageFields;
+use crate::interface::uds::wire::protocol::{AgentCommand, HISTORY_PAGE_SIZE};
+
+/// The idle `get_message` path: the composed recovery owner over the rig's
+/// live conversation, presented by the range presenter.
+async fn get_message_data(
+    ctx: &DispatchCtx<'_>,
+    message_id: &str,
+    tool_call_id: Option<&str>,
+    request_id: Option<&str>,
+) -> Option<serde_json::Value> {
+    let content = ctx
+        .sessions
+        .recover_message
+        .recover(
+            GetMessageFields {
+                message_id,
+                tool_call_id,
+                offset: None,
+                thinking_offset: None,
+                limit: None,
+            },
+            ctx.messages,
+        )
+        .await
+        .ok()?;
+    crate::interface::cli::uds_session::recovered_content_json(&content, request_id)
+}
+use crate::interface::cli::uds_session::AgentSession;
+use crate::interface::uds::controllers::uds_cancel::CancelSlot;
+use crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry;
+
+pub(crate) struct Fx {
+    agent: AgentLoopImpl,
+    messages: Vec<Message>,
+    session: AgentSession,
+    pub(crate) execution_state: crate::interface::cli::uds_execution_state::ExecutionStateHandle,
+    session_key: String,
+    store: Arc<FileSessionStore>,
+    _tmp: tempfile::TempDir,
+    writer: tokio::io::Sink,
+}
+
+impl Fx {
+    pub(crate) fn new() -> Self {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut tool_registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+        tool_registry.register_with_metadata(
+            Arc::new(CatalogueFixtureTool::new("bash")),
+            ToolRegistration::official_native(),
+        );
+        Self {
+            agent: AgentLoopImpl::new(AgentLoopConfig {
+                provider: crate::interface::test_support::make_stub_provider(),
+                tool_registry: Box::new(tool_registry),
+                model: "stub".into(),
+                max_tokens: 100,
+                temperature: 0.0,
+                retention: None,
+                session_key: "cli:test".into(),
+                max_context_tokens: 190_000,
+                progress_callback: None,
+                streaming: false,
+                effort: None,
+                audit_log: None,
+                pin_recent_turns: 2,
+                context_marks: Default::default(),
+                model_context_window: None,
+                tool_profile_context:
+                    crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
+            }),
+            messages: vec![Message::user("one"), Message::assistant("two", vec![])],
+            session: crate::composition::bootstrap::agent_turn::build_turn_session("stub".into()),
+            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
+            session_key: "cli:test".into(),
+            store: Arc::new(FileSessionStore::new(
+                crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout::new(
+                    tmp.path(),
+                ),
+            )),
+            _tmp: tmp,
+            writer: tokio::io::sink(),
+        }
+    }
+
+    pub(crate) fn ctx(&mut self) -> crate::interface::uds::controllers::uds::DispatchCtx<'_> {
+        self.ctx_with_workflow(None)
+    }
+
+    pub(crate) fn ctx_with_workflow(
+        &mut self,
+        workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    ) -> crate::interface::uds::controllers::uds::DispatchCtx<'_> {
+        let initial_stats = present_session_stats(self.session.usage_report(
+            &self.session_key,
+            &self.messages,
+            self.agent.max_context_tokens(),
+        ));
+        let save_session =
+            crate::interface::uds::controllers::uds::dispatch_session_roster_tests::save_handle_for(
+                &self.session_key,
+            );
+        let rewrite =
+            crate::interface::uds::controllers::uds::dispatch_session_roster_tests::rewrite_handles_for(
+                &self.session_key,
+            );
+        crate::interface::uds::controllers::uds::DispatchCtx {
+            execution_state: self.execution_state.clone(),
+            wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
+            agent: &mut self.agent,
+            messages: &mut self.messages,
+            sessions: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::read_handles_over(
+                self.store.clone(),
+                &self.session_key,
+                None,
+                &[],
+            ),
+            state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(
+                self.session.state_snapshot("cli:test", 0, None, 0, None),
+            )),
+            session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+            tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            session: &mut self.session,
+            stdout: Some(&mut self.writer),
+            system_prompt: "",
+            cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
+            turn_control: std::sync::Arc::default(),
+            broadcast_tx: None,
+            _ext_registry: None,
+            client_tool_registry: new_client_tool_registry(),
+            current_client_id: 0,
+            subagent_registry: None,
+            notification_rx: None,
+            workflow_state,
+            workflow_config: None,
+            save_session,
+            rewrite,
+            switch: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::switch_handles_for(
+                &self.session_key,
+            ),
+            catalogue: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::catalogue_handles(
+                self._tmp.path(),
+            ),
+            fleet_teardown: None,
+            discovery: list_handle(self._tmp.path()),
+        }
+    }
+}
+
+fn workflow_engine_for_get_state_since_tests() -> crate::interface::shared::WorkflowStateHandle {
+    Arc::new(std::sync::Mutex::new(
+        WorkflowEngine::new(
+            WorkflowConfig {
+                templates: vec![WorkflowTemplate {
+                    id: "feature".into(),
+                    label: "Feature".into(),
+                    description: "desc".into(),
+                    when_to_use: None,
+                    steps: vec![WorkflowTemplateStep {
+                        key: "plan".into(),
+                        label: "Plan".into(),
+                        phase: "design".into(),
+                        guidance: None,
+                    }],
+                    guards: vec![],
+                }],
+                ..WorkflowConfig::default()
+            },
+            false,
+        )
+        .unwrap(),
+    ))
+}
+
+#[test]
+fn idle_get_state_since_reveals_workflow_selection_change_after_session_generation_ahead() {
+    let mut fx = Fx::new();
+    fx.session.set_model("stub-a".into());
+    fx.session.set_model("stub-b".into());
+    fx.session.set_model("stub-c".into());
+    let workflow = workflow_engine_for_get_state_since_tests();
+    let before = {
+        let ctx = fx.ctx_with_workflow(Some(workflow.clone()));
+        query_response_data(
+            &AgentCommand::GetState {
+                id: None,
+                since: None,
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .unwrap()
+    };
+    assert!(before.get("workflow").is_none());
+    let before_generation = before["generation"].as_u64().unwrap();
+    assert!(before_generation > workflow.lock().unwrap().revision());
+
+    workflow
+        .lock()
+        .unwrap()
+        .select_template("feature", None)
+        .unwrap();
+
+    let ctx = fx.ctx_with_workflow(Some(workflow));
+    let after = query_response_data(
+        &AgentCommand::GetState {
+            id: None,
+            since: Some(before_generation),
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .unwrap();
+
+    assert_ne!(after.get("unchanged"), Some(&serde_json::Value::Bool(true)));
+    assert_eq!(after["workflow"]["activeTemplate"]["id"], "feature");
+    assert!(
+        after["generation"].as_u64().unwrap() > before_generation,
+        "workflow-visible idle mutation must advance get_state since cursor: before={before}, after={after}"
+    );
+}
+
+#[test]
+fn query_get_state_messages_and_stats_are_shaped() {
+    let mut fx = Fx::new();
+    let ctx = fx.ctx();
+
+    let state = query_response_data(
+        &AgentCommand::GetState {
+            id: None,
+            since: None,
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(state["model"], "stub");
+    assert!(state.get("messageCount").is_none());
+    assert!(state.get("execution").is_none());
+    assert_eq!(state["state"], "idle");
+
+    let all = query_response_data(
+        &AgentCommand::GetMessages {
+            id: None,
+            count: None,
+            before: None,
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .unwrap();
+    let all_messages = all["messages"].as_array().unwrap();
+    assert_eq!(all_messages.len(), 2);
+    assert_eq!(all["hasMoreBefore"], false);
+    assert_eq!(all["before"], serde_json::Value::Null);
+
+    let tail = query_response_data(
+        &AgentCommand::GetMessages {
+            id: None,
+            count: Some(1),
+            before: None,
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(tail["messages"].as_array().unwrap().len(), 1);
+
+    let stats = query_response_data(&AgentCommand::GetSessionStats { id: None }, &ctx).unwrap();
+    assert_eq!(stats["sessionKey"], "cli:test");
+    assert_eq!(stats["tokens"]["input"], 0);
+    assert_eq!(stats["tokens"]["output"], 0);
+    assert_eq!(stats["tokens"]["cacheRead"], 0);
+    assert_eq!(stats["tokens"]["cacheWrite"], 0);
+    assert_eq!(stats["tokens"]["total"], 0);
+    assert_eq!(stats["costMicroUsd"], 0);
+    assert_eq!(stats["cacheHitRatio"], serde_json::Value::Null);
+    assert!(stats.get("prompt_tokens_details").is_none());
+    assert!(stats.get("input_tokens_details").is_none());
+}
+
+#[test]
+fn query_get_session_stats_returns_shared_usage_accounting_fields() {
+    let mut fx = Fx::new();
+    fx.session
+        .record_usage("cli:test", UsageTotals::billed(70, 20, 30, 5, 1_234));
+    fx.session.set_context_tokens(105);
+    let ctx = fx.ctx();
+
+    let stats = query_response_data(&AgentCommand::GetSessionStats { id: None }, &ctx).unwrap();
+
+    assert_eq!(stats["sessionKey"], "cli:test");
+    assert_eq!(stats["tokens"]["input"], 70);
+    assert_eq!(stats["tokens"]["output"], 20);
+    assert_eq!(stats["tokens"]["cacheRead"], 30);
+    assert_eq!(stats["tokens"]["cacheWrite"], 5);
+    assert_eq!(stats["tokens"]["total"], 90);
+    assert_eq!(stats["contextTokens"], 105);
+    assert_eq!(stats["costMicroUsd"], 1_234);
+    let ratio = stats["cacheHitRatio"].as_f64().expect("ratio serialized");
+    assert!((ratio - (30.0 / 105.0)).abs() < 1e-9, "{ratio}");
+    assert!(stats.get("prompt_tokens_details").is_none());
+    assert!(stats.get("input_tokens_details").is_none());
+}
+
+fn assert_page_metadata(data: &serde_json::Value, has_more: bool) {
+    assert_eq!(data["hasMoreBefore"], has_more);
+    if has_more {
+        assert!(
+            data["before"].as_str().is_some(),
+            "older cursor should be present"
+        );
+    } else {
+        assert_eq!(data["before"], serde_json::Value::Null);
+    }
+    assert_ne!(data["trimmed"], true);
+}
+
+#[test]
+fn query_get_messages_without_count_returns_newest_bounded_page_with_cursor() {
+    let mut fx = Fx::new();
+    fx.messages = (0..(HISTORY_PAGE_SIZE * 3))
+        .map(|i| Message::user(format!("msg-{i:03}")))
+        .collect();
+    let ctx = fx.ctx();
+
+    let page = query_response_data(
+        &AgentCommand::GetMessages {
+            id: None,
+            count: None,
+            before: None,
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .expect("get_messages returns a page");
+    let contents = message_contents(&page);
+
+    assert_eq!(
+        contents.len(),
+        HISTORY_PAGE_SIZE,
+        "attach/resume must be bounded by the protocol history page size"
+    );
+    assert_eq!(contents.last().map(String::as_str), Some("msg-191"));
+    assert_eq!(contents.first().map(String::as_str), Some("msg-128"));
+    assert_page_metadata(&page, true);
+}
+
+#[test]
+fn query_get_messages_exact_page_has_no_older_cursor() {
+    let mut fx = Fx::new();
+    fx.messages = (0..HISTORY_PAGE_SIZE)
+        .map(|i| Message::user(format!("msg-{i:03}")))
+        .collect();
+    let ctx = fx.ctx();
+
+    let page = query_response_data(
+        &AgentCommand::GetMessages {
+            id: None,
+            count: None,
+            before: None,
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .expect("exact page returns data");
+
+    assert_eq!(message_contents(&page).len(), HISTORY_PAGE_SIZE);
+    assert_page_metadata(&page, false);
+}
+
+#[test]
+fn query_get_messages_just_over_page_keeps_oldest_reachable() {
+    let mut fx = Fx::new();
+    fx.messages = (0..(HISTORY_PAGE_SIZE + 1))
+        .map(|i| Message::user(format!("msg-{i:03}")))
+        .collect();
+    let ctx = fx.ctx();
+
+    let newest = query_response_data(
+        &AgentCommand::GetMessages {
+            id: None,
+            count: None,
+            before: None,
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .expect("newest page returns data");
+    assert_eq!(message_contents(&newest).len(), HISTORY_PAGE_SIZE);
+    assert_eq!(
+        message_contents(&newest).first().map(String::as_str),
+        Some("msg-001")
+    );
+    assert_page_metadata(&newest, true);
+
+    let older = query_response_data(
+        &AgentCommand::GetMessages {
+            id: None,
+            count: None,
+            before: newest["before"].as_str().map(str::to_owned),
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .expect("oldest omitted message is reachable");
+    assert_eq!(message_contents(&older), ["msg-000"]);
+    assert_page_metadata(&older, false);
+}
+
+#[test]
+fn query_get_messages_before_cursor_returns_adjacent_older_page() {
+    let mut fx = Fx::new();
+    fx.messages = (0..(HISTORY_PAGE_SIZE * 2))
+        .map(|i| Message::user(format!("msg-{i:03}")))
+        .collect();
+    let cursor = fx.messages[80].id().to_string();
+    let cmd: AgentCommand = serde_json::from_value(serde_json::json!({
+        "type": "get_messages",
+        "before": cursor,
+    }))
+    .expect("paged get_messages command parses");
+    let ctx = fx.ctx();
+
+    let page = query_response_data(&cmd, &ctx).expect("older page returns data");
+    let contents = message_contents(&page);
+
+    assert_eq!(contents.len(), HISTORY_PAGE_SIZE);
+    assert_eq!(contents.last().map(String::as_str), Some("msg-079"));
+    assert_eq!(contents.first().map(String::as_str), Some("msg-016"));
+    assert!(contents.iter().all(|content| content.as_str() < "msg-080"));
+}
+
+#[test]
+fn query_get_messages_pages_to_start_without_gap_or_duplicate() {
+    let mut fx = Fx::new();
+    fx.messages = (0..(HISTORY_PAGE_SIZE * 2 + 1))
+        .map(|i| Message::user(format!("msg-{i:03}")))
+        .collect();
+    let ctx = fx.ctx();
+    let mut before = None;
+    let mut collected = Vec::new();
+
+    loop {
+        let page = query_response_data(
+            &AgentCommand::GetMessages {
+                id: None,
+                count: None,
+                before: before.clone(),
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("page returns data");
+        let mut contents = message_contents(&page);
+        contents.extend(collected);
+        collected = contents;
+        if page["hasMoreBefore"] == false {
+            break;
+        }
+        before = page["before"].as_str().map(str::to_owned);
+    }
+
+    assert_eq!(collected.len(), HISTORY_PAGE_SIZE * 2 + 1);
+    assert_eq!(collected.first().map(String::as_str), Some("msg-000"));
+    assert_eq!(collected.last().map(String::as_str), Some("msg-128"));
+    let unique = collected.iter().collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        unique.len(),
+        collected.len(),
+        "collected messages must be exact-once"
+    );
+}
+
+#[test]
+fn query_get_messages_count_is_older_client_newest_slice_with_page_metadata() {
+    let mut fx = Fx::new();
+    fx.messages = (0..10).map(|i| Message::user(format!("msg-{i}"))).collect();
+    let ctx = fx.ctx();
+
+    let page = query_response_data(
+        &AgentCommand::GetMessages {
+            id: None,
+            count: Some(3),
+            before: None,
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .expect("compat get_messages count returns data");
+    let contents = message_contents(&page);
+
+    assert_eq!(contents, ["msg-7", "msg-8", "msg-9"]);
+    assert_page_metadata(&page, true);
+}
+
+#[test]
+fn query_get_messages_explicit_count_above_page_size_is_preserved() {
+    let mut fx = Fx::new();
+    fx.messages = (0..100)
+        .map(|i| Message::user(format!("msg-{i:03}")))
+        .collect();
+    let ctx = fx.ctx();
+
+    let page = query_response_data(
+        &AgentCommand::GetMessages {
+            id: None,
+            count: Some(80),
+            before: None,
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .expect("explicit count returns data");
+
+    assert_eq!(message_contents(&page).len(), 80);
+    assert_eq!(
+        message_contents(&page).first().map(String::as_str),
+        Some("msg-020")
+    );
+}
+
+#[test]
+fn query_get_messages_count_at_or_beyond_total_has_no_older_cursor() {
+    let mut fx = Fx::new();
+    fx.messages = (0..3).map(|i| Message::user(format!("msg-{i}"))).collect();
+    let ctx = fx.ctx();
+
+    for count in [3, 10] {
+        let page = query_response_data(
+            &AgentCommand::GetMessages {
+                id: None,
+                count: Some(count),
+                before: None,
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("compat page returns data");
+        assert_eq!(message_contents(&page), ["msg-0", "msg-1", "msg-2"]);
+        assert_page_metadata(&page, false);
+    }
+}
+
+#[test]
+fn query_get_messages_count_with_before_returns_bounded_slice_before_cursor() {
+    let mut fx = Fx::new();
+    fx.messages = (0..20)
+        .map(|i| Message::user(format!("msg-{i:02}")))
+        .collect();
+    let cursor = fx.messages[10].id().to_string();
+    let ctx = fx.ctx();
+
+    let page = query_response_data(
+        &AgentCommand::GetMessages {
+            id: None,
+            count: Some(4),
+            before: Some(cursor),
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .expect("count combined with before returns data");
+
+    assert_eq!(
+        message_contents(&page),
+        ["msg-06", "msg-07", "msg-08", "msg-09"],
+        "an explicit count pages that many messages strictly before the cursor"
+    );
+    assert_page_metadata(&page, true);
+}
+
+#[tokio::test]
+async fn query_get_message_hit_returns_message_by_stable_id() {
+    let mut fx = Fx::new();
+    // Resolve against the stable id of the second (assistant) message.
+    let target_id = fx.messages[1].id().to_string();
+    let ctx = fx.ctx();
+    let hit = get_message_data(&ctx, &target_id, None, Some("r1"))
+        .await
+        .expect("get_message must resolve a present stable id");
+    assert_eq!(
+        hit["id"], target_id,
+        "resolved message carries its stable id"
+    );
+    assert_eq!(hit["role"], "assistant");
+    assert_eq!(
+        hit["content"], "two",
+        "the exact referenced body is returned"
+    );
+}
+
+#[tokio::test]
+async fn query_get_message_miss_returns_none_for_structured_error() {
+    for message_id in ["00000000-0000-0000-0000-000000000000", "not-a-uuid"] {
+        let mut fx = Fx::new();
+        let ctx = fx.ctx();
+        // An unknown id must return None so dispatch emits a structured
+        // "message not found" error rather than a stale/empty hit (#1060).
+        let miss = get_message_data(&ctx, message_id, None, Some("r1")).await;
+        assert!(
+            miss.is_none(),
+            "unknown message id {message_id:?} must miss (None), got {miss:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn query_get_message_tool_call_uses_tool_id_not_request_or_message_id() {
+    let mut fx = Fx::new();
+    fx.messages.push(Message::assistant(
+        "call requested",
+        vec![ToolCall {
+            id: "call-target".into(),
+            name: "bash".into(),
+            arguments: "{\"command\":\"echo typed\"}".into(),
+        }],
+    ));
+    let message_id = fx.messages.last().unwrap().id().to_string();
+    let ctx = fx.ctx();
+
+    let hit = get_message_data(
+        &ctx,
+        &message_id,
+        Some("call-target"),
+        Some("response-correlation"),
+    )
+    .await
+    .expect("tool-call argument lookup must resolve by the requested toolCallId");
+
+    assert_eq!(hit["id"], message_id);
+    assert_eq!(hit["toolCallId"], "call-target");
+    assert_eq!(hit["toolName"], "bash");
+    assert_eq!(hit["arguments"], "{\"command\":\"echo typed\"}");
+    assert!(
+        hit.get("response-correlation").is_none(),
+        "request/correlation id must not be confused with message or tool-call ids"
+    );
+}
+
+#[test]
+fn query_metadata_commands_are_shaped_or_deferred() {
+    let mut fx = Fx::new();
+    let ctx = fx.ctx();
+    let catalogue =
+        query_response_data(&AgentCommand::GetToolCatalogue { id: None }, &ctx).unwrap();
+    let tools = catalogue["tools"]
+        .as_array()
+        .expect("tools must be an array");
+    let bash = tools
+        .iter()
+        .find(|entry| entry["name"].as_str() == Some("bash"))
+        .expect("core bash tool should be present in the catalogue");
+    assert_eq!(bash["source"].as_str(), Some("bundled-native"));
+    assert_eq!(bash["runtimeAvailability"].as_str(), Some("enabled"));
+    assert_eq!(bash["effectiveEnabled"].as_bool(), Some(true));
+    assert_eq!(bash["inputSchema"].as_str(), Some(r#"{"type":"object"}"#));
+    assert!(
+        query_response_data(&AgentCommand::ListModels { id: None }, &ctx).unwrap()["models"]
+            .is_array()
+    );
+    assert!(
+        query_response_data(
+            &AgentCommand::GetSubagents {
+                id: None,
+                since: None
+            },
+            &ctx
+        )
+        .unwrap()["subagents"]
+            .is_array()
+    );
+}

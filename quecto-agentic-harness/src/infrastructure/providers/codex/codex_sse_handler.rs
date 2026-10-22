@@ -59,8 +59,10 @@ impl CodexSseHandler {
 
     fn take_response(&mut self) -> LlmResponse {
         let mut response = std::mem::take(&mut self.acc).into_response();
-        if let Some(model) = &self.model {
-            CodexProvider::finish_response(&mut response, model, &self.origin);
+        // Only a handler built for its request (`with_model`) knows where
+        // its reasoning is replayed to.
+        if self.model.is_some() {
+            CodexProvider::finish_response(&mut response, &self.origin);
         }
         response
     }
@@ -147,11 +149,7 @@ impl SseHandler for CodexSseHandler {
         );
         // Tokens a `response.*` event already reported were spent all the same.
         let usage = std::mem::take(&mut self.acc).into_response().usage;
-        sse_end::record_unfinished_usage(
-            self.trace.as_deref(),
-            usage,
-            self.model.as_deref().unwrap_or_default(),
-        );
+        sse_end::record_unfinished_usage(self.trace.as_deref(), usage);
         let error = sse_end::ended_early(self.saw_event, RESPONSES_CUT_SHORT);
         let _ = tx.send(StreamEvent::Error(error)).await;
     }

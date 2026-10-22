@@ -89,5 +89,4 @@ pub(super) fn finalize_interrupted_turn(
 }
 
 #[cfg(test)]
-#[path = "uds_cancel_history_tests.rs"]
 mod tests;

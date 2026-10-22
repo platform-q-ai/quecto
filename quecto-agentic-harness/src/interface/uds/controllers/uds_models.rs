@@ -44,5 +44,4 @@ pub fn refresh_models_data(
 }
 
 #[cfg(test)]
-#[path = "uds_models_tests.rs"]
 mod tests;

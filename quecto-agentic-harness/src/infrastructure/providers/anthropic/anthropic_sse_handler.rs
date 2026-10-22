@@ -77,15 +77,7 @@ impl SseHandler for AnthropicSseHandler {
             self.current_event = event_type.to_string();
         } else if let Some(data) = data {
             let chunk_val: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
-            if dispatch_sse_event(
-                &self.current_event,
-                &chunk_val,
-                &mut self.acc,
-                self.model.as_deref(),
-                tx,
-            )
-            .await
-            {
+            if dispatch_sse_event(&self.current_event, &chunk_val, &mut self.acc, tx).await {
                 self.saw_terminal = true;
                 return SseLineOutcome::Done;
             }
@@ -104,11 +96,7 @@ impl SseHandler for AnthropicSseHandler {
             "an Anthropic stream ends at end of file only without message_stop"
         );
         let usage = std::mem::take(&mut self.acc).into_response().usage;
-        sse_end::record_unfinished_usage(
-            self.trace.as_deref(),
-            usage,
-            self.model.as_deref().unwrap_or_default(),
-        );
+        sse_end::record_unfinished_usage(self.trace.as_deref(), usage);
         let error = sse_end::ended_early(self.saw_event, ANTHROPIC_CUT_SHORT);
         let _ = tx.send(StreamEvent::Error(error)).await;
     }

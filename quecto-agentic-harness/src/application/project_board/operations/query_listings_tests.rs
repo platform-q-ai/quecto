@@ -84,6 +84,7 @@ pub fn assembled_launching(
         prs,
         Swarms {
             launcher,
+            started: None,
             liveness,
             reports: None,
         },
@@ -94,6 +95,8 @@ pub fn assembled_launching(
 /// liveness of runs' swarms and how they ended (#2481 S4c follow-up).
 pub struct Swarms {
     pub launcher: Option<Arc<dyn CoordinatorLaunch>>,
+    /// The runs the launcher started (#2655).
+    pub started: Option<Arc<dyn crate::application::project_board::ports::StartedRuns>>,
     pub liveness: Option<Arc<dyn crate::application::project_board::ports::RunLiveness>>,
     pub reports: Option<Arc<dyn crate::application::project_board::ports::SwarmRunReports>>,
 }
@@ -109,17 +112,11 @@ pub fn assembled_reporting(
 ) -> Result<RunBoardOperation, ProjectBoardError> {
     let Swarms {
         launcher,
+        started,
         liveness,
         reports,
     } = swarms;
-    let complete = match prs {
-        Ok(prs) => Ok(CompleteMergedTask::new(
-            Arc::clone(&store),
-            Arc::clone(&clock),
-            prs,
-        )?),
-        Err(why) => Err(why),
-    };
+    let complete = CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs)?;
     Ok(RunBoardOperation::new(BoardOperationParts {
         bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
         create: CreateBoardTask::new(Arc::clone(&store), Arc::clone(&clock))?,
@@ -133,6 +130,7 @@ pub fn assembled_reporting(
             Arc::clone(&store),
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
+            crate::application::project_board::use_cases::fixtures_tests::Remote::holding_all(),
             liveness,
             reports,
         )?,
@@ -144,6 +142,12 @@ pub fn assembled_reporting(
             launcher,
             None,
         )?,
+        left_runs: started.map(|started| {
+            crate::application::project_board::use_cases::ListLeftRuns::new(
+                Arc::clone(&store),
+                started,
+            )
+        }),
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock))?,
         complete,
         clock,

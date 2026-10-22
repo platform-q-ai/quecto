@@ -8,7 +8,7 @@ fn ctx(dir: &std::path::Path) -> CliContext {
         base_dir: Some(dir.to_path_buf()),
         config_path: Some(dir.join("config.json")),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
@@ -160,6 +160,66 @@ fn run_until_serves_then_stops_and_refuses_a_second_authority() {
     assert_eq!(outcome, 0, "{err}");
     assert!(out.contains("stopped"), "{out}");
     assert!(!dir.client_socket().exists(), "sockets removed on stop");
+}
+
+/// #2615: a broker started on demand (`run --stop-when-idle`) stops itself
+/// once it has held nothing for its idle period, exits 0 and says why;
+/// without the flag `run` keeps serving.
+#[test]
+fn run_until_stops_an_idle_on_demand_broker_and_says_so() {
+    let mut opts = parse_args(&["--stop-when-idle".to_string()], &mut String::new()).unwrap();
+    assert!(opts.stop_when_idle);
+    opts = parse_args(&[], &mut String::new()).unwrap();
+    assert!(!opts.stop_when_idle, "always-on unless asked");
+    let temp = tempfile::tempdir().unwrap();
+    let authority = temp.path().join("authority");
+    let config = ENABLED.replace("DIR", &format!("{:?}", authority.to_string_lossy()));
+    std::fs::write(temp.path().join("config.json"), config).unwrap();
+    let loaded = Config::load(temp.path().join("config.json").to_str().unwrap()).unwrap();
+    let (_, proposal) = loaded.admission_proposal().unwrap().unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dir = AuthorityDirectory::open(&authority).unwrap();
+    let on_demand = BrokerStart {
+        lifetime: AuthorityLifetime::StopWhenIdle(IdleWatch::new(100).unwrap()),
+        ..start(&dir, &proposal)
+    };
+    let (mut out, mut err) = (String::new(), String::new());
+    let code = rt.block_on(async {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            run_until(on_demand, std::future::pending(), &mut out, &mut err),
+        )
+        .await
+        .expect("an idle on-demand broker stops itself")
+    });
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(
+        out,
+        "admission authority stopped itself: idle with no sessions, permits or leases; the next session starts it again\n"
+    );
+    assert!(!dir.client_socket().exists(), "sockets removed on stop");
+    // An always-on broker over the same directory outlives that period.
+    let (mut out, mut err) = (String::new(), String::new());
+    let still_serving = rt.block_on(async {
+        tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            run_until(
+                start(&dir, &proposal),
+                std::future::pending(),
+                &mut out,
+                &mut err,
+            ),
+        )
+        .await
+    });
+    assert!(
+        still_serving.is_err(),
+        "always-on never stops itself: {out}{err}"
+    );
 }
 
 /// Lows (#2024 S3 review): an explicit `--directory` is validated like the
@@ -320,6 +380,7 @@ fn start(dir: &AuthorityDirectory, proposal: &AdmissionRuntimeProposal) -> Broke
         proposal: proposal.clone(),
         build_use_cases: build_authority_use_cases,
         accept_missing_ledger: false,
+        lifetime: AuthorityLifetime::AlwaysOn,
     }
 }
 
@@ -341,4 +402,37 @@ fn run_without_composed_handles_refuses_before_serving() {
     assert!(err.contains("admission capability not composed"), "{err}");
     assert!(!err.contains("serving authority directory"), "{err}");
     assert!(!authority.exists(), "nothing was opened");
+}
+
+/// #2615 review round 2: only a broker started on demand caps its log, at
+/// 1 MiB checked every minute, and the capping task empties a log past it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_on_demand_broker_keeps_its_log_capped() {
+    assert_eq!(log_cap_plan(AuthorityLifetime::AlwaysOn), None);
+    let plan = log_cap_plan(AuthorityLifetime::StopWhenIdle(
+        IdleWatch::new(AUTHORITY_IDLE_STOP_MS).unwrap(),
+    ))
+    .expect("an on-demand broker caps its log");
+    assert_eq!(plan.cap, 1 << 20);
+    assert_eq!(plan.interval, std::time::Duration::from_secs(60));
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("broker.log");
+    std::fs::write(&path, vec![b'x'; 65]).unwrap();
+    let log = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    let task = tokio::spawn(keep_log_capped(
+        log,
+        LogCapPlan {
+            interval: std::time::Duration::from_millis(10),
+            cap: 64,
+        },
+    ));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::fs::metadata(&path).unwrap().len() > 64 {
+        assert!(std::time::Instant::now() < deadline, "never capped");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    task.abort();
 }

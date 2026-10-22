@@ -258,6 +258,7 @@ fn settlement(next_wake: Result<Option<u64>, AuthorityError>, journal_healthy: b
         cancellation_due: Vec::new(),
         next_wake,
         journal_healthy,
+        holding: true,
     }
 }
 

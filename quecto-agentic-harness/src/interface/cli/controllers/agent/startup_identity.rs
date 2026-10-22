@@ -4,24 +4,25 @@ use super::{AgentFlags, CliContext};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 /// Composition's builders a UDS loop is opened over: the interface never
-/// constructs a session store (#1970) or a session's automatic turns
-/// (#1909), so each missing one refuses the start with its own reason.
+/// constructs a session store (#1970) or a session's agent-turn use cases
+/// (#1909, #1855), so each missing one refuses the start with its own
+/// reason.
 pub(super) fn composed_loop_builders(
     ctx: &CliContext,
     stderr: &mut String,
 ) -> Option<(
     crate::interface::cli::SessionHandlesBuilder,
-    crate::interface::cli::AutomaticTurnsBuilder,
+    crate::interface::cli::TurnSessionBuilder,
 )> {
     let Some(sessions) = ctx.sessions else {
         stderr.push_str("agent: sessions capability not composed\n");
         return None;
     };
-    let Some(automatic_turns) = ctx.automatic_turns else {
+    let Some(turn_session) = ctx.turn_session else {
         stderr.push_str("agent: agent-turn capability not composed\n");
         return None;
     };
-    Some((sessions, automatic_turns))
+    Some((sessions, turn_session))
 }
 
 /// The identity a UDS loop opens on (#1976): ephemeral (never persisted),

@@ -156,3 +156,25 @@ fn disable_now_treats_only_missing_unit_errors_as_idempotent() {
         );
     }
 }
+
+/// #2615 review: `is_active` asks `systemctl --user is-active` and reads its
+/// exit status: 0 is active, anything else (3: inactive, 4: unknown) is not.
+#[test]
+fn is_active_reads_the_exit_status_of_is_active() {
+    for (status, active) in [(0, true), (3, false), (4, false)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manager, log) = under_test(&tmp);
+        write_executable(
+            &tmp.path().join("systemctl"),
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit {status}\n",
+                log.display()
+            ),
+        );
+        assert_eq!(manager.is_active(), Ok(active), "exit {status}");
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "--user is-active --quiet quecto-admission-broker.service\n"
+        );
+    }
+}

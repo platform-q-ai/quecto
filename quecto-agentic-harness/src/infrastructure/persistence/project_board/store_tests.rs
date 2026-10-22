@@ -467,7 +467,7 @@ fn a_remote_that_is_not_configured_is_refused() {
         .unwrap();
         let built = GitBoardStore::new(git, remote).map(|_| ());
         assert!(
-            matches!(&built, Err(BoardStoreError::Unavailable(why)) if why.contains(remote)),
+            matches!(&built, Err(StoreOpenError::NoSuchRemote(why)) if why.contains(remote)),
             "{remote}: {built:?}"
         );
     }

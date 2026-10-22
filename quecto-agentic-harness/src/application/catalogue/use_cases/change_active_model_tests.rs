@@ -302,6 +302,7 @@ fn plan_reads_explicit_limits_from_the_generation_it_just_published() {
             context_window: Some(1234),
             prompt_limit: Default::default(),
             image_input: Default::default(),
+            price: None,
         }
     );
     assert_eq!(rig.store.current().generation(), 1, "the plan published");
@@ -324,6 +325,7 @@ fn each_limit_clamps_only_when_declared_explicitly() {
             context_window: None,
             prompt_limit: Default::default(),
             image_input: Default::default(),
+            price: None,
         }
     );
     assert_eq!(
@@ -333,6 +335,7 @@ fn each_limit_clamps_only_when_declared_explicitly() {
             context_window: Some(1234),
             prompt_limit: Default::default(),
             image_input: Default::default(),
+            price: None,
         }
     );
 }
@@ -391,6 +394,7 @@ fn a_model_added_since_the_last_read_is_switchable_without_a_refresh() {
             context_window: Some(20),
             prompt_limit: Default::default(),
             image_input: Default::default(),
+            price: None,
         }
     );
     assert_eq!(*rig.loader.loads.lock().unwrap(), 2);

@@ -31,7 +31,7 @@ use super::super::value_objects::code_ref::{BranchName, CommitId, RepoName};
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::timestamp::Timestamp;
-use super::claims::{after_last, held_live_by, within_slack};
+use super::claims::{after_last, held_live_by, not_before, within_slack};
 use super::plans::Moment;
 use super::transitions::{Completed, completable, finish};
 
@@ -147,6 +147,8 @@ pub fn link(
             )));
         }
     }
+    // Never before the task's last change, nor any of its changes'.
+    let at = not_before(task, change_stamps(&own, when), &when.now);
     Change::new(ChangeFields {
         task: task.fields().id.clone(),
         number: last + 1,
@@ -156,8 +158,8 @@ pub fn link(
         merged: None,
         linked_by: actor.clone(),
         unlinked: None,
-        created: when.now.clone(),
-        updated: when.now.clone(),
+        created: at.clone(),
+        updated: at,
     })
     .map_err(BoardRuleError::Invalid)
 }
@@ -231,7 +233,10 @@ pub fn unlink(
         None | Some(PrState::Open | PrState::Closed) => {}
         Some(PrState::Merged(_)) => return Err(BoardRuleError::ChangeMerged(number)),
     }
-    let at = after(change, &when.now)?;
+    let at = after(
+        change,
+        &not_before(task, change_stamps(changes, when), &when.now),
+    )?;
     let mut next = fields.clone();
     next.unlinked = Some((actor.clone(), at.clone()));
     next.updated = at;
@@ -385,6 +390,24 @@ fn not_ahead(changes: &[Change], when: &Moment) -> Result<(), BoardRuleError> {
     }
 }
 
+/// When each of `changes` (the task's) last changed: what a change is
+/// stamped no earlier than (#2662). A link or unlink refuses a change
+/// stamped past `when`'s bound first ([`not_ahead`]), so every one here is
+/// within it, and none drags a new stamp ahead.
+fn change_stamps<'a>(
+    changes: &'a [Change],
+    when: &'a Moment,
+) -> impl Iterator<Item = &'a Timestamp> {
+    changes.iter().map(move |change| {
+        let updated = &change.fields().updated;
+        assert!(
+            within_slack(updated, when.latest.as_ref()),
+            "a change past the bound is refused before it is built on"
+        );
+        updated
+    })
+}
+
 /// `now`, or a second past `change`'s last change if that is later.
 fn after(change: &Change, now: &Timestamp) -> Result<Timestamp, BoardRuleError> {
     after_last(&change.fields().updated, now)
@@ -397,3 +420,7 @@ mod tests;
 #[cfg(test)]
 #[path = "changes_superseded_tests.rs"]
 mod superseded_tests;
+
+#[cfg(test)]
+#[path = "changes_stamp_tests.rs"]
+mod stamp_tests;

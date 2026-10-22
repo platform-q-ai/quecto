@@ -48,5 +48,4 @@ pub(in crate::interface) fn visible_thinking_page_json(
 }
 
 #[cfg(test)]
-#[path = "uds_visible_thinking_wire_tests.rs"]
-mod tests;
+mod uds_visible_thinking_wire_tests;

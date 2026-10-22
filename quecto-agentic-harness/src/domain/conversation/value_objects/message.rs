@@ -513,7 +513,7 @@ pub struct UsageInfo {
     /// not undercount warm sessions.
     ///
     /// Billing (`prompt_tokens` + the discounted cache fields, via
-    /// [`ModelPricing::cost_for`]) intentionally does *not* use this field.
+    /// [`ModelPrice::cost_of`](crate::domain::inference::value_objects::model_price::ModelPrice::cost_of)) intentionally does *not* use this field.
     pub context_tokens: Option<u32>,
     /// Per-call cost breakdown, if model pricing is available.
     pub cost: Option<CostInfo>,
@@ -568,45 +568,6 @@ impl CostInfo {
     }
 }
 
-/// Per-million-token pricing for a model, stored as micro-USD per million tokens.
-/// Using integer rates avoids floating-point representation issues at the pricing layer.
-#[derive(Debug, Clone, Copy)]
-pub struct ModelPricing {
-    /// Input token cost in micro-USD per million tokens.
-    pub input_micro_usd_per_million: u64,
-    /// Output token cost in micro-USD per million tokens.
-    pub output_micro_usd_per_million: u64,
-    /// Cache-read input token cost in micro-USD per million tokens.
-    pub cache_read_micro_usd_per_million: u64,
-    /// Cache-write input token cost in micro-USD per million tokens.
-    pub cache_write_micro_usd_per_million: u64,
-}
-
-impl ModelPricing {
-    /// Calculate cost from usage data using integer micro-USD arithmetic.
-    pub fn cost_for(&self, usage: &UsageInfo) -> CostInfo {
-        // tokens * rate_per_million / 1_000_000 — performed in u64 to stay exact.
-        let calc = |tokens: u32, rate: u64| -> u64 { (tokens as u64 * rate) / 1_000_000 };
-        let input = calc(usage.prompt_tokens, self.input_micro_usd_per_million);
-        let output = calc(usage.completion_tokens, self.output_micro_usd_per_million);
-        let cache_read = calc(
-            usage.cache_read_tokens.unwrap_or(0),
-            self.cache_read_micro_usd_per_million,
-        );
-        let cache_write = calc(
-            usage.cache_write_tokens.unwrap_or(0),
-            self.cache_write_micro_usd_per_million,
-        );
-        CostInfo {
-            input_cost_micro_usd: input,
-            output_cost_micro_usd: output,
-            cache_read_cost_micro_usd: cache_read,
-            cache_write_cost_micro_usd: cache_write,
-            total_cost_micro_usd: input + output + cache_read + cache_write,
-        }
-    }
-}
-
 /// Returns true if `model` starts with `prefix`, case-insensitively, using byte
 /// comparison — no heap allocation.
 pub(crate) fn starts_with_ci(model: &str, prefix: &str) -> bool {
@@ -619,91 +580,6 @@ pub(crate) fn starts_with_ci(model: &str, prefix: &str) -> bool {
         .iter()
         .zip(p)
         .all(|(a, b)| a.eq_ignore_ascii_case(b))
-}
-
-/// Published per-model rates, as `[input, output, cache read, cache write]`
-/// micro-USD per million tokens (integer arithmetic, no f64 drift); cache
-/// write is the 5-minute TTL. A prefix another extends comes after it.
-///
-/// Sources:
-///   Anthropic (Claude API pricing, #2435 review round 2):
-///     Fable 5.1: $10 in / $50 out / $12.50 cache-write / $0.25 cache-read per MTok
-///     Fable 5: $10 in / $50 out / $12.50 cache-write / $1.00 cache-read per MTok
-///     Opus 5, Opus 4.8-4.5: $5 in / $25 out / $6.25 cache-write / $0.50 cache-read per MTok
-///     Sonnet 5 (https://www.anthropic.com/news/claude-sonnet-5) and Sonnet 4.x:
-///       $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
-///     Haiku 4.5: $1 in / $5 out / $1.25 cache-write / $0.10 cache-read per MTok
-///   OpenAI GPT-5.6/GPT-6 tiers mirror the registry pricing in
-///   `model_registry_builtin_tables.rs` (gpt-6.1-sol caches input at $0.10).
-const MODEL_PRICES: &[(&str, [u64; 4])] = &[
-    (
-        "claude-fable-5-1",
-        [10_000_000, 50_000_000, 250_000, 12_500_000],
-    ),
-    (
-        "claude-fable-5",
-        [10_000_000, 50_000_000, 1_000_000, 12_500_000],
-    ),
-    // Opus 5.5 ($4 / $20, $0.20 cache reads; the write rate is the
-    // standard 1.25x) must not be priced as Opus 5, which it extends.
-    (
-        "claude-opus-5-5",
-        [4_000_000, 20_000_000, 200_000, 5_000_000],
-    ),
-    ("claude-opus-5", [5_000_000, 25_000_000, 500_000, 6_250_000]),
-    ("claude-opus-4", [5_000_000, 25_000_000, 500_000, 6_250_000]),
-    // Sonnet 5.5 standard global rates; cache writes use the 5-minute TTL.
-    // Keep this prefix before Sonnet 5 so dated 5.5 ids use the same rates.
-    (
-        "claude-sonnet-5-5",
-        [2_000_000, 10_000_000, 200_000, 2_500_000],
-    ),
-    // Sonnet 5's flat standard rate (deterministic, no clock-based intro
-    // switch).
-    (
-        "claude-sonnet-5",
-        [3_000_000, 15_000_000, 300_000, 3_750_000],
-    ),
-    (
-        "claude-sonnet-4",
-        [3_000_000, 15_000_000, 300_000, 3_750_000],
-    ),
-    ("claude-haiku-4", [1_000_000, 5_000_000, 100_000, 1_250_000]),
-    (
-        "gpt-6-astra",
-        [10_000_000, 50_000_000, 1_000_000, 12_500_000],
-    ),
-    ("gpt-6-sol", [2_000_000, 10_000_000, 200_000, 2_500_000]),
-    ("gpt-6.1-sol", [2_000_000, 10_000_000, 100_000, 2_500_000]),
-    ("gpt-6-luna", [100_000, 500_000, 10_000, 125_000]),
-    ("gpt-5.6-sol", [5_000_000, 30_000_000, 500_000, 6_250_000]),
-    ("gpt-5.6-terra", [2_500_000, 15_000_000, 250_000, 3_125_000]),
-    ("gpt-5.6-luna", [1_000_000, 6_000_000, 100_000, 1_250_000]),
-];
-
-fn pricing(rates: [u64; 4]) -> ModelPricing {
-    let [input, output, cache_read, cache_write] = rates;
-    ModelPricing {
-        input_micro_usd_per_million: input,
-        output_micro_usd_per_million: output,
-        cache_read_micro_usd_per_million: cache_read,
-        cache_write_micro_usd_per_million: cache_write,
-    }
-}
-
-/// Look up pricing for a known model. Returns `None` for unknown models.
-///
-/// **Allowlist**: only the families in [`MODEL_PRICES`] are recognised, by
-/// case-insensitive prefix (dated variants included). Any other model
-/// string returns `None`, preventing a spoofed model name from silently
-/// matching unintended pricing. The Claude 4 families are no longer built
-/// in (#2435); their rates stay so a model declared in `models.json` is
-/// still costed.
-pub fn model_pricing(model: &str) -> Option<ModelPricing> {
-    MODEL_PRICES
-        .iter()
-        .find(|(prefix, _)| starts_with_ci(model, prefix))
-        .map(|(_, rates)| pricing(*rates))
 }
 
 #[cfg(test)]

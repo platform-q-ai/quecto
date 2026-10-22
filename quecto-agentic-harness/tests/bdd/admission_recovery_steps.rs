@@ -78,6 +78,10 @@ fn authority_dir(base: &Path) -> PathBuf {
     base.join("authority")
 }
 
+/// A real `quecto` with this scenario's base directory. An agent started
+/// with the `admission` section and no broker running would start a
+/// production broker on demand (#2615, ADR-0032) that outlives the
+/// scenario: start the scenario's broker first.
 fn qcmd(base: &Path, args: &[&str]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_quecto"));
     command

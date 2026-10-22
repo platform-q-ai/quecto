@@ -84,5 +84,4 @@ pub(super) async fn poll_before_listing(
 }
 
 #[cfg(test)]
-#[path = "uds_dispatch_reload_tests.rs"]
 mod tests;

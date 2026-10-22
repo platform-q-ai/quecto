@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use crate::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, AdmissionError, GroupId, GroupSnapshot, RequestId, RequestState, ScopeId,
+    UncertainHold,
 };
 
 /// Scope identity plus the opaque secret proving the caller was issued it.
@@ -21,6 +22,9 @@ pub enum AuthorityError {
     Unauthorized,
     Admission(AdmissionError),
     JournalUnavailable,
+    /// A queued wait expired while uncertain leases held its group (#2664):
+    /// the waiter is told which, and when they clear by themselves.
+    HeldByUncertainLease(UncertainHold),
 }
 
 impl From<AdmissionError> for AuthorityError {
@@ -57,6 +61,11 @@ pub struct Settlement {
     /// Whether the journal accepted its last write; while it has not, held
     /// work proceeds only after a successful probe.
     pub journal_healthy: bool,
+    /// Whether the authority holds anything a stop would lose (#2615): a
+    /// root, a lost scope owing work, or any permit, queued wait or lease,
+    /// uncertain ones included. Only a broker that holds nothing may stop
+    /// itself when idle.
+    pub holding: bool,
 }
 
 /// How soon a turn retries when the policy cannot say when it next needs one.

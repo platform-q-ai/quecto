@@ -48,7 +48,7 @@ exit 1 from a *write* as "not done", never retry the same command unchanged
 | `<repo>/.quecto/config.json` | the repo overlay: `agents.defaults`, `tools`, `workflow`, `container_configs` | `quecto config set …`, `quecto container init` |
 | `<base_dir>/config-overlay-trust.json` | which overlay content is approved | `quecto config set`, `quecto config trust`, `quecto container init` |
 | `<base_dir>/models.json` | extra providers/models | you, with the schema on the `models` page; `quecto models discover` |
-| `<base_dir>/admission/` | the broker's sockets, lock and journal | `quecto admission-broker run` / the service |
+| `<base_dir>/admission/` | the broker's sockets, lock, journal and `broker.log` | the broker (started on demand by a session, or the service) |
 | `<repo>/.quecto/containers/standard/` | Containerfile and runtime scripts | `quecto container init` |
 
 `<base_dir>` is `~/.quecto` unless `QUECTO_BASE_DIR` is set; `quecto status`

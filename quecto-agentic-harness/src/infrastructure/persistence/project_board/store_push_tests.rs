@@ -350,3 +350,35 @@ fn a_store_without_the_cancel_keeps_what_it_found_of_its_remote() {
     assert_eq!(alice.without_cancel().partial.get(), Some(&found));
     assert_eq!(store(&repos.alice).without_cancel().partial.get(), None);
 }
+
+/// #2654: writers in one clone share its tracking ref, and git locks it
+/// while one of them fetches. A fetch that finds it locked (its lock file
+/// held) is a race this clone lost, not a store it cannot reach: it
+/// fetches again once the other writer is done, and the read reads.
+#[test]
+fn a_fetch_that_finds_the_tracking_ref_locked_by_another_writer_fetches_again() {
+    let repos = Repos::new();
+    created(&store(&repos.alice));
+    assert_eq!(
+        sh(&repos.bob, &["rev-parse", "--show-ref-format"]),
+        "files",
+        "a lock file holds a ref only in the files backend"
+    );
+    let refs = repos.bob.join(".git/refs/remotes/origin/quecto");
+    std::fs::create_dir_all(&refs).unwrap();
+    let lock = refs.join("board.lock");
+    std::fs::write(&lock, b"").unwrap();
+    let held = lock.clone();
+    let other = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        std::fs::remove_file(held).unwrap();
+    });
+    let bob = store(&repos.bob);
+    assert_eq!(bob.lock_races(), 0);
+    let read = bob.read();
+    other.join().unwrap();
+    assert!(read.is_ok(), "{read:?}");
+    assert!(!lock.exists());
+    // Each race is counted, for the write's record (#2663).
+    assert!(bob.lock_races() >= 1, "{}", bob.lock_races());
+}

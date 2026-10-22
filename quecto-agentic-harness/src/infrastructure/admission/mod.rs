@@ -6,6 +6,7 @@ pub mod directory;
 pub mod journal;
 pub mod link;
 pub mod observed_gate;
+pub mod on_demand_launcher;
 pub mod process;
 pub mod protocol;
 pub mod remote_gate;
@@ -15,13 +16,14 @@ mod server_actor;
 mod session;
 
 pub use admin_adapter::SocketAuthorityAdmin;
-pub use client::{AdminConnection, AuthorityConnection, ClientError, Hello};
+pub use client::{AdminConnection, AdminStatus, AuthorityConnection, ClientError, Hello};
 pub use directory::{AuthorityDirectory, SingletonLock};
 pub use journal::FileJournal;
 pub use link::{AuthorityLink, LinkChangeHook, LinkHealth};
 pub use observed_gate::{ActivityHook, AdmissionRecorder, ObservedAdmission};
+pub use on_demand_launcher::DetachedAuthorityLauncher;
 pub use process::{
-    AdmissionContext, BindingKind, Negotiation, ProcessAdmission, negotiate,
+    AdmissionContext, BindingKind, CurrentProcessSession, Negotiation, ProcessAdmission, negotiate,
     read_admission_context, write_admission_context,
 };
 pub use remote_gate::RemoteAdmission;

@@ -178,7 +178,12 @@ pub(super) fn production_files() -> Vec<String> {
     walk(Path::new("src"), &mut files);
     files
         .into_iter()
-        .filter(|path| !path.ends_with("_tests.rs") && !path.contains("/tests/"))
+        .filter(|path| {
+            super::uds_canonical_modules::production_scan_file(
+                path,
+                !path.ends_with("_tests.rs") && !path.contains("/tests/"),
+            )
+        })
         .collect()
 }
 
@@ -257,7 +262,9 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
         "arms PR_SET_PDEATHSIG (SIGTERM only, a typed choice) on a process \
          this harness spawns, and gives the board's git and gh children their \
          own session that dies with quecto (the child is signalled by the \
-         kernel when its launcher dies; nothing is sent from here)",
+         kernel when its launcher dies; nothing is sent from here); and gives \
+         the admission broker started on demand (#2615) its own session with \
+         no death signal, since every session on the host shares it",
     ),
     (
         "src/infrastructure/tools/native/bash/mod.rs",
@@ -304,6 +311,12 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
         "src/infrastructure/tools/native/find_fd.rs",
         &["start_kill", "kill_on_drop"],
         "tool invocation containment: the find tool's own `fd` Child on a cap",
+    ),
+    (
+        "src/infrastructure/workspace/checkout_history.rs",
+        &["kill("],
+        "the swarm board's own `git merge-base` Child ended through its \
+         retained handle when it outlives its deadline (#2687)",
     ),
     (
         "src/infrastructure/tools/swarm/swarm_bridge.rs",
@@ -406,6 +419,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/application/subagents/ports/delegated_agent_registry.rs",
     "src/application/subagents/ports/ended_child_records.rs",
     "src/application/subagents/ports/harness_shutdown.rs",
+    "src/application/subagents/ports/kept_environments.rs",
     "src/application/subagents/ports/mod.rs",
     "src/application/subagents/ports/owned_child_termination.rs",
     "src/application/subagents/ports/teardown_compensation.rs",
@@ -468,7 +482,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/interface/uds/controllers/uds_delete_all_subagents.rs",
     "src/interface/cli/uds_busy_subagents.rs",
     "src/interface/uds/framing/uds_shutdown.rs",
-    "src/interface/uds/controllers/uds_dispatch_session.rs",
+    "src/interface/uds/controllers/uds/uds_dispatch_session.rs",
     "src/interface/cli/uds_teardown_adapters.rs",
     "src/interface/cli/uds_teardown_handles.rs",
     "src/composition/subagent_teardown.rs",

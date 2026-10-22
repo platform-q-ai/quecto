@@ -20,13 +20,13 @@ use std::time::SystemTime;
 use crate::application::project_board::operations::{BoardOperationParts, NoPullRequestHost};
 use crate::application::project_board::ports::{
     BoardClock, BoardStoreError, CoordinatorLaunch, ProjectBoardStore, PullRequestStates,
-    PullRequestStatesError, RunLiveness, SwarmRunReports,
+    PullRequestStatesError, RemoteRevisions, RunLiveness, StartedRuns, SwarmRunReports,
 };
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
-    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ProposePlan, QueryBoard, RunBoardOperation,
-    StartBoardTask, UpdateDraftTask,
+    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ListLeftRuns, ProposePlan, QueryBoard,
+    RunBoardOperation, StartBoardTask, UpdateDraftTask,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
@@ -41,7 +41,7 @@ use crate::infrastructure::persistence::project_board::gh_pull_requests::{
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment, GitError};
 use crate::infrastructure::persistence::project_board::index::BoardIndex;
 use crate::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
-use crate::infrastructure::persistence::project_board::store::GitBoardStore;
+use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use crate::infrastructure::time::remote_time::ReferencedBoardClock;
 use crate::infrastructure::tools::agents::coordinator_launch::KeptRunReports;
@@ -93,8 +93,10 @@ fn build_with_warnings(
         Access::Read => Git::reader(&environment.repo, vars)
             .map_err(|error| unavailable(format!("git cannot run here: {error}")))?,
     };
-    let board = GitBoardStore::new(git, &environment.remote)
-        .map_err(|error| unavailable(store_reason(&error)))?;
+    let board = GitBoardStore::new(git, &environment.remote).map_err(|error| match error {
+        StoreOpenError::NoSuchRemote(why) => BuildError::NoSuchRemote(why),
+        StoreOpenError::Unavailable(error) => unavailable(store_reason(&error)),
+    })?;
     // A start's undo writes past the call's cancel, so no run is stranded.
     let undo_store: Arc<dyn ProjectBoardStore> = Arc::new(board.without_cancel());
     let store = Arc::new(board.with_cancel(environment.cancelled.clone()));
@@ -102,6 +104,10 @@ fn build_with_warnings(
         .remote_url()
         .map_err(|error| unavailable(store_reason(&error)))?;
     let clock: Arc<dyn BoardClock> = Arc::new(ReferencedBoardClock::for_remote(&url));
+    // A relative remote is the clone's top level's, as git resolves it.
+    let top_level = store
+        .top_level()
+        .unwrap_or_else(|_| environment.repo.clone());
     let index = BoardIndex::of(&store).map_err(|error| {
         unavailable(format!(
             "the board index's directory cannot be named: {error}"
@@ -113,16 +119,13 @@ fn build_with_warnings(
         Arc::clone(&store) as _,
     ));
     let prs = pull_request_states(&url, &environment.vars);
+    let revisions: Arc<dyn RemoteRevisions> = Arc::clone(&store) as _;
     let store: Arc<dyn ProjectBoardStore> = store;
     let built = |error: crate::application::project_board::dto::ProjectBoardError| {
         unavailable(error.to_string())
     };
-    let complete = match prs {
-        Ok(prs) => Ok(
-            CompleteMergedTask::new(Arc::clone(&store), Arc::clone(&clock), prs).map_err(built)?,
-        ),
-        Err(why) => Err(why),
-    };
+    let complete =
+        CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs).map_err(built)?;
     let parts = BoardOperationParts {
         bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
         create: CreateBoardTask::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
@@ -136,6 +139,9 @@ fn build_with_warnings(
             Arc::clone(&store),
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
+            // A success is judged by the revisions the board's own remote
+            // holds (#2666).
+            Arc::clone(&revisions),
             environment
                 .launcher
                 .clone()
@@ -167,6 +173,11 @@ fn build_with_warnings(
                 .clone()
                 .map(|swarms| swarms as Arc<dyn RunLiveness>),
         ),
+        // A session's end ends the runs its starts left open (#2655).
+        left_runs: environment
+            .launcher
+            .clone()
+            .map(|swarms| ListLeftRuns::new(Arc::clone(&store), swarms as Arc<dyn StartedRuns>)),
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         complete,
         clock,
@@ -175,7 +186,32 @@ fn build_with_warnings(
     };
     Ok(ProjectBoardHandles {
         operations: RunBoardOperation::new(parts),
+        board: GitBoardStore::board_id_of(&url, &top_level),
     })
+}
+
+/// How long one git call of a teardown's completion check may take: past
+/// it the completion is unknown, and the box is kept.
+const TEARDOWN_READ: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// The revisions the board of the repository at `repo` holds on its
+/// `origin` (#2666), read as the board's own store reads them, each git
+/// call within [`TEARDOWN_READ`]: what the teardown asks of a succeeded
+/// board run's completion. Or why there are none here (no repository, no
+/// `origin`).
+///
+/// # Errors
+/// git cannot run at `repo`, or it has no `origin`.
+pub fn board_remote_revisions(repo: &Path) -> Result<Arc<dyn RemoteRevisions>, String> {
+    let vars = GitEnvironment::allowlisted(std::env::vars_os());
+    let git = Git::reader(repo, vars)
+        .map_err(|error| format!("git cannot run here: {error}"))?
+        .bounded(TEARDOWN_READ);
+    let store = GitBoardStore::new(git, "origin").map_err(|error| match error {
+        StoreOpenError::NoSuchRemote(why) => why,
+        StoreOpenError::Unavailable(error) => store_reason(&error),
+    })?;
+    Ok(Arc::new(store))
 }
 
 /// Pull request states of the remote at `url`, read with `gh` when it is
@@ -261,7 +297,7 @@ fn store_reason(error: &BoardStoreError) -> String {
         | BoardStoreError::WriteTooLarge(why)
         | BoardStoreError::Unavailable(why)
         | BoardStoreError::TooLarge(why)
-        | BoardStoreError::FolderSetAside(why) => why.clone(),
+        | BoardStoreError::FolderSetAside { why, .. } => why.clone(),
     }
 }
 
@@ -339,3 +375,7 @@ mod tests;
 #[cfg(test)]
 #[path = "project_board_wiring_tests.rs"]
 mod wiring_tests;
+
+#[cfg(test)]
+#[path = "project_board_telemetry_tests.rs"]
+mod telemetry_tests;

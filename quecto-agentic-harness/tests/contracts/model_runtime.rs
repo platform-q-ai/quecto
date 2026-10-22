@@ -23,6 +23,7 @@ fn model_and_limits_switch_together_and_reclamp() {
             context_window: Some(2_048),
             prompt_limit: Default::default(),
             image_input: Default::default(),
+            price: None,
         },
     );
     assert_eq!(ModelRuntime::model(&rt.agent), "acme/limited");

@@ -7,6 +7,19 @@ pub struct ModelCost {
     pub output: f64,
     pub cache_read: f64,
     pub cache_write: f64,
+    /// Whether someone stated these rates — a published row or a
+    /// `models.json` declaration (#1855). Only a stated cost is a price:
+    /// stated all zero is a free model; unstated is unpriced.
+    pub declared: bool,
+}
+
+impl ModelCost {
+    /// Whether `rate` can be a price rate: finite and non-negative, in USD
+    /// per million tokens (#1855). The one rule both a price and a
+    /// `models.json` declaration are checked by.
+    pub fn rate_in_range(rate: f64) -> bool {
+        rate.is_finite() && rate >= 0.0
+    }
 }
 
 /// Capabilities and limits of a model, replacing the heuristics currently

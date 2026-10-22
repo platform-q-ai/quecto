@@ -88,6 +88,7 @@ fn entry_from_record(record: &ModelRecord) -> Result<CatalogueEntry, String> {
                     output: record.cost.output,
                     cache_read: record.cost.cache_read,
                     cache_write: record.cost.cache_write,
+                    declared: record.cost.declared,
                 },
                 prompt_limit: record.prompt_limit,
             },
@@ -158,8 +159,12 @@ fn unsupported_entry(
             reference,
             display_name: name.map(str::to_string),
             // An unsupported transport has no reasoning-option adapter, so the
-            // synthesized defaults carry no effort vocabulary.
-            capabilities: default_capabilities(),
+            // synthesized defaults carry no effort vocabulary; the price is
+            // the published one for the id (#1855 review M3).
+            capabilities: ModelCapabilities {
+                cost: crate::domain::catalogue::services::published_prices::cost_of_id(model_id),
+                ..default_capabilities()
+            },
             availability: Availability::runnable(),
         },
     })

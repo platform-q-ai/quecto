@@ -542,8 +542,8 @@ fn read_uds_protocol_sources() -> String {
     // Architecture BDD must accept either location after the line-count split.
     let protocol = std::fs::read_to_string("src/interface/uds/wire/protocol.rs")
         .expect("read UDS protocol source");
-    let commands =
-        std::fs::read_to_string("src/interface/uds/wire/protocol_commands.rs").unwrap_or_default();
+    let commands = std::fs::read_to_string("src/interface/uds/wire/protocol/protocol_commands.rs")
+        .unwrap_or_default();
     format!("{protocol}\n{commands}")
 }
 
