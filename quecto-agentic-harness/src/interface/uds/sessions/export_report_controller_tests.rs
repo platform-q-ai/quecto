@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::sessions::active_session::ActiveSessionState;
+use crate::application::sessions::services::active_session::ActiveSessionState;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 

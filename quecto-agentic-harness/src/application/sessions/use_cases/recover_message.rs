@@ -8,10 +8,10 @@
 //! resolve through the active session's read model; the idle loop may add
 //! its own live conversation as a fallback for a ref the read model has
 //! not been published yet.
-use crate::application::sessions::active_session::{ActiveSessionHandle, RecoveryResolution};
 use crate::application::sessions::dto::{
     ContentSelector, RecoveredContent, RecoveryError, RecoveryRequest, Utf8Range,
 };
+use crate::application::sessions::services::active_session::*;
 use crate::domain::conversation::services::conversation_view::position_by_id;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::identity::ids::MessageId;

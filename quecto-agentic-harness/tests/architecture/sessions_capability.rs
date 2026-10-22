@@ -70,7 +70,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/domain/sessions/entities/session_home.rs",
     "src/application/sessions/dto/list_sessions.rs",
     "src/application/sessions/ports/session_home.rs",
-    "src/application/sessions/session_home.rs",
+    "src/application/sessions/services/session_home.rs",
     "src/infrastructure/persistence/file/sessions/session_home_catalogue.rs",
     "src/infrastructure/persistence/file/sessions/session_home_catalogue_index.rs",
     "src/infrastructure/persistence/file/sessions/session_store_home.rs",
@@ -159,9 +159,9 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/start_fresh_conversation.rs",
     "src/application/sessions/dto/resume_saved_session.rs",
     "src/application/sessions/dto/retained_context.rs",
-    "src/application/sessions/active_session.rs",
-    "src/application/sessions/conversation_ledger.rs",
-    "src/application/sessions/history_paging.rs",
+    "src/application/sessions/services/active_session.rs",
+    "src/application/sessions/services/conversation_ledger.rs",
+    "src/application/sessions/services/history_paging.rs",
     "src/application/agent_turn/agent_loop/durable_prefix.rs",
     "src/infrastructure/persistence/file/sessions/session_snapshot_sources.rs",
     "src/infrastructure/persistence/file/sessions/fresh_session_identity.rs",
@@ -617,8 +617,11 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // D7 #1976 folds the interface reset composition into `switch_to`
     // (was 277 before D7); D8 #1977 notes the switch is the transactions' alone
     // (was 287 before D8).
-    ("src/application/sessions/active_session.rs", 289),
-    ("src/application/sessions/conversation_ledger.rs", 295),
+    ("src/application/sessions/services/active_session.rs", 289),
+    (
+        "src/application/sessions/services/conversation_ledger.rs",
+        295,
+    ),
     ("src/application/sessions/dto/history.rs", 90),
     ("src/application/sessions/dto/message_recovery.rs", 185),
     ("src/application/sessions/dto/session_report.rs", 150),
@@ -630,7 +633,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/application/sessions/dto/start_fresh_conversation.rs",
         136,
     ),
-    ("src/application/sessions/history_paging.rs", 65),
+    ("src/application/sessions/services/history_paging.rs", 65),
     // D7 #1976 declares and re-exports the transition ports module (was
     // 135 before D7); D9 #1978 adds the ephemeral scrub to the retention
     // port (was 142 before D9).
@@ -1662,7 +1665,8 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
         );
     }
     // The identity switch is the active session's own step, private to it.
-    let state = std::fs::read_to_string("src/application/sessions/active_session.rs").unwrap();
+    let state =
+        std::fs::read_to_string("src/application/sessions/services/active_session.rs").unwrap();
     assert!(state.contains("pub(in crate::application::sessions) fn switch_to("));
     assert!(!state.contains("pub fn switch_to("));
     assert!(!state.contains("pub fn switch_identity("));
@@ -1729,13 +1733,13 @@ fn interface_owns_no_conversation_state_or_history_policy() {
     let application_ledger = production_files_calling("struct ConversationLedger");
     assert_eq!(
         application_ledger,
-        set(&["src/application/sessions/conversation_ledger.rs"]),
+        set(&["src/application/sessions/services/conversation_ledger.rs"]),
         "one conversation ledger, owned by the application"
     );
     let state_owner = production_files_calling("struct ActiveSessionState");
     assert_eq!(
         state_owner,
-        set(&["src/application/sessions/active_session.rs"]),
+        set(&["src/application/sessions/services/active_session.rs"]),
         "one active-session state, owned by the application"
     );
 }
@@ -1848,8 +1852,8 @@ fn owner_line_ceilings_are_non_empty_and_respected() {
 /// implements it, and the interface handle structs the loop is composed
 /// over. Exact: no pruning-policy file, no tool, no dispatch handler.
 const RETENTION_PORT_HOLDERS: &[&str] = &[
-    "src/application/sessions/active_session.rs",
-    "src/application/sessions/conversation_ledger.rs",
+    "src/application/sessions/services/active_session.rs",
+    "src/application/sessions/services/conversation_ledger.rs",
     "src/application/sessions/ports/mod.rs",
     "src/application/sessions/use_cases/clear_conversation.rs",
     "src/application/sessions/use_cases/export_session_report.rs",

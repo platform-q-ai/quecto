@@ -15,14 +15,14 @@
 //! One transaction runs at a time per loop: the barrier serialises concurrent requests so a later
 //! save always sees the watermark the earlier one committed. Readers of the active session are
 //! never blocked on store I/O — the state lock is held only to read inputs and to commit.
-use crate::application::sessions::session_home::SessionHomeContext;
+use crate::application::sessions::services::session_home::SessionHomeContext;
 use std::sync::Arc;
 
-use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::dto::{SaveMode, SaveOutcome, SaveSessionError, SaveTrigger};
 use crate::application::sessions::ports::{
     DurablePrefixObservation, HistoricalRosterSource, SessionStore, WorkflowRunSource,
 };
+use crate::application::sessions::services::active_session::ActiveSessionHandle;
 use crate::domain::conversation::services::conversation_view;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session;

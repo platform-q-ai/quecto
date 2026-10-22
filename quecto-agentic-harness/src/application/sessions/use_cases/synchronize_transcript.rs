@@ -9,12 +9,14 @@
 //! transport decides how many delta messages one frame carries (its frame
 //! predicate); the application decides what the cut means (`next_rev`).
 //! The reset window is the shared paging rule (`history_paging`).
-use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSessionState};
-use crate::application::sessions::conversation_ledger::ConversationLedger;
 use crate::application::sessions::dto::{
     SyncRequest, TranscriptDelta, TranscriptReset, TranscriptSync,
 };
-use crate::application::sessions::history_paging::newest_window;
+use crate::application::sessions::services::active_session::{
+    ActiveSessionHandle, ActiveSessionState,
+};
+use crate::application::sessions::services::conversation_ledger::ConversationLedger;
+use crate::application::sessions::services::history_paging::newest_window;
 use crate::domain::conversation::value_objects::message::Message;
 
 pub struct SynchronizeTranscript {

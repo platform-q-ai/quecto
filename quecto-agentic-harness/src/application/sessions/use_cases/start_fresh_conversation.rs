@@ -22,13 +22,13 @@ use std::sync::Arc;
 
 use super::clear_conversation::{clear_retention_best_effort, retention_of, visible_message_count};
 use super::{DepartingChildren, SaveSession};
-use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::dto::{
     FreshConversationStarted, SaveTrigger, SessionTransition, StartFreshConversationError,
 };
 use crate::application::sessions::ports::{
     FleetSettlement, FreshSessionIdentityGenerator, SessionStore, SessionSwitchRuntime,
 };
+use crate::application::sessions::services::active_session::ActiveSessionHandle;
 use crate::domain::conversation::services::conversation_edit::clear_conversation;
 use crate::domain::conversation::value_objects::message::Message;
 

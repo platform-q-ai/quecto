@@ -205,7 +205,7 @@ pub(in crate::interface) async fn emit_event_to_broadcast_or_writer(
 
 pub(super) async fn emit_ledger_advanced(
     ctx: &mut DispatchCtx<'_>,
-    advance: crate::application::sessions::conversation_ledger::LedgerAdvance,
+    advance: crate::application::sessions::services::conversation_ledger::LedgerAdvance,
 ) {
     ctx.event_sink().emit_ledger_advanced(advance).await;
 }

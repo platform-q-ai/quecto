@@ -118,6 +118,10 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("application/environments", &["use_cases", "ports", "dto"]),
     Capability("application/subagents", &["use_cases", "ports", "dto"]),
     Capability(
+        "application/sessions",
+        &["use_cases", "ports", "dto", "services"],
+    ),
+    Capability(
         "application/swarm",
         &["use_cases", "ports", "dto", "services", "test_support"],
     ),
