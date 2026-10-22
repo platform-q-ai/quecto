@@ -64,10 +64,8 @@ struct ToolResultLine {
 }
 
 #[cfg(test)]
-#[path = "uds_tool_intercept_tests.rs"]
 mod tests;
 // The reader-side interception tests (#994) once beside the multi-client
 // loop; they exercise only this parser, so they stay its siblings.
 #[cfg(test)]
-#[path = "uds_multi_interception_tests.rs"]
 mod multi_interception_tests;

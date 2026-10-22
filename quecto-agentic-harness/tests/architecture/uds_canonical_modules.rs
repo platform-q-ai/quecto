@@ -2,6 +2,24 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+fn redirects_path(meta: &syn::Meta) -> bool {
+    if meta.path().is_ident("path") {
+        true
+    } else if meta.path().is_ident("cfg_attr") {
+        if let syn::Meta::List(list) = meta {
+            use syn::parse::Parser;
+            let parser = syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated;
+            return match parser.parse2(list.tokens.clone()) {
+                Ok(arguments) => arguments.iter().skip(1).any(redirects_path),
+                Err(_) => true,
+            };
+        }
+        true
+    } else {
+        false
+    }
+}
+
 struct Resolver<F> {
     read: F,
     visited: BTreeSet<PathBuf>,
@@ -37,7 +55,7 @@ impl<F: Fn(&Path) -> Result<String, String>> Resolver<F> {
                 ];
                 let mut redirected = None;
                 for attribute in &module.attrs {
-                    if attribute.path().is_ident("path") {
+                    if redirects_path(&attribute.meta) {
                         self.violations.push(format!(
                             "{}: module {name} redirects canonical resolution",
                             owner.display()
@@ -92,10 +110,16 @@ fn inspect<F: Fn(&Path) -> Result<String, String>>(roots: &[PathBuf], read: F) -
 }
 
 #[test]
-fn uds_framing_and_wire_use_canonical_module_paths() {
+fn uds_framing_wire_and_cli_interception_use_canonical_module_paths() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/interface/uds");
     let violations = inspect(
-        &[root.join("framing/mod.rs"), root.join("wire/mod.rs")],
+        &[
+            root.join("framing/mod.rs"),
+            root.join("wire/mod.rs"),
+            root.parent()
+                .expect("interface directory")
+                .join("cli/uds_tool_intercept.rs"),
+        ],
         |path| std::fs::read_to_string(path).map_err(|error| error.to_string()),
     );
     assert!(
@@ -172,4 +196,25 @@ fn resolver_reports_redirects_even_when_canonical_and_follows_children() {
             .iter()
             .all(|message| message.contains("redirects canonical resolution"))
     );
+}
+
+fn assert_cfg_attr_redirect(attribute: &str) {
+    let source = format!("{attribute} mod actual;");
+    let violations = fixture(&[
+        ("slice/mod.rs", &source),
+        ("slice/actual.rs", ""),
+        ("slice/alias.rs", ""),
+    ]);
+    assert_eq!(violations.len(), 1, "{attribute}: {violations:?}");
+    assert!(violations[0].contains("redirects canonical resolution"));
+}
+
+#[test]
+fn resolver_rejects_direct_cfg_attr_redirect() {
+    assert_cfg_attr_redirect("#[cfg_attr(unix, path = \"alias.rs\")]");
+}
+
+#[test]
+fn resolver_rejects_nested_cfg_attr_redirect() {
+    assert_cfg_attr_redirect("#[cfg_attr(unix, cfg_attr(test, path = \"alias.rs\"))]");
 }
