@@ -5,10 +5,12 @@
 |---|---|
 | Task | issue-2696-exit-guard |
 | Version | 1 |
-| State | draft |
+| State | accepted |
 | Proposed by | SQ (`shane@platformq.co.uk`) |
+| Accepted by | SQ (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-22T00:09:29Z |
 | Created | 2026-10-22T00:09:02Z |
-| Updated | 2026-10-22T00:09:02Z |
+| Updated | 2026-10-22T00:09:29Z |
 
 ## Approach
 At site::left_runs, affirmatively admit composed cleanup only when the existing launcher has nonempty StartedRuns; otherwise return empty before environment_of/build. Keep existing application selection and deduplication intact. TDD at tool_left_runs_tests boundary with isolated trap/counting builder; no production assertion on valid absent launcher. Preserve stopped outcome and session_end assertions. Separate red-test bundle phase (no behavior implementation), delivery phase, then fresh PR-first independent review and separate remediation if needed. One fixed small pool per phase, member_limit25; only one member builds. Baseline ef17b93e0d5058e07fdd3e54f05e6c86f3e31243; full handoff /home/swq/.quecto/artifacts/issue-2696/planning/handoff.md. Estimate109–255 lines including version; target500, max900. Targeted cargo lib tests for tool::left_runs_tests, application list_left_runs::tests, project_board; cargo fmt check and strict targeted clippy. Full suite in CI. Required crate patch bump in final commit, explicit paths staged, hooks intact; no process artifacts committed.
