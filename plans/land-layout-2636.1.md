@@ -5,10 +5,12 @@
 |---|---|
 | Task | land-layout-2636 |
 | Version | 1 |
-| State | draft |
+| State | accepted |
 | Proposed by | SQ (`shane@platformq.co.uk`) |
+| Accepted by | SQ (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-22T09:34:47Z |
 | Created | 2026-10-22T09:34:36Z |
-| Updated | 2026-10-22T09:34:36Z |
+| Updated | 2026-10-22T09:34:47Z |
 
 ## Approach
 Refresh the existing reviewed layout slice rather than redesign it. Preserve original red-first commits and move-only ownership. Merge current master as a merge commit, reconcile new master content at relocated paths, and validate architecture ratchet/placements and targeted gates. Publish version master+1 as final commit. Independently review the exact refreshed PR head in a fresh checkout, remediate separately if needed, then retarget child #2641 before merging with green required CI and resolved conversations.
