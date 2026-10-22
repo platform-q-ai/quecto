@@ -35,5 +35,4 @@ pub(in crate::interface) fn parse_forwarded_get_messages(
 }
 
 #[cfg(test)]
-#[path = "uds_forward_response_cov_tests.rs"]
 mod cov_tests;

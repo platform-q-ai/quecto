@@ -100,7 +100,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/resume_refusal_code.rs",
     "src/application/sessions/dto/resume_target.rs",
     "src/domain/sessions/services/stable_digest.rs",
-    "src/interface/uds/wire/uds_safe_display.rs",
+    "src/interface/uds/wire/uds_freshness_json/uds_safe_display.rs",
     "src/application/sessions/use_cases/resume_saved_session_decision.rs",
     "src/interface/uds/sessions/resume_session_controller.rs",
     "src/interface/cli/uds_dispatch_resume.rs",
@@ -132,7 +132,7 @@ const CANONICAL_FILES: &[&str] = &[
     // #2045: the shell command that opens quecto in a session's folder.
     "src/domain/sessions/value_objects/session_open_command.rs",
     "src/domain/sessions/value_objects/session_query_refusal.rs",
-    "src/interface/uds/wire/protocol_search_rescue.rs",
+    "src/interface/uds/wire/protocol/protocol_search_rescue.rs",
     "src/interface/uds/wire/uds_freshness_json.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/recover_message.rs",
@@ -988,7 +988,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/domain/sessions/value_objects/session_query_refusal.rs",
         31,
     ),
-    ("src/interface/uds/wire/protocol_search_rescue.rs", 51),
+    (
+        "src/interface/uds/wire/protocol/protocol_search_rescue.rs",
+        51,
+    ),
     ("src/interface/uds/wire/uds_freshness_json.rs", 33),
     ("src/composition/session_search.rs", 23),
     ("src/interface/cli/uds_dispatch_search.rs", 80),
@@ -997,7 +1000,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/interface/uds/sessions/search_session_metadata_controller.rs",
         39,
     ),
-    ("src/interface/uds/wire/uds_safe_display.rs", 24),
+    (
+        "src/interface/uds/wire/uds_freshness_json/uds_safe_display.rs",
+        24,
+    ),
     // #1848 reasoning-effort injection plus #2009 scoped session dispatch.
     // #2011: the resume answers are the resume presenter's (259 → 246).
     ("src/interface/cli/uds_dispatch_session.rs", 243),

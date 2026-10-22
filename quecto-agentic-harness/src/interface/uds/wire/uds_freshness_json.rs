@@ -3,7 +3,6 @@
 //! made safe and BOUNDED (R2-H5). A store with a thousand corrupt records
 //! would otherwise put a thousand lines into every answer, one per keystroke.
 
-#[path = "uds_safe_display.rs"]
 mod uds_safe_display;
 pub(in crate::interface) use uds_safe_display::safe_display;
 

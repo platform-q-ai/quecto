@@ -3458,7 +3458,7 @@ fn cargo_toml_section_contains_dependency(section: &str, dependency: &str) -> bo
 fn all_four_socket_consumers_read_via_the_shared_frame_reader() {
     let consumers = [
         "src/interface/uds/framing/uds_reader.rs",
-        "src/interface/uds/framing/uds_multi_client.rs",
+        "src/interface/uds/framing/uds_multi/client.rs",
         "src/infrastructure/tools/agents/subagent_monitor.rs",
         // The parent→child query path (agent tool + TUI inspector poll) is a
         // socket consumer too; it must not be stranded on legacy NDJSON reads
@@ -5925,7 +5925,7 @@ const SUBAGENT_PROCESS_MODULES: &[&str] = &[
     "src/infrastructure/processes/owned_child_termination.rs",
     "src/infrastructure/processes/parent_control.rs",
     "src/interface/uds/framing/uds_multi.rs",
-    "src/interface/uds/framing/uds_multi_client.rs",
+    "src/interface/uds/framing/uds_multi/client.rs",
     "src/interface/cli/uds_parent_control.rs",
     "src/interface/cli/uds_teardown_adapters.rs",
     "src/interface/cli/uds_teardown_handles.rs",
@@ -6542,7 +6542,7 @@ fn no_interface_registry_drain_remains_after_the_fleet_teardown() {
         "src/interface/uds/framing/uds_shutdown.rs",
         "src/interface/cli/uds_dispatch_session.rs",
         "src/interface/uds/framing/uds_multi.rs",
-        "src/interface/uds/framing/uds_multi_client.rs",
+        "src/interface/uds/framing/uds_multi/client.rs",
         "src/interface/cli/uds_query.rs",
     ] {
         let source = production_source(path);

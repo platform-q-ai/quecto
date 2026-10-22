@@ -435,5 +435,4 @@ async fn busy_inspection_accepts_production_projection_without_dispatch() {
     assert_eq!(response["data"]["repeatedFailureNotifications"], 0);
 }
 
-#[path = "uds_multi_owner_exit_tests.rs"]
 mod owner_exit_tests;

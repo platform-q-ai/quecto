@@ -30,5 +30,4 @@ pub(super) fn announce_if_exit_persist(
 }
 
 #[cfg(test)]
-#[path = "uds_owner_exit_tests.rs"]
-mod tests;
+mod uds_owner_exit_tests;

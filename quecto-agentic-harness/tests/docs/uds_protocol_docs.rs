@@ -7,7 +7,7 @@ use crate::common::read_repo_file;
 /// The command type names `AgentCommand::type_name` answers, read from its
 /// match arms (`Self::Variant { .. } => "name",`).
 fn accepted_command_types() -> Vec<String> {
-    let source = read_repo_file("src/interface/uds/wire/protocol_commands.rs");
+    let source = read_repo_file("src/interface/uds/wire/protocol/protocol_commands.rs");
     let start = source
         .find("pub fn type_name(&self)")
         .expect("AgentCommand::type_name exists");

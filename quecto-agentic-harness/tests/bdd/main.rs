@@ -867,7 +867,7 @@ pub struct QuectoWorld {
     //   src/infrastructure/tools/native/workflow_tool_comprehensive_tests.rs
     //   src/interface/shared_tests.rs
     //   src/interface/cli/controllers/agent_tests.rs
-    //   src/interface/uds/wire/protocol_tests.rs
+    //   src/interface/uds/wire/protocol/tests.rs
     //   src/infrastructure/persistence/file/sessions/session_store.rs
     // --- Extension system BDD fields ---
     /// Test extension for extension trait scenarios (Debug-opaque)

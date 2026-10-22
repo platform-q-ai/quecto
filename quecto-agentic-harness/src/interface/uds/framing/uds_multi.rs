@@ -42,7 +42,6 @@ pub(in crate::interface) const BROADCAST_CHANNEL_CAPACITY: usize = 256;
 pub(super) static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
-#[path = "uds_multi_busy.rs"]
 mod busy;
 pub(crate) use busy::{BusyFlag, BusyGuard};
 
@@ -507,9 +506,7 @@ async fn run_dispatch_loop(
     }
 }
 
-#[path = "uds_multi/clients.rs"]
 mod clients;
-#[path = "uds_multi_recv.rs"]
 mod recv;
 use recv::DispatchMsg;
 #[cfg(test)]
@@ -558,7 +555,6 @@ async fn handle_client_msg(
 
 // ─── Per-client handler ───────────────────────────────────────────────────────
 
-#[path = "uds_multi_client.rs"]
 mod client;
 pub(crate) use client::{ClientHandlerArgs, handle_client};
 
@@ -566,29 +562,20 @@ pub(crate) use client::{ClientHandlerArgs, handle_client};
 
 // Test modules for multi-client dispatch and passive-note delivery.
 #[cfg(test)]
-#[path = "uds_multi_accept_loop_tests.rs"]
 mod accept_loop_tests;
 #[cfg(test)]
-#[path = "uds_multi_cov2_tests.rs"]
 mod cov2_tests;
 #[cfg(test)]
-#[path = "uds_multi_cov_tests.rs"]
 mod cov_tests;
 #[cfg(test)]
-#[path = "uds_multi_926_wake_tests.rs"]
 mod issue_926_wake_tests;
 #[cfg(test)]
-#[path = "uds_994_tests.rs"]
 mod issue_994_tests;
 #[cfg(test)]
-#[path = "uds_multi_oversized_tests.rs"]
 mod oversized_tests;
 #[cfg(test)]
-#[path = "uds_paged_history_tests.rs"]
 mod paged_history_tests;
 #[cfg(test)]
-#[path = "uds_multi_shutdown_tests.rs"]
 mod shutdown_tests;
 #[cfg(test)]
-#[path = "uds_snapshot_tests.rs"]
 mod snapshot_tests;

@@ -18,9 +18,7 @@ pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
         .or_else(|e| protocol_search_rescue::rescued(line).ok_or(e))
         .map_err(|e| format!("parse error: {e}"))
 }
-#[path = "protocol_commands.rs"]
 mod protocol_commands;
-#[path = "protocol_search_rescue.rs"]
 mod protocol_search_rescue;
 pub use protocol_commands::{
     AgentCommand, ImagePayload, SessionListScopeCommand, StreamingBehavior,
@@ -640,34 +638,25 @@ pub struct TokenStats {
 }
 
 #[cfg(test)]
-#[path = "protocol_roster_tests.rs"]
 mod protocol_roster_tests;
 #[cfg(test)]
-#[path = "protocol_tests.rs"]
-mod tests;
+mod protocol_tests;
 #[cfg(test)]
-#[path = "protocol_1586_tests.rs"]
 mod tests_1586;
 
 #[cfg(test)]
-#[path = "protocol_event_tests.rs"]
 mod event_tests;
 
 #[cfg(test)]
-#[path = "protocol_policy_tests.rs"]
 mod policy_tests;
 #[cfg(test)]
-#[path = "protocol_shape_tests.rs"]
 mod shape_tests;
 
 #[cfg(test)]
-#[path = "protocol_1060_tests.rs"]
 mod protocol_1060_tests;
 
 #[cfg(test)]
-#[path = "protocol_environment_tests.rs"]
 mod protocol_environment_tests;
 
 #[cfg(test)]
-#[path = "protocol_effective_status_tests.rs"]
 mod protocol_effective_status_tests;
