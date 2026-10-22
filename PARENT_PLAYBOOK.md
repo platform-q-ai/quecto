@@ -43,7 +43,7 @@ Run each remediation pass in a separate, fresh fix swarm, distinct from the revi
 After fixes are pushed, use a fresh independent review swarm to verify the changed revision and affected findings. Repeat review and remediation subject to the repeated remediation escalation checkpoint below. Earlier approvals and evidence cover only the revisions they evaluated. Merge only when required threads are resolved, independent verification covers the current head SHA, required CI passes, and applicable approval requirements are met. Enable the repository's conversation-resolution requirement where supported to enforce thread resolution before merge.
 
 #### Repeated remediation escalation
-If a PR requires **more than two remediation rounds**, pause before starting the third round and escalate to the human. A remediation round is one fix pass responding to an independent review, followed by independent re-review; individual findings or commits do not count as separate rounds.
+This checkpoint exists to judge whether the PR should be split, not to cut review short: whichever course is approved, independent review and remediation continue until the resulting PR or PRs are clean. If a PR requires **more than two remediation rounds**, pause before starting the third round and escalate to the human. A remediation round is one fix pass responding to an independent review, followed by independent re-review; individual findings or commits do not count as separate rounds.
 
 The escalation must include:
 - The PR's scope, changed-line count, and remediation history.
