@@ -539,8 +539,8 @@ fn teardown_interface_only_parses_maps_and_presents() {
         .into_iter()
         .map(str::to_string),
     );
-    for path in files.iter().filter(|p| !p.ends_with("_tests.rs")) {
-        for (line_no, line) in production_code(path) {
+    for path in super::dependency_scan::production_closure(&files) {
+        for (line_no, line) in production_code(&path) {
             for needle in forbidden {
                 assert!(
                     !line.contains(needle),

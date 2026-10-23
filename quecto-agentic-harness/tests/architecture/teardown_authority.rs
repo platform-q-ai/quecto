@@ -532,16 +532,12 @@ fn teardown_paths_carry_no_pid() {
     let mut files = Vec::new();
     walk(Path::new("src/application/subagents"), &mut files);
     walk(Path::new("src/application/environments"), &mut files);
-    files.extend(
-        [
-            "src/interface/uds/controllers/subagent_teardown_controller.rs",
-            "src/interface/uds/mapping/subagent_teardown_mapping.rs",
-            "src/interface/uds/presenters/subagent_teardown_presenter.rs",
-            "src/interface/uds/wire/subagent_teardown_wire.rs",
-        ]
-        .into_iter()
-        .map(str::to_string),
-    );
+    files.extend(super::dependency_scan::production_closure(&[
+        "src/interface/uds/controllers/subagent_teardown_controller.rs",
+        "src/interface/uds/mapping/subagent_teardown_mapping.rs",
+        "src/interface/uds/presenters/subagent_teardown_presenter.rs",
+        "src/interface/uds/wire/subagent_teardown_wire.rs",
+    ]));
     for path in files.iter().filter(|p| !p.ends_with("_tests.rs")) {
         assert!(
             NO_PID_FILES.contains(&path.as_str()),

@@ -209,7 +209,12 @@ paths.
   the only place a sessions use case, controller, store or the
   `ActiveSessionState` is constructed; the interface receives handles through
   `CliComposition` and must not name the composition layer.
-- `src/interface/uds/sessions/*` and `src/interface/uds/controllers/uds/uds_dispatch_session.rs`
+- `src/interface/uds/controllers/sessions_controller.rs`,
+  `src/interface/uds/controllers/read_history_controller.rs`,
+  `src/interface/uds/controllers/recover_message_controller.rs`,
+  `src/interface/uds/controllers/resume_session_controller.rs`,
+  `src/interface/uds/controllers/synchronize_transcript_controller.rs` and
+  `src/interface/uds/controllers/uds/uds_dispatch_session.rs`
   for the wire edge: parse the command, map it to the DTO, request the
   injected use case, present the response. Handlers admit and present; they
   never claim, load, save, release or switch anything themselves.

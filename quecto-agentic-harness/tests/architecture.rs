@@ -5399,13 +5399,13 @@ fn sessions_edge_files() -> Vec<String> {
         .collect()
 }
 
-/// As `assert_dependencies`, over named files rather than a folder: each
-/// listed file must exist, and every path it names must pass `allowed`.
+/// As `assert_dependencies`, over registered owners' production module
+/// closures: each owner must exist, and every dependency must pass `allowed`.
 fn assert_file_dependencies<S: AsRef<str>>(files: &[S], allowed: fn(&str) -> bool) {
     assert!(!files.is_empty(), "an edge rule must name its files");
-    for path in files.iter().map(AsRef::as_ref) {
+    for path in dependency_scan::production_closure(files) {
         let source =
-            fs::read_to_string(path).unwrap_or_else(|error| panic!("read {path}: {error}"));
+            fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {path}: {error}"));
         let paths = dependency_paths(&source).unwrap_or_else(|| panic!("parse {path}"));
         let violations: Vec<_> = paths.iter().filter(|dep| !allowed(dep)).collect();
         assert!(

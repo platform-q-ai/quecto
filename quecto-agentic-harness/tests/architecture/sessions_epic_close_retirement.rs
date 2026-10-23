@@ -450,7 +450,7 @@ fn interface_session_modules_parse_map_and_present_only() {
         );
     }
     // The sessions edge names only the capability's DTOs and use cases.
-    for path in SESSIONS_EDGE_FILES.iter().map(|p| p.to_string()) {
+    for path in super::dependency_scan::production_closure(SESSIONS_EDGE_FILES) {
         for (n, line) in production_code(&path) {
             if line.contains("crate::application::sessions::") {
                 assert!(
