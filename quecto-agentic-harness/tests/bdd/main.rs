@@ -865,7 +865,7 @@ pub struct QuectoWorld {
     // V1 BDD workflow fields removed. V2 workflow is covered by unit tests in:
     //   src/domain/workflow/mod_tests.rs
     //   src/infrastructure/tools/native/workflow_tool_comprehensive_tests.rs
-    //   src/interface/shared_tests.rs
+    //   src/interface/cli/controllers/shared/tests.rs
     //   src/interface/cli/controllers/agent_tests.rs
     //   src/interface/uds/wire/protocol/tests.rs
     //   src/infrastructure/persistence/file/sessions/session_store.rs

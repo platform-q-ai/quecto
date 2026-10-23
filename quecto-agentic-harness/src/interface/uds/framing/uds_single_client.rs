@@ -5,8 +5,8 @@
 use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::interface::cli::uds_lifecycle;
 use crate::interface::cli::uds_session::history_session_stats;
+use crate::interface::cli::{controllers::shared::WorkflowStateHandle, uds_lifecycle};
 use crate::interface::uds::controllers::uds::{DispatchCtx, run_command_loop};
 use crate::interface::uds::controllers::uds_session_handles::SessionHandles;
 use crate::interface::uds::controllers::{uds_cancel, uds_ext_protocol, uds_extensions};
@@ -23,7 +23,7 @@ pub(in crate::interface) struct SingleClientArgs<'a> {
     pub(in crate::interface) ext_registry: Option<uds_extensions::ExtRegistry>,
     pub(in crate::interface) subagent_registry:
         Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
-    pub(in crate::interface) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    pub(in crate::interface) workflow_state: Option<WorkflowStateHandle>,
 }
 
 pub(in crate::interface) async fn single_client_loop(

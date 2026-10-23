@@ -330,7 +330,8 @@ fn admitted_child(checkout: &std::path::Path) {
         "the admission's reads went through the composed builder"
     );
     let bound = swarm_bridge::process_board().expect("admission bound the process's board");
-    let context = crate::interface::tool_runtime::swarm_context().expect("a contracted context");
+    let context = crate::interface::cli::controllers::tool_runtime::swarm_context()
+        .expect("a contracted context");
     assert_eq!(context.checkout, checkout);
     assert!(
         context.board.is_the_same_board(bound),

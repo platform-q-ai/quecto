@@ -38,7 +38,7 @@ pub struct SessionLoopInputs {
     /// The agent's durable-prefix dirty latch (#1072) the save drains.
     pub durable_prefix: Arc<DurablePrefixLatch>,
     /// The bound workflow engine whose run the session records, if any.
-    pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    pub workflow_state: Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
     /// The sub-agent registry whose rows the session records as history (#1937).
     pub subagent_registry:
         Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,

@@ -206,7 +206,7 @@ async fn e2e_resume_restores_history_without_readopting_children() {
             0,
         ),
     );
-    let workflow_state: crate::interface::shared::WorkflowStateHandle =
+    let workflow_state: crate::interface::cli::controllers::shared::WorkflowStateHandle =
         std::sync::Arc::new(std::sync::Mutex::new(feature_workflow_engine()));
     fx.set_subagent_registry(registry.clone());
     {

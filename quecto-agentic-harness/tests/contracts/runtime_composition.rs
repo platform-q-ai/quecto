@@ -30,18 +30,22 @@ const FORBIDDEN: &[&str] = &[
     "ComposeProviderRuntimeUseCase",
 ];
 
-fn is_test_source(name: &str) -> bool {
-    name.ends_with("_tests.rs") || name.contains("_tests_")
-}
+use crate::catalogue_conformance::declaration_ownership::declaration_test_sources;
 
 #[test]
 fn interface_contains_no_provider_construction_or_router_orchestration() {
     let interface_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/interface");
+    assert_interface_contains_no_provider_construction(&interface_dir);
+}
+
+fn assert_interface_contains_no_provider_construction(interface_dir: &Path) {
     let mut offenders = Vec::new();
     let mut scanned = 0usize;
-    for entry in walk(&interface_dir) {
+    let files = walk(interface_dir);
+    let test_sources = declaration_test_sources(&files);
+    for entry in files {
         let name = entry.file_name().unwrap().to_string_lossy().to_string();
-        if !name.ends_with(".rs") || is_test_source(&name) {
+        if !name.ends_with(".rs") || test_sources.contains(&entry.canonicalize().unwrap()) {
             continue;
         }
         scanned += 1;
@@ -124,4 +128,79 @@ fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
         }
     }
     files
+}
+
+mod l13e_test_ownership {
+    use super::assert_interface_contains_no_provider_construction;
+    fn fixture(child: &str) -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        let controllers = root.path().join("cli/controllers");
+        std::fs::create_dir_all(controllers.join("shared")).unwrap();
+        // Mirror src/interface/cli/controllers/shared.rs and its ordinary child.
+        std::fs::write(controllers.join("shared.rs"), "#[cfg(test)]\nmod tests;\n").unwrap();
+        std::fs::write(controllers.join("shared/tests.rs"), child).unwrap();
+        for index in 0..51 {
+            std::fs::write(root.path().join(format!("module_{index}.rs")), "").unwrap();
+        }
+        root
+    }
+
+    const CREDENTIAL_TEST: &str = "use crate::infrastructure::auth::credential_store::CredentialStore;\n\
+        #[test]\nfn credential_fixture() {\n\
+        let tmp = tempfile::tempdir().unwrap();\n\
+        let _store = CredentialStore::new(tmp.path());\n}\n";
+
+    #[test]
+    fn canonical_external_cfg_test_child_is_not_production() {
+        let root = fixture(CREDENTIAL_TEST);
+        assert_interface_contains_no_provider_construction(root.path());
+    }
+
+    #[test]
+    #[should_panic(expected = "production.rs: CredentialStore::new")]
+    fn production_credential_construction_is_rejected() {
+        let root = fixture("");
+        std::fs::write(
+            root.path().join("production.rs"),
+            "fn build() { let _store = CredentialStore::new(std::path::Path::new(\".\")); }",
+        )
+        .unwrap();
+        assert_interface_contains_no_provider_construction(root.path());
+    }
+
+    #[test]
+    #[should_panic(expected = "production.rs: create_openai_compatible_provider")]
+    fn production_provider_construction_is_rejected() {
+        let root = fixture("");
+        std::fs::write(
+            root.path().join("production.rs"),
+            "fn build() { create_openai_compatible_provider(); }",
+        )
+        .unwrap();
+        assert_interface_contains_no_provider_construction(root.path());
+    }
+
+    #[test]
+    #[should_panic(expected = "production.rs: ProviderRouter")]
+    fn production_router_orchestration_is_rejected() {
+        let root = fixture("");
+        std::fs::write(
+            root.path().join("production.rs"),
+            "use router::ProviderRouter;",
+        )
+        .unwrap();
+        assert_interface_contains_no_provider_construction(root.path());
+    }
+
+    #[test]
+    #[should_panic(expected = "tests.rs: CredentialStore::new")]
+    fn child_owned_by_production_and_tests_is_rejected() {
+        let root = fixture(CREDENTIAL_TEST);
+        std::fs::write(
+            root.path().join("cli/controllers/shared.rs"),
+            "#[cfg(test)]\nmod tests;\n#[path = \"shared/tests.rs\"]\nmod production;\n",
+        )
+        .unwrap();
+        assert_interface_contains_no_provider_construction(root.path());
+    }
 }

@@ -149,8 +149,8 @@ pub(crate) struct DispatchCtx<'a> {
     pub current_client_id: u64,
     pub subagent_registry: Option<subagent_registry::SubagentRegistry>,
     pub notification_rx: Option<subagent_registry::NotificationRx>,
-    pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
-    pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
+    pub workflow_state: Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>, // #562
+    pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>, // #562
     /// Fleet teardown (#1938) of delete-all and session transitions.
     pub fleet_teardown: Option<FleetTeardown>,
     /// Discovery (#1861, #2010): answers `list_sessions` and `search_session_metadata`.

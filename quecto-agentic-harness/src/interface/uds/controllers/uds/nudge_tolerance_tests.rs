@@ -15,7 +15,7 @@ use super::dispatch_test_env::{
 use super::*;
 use crate::application::providers::ports::LlmProvider;
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::interface::shared::WorkflowStateHandle;
+use crate::interface::cli::controllers::shared::WorkflowStateHandle;
 
 /// Fragment of the standard auto-continue nudge (first nudge, and any nudge
 /// after a turn that advanced the workflow).

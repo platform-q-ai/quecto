@@ -13,7 +13,7 @@ use crate::infrastructure::config::{Config, ToolPolicyEntryConfig};
 use crate::infrastructure::tools::agents::inherited_tool_policy::{
     InheritedToolPolicySnapshot, workflow_tool_identity,
 };
-use crate::interface::tool_runtime::{
+use crate::interface::cli::controllers::tool_runtime::{
     ToolEntrypoint, ToolRuntimeBuild, ToolRuntimeBuildArgs, ToolRuntimeProfileContext,
     ToolRuntimeWorkflowPolicy, build_tool_runtime,
 };

@@ -2074,10 +2074,10 @@ fn retained_context_has_exactly_one_owner_per_role() {
         ])
     );
     assert!(
-        !production_code("src/interface/shared.rs")
+        !production_code("src/interface/cli/controllers/shared.rs")
             .iter()
             .any(|(_, line)| line.contains("spill")),
-        "interface/shared.rs no longer scrubs or names the spill file"
+        "interface/cli/controllers/shared.rs no longer scrubs or names the spill file"
     );
     // Composition alone builds the graph and hands the builder to `main`.
     let main = std::fs::read_to_string("src/main.rs").unwrap();

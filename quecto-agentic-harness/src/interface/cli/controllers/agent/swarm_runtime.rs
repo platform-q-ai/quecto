@@ -14,7 +14,7 @@ pub(super) fn admit(ctx: &CliContext, flags: &mut AgentFlags, stderr: &mut Strin
     let context = match admission_board(ctx, flags, contracted) {
         Ok(Some(board)) => {
             swarm_bridge::bind_process_board(board);
-            crate::interface::tool_runtime::swarm_context()
+            crate::interface::cli::controllers::tool_runtime::swarm_context()
         }
         Ok(None) => None,
         Err(refusal) => {
@@ -170,7 +170,7 @@ fn admit_backend(
 
 pub(super) fn bind_socket(socket: &std::path::Path, stderr: &mut String) -> bool {
     swarm_bridge::set_process_socket(socket.to_path_buf());
-    if let Some(context) = crate::interface::tool_runtime::swarm_context() {
+    if let Some(context) = crate::interface::cli::controllers::tool_runtime::swarm_context() {
         if context.database().exists() {
             if let Err(error) = context.register_endpoint(&socket.to_string_lossy()) {
                 stderr.push_str(&format!("swarm endpoint registration failed: {error}\n"));

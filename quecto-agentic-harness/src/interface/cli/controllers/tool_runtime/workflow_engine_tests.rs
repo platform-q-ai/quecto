@@ -5,7 +5,7 @@
 //! fail-closed start, and a swarm member, which builds no engine by design,
 //! is not refused.
 use crate::infrastructure::config::Config;
-use crate::interface::tool_runtime::{
+use crate::interface::cli::controllers::tool_runtime::{
     ToolEntrypoint, ToolRuntimeBuild, ToolRuntimeBuildArgs, ToolRuntimeProfileContext,
     ToolRuntimeWorkflowPolicy, build_tool_runtime,
 };

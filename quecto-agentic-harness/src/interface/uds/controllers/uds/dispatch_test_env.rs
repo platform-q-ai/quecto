@@ -11,7 +11,7 @@ use super::*;
 use crate::domain::workflow::{
     WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
 };
-use crate::interface::shared::WorkflowStateHandle;
+use crate::interface::cli::controllers::shared::WorkflowStateHandle;
 
 fn workflow_test_config() -> WorkflowConfig {
     WorkflowConfig {

@@ -75,7 +75,7 @@ pub(in crate::interface) struct MultiClientArgs<'a> {
     pub harness_lifecycle:
         Option<crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle>,
     /// Shared workflow state for auto-nudge injection (#562).
-    pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    pub workflow_state: Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
     /// Workflow config (auto_continue, completion_nudge flags).
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,
     /// Pre-created broadcast channel for workflow event emission (#598).
@@ -243,7 +243,7 @@ pub(in crate::interface) async fn multi_client_loop(
     let cancel_handle: CancelHandle = std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle));
     cli::controllers::swarm_composition::bind_suspension(
         &cancel_handle,
-        crate::interface::tool_runtime::swarm_context(),
+        crate::interface::cli::controllers::tool_runtime::swarm_context(),
     );
     // One loop-exit notification for every shutdown trigger (#1935, #1938):
     // the teardown graph's exit-readiness adapter fires it once the fleet

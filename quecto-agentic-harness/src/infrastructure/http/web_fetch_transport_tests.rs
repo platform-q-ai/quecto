@@ -55,7 +55,7 @@ async fn fetch_under_the_inherited_proxy_environment() {
     };
     let target = target.into_string().expect("a UTF-8 URL");
     let tool = crate::composition::web_fetch::build_allowing_loopback_for_tests(
-        crate::interface::shared::web_fetch_client_recipe(),
+        crate::interface::cli::controllers::shared::web_fetch_client_recipe(),
         32,
     );
     let arguments = serde_json::json!({ "url": target, "raw": true }).to_string();
@@ -184,7 +184,7 @@ fn the_ignored_proxy_note_names_every_variable_set() {
 /// chooses; the adapter builds everything else itself.
 #[test]
 fn the_production_recipe_is_the_shared_connect_timeout_and_built_in_roots() {
-    let recipe = crate::interface::shared::web_fetch_client_recipe();
+    let recipe = crate::interface::cli::controllers::shared::web_fetch_client_recipe();
     assert_eq!(
         recipe.connect_timeout,
         Some(crate::infrastructure::providers::transport::single_attempt_client::CONNECT_TIMEOUT)
