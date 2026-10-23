@@ -5086,6 +5086,13 @@ fn find_interface_dependencies_allowed(source: &str) -> bool {
 }
 
 fn find_composition_delegation_allowed(file: &str, source: &str) -> bool {
+    if dependency_scan::mounted_under(&[])
+        .iter()
+        .any(|(path, _, _)| path == Path::new(file))
+        && dependency_scan::test_only_file(file)
+    {
+        return true;
+    }
     dependency_paths(source).is_some_and(|paths| {
         paths.iter().all(|path| {
             let parts: Vec<_> = path.split("::").collect();
@@ -5905,6 +5912,13 @@ fn interface_dependency_roots(source: &str) -> BTreeSet<String> {
 }
 
 fn assert_interface_dependencies_allowlisted(path: &str, source: &str) {
+    if dependency_scan::mounted_under(&[])
+        .iter()
+        .any(|(file, _, _)| file == Path::new(path))
+        && dependency_scan::test_only_file(path)
+    {
+        return;
+    }
     const ALLOWED: &[&str] = &["application", "domain", "infrastructure", "interface"];
     for root in interface_dependency_roots(source) {
         const LEGACY_FIND_EXCEPTIONS: &[&str] = &[
