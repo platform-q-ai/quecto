@@ -121,17 +121,19 @@ fn collect_rs_files(dir: &Path, files: &mut Vec<String>) {
         if path.is_dir() {
             collect_rs_files(&path, files);
         } else if path.extension().is_some_and(|ext| ext == "rs") {
-            // Files named `*_tests.rs` are test-only modules included via
-            // `#[cfg(test)]`, not production architecture dependencies.
-            if path
+            // Canonical controller children use their real AST ownership;
+            // retain the existing filename policy everywhere else.
+            let legacy = path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with("_tests.rs"))
-            {
-                continue;
+                .is_some_and(|name| !name.ends_with("_tests.rs"));
+            if uds_canonical_modules::production_scan_file(
+                path.to_str().expect("source filename"),
+                legacy,
+            ) {
+                let content = fs::read_to_string(&path).expect("read file");
+                files.push(format!("{}:\n{}", path.display(), content));
             }
-            let content = fs::read_to_string(&path).expect("read file");
-            files.push(format!("{}:\n{}", path.display(), content));
         }
     }
 }
@@ -1104,7 +1106,7 @@ fn kill_environment_orchestration_stays_out_of_interface_handlers() {
     // to `ListEnvironmentsQuery` or `KillEnvironment`, and encode results —
     // kill_container orchestration must never live in `uds_query.rs`.
     let handler_files = [
-        "src/interface/cli/uds_query.rs",
+        "src/interface/uds/controllers/uds_query.rs",
         "src/infrastructure/tools/agents/agent_cmd.rs",
         "src/infrastructure/tools/agents/agent_cmd_containers.rs",
     ];
@@ -5267,7 +5269,15 @@ fn teardown_interface_dependency_allowed(path: &str) -> bool {
     match parts.as_slice() {
         ["crate", "domain", ..]
         | ["crate", "application", "subagents", ..]
-        | ["crate", "interface", "uds", ..] => true,
+        // Its own folders and the wire schema; never the dispatch loop's
+        // controllers (#2369 moved them under `uds`).
+        | [
+            "crate",
+            "interface",
+            "uds",
+            "subagent_teardown" | "parent_control" | "wire",
+            ..,
+        ] => true,
         ["crate", ..] => false,
         ["super", "super", "super", ..] => false,
         ["tokio" | "quecto_line_io" | "reqwest" | "futures", ..] => false,
@@ -5439,7 +5449,7 @@ fn sessions_interface_only_parses_maps_and_presents() {
     );
     // Every UDS edge directory is covered by exactly one of the edge rules;
     // `framing` and `wire` are the delivery adapter's transport roles
-    // (#2368), held to the layout policy (`MIGRATED`) and the socket rules
+    // (#2368) and `controllers` its dispatch (#2369), held to the layout policy (`MIGRATED`) and the socket rules
     // (`all_four_socket_consumers_read_via_the_shared_frame_reader`,
     // `multi_client_agent_announces_protocol_version_via_shared_helper`).
     let mut edges: Vec<_> = fs::read_dir("src/interface/uds")
@@ -5454,6 +5464,7 @@ fn sessions_interface_only_parses_maps_and_presents() {
         [
             "admission",
             "catalogue",
+            "controllers",
             "framing",
             "parent_control",
             "sessions",
@@ -5656,7 +5667,7 @@ fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
     }
     for dep in [
         "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
-        "crate::interface::cli::uds::DispatchCtx",
+        "crate::interface::uds::controllers::uds::DispatchCtx",
         "crate::application::sessions::ports::SessionStore",
         "tokio::net::UnixStream",
         "std::os::unix::net::UnixStream",
@@ -5926,13 +5937,13 @@ const SUBAGENT_PROCESS_MODULES: &[&str] = &[
     "src/infrastructure/processes/parent_control.rs",
     "src/interface/uds/framing/uds_multi.rs",
     "src/interface/uds/framing/uds_multi/client.rs",
-    "src/interface/cli/uds_parent_control.rs",
+    "src/interface/uds/controllers/uds_parent_control.rs",
     "src/interface/cli/uds_teardown_adapters.rs",
     "src/interface/cli/uds_teardown_handles.rs",
     "src/interface/uds/framing/uds_shutdown.rs",
-    "src/interface/cli/uds_delete_all_subagents.rs",
+    "src/interface/uds/controllers/uds_delete_all_subagents.rs",
     "src/interface/cli/uds_busy_subagents.rs",
-    "src/interface/cli/uds_dispatch_session.rs",
+    "src/interface/uds/controllers/uds/uds_dispatch_session.rs",
     "src/composition/subagent_teardown.rs",
     "src/composition/subagent_lifecycle.rs",
     "src/composition/environments.rs",
@@ -6218,10 +6229,10 @@ fn termination_paths_never_consult_a_lease_or_a_pid() {
         "src/application/subagents/use_cases/harness_shutdown.rs",
         "src/infrastructure/tools/agents/spawn_registry.rs",
         "src/infrastructure/tools/agents/process_tree.rs",
-        "src/interface/cli/uds_delete_all_subagents.rs",
+        "src/interface/uds/controllers/uds_delete_all_subagents.rs",
         "src/interface/cli/uds_busy_subagents.rs",
         "src/interface/uds/framing/uds_shutdown.rs",
-        "src/interface/cli/uds_dispatch_session.rs",
+        "src/interface/uds/controllers/uds/uds_dispatch_session.rs",
         "src/interface/uds/framing/uds_multi.rs",
         "src/composition/subagent_teardown.rs",
         "src/application/subagents/use_cases/observe_owned_child_exit.rs",
@@ -6537,13 +6548,13 @@ fn kill_result_vocabulary_is_graceful_fallback_already_exited_failed() {
 #[test]
 fn no_interface_registry_drain_remains_after_the_fleet_teardown() {
     for path in [
-        "src/interface/cli/uds_delete_all_subagents.rs",
+        "src/interface/uds/controllers/uds_delete_all_subagents.rs",
         "src/interface/cli/uds_busy_subagents.rs",
         "src/interface/uds/framing/uds_shutdown.rs",
-        "src/interface/cli/uds_dispatch_session.rs",
+        "src/interface/uds/controllers/uds/uds_dispatch_session.rs",
         "src/interface/uds/framing/uds_multi.rs",
         "src/interface/uds/framing/uds_multi/client.rs",
-        "src/interface/cli/uds_query.rs",
+        "src/interface/uds/controllers/uds_query.rs",
     ] {
         let source = production_source(path);
         for forbidden in [
@@ -6664,7 +6675,7 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
         .find(".session_key_changed(&target.identity)")
         .unwrap();
     assert!(claim < settle && settle < reset && reset < propagate);
-    let session = production_source("src/interface/cli/uds_dispatch_session.rs");
+    let session = production_source("src/interface/uds/controllers/uds/uds_dispatch_session.rs");
     assert!(
         !session.contains(".settle(") && !session.contains(".reset_roster("),
         "the interface orders no settlement or roster replacement"
@@ -6799,7 +6810,7 @@ fn environments_application_depends_only_inward() {
     );
     for dep in [
         "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
-        "crate::interface::cli::uds_query::respond",
+        "crate::interface::uds::controllers::uds_query::respond",
         "crate::application::subagents::ports::child_routing::DirectChildRouting",
         "tokio::process::Command",
         "std::process::Command",

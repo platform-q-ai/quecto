@@ -6,7 +6,7 @@ use quecto::infrastructure::persistence::file::sessions::session_ownership::{
     SessionOwnershipGuard, open_stamp_file,
 };
 use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
-use quecto::interface::cli::uds::reap_stale_sockets;
+use quecto::interface::uds::controllers::uds::reap_stale_sockets;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 // #1460 shared-state hardening steps

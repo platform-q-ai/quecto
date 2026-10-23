@@ -2,11 +2,11 @@ use super::*;
 use crate::application::sessions::dto::{RawExportReceipt, ReportPreview};
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::identity::ids::MessageId;
-use crate::interface::cli::uds::dispatch_session_roster_tests::{
+use crate::interface::cli::uds_busy_get_message::BusyCommandCtx;
+use crate::interface::uds::controllers::uds::dispatch_session_roster_tests::{
     composed_sessions_for, seeded_read_handles,
 };
-use crate::interface::cli::uds_busy_get_message::BusyCommandCtx;
-use crate::interface::cli::uds_ext_protocol;
+use crate::interface::uds::controllers::uds_ext_protocol;
 
 #[test]
 fn a_truncated_report_presents_its_preview_and_recovery_ref() {

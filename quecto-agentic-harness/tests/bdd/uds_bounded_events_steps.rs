@@ -757,7 +757,7 @@ fn when_subagent_completes_turn_on_parent(world: &mut QuectoWorld) {
             quecto::domain::conversation::value_objects::message::Message::assistant(&body, vec![]),
         ];
         let mut child_bytes = Vec::new();
-        quecto::interface::cli::uds_cancel::forward_progress_event(
+        quecto::interface::uds::controllers::uds_cancel::forward_progress_event(
             quecto::domain::agents::value_objects::agent::AgentProgressEvent::TurnCompleted {
                 messages: child_messages.into(),
             },
@@ -1515,7 +1515,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
     use quecto::infrastructure::config::Config;
     use quecto::infrastructure::security::sandbox::Sandbox;
     use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-    use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
+    use quecto::interface::uds::controllers::uds::{UdsLoopArgs, run_uds_loop};
 
     let env_overrides: HashMap<String, String> = std::env::vars()
         .filter(|(k, _)| k.starts_with("QUECTO_"))

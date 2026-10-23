@@ -5,7 +5,7 @@ use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle;
 use crate::infrastructure::tools::agents::subagent_registry::{NotificationRx, SubagentRegistry};
-use crate::interface::cli::CliContext;
+use crate::interface::{cli::CliContext, uds::controllers::uds};
 use std::sync::Arc;
 /// Max byte length for `--socket` paths (the portable macOS/Linux limit).
 const MAX_SOCKET_PATH_BYTES: usize = 104;
@@ -663,7 +663,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         return 1;
     }
     let retention = build.retention;
-    let code = crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
+    let code = uds::run_uds_loop(uds::UdsLoopArgs {
         agent,
         retention: Some(retention.clone()),
         base_dir: &base_dir,

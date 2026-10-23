@@ -7,9 +7,9 @@
 //! `messages` mutably for the whole turn (`agent.process(messages)`).
 
 use crate::domain::conversation::value_objects::message::Message;
-use crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles;
 use crate::interface::cli::uds_execution_state::{ExecutionSnapshot, ProgressSummary, ToolSummary};
 use crate::interface::cli::uds_session::HISTORY_PAGE_SIZE;
+use crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles;
 use crate::interface::uds::framing::uds_multi::{
     BusyFlag, BusyGuard, build_get_messages_line, build_get_state_line,
 };

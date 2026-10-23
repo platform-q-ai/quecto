@@ -2,27 +2,29 @@ use super::uds_session_handles::SessionReadHandles;
 use crate::interface::uds::sessions::recover_message_controller::GetMessageFields;
 use crate::interface::uds::wire::protocol::AgentEvent;
 
-pub(super) struct BusyCommandCtx<'a> {
+pub(in crate::interface) struct BusyCommandCtx<'a> {
     pub line: &'a str,
     pub session: &'a SessionReadHandles,
-    pub registry: &'a super::uds_ext_protocol::ClientToolRegistry,
+    pub registry: &'a crate::interface::uds::controllers::uds_ext_protocol::ClientToolRegistry,
     pub client_id: u64,
 }
 
 /// Handle commands that must bypass the dispatch loop while a prompt is active.
-pub(super) async fn intercept(ctx: BusyCommandCtx<'_>) -> bool {
+pub(in crate::interface) async fn intercept(ctx: BusyCommandCtx<'_>) -> bool {
     if super::uds_latest_report::intercept(&ctx).await {
         return true;
     }
     if let Some(result) = super::uds_tool_intercept::try_intercept_tool_result(ctx.line) {
-        super::uds_ext_protocol::handle_tool_result(super::uds_ext_protocol::ToolResultArgs {
-            client_id: ctx.client_id,
-            tool_call_id: &result.tool_call_id,
-            content: &result.content,
-            is_error: result.is_error,
-            image_blocks: result.image_blocks,
-            registry: ctx.registry,
-        });
+        crate::interface::uds::controllers::uds_ext_protocol::handle_tool_result(
+            crate::interface::uds::controllers::uds_ext_protocol::ToolResultArgs {
+                client_id: ctx.client_id,
+                tool_call_id: &result.tool_call_id,
+                content: &result.content,
+                is_error: result.is_error,
+                image_blocks: result.image_blocks,
+                registry: ctx.registry,
+            },
+        );
         return true;
     }
     if let Some(parsed) = parse(ctx.line.trim()) {
@@ -33,19 +35,19 @@ pub(super) async fn intercept(ctx: BusyCommandCtx<'_>) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ParsedGetMessage {
-    pub(super) request_id: Option<String>,
-    pub(super) message_id: String,
-    pub(super) tool_call_id: Option<String>,
-    pub(super) offset: Option<usize>,
-    pub(super) thinking_offset: Option<usize>,
-    pub(super) limit: Option<usize>,
+pub(in crate::interface) struct ParsedGetMessage {
+    pub(in crate::interface) request_id: Option<String>,
+    pub(in crate::interface) message_id: String,
+    pub(in crate::interface) tool_call_id: Option<String>,
+    pub(in crate::interface) offset: Option<usize>,
+    pub(in crate::interface) thinking_offset: Option<usize>,
+    pub(in crate::interface) limit: Option<usize>,
 }
 
-pub(super) async fn service(
+pub(in crate::interface) async fn service(
     parsed: ParsedGetMessage,
     session: &SessionReadHandles,
-    registry: &super::uds_ext_protocol::ClientToolRegistry,
+    registry: &crate::interface::uds::controllers::uds_ext_protocol::ClientToolRegistry,
     client_id: u64,
 ) {
     let ParsedGetMessage {
@@ -84,7 +86,9 @@ pub(super) async fn service(
             format!("message not found: {message_id}"),
         ),
     };
-    if let Some(tx) = super::uds_ext_protocol::client_writer_tx(registry, client_id) {
+    if let Some(tx) =
+        crate::interface::uds::controllers::uds_ext_protocol::client_writer_tx(registry, client_id)
+    {
         let mut response = serde_json::to_string(&event).unwrap_or_default();
         // Same frame-cap discipline as the dispatch-loop path (#1062): an
         // over-budget line would be dropped unread by the client's bounded
@@ -107,7 +111,7 @@ pub(super) async fn service(
     }
 }
 
-pub(super) fn parse(line: &str) -> Option<ParsedGetMessage> {
+pub(in crate::interface) fn parse(line: &str) -> Option<ParsedGetMessage> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
     // An agent-targeted lookup (`agent_id` present) must fall through to the
     // dispatch loop, which forwards it to the child. The wire key is snake_case

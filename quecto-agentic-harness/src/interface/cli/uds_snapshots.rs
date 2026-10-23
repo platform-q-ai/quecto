@@ -10,11 +10,11 @@
 //! (`uds_sync`, #1973), `get_report` through the composed export controller
 //! (#1974); the rewind's ledger reset and the session switch are the
 //! transactions' own (#1975, #1976).
-use super::uds::DispatchCtx;
 use super::uds_session::{HISTORY_PAGE_SIZE, history_page_json, present_session_stats};
 use super::uds_session_handles::SessionReadHandles;
 use crate::application::sessions::dto::HistoryPage;
 use crate::domain::conversation::services::conversation_view::user_visible_messages;
+use crate::interface::uds::controllers::uds::DispatchCtx;
 use crate::interface::uds::wire::protocol::{AgentEvent, SessionState};
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
@@ -29,7 +29,7 @@ pub(crate) type SessionStatsSnapshot =
 /// dispatched command returns (#899). The `snapshot: true` staleness marker is
 /// retained — a busy snapshot may still lag the in-flight turn by design, but it
 /// must not lag by an entire workflow.
-pub(super) async fn refresh_busy_snapshots(ctx: &DispatchCtx<'_>) {
+pub(in crate::interface) async fn refresh_busy_snapshots(ctx: &DispatchCtx<'_>) {
     refresh_conversation_snapshot(ctx).await;
     refresh_state_snapshot(ctx).await;
     refresh_session_stats_snapshot(ctx).await;
@@ -161,7 +161,8 @@ pub(crate) struct BusySnapshotSources<'a> {
     pub state: &'a StateSnapshot,
     pub session: &'a SessionReadHandles,
     pub session_stats: &'a SessionStatsSnapshot,
-    pub tool_catalogue: &'a crate::interface::cli::uds_extensions::ToolCatalogueSnapshot,
+    pub tool_catalogue:
+        &'a crate::interface::uds::controllers::uds_extensions::ToolCatalogueSnapshot,
     pub subagents:
         &'a Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     pub workflow: &'a Option<crate::interface::shared::WorkflowStateHandle>,

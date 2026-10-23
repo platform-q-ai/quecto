@@ -8,14 +8,14 @@
 //! a hand-written BDD mock.
 
 use super::*;
-use crate::interface::cli::uds::MAX_FRAME_PAYLOAD_BYTES;
+use crate::interface::uds::controllers::uds::MAX_FRAME_PAYLOAD_BYTES;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentStatus};
-use crate::interface::cli::uds_cancel::CancelSlot;
+use crate::interface::uds::controllers::uds_cancel::CancelSlot;
 use crate::interface::uds::wire::protocol::SessionState;
 
 /// Build `AcceptLoopArgs` wired to a listener at `socket_path`, with the given
@@ -48,8 +48,8 @@ pub(super) fn make_args(
         cancel_handle: Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
         turn_control: Arc::default(),
         live_clients: Arc::new(AtomicU32::new(0)),
-        client_tool_registry: crate::interface::cli::uds_ext_protocol::new_client_tool_registry(),
-        session: crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(
+        client_tool_registry: crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry(),
+        session: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(
             &[Message::user("hello")],
         ),
         runtime_store: Default::default(),

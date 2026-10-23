@@ -3,6 +3,7 @@
 //! the parent-local command. Selection, preview, export and admission are
 //! the composed report owner's (`SessionReadHandles::export_report`).
 use crate::application::sessions::dto::{ReportError, SessionReport};
+use crate::interface::uds::controllers::uds_ext_protocol;
 use crate::interface::uds::wire::protocol::AgentEvent;
 use serde_json::{Value, json};
 
@@ -28,7 +29,7 @@ pub(super) fn report_json(report: &SessionReport) -> Value {
 }
 
 /// The `get_report` response event for `id`.
-pub(super) fn report_event(
+pub(in crate::interface) fn report_event(
     id: Option<&str>,
     result: Result<SessionReport, ReportError>,
 ) -> AgentEvent {
@@ -58,9 +59,7 @@ pub(super) async fn intercept(ctx: &super::uds_busy_get_message::BusyCommandCtx<
                 let client_id = ctx.client_id;
                 tokio::spawn(async move {
                     let event = report_event(id.as_deref(), admitted.await);
-                    if let Some(writer) =
-                        super::uds_ext_protocol::client_writer_tx(&registry, client_id)
-                    {
+                    if let Some(writer) = uds_ext_protocol::client_writer_tx(&registry, client_id) {
                         let _ = writer.send(event.to_json_line() + "\n").await;
                     }
                 });
@@ -71,7 +70,7 @@ pub(super) async fn intercept(ctx: &super::uds_busy_get_message::BusyCommandCtx<
     } else {
         report_event(id.as_deref(), ctx.session.export_report.report(false).await)
     };
-    if let Some(writer) = super::uds_ext_protocol::client_writer_tx(ctx.registry, ctx.client_id) {
+    if let Some(writer) = uds_ext_protocol::client_writer_tx(ctx.registry, ctx.client_id) {
         let _ = writer.send(event.to_json_line() + "\n").await;
     }
     true

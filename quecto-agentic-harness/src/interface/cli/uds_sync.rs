@@ -16,9 +16,9 @@ use crate::domain::conversation::value_objects::message::Message;
 use crate::interface::uds::sessions::synchronize_transcript_controller::{
     SyncFields, SynchronizeTranscriptController,
 };
-use crate::interface::uds::wire::protocol::AgentEvent;
+use crate::interface::uds::{controllers::uds_ext_protocol, wire::protocol::AgentEvent};
 
-pub(super) const SYNC_OVERSIZED_ERROR: &str =
+pub(in crate::interface) const SYNC_OVERSIZED_ERROR: &str =
     "sync response exceeds the protocol frame limit; retry with nextRev to continue";
 
 /// The bytes one message costs in a frame: its bounded history
@@ -40,7 +40,7 @@ fn encoded_size(message: &Message) -> usize {
 /// the delta was cut at (null, `caughtUp: true`, when nothing was left
 /// out). The frame predicate measures; the typed delta is the one source
 /// of what is carried, encoded here.
-pub(super) async fn sync_data(
+pub(in crate::interface) async fn sync_data(
     controller: &SynchronizeTranscriptController,
     epoch: u64,
     since_rev: u64,
@@ -107,10 +107,10 @@ pub(super) fn bounded_response_line(
 /// client's own writer, never queuing behind the dispatch loop. `false`
 /// leaves any other line (another command, a child-addressed or malformed
 /// `sync`) to its own route.
-pub(super) async fn intercept(
+pub(in crate::interface) async fn intercept(
     line: &str,
     session: &SessionReadHandles,
-    registry: &super::uds_ext_protocol::ClientToolRegistry,
+    registry: &uds_ext_protocol::ClientToolRegistry,
     client_id: u64,
 ) -> bool {
     let Some(fields) = SyncFields::parse_line(line.trim()) else {
@@ -123,7 +123,7 @@ pub(super) async fn intercept(
     )
     .await;
     let event = AgentEvent::ok(fields.request_id.as_deref(), "sync", Some(data));
-    if let Some(tx) = super::uds_ext_protocol::client_writer_tx(registry, client_id) {
+    if let Some(tx) = uds_ext_protocol::client_writer_tx(registry, client_id) {
         let response = bounded_response_line(
             &event,
             fields.request_id.as_deref(),

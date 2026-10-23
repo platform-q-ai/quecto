@@ -190,7 +190,7 @@ async fn test_support_probes_report_live_and_completed_execution_state() {
     assert_eq!(done["messageCount"], 0);
     let hints = super::ledger_hint_lines_for_turn_events(
         &[AgentProgressEvent::Done],
-        &crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
+        &crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
             .active_session,
     )
     .await;

@@ -29,10 +29,10 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use super::uds_ext_protocol::ClientToolRegistry;
 use crate::application::environments::dto::{BoardSighting, HostedBoardRevision};
 use crate::application::environments::use_cases::ReadSwarmBoard;
 use crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry;
+use crate::interface::uds::controllers::uds_ext_protocol::ClientToolRegistry;
 use crate::interface::uds::wire::protocol::AgentEvent;
 
 /// How often the boards are polled: no swarm is hinted more than once in
@@ -172,7 +172,9 @@ pub(in crate::interface) fn intercept(line: &str, ctx: BoardViewCtx<'_>) -> bool
 /// dropped when it has none: no task waits on a client that does not read
 /// (verification item 1).
 fn refuse(clients: &ClientToolRegistry, client_id: u64, id: Option<&str>, error: &str) {
-    let Some(writer) = super::uds_ext_protocol::client_writer_tx(clients, client_id) else {
+    let Some(writer) =
+        crate::interface::uds::controllers::uds_ext_protocol::client_writer_tx(clients, client_id)
+    else {
         return;
     };
     let mut line = serde_json::to_string(&AgentEvent::err(id, COMMAND, error)).unwrap_or_default();

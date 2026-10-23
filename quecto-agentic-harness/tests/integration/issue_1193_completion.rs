@@ -56,9 +56,10 @@ fn set_model_derives_limits_from_the_published_snapshot_only() {
     // `contracts::catalogue_consumers::set_model_limits_and_selection_come_from_the_published_snapshot`
     // and the dispatch-level re-clamp test
     // (`uds_dispatch_935_clamp_tests::dispatch_set_model_re_clamps_effective_max_tokens`).
-    let dispatch =
-        std::fs::read_to_string(harness_root().join("src/interface/cli/uds_dispatch_runtime.rs"))
-            .unwrap();
+    let dispatch = std::fs::read_to_string(
+        harness_root().join("src/interface/uds/controllers/uds/uds_dispatch_runtime.rs"),
+    )
+    .unwrap();
     assert!(
         !dispatch.contains("model_limits_from_base_dir")
             && !dispatch.contains("published_model_limits"),

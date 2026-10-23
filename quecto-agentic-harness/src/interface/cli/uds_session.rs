@@ -21,7 +21,7 @@ pub struct AgentSession {
     /// each with the model it is about: a switch keeps only those about the
     /// model now active.
     startup_warnings: Vec<(String, String)>,
-    extensions: super::uds_extensions::Extensions, // #2446: warnings, generation
+    extensions: crate::interface::uds::controllers::uds_extensions::Extensions, // #2446: warnings, generation
     runtime_store: Option<crate::application::provider_runtime::RuntimeSnapshotStore>,
     streaming: bool,
     /// Whether automatic turns run, why not, and what re-arms them
@@ -461,7 +461,7 @@ pub(crate) fn messages_page_json(
     before: Option<&str>,
 ) -> serde_json::Value {
     let handles =
-        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
     history_page_json(
         handles
             .read_history

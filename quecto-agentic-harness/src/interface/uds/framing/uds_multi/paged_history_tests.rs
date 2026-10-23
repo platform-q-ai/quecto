@@ -8,7 +8,7 @@ fn snapshot_for(size: usize) -> serde_json::Value {
         .map(|i| Message::user(format!("msg-{i:03}")))
         .collect();
     let handles =
-        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
     let line = build_get_messages_line(
         handles
             .read_history

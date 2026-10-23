@@ -12,12 +12,12 @@ use std::time::Duration;
 
 /// One connected client's reply channel, as the accept loop registers it.
 fn client() -> (
-    crate::interface::cli::uds_ext_protocol::ClientToolRegistry,
+    crate::interface::uds::controllers::uds_ext_protocol::ClientToolRegistry,
     tokio::sync::mpsc::Receiver<String>,
 ) {
-    let clients = crate::interface::cli::uds_ext_protocol::new_client_tool_registry();
+    let clients = crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry();
     let (tx, rx) = tokio::sync::mpsc::channel(8);
-    crate::interface::cli::uds_ext_protocol::register_client_writer(&clients, 7, tx);
+    crate::interface::uds::controllers::uds_ext_protocol::register_client_writer(&clients, 7, tx);
     (clients, rx)
 }
 
@@ -322,9 +322,13 @@ async fn board_requests_in_flight_are_bounded_per_connection() {
 /// waits on a client that does not read.
 #[tokio::test]
 async fn refusals_to_a_client_that_does_not_read_are_dropped() {
-    let clients = crate::interface::cli::uds_ext_protocol::new_client_tool_registry();
+    let clients = crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    crate::interface::cli::uds_ext_protocol::register_client_writer(&clients, 7, tx.clone());
+    crate::interface::uds::controllers::uds_ext_protocol::register_client_writer(
+        &clients,
+        7,
+        tx.clone(),
+    );
     tx.try_send("filler\n".to_owned()).unwrap();
     let boards = view(read_over(Arc::new(OneBoard)));
     let none: Option<SubagentRegistry> = None;

@@ -87,7 +87,7 @@ const BUDGETS: &[FlatBudget<'_>] = &[
     FlatBudget { path: "interface", expected: 6 },
     FlatBudget { path: "infrastructure", expected: 1 },
     FlatBudget { path: "composition", expected: 24 },
-    FlatBudget { path: "interface/cli", expected: 63 },
+    FlatBudget { path: "interface/cli", expected: 28 },
     FlatBudget { path: "infrastructure/tools", expected: 1 },
     FlatBudget { path: "infrastructure/persistence", expected: 1 },
     FlatBudget { path: "application/swarm", expected: 1 },
@@ -121,11 +121,12 @@ const MIGRATED: &[Capability<'_>] = &[
         "application/swarm",
         &["use_cases", "ports", "dto", "services", "test_support"],
     ),
-    // #2368 (L10): the transport-level UDS files in `framing` and `wire`; the
+    // #2368 (L10), #2369 (L11): the UDS roles `framing`, `wire` and
+    // `controllers`; the
     // capability-split folders stay until L11/L12 fold them into the roles.
     Capability(
         "interface/uds",
-        &["framing", "wire", "admission", "catalogue", "parent_control", "sessions", "subagent_teardown"],
+        &["framing", "wire", "controllers", "admission", "catalogue", "parent_control", "sessions", "subagent_teardown"],
     ),
 ];
 // Wiki target-source-tree anchors define allowed future names; Transitional rows must exist.

@@ -23,7 +23,7 @@ use crate::interface::uds::subagent_teardown::controller::{
 };
 
 use super::uds_multi::BusyFlag;
-use crate::interface::cli::uds_cancel::{CancelHandle, fire_cancel};
+use crate::interface::uds::controllers::uds_cancel::{CancelHandle, fire_cancel};
 
 /// Handle the dispatch loop waits on; resolves once a shutdown has settled.
 pub(super) struct ShutdownRequest {

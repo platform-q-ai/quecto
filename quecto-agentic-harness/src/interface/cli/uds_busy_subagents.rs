@@ -29,20 +29,20 @@ type SubagentRegistry = crate::infrastructure::tools::agents::subagent_registry:
 
 /// Everything the reader task lends the interceptor for one command line.
 /// Mirrors `uds_busy_get_message::BusyCommandCtx`.
-pub(super) struct BusySubagentCtx<'a> {
+pub(in crate::interface) struct BusySubagentCtx<'a> {
     pub line: &'a str,
     pub subagents: &'a Option<SubagentRegistry>,
     /// The fleet teardown a busy-path `delete_all_subagents` invokes
     /// (#1938); `None` on a harness with no teardown graph.
     pub fleet: Option<&'a std::sync::Arc<TerminateAllDelegatedAgents>>,
-    pub clients: &'a super::uds_ext_protocol::ClientToolRegistry,
+    pub clients: &'a crate::interface::uds::controllers::uds_ext_protocol::ClientToolRegistry,
     pub client_id: u64,
 }
 
 /// Intercept `get_subagents`, `delete_all_subagents` and child-targeted
 /// `sync` on the reader task. Returns `true` when the command was fully
 /// handled here.
-pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
+pub(in crate::interface) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
     let BusySubagentCtx {
         line,
         subagents,
@@ -94,8 +94,11 @@ pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
             let fleet = fleet.cloned();
             let clients = clients.clone();
             tokio::spawn(async move {
-                let ev =
-                    super::uds_delete_all_subagents::respond(fleet.as_ref(), id.as_deref()).await;
+                let ev = crate::interface::uds::controllers::uds_delete_all_subagents::respond(
+                    fleet.as_ref(),
+                    id.as_deref(),
+                )
+                .await;
                 write_event(
                     &clients,
                     client_id,
@@ -191,7 +194,7 @@ async fn forward_child_sync(
 }
 
 /// Forward an already validated command to its owning descendant without running a model turn.
-pub(super) async fn forward_child_command(
+pub(in crate::interface) async fn forward_child_command(
     subagents: &Option<SubagentRegistry>,
     id: Option<&str>,
     agent_id: &str,
@@ -247,14 +250,16 @@ pub(super) async fn forward_child_command(
 
 /// Write a response line to this client's targeted writer channel, guarding
 /// the protocol frame limit the same way the dispatch path does.
-pub(super) async fn write_event(
-    clients: &super::uds_ext_protocol::ClientToolRegistry,
+pub(in crate::interface) async fn write_event(
+    clients: &crate::interface::uds::controllers::uds_ext_protocol::ClientToolRegistry,
     client_id: u64,
     id: Option<&str>,
     command: &str,
     ev: &AgentEvent,
 ) {
-    if let Some(tx) = super::uds_ext_protocol::client_writer_tx(clients, client_id) {
+    if let Some(tx) =
+        crate::interface::uds::controllers::uds_ext_protocol::client_writer_tx(clients, client_id)
+    {
         let mut response = serde_json::to_string(ev).unwrap_or_default();
         if response.len() > crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET {
             response = serde_json::to_string(&AgentEvent::err(

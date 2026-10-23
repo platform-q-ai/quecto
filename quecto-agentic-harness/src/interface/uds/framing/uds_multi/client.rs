@@ -10,13 +10,13 @@
 use std::sync::Arc;
 
 use super::{ClientGuard, ClientMessage};
-use crate::interface::cli::uds::MAX_FRAME_PAYLOAD_BYTES;
-use crate::interface::cli::uds_cancel::CancelHandle;
-use crate::interface::cli::uds_parent_control::{
-    ConnectionRole, ConnectionTeardown, Intercept, LineContext,
-};
 use crate::interface::cli::uds_session_handles::SessionReadHandles;
 use crate::interface::cli::uds_teardown_adapters::SharedWriter;
+use crate::interface::uds::controllers::uds::MAX_FRAME_PAYLOAD_BYTES;
+use crate::interface::uds::controllers::uds_cancel::CancelHandle;
+use crate::interface::uds::controllers::uds_parent_control::{
+    ConnectionRole, ConnectionTeardown, Intercept, LineContext,
+};
 
 /// Arguments for [`handle_client`].
 pub(crate) struct ClientHandlerArgs {
@@ -31,11 +31,12 @@ pub(crate) struct ClientHandlerArgs {
     pub(crate) cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
     pub(crate) cancel_handle: CancelHandle,
     /// Shared abort/steer control flags (#895/#896).
-    pub(crate) turn_control: crate::interface::cli::uds_cancel::TurnControlHandle,
+    pub(crate) turn_control: crate::interface::uds::controllers::uds_cancel::TurnControlHandle,
     /// Unique client identifier (#352).
     pub(crate) client_id: u64,
     /// For in-reader handling of `tool_result` — see handle_client.
-    pub(crate) client_tool_registry: crate::interface::cli::uds_ext_protocol::ClientToolRegistry,
+    pub(crate) client_tool_registry:
+        crate::interface::uds::controllers::uds_ext_protocol::ClientToolRegistry,
     /// The active session and its read use cases (#1971): published as
     /// messages are appended during a turn, so read-only history and
     /// recovery lookups bypass the blocked dispatcher.
@@ -153,7 +154,7 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
             Read::Closed => break,
         };
         if let Some(teardown) = teardown.as_deref() {
-            let intercept = crate::interface::cli::uds_parent_control::intercept_line(
+            let intercept = crate::interface::uds::controllers::uds_parent_control::intercept_line(
                 LineContext {
                     teardown,
                     role: &mut role,
@@ -187,8 +188,8 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
         ) {
             continue;
         }
-        if !crate::interface::cli::uds_reader_dispatch::dispatch(
-            crate::interface::cli::uds_reader_dispatch::ReaderDispatchCtx {
+        if !crate::interface::uds::controllers::uds_reader_dispatch::dispatch(
+            crate::interface::uds::controllers::uds_reader_dispatch::ReaderDispatchCtx {
                 line,
                 session: &session,
                 registry: &client_tool_registry,
@@ -215,8 +216,10 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
     if let Some(teardown) = teardown.as_deref() {
         teardown.owner_exit.withdraw(client_id);
         if let Some(outcome) =
-            crate::interface::cli::uds_parent_control::connection_closed(teardown, &role, client_id)
-                .await
+            crate::interface::uds::controllers::uds_parent_control::connection_closed(
+                teardown, &role, client_id,
+            )
+            .await
         {
             tracing::info!(client_id, ?outcome, "parent-loss shutdown finished");
         }
@@ -239,13 +242,14 @@ enum Read {
 /// oldest pending extension call at once (it may have been that call's
 /// result) and send the client a `protocol_error` saying so.
 async fn reject_oversized(
-    registry: &crate::interface::cli::uds_ext_protocol::ClientToolRegistry,
+    registry: &crate::interface::uds::controllers::uds_ext_protocol::ClientToolRegistry,
     client_id: u64,
     (writer, mode): (&SharedWriter, &super::super::uds_wire::ConnectionWireMode),
     over_cap: (String, usize),
 ) {
-    let error =
-        crate::interface::cli::uds_ext_protocol::reject_oversized(registry, client_id, over_cap);
+    let error = crate::interface::uds::controllers::uds_ext_protocol::reject_oversized(
+        registry, client_id, over_cap,
+    );
     tracing::warn!(client_id, "dropping over-cap message from client: {error}");
     let event = super::super::super::wire::protocol::AgentEvent::err(None, "protocol_error", error);
     let _ = write_line(writer, &format!("{}\n", event.to_json_line()), mode).await;

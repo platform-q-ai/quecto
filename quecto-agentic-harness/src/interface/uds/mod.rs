@@ -3,6 +3,7 @@
 
 pub mod admission;
 pub mod catalogue;
+pub mod controllers;
 pub mod framing;
 pub mod parent_control;
 pub mod sessions;

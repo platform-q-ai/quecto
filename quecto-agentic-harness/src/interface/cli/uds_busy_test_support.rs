@@ -30,9 +30,9 @@ async fn run_intercept(
     subagents: &Option<SubagentRegistry>,
     fleet: Option<&Arc<TerminateAllDelegatedAgents>>,
 ) -> (bool, Option<serde_json::Value>) {
-    let clients = super::uds_ext_protocol::new_client_tool_registry();
+    let clients = crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
-    super::uds_ext_protocol::register_client_writer(&clients, 1, tx);
+    crate::interface::uds::controllers::uds_ext_protocol::register_client_writer(&clients, 1, tx);
     let handled =
         super::uds_busy_subagents::intercept(super::uds_busy_subagents::BusySubagentCtx {
             line,

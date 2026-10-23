@@ -6,8 +6,8 @@ pub(crate) use crate::domain::conversation::services::conversation_view::remove_
 #[cfg(test)]
 use crate::domain::conversation::value_objects::message::Role;
 use crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot;
-use crate::interface::uds::framing::uds_single_client::{SingleClientArgs, single_client_loop};
-use crate::interface::uds::framing::{uds_multi, uds_wire};
+use crate::interface::uds::controllers::{uds_extensions, uds_parent_control};
+use crate::interface::uds::framing::{uds_multi, uds_single_client, uds_wire};
 #[cfg(test)]
 #[path = "uds_lifecycle_cov2_tests.rs"]
 mod cov2_tests;
@@ -37,7 +37,7 @@ pub struct UdsLoopArgs<'a> {
     /// The run's catalogue handles (#1845, #1848), built once by the agent
     /// startup and shared with the spawn tool.
     pub catalogue: super::controllers::catalogue_handles::CatalogueHandles,
-    pub ext_registry: Option<super::uds_extensions::ExtRegistry>,
+    pub ext_registry: Option<uds_extensions::ExtRegistry>,
     /// How long this harness lives (#1937): decided once at startup.
     pub lifetime: crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime,
     pub notification_rx:
@@ -56,7 +56,7 @@ pub struct UdsLoopArgs<'a> {
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     /// The launch-bound parent control binding (#1935); `None` for a
     /// top-level harness.
-    pub parent_control: Option<super::uds_parent_control::ParentControlLaunch>,
+    pub parent_control: Option<uds_parent_control::ParentControlLaunch>,
     /// Composition's teardown handles builder; `None` runs the loop without
     /// the teardown edge (unit rigs) and is refused for a launched child.
     pub teardown_graph: Option<super::TeardownHandlesBuilder>,
@@ -135,8 +135,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     }
     if let Some(std_stream) = socket_override {
         // Single-client path: backward-compatible with existing tests.
-        single_client_loop(
-            SingleClientArgs {
+        uds_single_client::single_client_loop(
+            uds_single_client::SingleClientArgs {
                 agent,
                 turn_session,
                 workspace,
@@ -186,7 +186,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 parent_control,
                 teardown_graph,
                 environment_control,
-                extensions: super::uds_extensions::launch(&extensions, &guard.0, base_dir),
+                extensions: uds_extensions::launch(&extensions, &guard.0, base_dir),
             },
             listener,
             &sessions,

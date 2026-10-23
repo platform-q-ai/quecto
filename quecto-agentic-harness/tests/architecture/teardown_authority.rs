@@ -178,7 +178,12 @@ pub(super) fn production_files() -> Vec<String> {
     walk(Path::new("src"), &mut files);
     files
         .into_iter()
-        .filter(|path| !path.ends_with("_tests.rs") && !path.contains("/tests/"))
+        .filter(|path| {
+            super::uds_canonical_modules::production_scan_file(
+                path,
+                !path.ends_with("_tests.rs") && !path.contains("/tests/"),
+            )
+        })
         .collect()
 }
 
@@ -474,10 +479,10 @@ const NO_PID_FILES: &[&str] = &[
     "src/interface/tools/agent_cmd_kill.rs",
     "src/interface/uds/subagent_teardown/controller.rs",
     "src/interface/uds/subagent_teardown/presenter.rs",
-    "src/interface/cli/uds_delete_all_subagents.rs",
+    "src/interface/uds/controllers/uds_delete_all_subagents.rs",
     "src/interface/cli/uds_busy_subagents.rs",
     "src/interface/uds/framing/uds_shutdown.rs",
-    "src/interface/cli/uds_dispatch_session.rs",
+    "src/interface/uds/controllers/uds/uds_dispatch_session.rs",
     "src/interface/cli/uds_teardown_adapters.rs",
     "src/interface/cli/uds_teardown_handles.rs",
     "src/composition/subagent_teardown.rs",
@@ -757,7 +762,7 @@ const SINGLE_OWNERS: &[(&str, &str, &str)] = &[
     ),
     (
         "child parent-loss binding",
-        "src/interface/cli/uds_parent_control.rs",
+        "src/interface/uds/controllers/uds_parent_control.rs",
         "struct ConnectionTeardown",
     ),
 ];

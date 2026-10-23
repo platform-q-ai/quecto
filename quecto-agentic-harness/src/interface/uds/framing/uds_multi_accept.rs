@@ -1,11 +1,12 @@
 use super::uds_multi::{
     BusyFlag, ClientGuard, ClientHandlerArgs, ClientMessage, StateSnapshot, handle_client,
 };
-use crate::interface::cli::uds_cancel::CancelHandle;
 use crate::interface::cli::uds_session_handles::SessionReadHandles;
+use crate::interface::uds::controllers::uds_cancel::CancelHandle;
 
 use super::uds_multi::{MAX_CLIENTS, NEXT_CLIENT_ID};
 use crate::interface::cli;
+use crate::interface::uds::controllers;
 
 /// Arguments for [`spawn_accept_loop`].
 pub(in crate::interface) struct AcceptLoopArgs {
@@ -15,16 +16,18 @@ pub(in crate::interface) struct AcceptLoopArgs {
     pub(in crate::interface) disconnect_tx:
         tokio::sync::mpsc::UnboundedSender<super::uds_multi::ClientDisconnected>,
     pub(in crate::interface) cancel_handle: CancelHandle,
-    pub(in crate::interface) turn_control: cli::uds_cancel::TurnControlHandle,
+    pub(in crate::interface) turn_control: controllers::uds_cancel::TurnControlHandle,
     pub(in crate::interface) live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
-    pub(in crate::interface) client_tool_registry: cli::uds_ext_protocol::ClientToolRegistry,
+    pub(in crate::interface) client_tool_registry:
+        controllers::uds_ext_protocol::ClientToolRegistry,
     pub(in crate::interface) session: SessionReadHandles,
     pub(in crate::interface) state_snapshot: StateSnapshot,
     pub(in crate::interface) runtime_store:
         crate::application::provider_runtime::RuntimeSnapshotStore,
     pub(in crate::interface) execution_state: cli::uds_execution_state::ExecutionStateHandle,
     pub(in crate::interface) session_stats_snapshot: cli::uds_snapshots::SessionStatsSnapshot,
-    pub(in crate::interface) tool_catalogue_snapshot: cli::uds_extensions::ToolCatalogueSnapshot,
+    pub(in crate::interface) tool_catalogue_snapshot:
+        controllers::uds_extensions::ToolCatalogueSnapshot,
     pub(in crate::interface) busy: BusyFlag,
     pub(in crate::interface) subagent_registry:
         Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
@@ -35,10 +38,10 @@ pub(in crate::interface) struct AcceptLoopArgs {
     /// Launch-bound parent control / teardown edge shared by every
     /// connection (#1935).
     pub(in crate::interface) teardown:
-        Option<std::sync::Arc<cli::uds_parent_control::ConnectionTeardown>>,
+        Option<std::sync::Arc<controllers::uds_parent_control::ConnectionTeardown>>,
     /// This agent's configured extensions, whose connections are claimed
     /// at accept (#2446).
-    pub(in crate::interface) extensions: cli::uds_extensions::Extensions,
+    pub(in crate::interface) extensions: controllers::uds_extensions::Extensions,
     /// The board view's handle (#2478): every connection's
     /// `get_swarm_board`, and the `swarm_board_changed` poll.
     pub(in crate::interface) swarm_boards: Option<cli::uds_swarm_board::SwarmBoards>,
@@ -106,12 +109,12 @@ pub(in crate::interface) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::ta
                         client_id,
                     };
                     let (targeted_tx, targeted_rx) = tokio::sync::mpsc::channel::<String>(64);
-                    cli::uds_ext_protocol::register_client_writer(
+                    controllers::uds_ext_protocol::register_client_writer(
                         &client_tool_registry,
                         client_id,
                         targeted_tx.clone(),
                     );
-                    cli::uds_extensions::claim_connection(
+                    controllers::uds_extensions::claim_connection(
                         &extensions,
                         &stream,
                         &client_tool_registry,

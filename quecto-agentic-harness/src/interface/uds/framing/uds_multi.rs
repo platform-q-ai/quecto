@@ -15,10 +15,6 @@ use crate::infrastructure::tools::agents::owner_exit::OwnerExitFlag;
 use super::super::wire::protocol::{self, AgentEvent};
 pub(in crate::interface) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
 use crate::interface::cli;
-use crate::interface::cli::uds::{
-    DispatchCtx, LineResult, emit_event_to_broadcast_or_writer, inject_system_prompt, parse_line,
-};
-use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 pub(crate) use crate::interface::cli::uds_snapshots::StateSnapshot;
 #[cfg(test)]
 pub(crate) use crate::interface::cli::uds_snapshots::{
@@ -28,6 +24,10 @@ use crate::interface::cli::uds_snapshots::{
     refresh_conversation_snapshot, refresh_session_stats_snapshot, refresh_state_snapshot,
     refresh_tool_catalogue_snapshot,
 };
+use crate::interface::uds::controllers::uds::{
+    DispatchCtx, LineResult, emit_event_to_broadcast_or_writer, inject_system_prompt, parse_line,
+};
+use crate::interface::uds::controllers::{self, uds_cancel::CancelHandle, uds_cancel::CancelSlot};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -82,14 +82,14 @@ pub(in crate::interface) struct MultiClientArgs<'a> {
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     /// The launch-bound parent control binding this harness was started
     /// with (#1935); `None` for a top-level harness that can never be bound.
-    pub parent_control: Option<cli::uds_parent_control::ParentControlLaunch>,
+    pub parent_control: Option<controllers::uds_parent_control::ParentControlLaunch>,
     /// Composition's teardown handles builder; without it the loop runs with
     /// no teardown edge (unit rigs only).
     pub teardown_graph: Option<cli::TeardownHandlesBuilder>,
     pub turn_session: cli::TurnSessionBuilder,
     /// The environment control slot (#2070): an owner exit ends retained boxes through it.
     pub environment_control: Option<EnvironmentControlSlot>,
-    pub extensions: cli::uds_extensions::Extensions, // #2446: see `clients`
+    pub extensions: controllers::uds_extensions::Extensions, // #2446: see `clients`
 }
 
 /// A command line from a client.
@@ -98,7 +98,7 @@ pub(crate) struct ClientCommand {
     /// Unique client identifier for per-client tool routing (#352).
     pub(in crate::interface) client_id: u64,
     /// Images the reader admitted for this message command (#2422).
-    pub(in crate::interface) admitted: Option<cli::uds::AdmittedImages>,
+    pub(in crate::interface) admitted: Option<controllers::uds::AdmittedImages>,
 }
 
 /// Sentinel: a client disconnected.
@@ -116,7 +116,7 @@ pub(crate) enum ClientMessage {
     Disconnected(ClientDisconnected),
     /// A control the reader refused itself (#2422): dispatch records its
     /// `Rejected` receipt, as it does for one it refuses.
-    RejectedControl(cli::uds_control_forward::RefusedControl),
+    RejectedControl(controllers::uds_control_forward::RefusedControl),
 }
 
 /// RAII guard that decrements `live_clients` on drop (normal exit or panic).
@@ -252,10 +252,10 @@ pub(in crate::interface) async fn multi_client_loop(
     let coordinator = parent_control
         .as_ref()
         .is_some_and(|launch| launch.coordinator);
-    let turn_control = cli::uds_swarm_control::process_turn_control(coordinator);
+    let turn_control = controllers::uds_swarm_control::process_turn_control(coordinator);
     let live_clients = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
 
-    let client_tool_registry = cli::uds_ext_protocol::new_client_tool_registry();
+    let client_tool_registry = controllers::uds_ext_protocol::new_client_tool_registry();
 
     // Subagent teardown handles (#1935, #1938): composition's builder wires
     // the application use cases to this loop's cancel slot, exit
@@ -305,7 +305,7 @@ pub(in crate::interface) async fn multi_client_loop(
     let fleet_teardown = teardown.as_ref().map(|graph| graph.fleet.clone());
     let connections = teardown.as_ref().map(|graph| graph.connections.clone());
     if let (Some(connections), Some(deadline)) = (connections.clone(), bind_deadline) {
-        cli::uds_parent_control::arm_bind_deadline(connections, deadline);
+        controllers::uds_parent_control::arm_bind_deadline(connections, deadline);
     }
 
     let accept_task = spawn_accept_loop(AcceptLoopArgs {
@@ -410,7 +410,7 @@ struct DispatchLoopArgs {
     disconnect_rx: tokio::sync::mpsc::UnboundedReceiver<ClientDisconnected>,
     lifetime: crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime,
     shutdown: super::uds_shutdown::ShutdownRequest,
-    extensions: cli::uds_extensions::Extensions,
+    extensions: controllers::uds_extensions::Extensions,
 }
 
 /// Process commands from all clients until no clients remain or a fatal error.
@@ -493,7 +493,7 @@ async fn run_dispatch_loop(
                 // DISPLAY of the note until the parent is idle, so acting here never
                 // splits an in-flight response.
                 if should_deliver {
-                    cli::uds::drain_pending_and_nudge(ctx).await;
+                    controllers::uds::drain_pending_and_nudge(ctx).await;
                 }
             }
         }
@@ -521,7 +521,7 @@ async fn handle_client_msg(
 ) -> bool {
     match client_msg {
         ClientMessage::SwarmWake { generation } => {
-            cli::uds_swarm_control::handle_wake(ctx, generation).await
+            controllers::uds_swarm_control::handle_wake(ctx, generation).await
         }
         ClientMessage::Command(cmd) => {
             ctx.current_client_id = cmd.client_id;
@@ -536,7 +536,7 @@ async fn handle_client_msg(
                     emit_event_to_broadcast_or_writer(ctx, &ev).await;
                 }
                 LineResult::Command(parsed) => {
-                    if cli::uds::dispatch_parsed(parsed, cmd.admitted, ctx).await {
+                    if controllers::uds::dispatch_parsed(parsed, cmd.admitted, ctx).await {
                         return true;
                     }
                 }
@@ -544,7 +544,7 @@ async fn handle_client_msg(
             false
         }
         ClientMessage::RejectedControl(refused) => {
-            cli::uds::record_rejected(ctx, &refused.id, &refused.command).await;
+            controllers::uds::record_rejected(ctx, &refused.id, &refused.command).await;
             false
         }
         ClientMessage::Disconnected(disc) => {

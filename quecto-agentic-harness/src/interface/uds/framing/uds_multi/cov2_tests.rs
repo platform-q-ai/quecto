@@ -6,7 +6,7 @@ use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
-use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
+use crate::interface::uds::controllers::uds::dispatch_session_roster_tests::list_handle;
 use std::borrow::Cow;
 use std::future::Future;
 use std::pin::Pin;
@@ -149,7 +149,7 @@ async fn real_multi_client_loop_answers_read_command_then_exits_on_disconnect() 
             .unwrap();
         rt.block_on(async move {
             let store = crate::composition::sessions::build_session_handles(
-                crate::interface::cli::uds::dispatch_session_roster_tests::loop_inputs(
+                crate::interface::uds::controllers::uds::dispatch_session_roster_tests::loop_inputs(
                     dir.path(),
                     "cli:cov",
                 ),
@@ -278,7 +278,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
     let (broadcast_tx, mut rx) = tokio::sync::broadcast::channel::<String>(16);
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(8);
     let live = Arc::new(std::sync::atomic::AtomicU32::new(1));
-    let registry = crate::interface::cli::uds_ext_protocol::new_client_tool_registry();
+    let registry = crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry();
     let mut agent = make_agent();
     agent.register_uds_tool_for_owner(Arc::new(TinyExtensionTool), "uds:client:55".into());
     registry
@@ -301,16 +301,19 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
     let session_key = "cli:cov".to_string();
     let mut writer = tokio::io::sink();
     let save_session =
-        crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
-    let rewrite = crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
-        &session_key,
-    );
-    let mut ctx = crate::interface::cli::uds::DispatchCtx {
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::save_handle_for(
+            &session_key,
+        );
+    let rewrite =
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::rewrite_handles_for(
+            &session_key,
+        );
+    let mut ctx = crate::interface::uds::controllers::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         agent: &mut agent,
         messages: &mut messages,
-        sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+        sessions: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::read_handles_for(
             &session_key,
             None,
             &[],
@@ -327,7 +330,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         stdout: Some(&mut writer),
         system_prompt: "",
         cancel_handle: Arc::new(std::sync::Mutex::new(
-            crate::interface::cli::uds_cancel::CancelSlot::Idle,
+            crate::interface::uds::controllers::uds_cancel::CancelSlot::Idle,
         )),
         turn_control: Arc::default(),
         broadcast_tx: Some(broadcast_tx.clone()),
@@ -340,10 +343,10 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         workflow_config: None,
         save_session,
         rewrite,
-        switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+        switch: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::switch_handles_for(
             &session_key,
         ),
-        catalogue: crate::interface::cli::uds::dispatch_session_roster_tests::catalogue_handles(
+        catalogue: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::catalogue_handles(
             dir.path(),
         ),
         fleet_teardown: None,
@@ -401,7 +404,7 @@ fn the_multi_client_loop_waits_for_a_launch_rollback_at_exit() {
         rt.block_on(async move {
             let listener = tokio::net::UnixListener::from_std(listener).unwrap();
             let store = crate::composition::sessions::build_session_handles(
-                crate::interface::cli::uds::dispatch_session_roster_tests::loop_inputs(
+                crate::interface::uds::controllers::uds::dispatch_session_roster_tests::loop_inputs(
                     dir.path(),
                     "cli:cov",
                 ),

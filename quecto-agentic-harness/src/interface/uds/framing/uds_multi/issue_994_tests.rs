@@ -6,16 +6,16 @@
 //! event stream, and message snapshots keep the canonical response envelope and
 //! public message shape.
 
-use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
+use crate::interface::uds::controllers::uds::dispatch_session_roster_tests::list_handle;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
 use super::{ClientCommand, ClientMessage, DispatchCtx, handle_client_msg};
 use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::conversation::value_objects::message::Message;
-use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
-use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::{AgentSession, history_session_stats};
+use crate::interface::uds::controllers::uds_cancel::{CancelHandle, CancelSlot};
+use crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry;
 
 fn make_agent() -> AgentLoopImpl {
     AgentLoopImpl::new(AgentLoopConfig {
@@ -75,11 +75,11 @@ impl Fixture {
     fn ctx(&mut self) -> DispatchCtx<'_> {
         let initial_stats = history_session_stats(&self.session_key, &self.messages);
         let save_session =
-            crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(
+            crate::interface::uds::controllers::uds::dispatch_session_roster_tests::save_handle_for(
                 &self.session_key,
             );
         let rewrite =
-            crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
+            crate::interface::uds::controllers::uds::dispatch_session_roster_tests::rewrite_handles_for(
                 &self.session_key,
             );
         DispatchCtx {
@@ -87,7 +87,7 @@ impl Fixture {
             wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
             agent: &mut self.agent,
             messages: &mut self.messages,
-            sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
+            sessions: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::read_handles_for(
                 &self.session_key,
                 None,
                 &[],
@@ -113,10 +113,10 @@ impl Fixture {
             workflow_config: None,
             save_session,
             rewrite,
-            switch: crate::interface::cli::uds::dispatch_session_roster_tests::switch_handles_for(
+            switch: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::switch_handles_for(
                 &self.session_key,
             ),
-            catalogue: crate::interface::cli::uds::dispatch_session_roster_tests::catalogue_handles(
+            catalogue: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::catalogue_handles(
                 self._tmp.path(),
             ),
             fleet_teardown: None,
@@ -157,9 +157,9 @@ async fn multi_client_parse_error_text(line: &str) -> String {
 fn single_client_parse_error_text(line: &str) -> String {
     // The single-client command loop delegates parse failures to `uds::parse_line`;
     // the BDD coverage exercises both real loops end-to-end.
-    match crate::interface::cli::uds::parse_line(line) {
-        crate::interface::cli::uds::LineResult::ParseError(err) => err,
-        crate::interface::cli::uds::LineResult::Command(_) => {
+    match crate::interface::uds::controllers::uds::parse_line(line) {
+        crate::interface::uds::controllers::uds::LineResult::ParseError(err) => err,
+        crate::interface::uds::controllers::uds::LineResult::Command(_) => {
             panic!("malformed input unexpectedly parsed as a command")
         }
     }
@@ -253,7 +253,7 @@ fn get_messages_snapshot_line_matches_agent_event_envelope() {
     ];
 
     let line = build_get_messages_line(
-        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
             .read_history
             .tail(
                 &messages,
@@ -304,7 +304,7 @@ fn paged_get_messages_snapshot_line_never_marks_content_trimmed() {
 
     let messages = vec![Message::user("snapshot content")];
     let line = build_get_messages_line(
-        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
             .read_history
             .tail(
                 &messages,
@@ -325,7 +325,7 @@ fn paged_get_messages_snapshot_line_never_marks_content_trimmed() {
 
 #[tokio::test]
 async fn event_sink_variants_emit_identical_json_for_same_events() {
-    use crate::interface::cli::uds_cancel::EventSink;
+    use crate::interface::uds::controllers::uds_cancel::EventSink;
     use crate::interface::uds::wire::protocol::{
         AgentEvent, ToolResultContent, TurnMessage, TurnUsage,
     };
@@ -400,9 +400,9 @@ async fn event_sink_variants_emit_identical_json_for_same_events() {
 }
 
 async fn run_stub_turn_event_types_with_sink(
-    sink: &mut crate::interface::cli::uds_cancel::EventSink<'_>,
+    sink: &mut crate::interface::uds::controllers::uds_cancel::EventSink<'_>,
 ) -> Vec<String> {
-    use crate::interface::cli::uds_cancel::{PromptRun, run_agent_message};
+    use crate::interface::uds::controllers::uds_cancel::{PromptRun, run_agent_message};
 
     let mut agent = make_agent();
     let mut messages = Vec::new();
@@ -428,7 +428,7 @@ async fn run_stub_turn_event_types_with_sink(
     .await;
     assert!(matches!(
         outcome,
-        crate::interface::cli::uds_cancel::PromptOutcome::Success
+        crate::interface::uds::controllers::uds_cancel::PromptOutcome::Success
     ));
 
     messages
@@ -441,7 +441,8 @@ async fn run_stub_turn_event_types_with_sink(
 async fn stub_provider_turn_has_same_event_sequence_through_each_sink() {
     let mut writer_bytes = Vec::new();
     let writer_message_roles = {
-        let mut sink = crate::interface::cli::uds_cancel::EventSink::writer(&mut writer_bytes);
+        let mut sink =
+            crate::interface::uds::controllers::uds_cancel::EventSink::writer(&mut writer_bytes);
         run_stub_turn_event_types_with_sink(&mut sink).await
     };
     let writer_event_types: Vec<String> = String::from_utf8(writer_bytes)
@@ -453,7 +454,7 @@ async fn stub_provider_turn_has_same_event_sequence_through_each_sink() {
 
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(16);
     let broadcast_message_roles = {
-        let mut sink = crate::interface::cli::uds_cancel::EventSink::Broadcast(tx);
+        let mut sink = crate::interface::uds::controllers::uds_cancel::EventSink::Broadcast(tx);
         run_stub_turn_event_types_with_sink(&mut sink).await
     };
     let mut broadcast_event_types = Vec::new();

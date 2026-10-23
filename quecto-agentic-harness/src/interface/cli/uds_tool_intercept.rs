@@ -2,12 +2,12 @@ use crate::interface::uds::wire::protocol;
 
 /// Parsed representation of a client-sent `tool_result` command, ready
 /// for `handle_tool_result` to consume.
-pub(super) struct ParsedToolResult {
-    pub(super) tool_call_id: String,
-    pub(super) content: String,
-    pub(super) is_error: bool,
+pub(in crate::interface) struct ParsedToolResult {
+    pub(in crate::interface) tool_call_id: String,
+    pub(in crate::interface) content: String,
+    pub(in crate::interface) is_error: bool,
     /// The `imageBlocks` field as sent (#2423), admitted on delivery.
-    pub(super) image_blocks: Option<protocol::WireImageBlocks>,
+    pub(in crate::interface) image_blocks: Option<protocol::WireImageBlocks>,
 }
 
 /// Intercept a raw client line that carries a `tool_result` so it can
@@ -32,7 +32,7 @@ pub(super) struct ParsedToolResult {
 ///    image limit is counted, never held. The fields mirror
 ///    `AgentCommand::ToolResult`'s (its wire names and defaults; unknown
 ///    fields ignored alike), and a test checks both readings agree.
-pub(super) fn try_intercept_tool_result(line: &str) -> Option<ParsedToolResult> {
+pub(in crate::interface) fn try_intercept_tool_result(line: &str) -> Option<ParsedToolResult> {
     if !line.contains(r#""tool_result""#) {
         return None;
     }

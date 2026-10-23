@@ -204,7 +204,7 @@ async fn a_follow_up_sent_mid_reply_waits_for_the_run_and_leaves_the_reply_strea
         runtime.block_on(async move {
             let listener = tokio::net::UnixListener::from_std(listener).unwrap();
             let store = crate::composition::sessions::build_session_handles(
-                crate::interface::cli::uds::dispatch_session_roster_tests::loop_inputs(
+                crate::interface::uds::controllers::uds::dispatch_session_roster_tests::loop_inputs(
                     dir.path(),
                     "cli:followup",
                 ),
