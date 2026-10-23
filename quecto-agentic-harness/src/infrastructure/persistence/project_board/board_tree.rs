@@ -632,7 +632,10 @@ pub use entries::TASK_NAMING;
 use entries::{TaskFile, task_name};
 #[path = "board_folders.rs"]
 mod folders;
-pub use folders::{ARCHIVE, CarriedTree, FILTER_BYTES, MAX_BOARD_ENTRIES, is_folder, read_size_in};
+pub use folders::{
+    ARCHIVE, CarriedTree, FILTER_BYTES, MAX_BOARD_ENTRIES, decode_folder_file, is_folder,
+    read_size_in,
+};
 use folders::{FOLDERS, FolderScan, load_folder, root_tree, scan_folder};
 #[path = "board_left_on_remote.rs"]
 mod left;

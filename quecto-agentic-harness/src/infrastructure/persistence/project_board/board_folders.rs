@@ -479,3 +479,23 @@ impl Board {
         snapshot
     }
 }
+
+/// Spike (board service): the key a file `name` in `folder` spells and
+/// what its bytes decode to, by the folder's codec; `None` when the
+/// folder is not one of the kinds' or the name spells no key.
+pub fn decode_folder_file(
+    folder: &str,
+    name: &str,
+    bytes: &[u8],
+) -> Option<(ArtifactKey, Result<BoardArtifact, String>)> {
+    let found = FOLDERS.iter().find(|found| found.naming.folder == folder)?;
+    let key = name.strip_suffix(".md").and_then(found.spell)?;
+    let noun = found.naming.noun;
+    let read = (found.decode)(bytes)
+        .map_err(|error| format!("{noun} file: {error}"))
+        .and_then(|artifact| match artifact.key() == key {
+            true => Ok(artifact),
+            false => Err(format!("holds {}, not {key}", artifact.key())),
+        });
+    Some((key, read))
+}
