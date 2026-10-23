@@ -17,3 +17,5 @@ pub mod inference;
 
 pub mod project_board;
 pub mod swarm;
+
+pub mod turn_declaration;
