@@ -46,7 +46,7 @@ fn web_fetch_scan_excludes_canonical_external_cfg_test_board_module() {
 #[test]
 fn find_rejects_direct_forbidden_production_composition() {
     assert!(dependency_scan::production_file(BOARD));
-    assert_eq!(find_composition_delegation_allowed(BOARD, FORBIDDEN), false);
+    assert!(!find_composition_delegation_allowed(BOARD, FORBIDDEN));
 }
 
 #[test]
