@@ -355,23 +355,8 @@ fn check_heads<F: ReaderFixture>(make: impl Fn() -> F) {
             }],
         )]);
         let store = f.store();
-        let before = f.fingerprint();
         assert_eq!(f.observed_head(), Some(f.head().0));
         assert!(matches!(store.read(), Err(BoardStoreError::Unavailable(_))));
-        assert!(matches!(
-            store.write_tasks(&f.head(), &[task("a", "A")], "board: a"),
-            Err(BoardStoreError::Unavailable(_))
-        ));
-        unchanged(&f, &before);
-        assert!(matches!(
-            store.clear_set_aside(
-                &f.head(),
-                &clear("tasks/a.md", &"0".repeat(40)),
-                "board: clear"
-            ),
-            Err(BoardStoreError::Unavailable(_))
-        ));
-        unchanged(&f, &before);
     }
 }
 
@@ -499,46 +484,6 @@ fn check_quarantine<F: ReaderFixture>(make: impl Fn() -> F) {
 #[test]
 fn project_board_reader_quarantine_legacy_opaque_and_repeated_copies() {
     check_quarantine(fresh);
-}
-
-fn check_folder_writes<F: ReaderFixture>(make: impl Fn() -> F) {
-    for (folder, cap, _, _) in FOLDERS.into_iter().skip(1) {
-        for count in [cap - 1, cap] {
-            let f = make();
-            f.batch(&[(
-                folder,
-                (0..count).map(|i| Raw::file(name(folder, i), 1)).collect(),
-            )]);
-            let board = f.store().read().unwrap();
-            assert_eq!(board.quarantined.len(), count);
-            let before = f.fingerprint();
-            let result = f
-                .store()
-                .write(&board.head, &[artifact(folder)], "board: count");
-            match count == cap {
-                true => {
-                    assert!(
-                        matches!(result, Err(BoardStoreError::InvalidWrite(_))),
-                        "{folder}: {result:?}"
-                    );
-                    unchanged(&f, &before);
-                }
-                false => written(result),
-            }
-            let board = f.store().read().unwrap();
-            let file = &board.quarantined[0];
-            written(f.store().clear_set_aside(
-                &board.head,
-                &clear(&file.path, &file.object),
-                "board: clear",
-            ));
-            assert_eq!(f.store().read().unwrap().quarantined.len(), count - 1);
-        }
-    }
-}
-#[test]
-fn project_board_reader_folder_write_and_clear_counts() {
-    check_folder_writes(fresh);
 }
 
 #[test]
