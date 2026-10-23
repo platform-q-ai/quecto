@@ -59,6 +59,8 @@ mod project_board_telemetry;
 mod provider_serialization;
 #[path = "architecture/providers_transport.rs"]
 mod providers_transport;
+#[path = "architecture/schema_validator_dependency.rs"]
+mod schema_validator_dependency;
 /// Sessions capability (#1968, D1 #1970): plural capability, one
 /// construction site, one layout owner, retirement of the singular path.
 #[path = "architecture/sessions_capability.rs"]
