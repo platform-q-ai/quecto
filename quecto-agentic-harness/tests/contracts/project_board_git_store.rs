@@ -652,3 +652,67 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
     let log = sh(&remote.bare, &["log", "-1", "--format=%s", BOARD_REF], b"");
     assert_eq!(log, "board: run 1 of board-store folded back, succeeded");
 }
+
+type RawBoardRow<'a> = (&'a str, &'a str, &'a [u8]);
+
+/// Raw batch fixture for bounded-reader parity. Replace named folders only;
+/// retain every other root row, including format, archive and stray files.
+impl Remote {
+    pub fn raw_head(&self) -> String {
+        sh(&self.bare, &["rev-parse", BOARD_REF], b"")
+    }
+
+    pub fn raw_fingerprint(&self) -> String {
+        format!(
+            "{}\n{}",
+            self.raw_head(),
+            sh(&self.bare, &["ls-tree", "-r", "-t", BOARD_REF], b"")
+        )
+    }
+
+    pub fn raw_batch(&self, folders: Vec<(&str, Vec<RawBoardRow<'_>>)>) {
+        let head = self.raw_head();
+        let held = sh(&self.bare, &["ls-tree", &head], b"");
+        let mut root: Vec<String> = held.lines().map(str::to_owned).collect();
+        let mut blobs = std::collections::BTreeMap::new();
+        for (folder, rows) in folders {
+            assert!(
+                [
+                    "tasks",
+                    "plans",
+                    "runs",
+                    "changes",
+                    "reviews",
+                    "discussions",
+                    "format",
+                    "archive"
+                ]
+                .contains(&folder)
+            );
+            let listing: String = rows
+                .into_iter()
+                .map(|(name, mode, bytes)| {
+                    assert!(["100644", "100755", "120000"].contains(&mode));
+                    assert!(
+                        name.bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+                    );
+                    let oid = blobs.entry(bytes).or_insert_with(|| {
+                        sh(&self.bare, &["hash-object", "-w", "--stdin"], bytes)
+                    });
+                    format!("{mode} blob {oid}\t{name}\n")
+                })
+                .collect();
+            let tree = sh(&self.bare, &["mktree"], listing.as_bytes());
+            root.retain(|row| row.split_once('\t').is_some_and(|(_, name)| name != folder));
+            root.push(format!("040000 tree {tree}\t{folder}"));
+        }
+        let tree = sh(&self.bare, &["mktree"], (root.join("\n") + "\n").as_bytes());
+        let commit = sh(
+            &self.bare,
+            &["commit-tree", &tree, "-p", &head, "-m", "raw batch"],
+            b"",
+        );
+        sh(&self.bare, &["update-ref", BOARD_REF, &commit], b"");
+    }
+}

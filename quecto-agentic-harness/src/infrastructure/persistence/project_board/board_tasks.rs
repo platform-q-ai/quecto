@@ -71,7 +71,7 @@ fn keep(board: &mut Board, entry: &Entry) {
 /// Objects this clone does not hold; git fails, or the tree is past its
 /// bounds.
 pub(super) fn scan_tasks(
-    git: &super::Git,
+    git: &impl super::Reader,
     tree: &str,
     limits: Limits,
     left: &LeftOnRemote,
@@ -154,7 +154,7 @@ pub(super) fn scan_tasks(
 ///
 /// # Errors
 /// git fails to give the files' bytes.
-pub(super) fn load_tasks(git: &super::Git, scan: TasksScan) -> Result<Board, Unread> {
+pub(super) fn load_tasks(git: &impl super::Reader, scan: TasksScan) -> Result<Board, Unread> {
     let TasksScan { mut board, to_read } = scan;
     let wanted: Vec<(&str, usize)> = to_read
         .iter()

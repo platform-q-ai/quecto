@@ -5,7 +5,6 @@
 //! would not see. Format 3 (#2481 S9) adds the other kinds' folders and the
 //! archive to the root: a quecto of format 2 asks for an upgrade, never
 //! takes them for a clash, and this one reads a board of format 2 as it is.
-use super::Git;
 use super::{Found, contents};
 use super::{LeftOnRemote, Limits, REGULAR_FILE, Unread, kinds_in, listed};
 use crate::application::project_board::ports::BoardStoreError;
@@ -80,7 +79,7 @@ fn above(number: &str) -> bool {
 /// # Errors
 /// Objects this clone does not hold, or git fails.
 pub(super) fn read_format(
-    git: &Git,
+    git: &impl super::Reader,
     tree: &str,
     limits: Limits,
     left: &LeftOnRemote,
