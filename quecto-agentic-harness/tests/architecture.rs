@@ -27,6 +27,8 @@ mod bdd_lanes;
 /// (#1637).
 #[path = "architecture/dependency_scan.rs"]
 mod dependency_scan;
+#[path = "architecture/external_child_ownership.rs"]
+mod external_child_ownership;
 #[path = "architecture/layout.rs"]
 mod layout;
 #[path = "architecture/uds_canonical_modules.rs"]
