@@ -506,3 +506,77 @@ fn the_git_store_drops_a_stray_in_a_folder() {
         remote.put("plans", "notes.txt", b"notes")
     });
 }
+
+/// The every-kind checks against one store: `$clients` builds two
+/// clients and the board to spoil.
+macro_rules! every_kind_checks {
+    ($prefix:ident, $make:expr) => {
+        mod $prefix {
+            use super::*;
+            use quecto::infrastructure::persistence::board_service::sqlite::SqliteBoard;
+            fn spoil(board: &SqliteBoard) {
+                super::super::project_board_sqlite_store::put_raw(board, "runs/a.1.md", b"{");
+            }
+            #[test]
+            fn writes_and_reads_every_kind() {
+                let (_keep, _board, clients) = $make;
+                check_write_and_read_every_kind(clients);
+            }
+            #[test]
+            fn refuses_one_key_twice() {
+                let (_keep, _board, clients) = $make;
+                check_one_key_twice_is_invalid(clients);
+            }
+            #[test]
+            fn refuses_only_the_write_of_a_set_aside_key() {
+                let (_keep, board, clients) = $make;
+                check_set_aside_key_refuses_only_its_write(clients, |_| spoil(&board));
+            }
+            #[test]
+            fn holds_one_artifact_per_key() {
+                let (_keep, _board, clients) = $make;
+                check_one_artifact_per_key(clients);
+            }
+            #[test]
+            fn reads_a_plan_and_a_run_back_byte_exact() {
+                let (_keep, _board, clients) = $make;
+                check_plan_and_run_read_back_byte_exact(clients);
+            }
+            #[test]
+            fn refuses_a_value_its_codec_refuses() {
+                let (_keep, _board, clients) = $make;
+                check_a_value_the_codec_refuses_is_invalid(clients);
+            }
+            #[test]
+            fn writes_a_change_only_in_case() {
+                let (_keep, _board, clients) = $make;
+                check_a_change_only_in_case_is_written(clients);
+            }
+            #[test]
+            fn clears_a_file_in_a_folder() {
+                let (_keep, board, clients) = $make;
+                check_a_clear_in_a_folder_removes_its_file(clients, |_| spoil(&board));
+            }
+            #[test]
+            fn drops_a_stray_in_a_folder() {
+                let (_keep, board, clients) = $make;
+                check_a_write_drops_a_stray_in_a_folder(clients, || {
+                    super::super::project_board_sqlite_store::put_raw(
+                        &board,
+                        "plans/notes.txt",
+                        b"notes\n",
+                    )
+                });
+            }
+        }
+    };
+}
+
+every_kind_checks!(
+    sqlite_kinds,
+    super::super::project_board_sqlite_store::kinds_fixture()
+);
+every_kind_checks!(
+    service_kinds,
+    super::super::project_board_service_store::kinds_fixture()
+);

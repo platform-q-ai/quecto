@@ -127,7 +127,7 @@ pub struct SqliteBoard {
     writer: Mutex<Connection>,
     readers: Mutex<Vec<Connection>>,
     current: Mutex<Option<Arc<Current>>>,
-    /// The latest revision committed, for the change feed's waiters.
+    /// A generation counted up on every change, for the feed's waiters.
     pub latest: Arc<(Mutex<u64>, Condvar)>,
     gate: Mutex<Option<WriteGate>>,
 }
@@ -288,9 +288,11 @@ impl SqliteBoard {
         Ok(BoardBootstrap::Created(head.board_head()))
     }
 
-    fn committed(&self, revision: u64) {
-        let (latest, waiters) = &*self.latest;
-        *lock(latest) = revision;
+    /// The board moved (a revision, or a new epoch): the feed's waiters
+    /// wake on the generation.
+    fn committed(&self, _revision: u64) {
+        let (generation, waiters) = &*self.latest;
+        *lock(generation) += 1;
         waiters.notify_all();
     }
 

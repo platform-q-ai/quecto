@@ -352,6 +352,20 @@ impl Git {
         limit: usize,
         reach: Reach,
     ) -> Result<Output, GitError> {
+        // SPIKE (board service): every git spawn counted and timed.
+        let started = std::time::Instant::now();
+        let out = self.run_timed(args, input, limit, reach);
+        crate::infrastructure::persistence::board_service::timing::git(args, started.elapsed());
+        out
+    }
+
+    fn run_timed(
+        &self,
+        args: &[&str],
+        input: Option<&[u8]>,
+        limit: usize,
+        reach: Reach,
+    ) -> Result<Output, GitError> {
         let timeout = match reach {
             Reach::Local => self.local_timeout,
             Reach::Network => self.network_timeout,

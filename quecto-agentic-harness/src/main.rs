@@ -5,7 +5,14 @@ fn main() {
     // (#2192, ADR-0029).
     quecto::interface::panic_hook::install();
     let args: Vec<String> = std::env::args().collect();
-    std::process::exit(cli::run(
+    // SPIKE (board service): the board server, and the timing tally.
+    quecto::infrastructure::persistence::board_service::timing::begin();
+    if args.get(1).map(String::as_str) == Some("board-server") {
+        std::process::exit(
+            quecto::infrastructure::persistence::board_service::server::run(&args[2..]),
+        );
+    }
+    let code = cli::run(
         args,
         cli::CliComposition {
             web_fetch_tool_factory: quecto::composition::web_fetch::build,
@@ -43,5 +50,7 @@ fn main() {
                 quecto::composition::bootstrap::project_board::cli_board_recording,
             ),
         },
-    ));
+    );
+    quecto::infrastructure::persistence::board_service::timing::report();
+    std::process::exit(code);
 }

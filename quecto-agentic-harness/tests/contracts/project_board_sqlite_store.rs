@@ -160,3 +160,10 @@ fn the_sqlite_store_carries_a_task_file_set_aside_and_drops_a_stray() {
         "tasks/notes.txt",
     );
 }
+
+/// Two clients, the board to spoil, and what keeps them alive.
+pub fn kinds_fixture() -> (Fixture, Arc<SqliteBoard>, Clients) {
+    let (fixture, clients) = fixture();
+    let board = Arc::clone(&fixture.board);
+    (fixture, board, clients)
+}

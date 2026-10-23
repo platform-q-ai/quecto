@@ -35,6 +35,8 @@ use crate::infrastructure::observability::audit_log::AuditLog;
 use crate::infrastructure::observability::project_board_op_log::{
     EventLogProjectBoardOps, TracingProjectBoardOps,
 };
+use crate::infrastructure::persistence::board_service;
+use crate::infrastructure::persistence::board_service::client::SERVICE_VARIABLE;
 use crate::infrastructure::persistence::project_board::gh_pull_requests::{
     GhPullRequestStates, github_repository,
 };
@@ -69,6 +71,17 @@ fn build_with_warnings(
     warn: &mut dyn FnMut(&str),
 ) -> Result<ProjectBoardHandles, BuildError> {
     let unavailable = |why: String| BuildError::Unavailable(why);
+    // SPIKE (board service): a board server instead of the git branch.
+    let service = environment
+        .vars
+        .iter()
+        .find(|(key, _)| key == SERVICE_VARIABLE)
+        .and_then(|(_, value)| value.to_str().map(str::to_owned));
+    if let Some(spec) = service {
+        let built = build_service_handles(environment, &spec);
+        board_service::timing::mark("composed");
+        return built;
+    }
     let vars = GitEnvironment::allowlisted(environment.vars.iter().cloned());
     // Only a write names a committer, so only a write is told what the
     // set naming one warns of. A warning names variables and the
@@ -184,9 +197,96 @@ fn build_with_warnings(
         listings,
         query: QueryBoard::new(store),
     };
+    board_service::timing::mark("composed");
     Ok(ProjectBoardHandles {
         operations: RunBoardOperation::new(parts),
         board: GitBoardStore::board_id_of(&url, &top_level),
+    })
+}
+
+/// SPIKE (board service): the board's operations over a board server
+/// (`QUECTO_BOARD_SERVICE`): no git process is started, unless a write
+/// names no committer in `QUECTO_BOARD_COMMITTER` (then git config is
+/// read for it, as today).
+fn build_service_handles(
+    environment: &ProjectBoardEnvironment,
+    spec: &str,
+) -> Result<ProjectBoardHandles, BuildError> {
+    use board_service::client::{
+        NoRemoteRevisions, ServiceBoardStore, ServiceClock, SnapshotListings,
+    };
+    let unavailable = |why: String| BuildError::Unavailable(why);
+    let writer = match (environment.access, board_committer(&environment.vars)) {
+        (_, Some(named)) => named.map_err(BuildError::NoCommitter)?,
+        (Access::Write, None) => {
+            let vars = GitEnvironment::allowlisted(environment.vars.iter().cloned());
+            Git::configured_committer(&environment.repo, &vars).map_err(write_refusal)?
+        }
+        (Access::Read, None) => Identity {
+            name: "board reader".into(),
+            email: "reader@quecto.invalid".into(),
+        },
+    };
+    let service = Arc::new(ServiceBoardStore::new(spec, writer).map_err(unavailable)?);
+    let clock: Arc<dyn BoardClock> = Arc::new(ServiceClock::new(Arc::clone(&service)));
+    let store: Arc<dyn ProjectBoardStore> = service;
+    let listings = Arc::new(SnapshotListings::new(Arc::clone(&store)));
+    let revisions: Arc<dyn RemoteRevisions> = Arc::new(NoRemoteRevisions);
+    let built = |error: crate::application::project_board::dto::ProjectBoardError| {
+        unavailable(error.to_string())
+    };
+    let complete = CompleteMergedTask::reading(
+        Arc::clone(&store),
+        Arc::clone(&clock),
+        Err(NoPullRequestHost::NotAPullRequestHost),
+    )
+    .map_err(built)?;
+    let parts = BoardOperationParts {
+        bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
+        create: CreateBoardTask::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
+        update: UpdateDraftTask::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
+        change: ChangeBoardTask::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
+        propose_plan: ProposePlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
+        edit_plan: EditPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
+        accept_plan: AcceptPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
+        discard_plan: DiscardPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
+        end_run: EndRun::new(
+            Arc::clone(&store),
+            Arc::clone(&clock),
+            Arc::new(MarkdownTextCells),
+            Arc::clone(&revisions),
+            environment
+                .launcher
+                .clone()
+                .map(|swarms| swarms as Arc<dyn RunLiveness>),
+            None,
+        )
+        .map_err(built)?,
+        start: StartBoardTask::new(
+            Arc::clone(&store),
+            Arc::clone(&store),
+            Arc::clone(&clock),
+            Arc::new(MarkdownTextCells),
+            environment
+                .launcher
+                .clone()
+                .map(|swarms| swarms as Arc<dyn CoordinatorLaunch>),
+            environment.cancelled.clone(),
+        )
+        .map_err(built)?,
+        left_runs: environment
+            .launcher
+            .clone()
+            .map(|swarms| ListLeftRuns::new(Arc::clone(&store), swarms as Arc<dyn StartedRuns>)),
+        clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
+        complete,
+        clock,
+        listings,
+        query: QueryBoard::new(store),
+    };
+    Ok(ProjectBoardHandles {
+        operations: RunBoardOperation::new(parts),
+        board: None,
     })
 }
 
