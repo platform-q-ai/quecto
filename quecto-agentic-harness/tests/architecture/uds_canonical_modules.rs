@@ -568,3 +568,88 @@ fn resolver_requires_materialized_files_even_for_inactive_cfg_modules() {
         .is_empty()
     );
 }
+
+
+fn builtin_include_imports(root: &str) -> Vec<String> {
+    [
+        format!("use ::{root}::include as generated; generated!(\"included.rs\");"),
+        format!("use {root}::include;"),
+        format!("use {root}::{{include}};"),
+        format!("use {root}::{{include as generated}}; generated!(\"included.rs\");"),
+        format!("use ::{root}::{{{{include as generated}}}};"),
+        format!("use {{{root}::include as generated}};"),
+        format!("use {{{{{root}::{{include as generated}}}}}};"),
+        format!("use {root}::include::self;"),
+        format!("use {root}::include::{{self}};"),
+        format!("use {root}::{{include::{{self as generated}}}};"),
+        format!("use ::{{{root}::{{include::{{{{self as generated}}}}}}}};"),
+        format!("#[cfg(any())] use {root}::include as generated;"),
+    ]
+    .into()
+}
+
+fn assert_builtin_include_imports_rejected(root: &str) {
+    for import in builtin_include_imports(root) {
+        for source in [import.clone(), format!("mod inline {{ {import} }}")] {
+            let violations = owned_fixture("mod framing; mod wire; mod controllers;", &source);
+            assert_eq!(violations.len(), 1, "{source}: {violations:?}");
+            assert_eq!(
+                violations[0],
+                "interface/uds/controllers/mod.rs: builtin include import is unsupported in the owned canonical module graph; declare modules explicitly",
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn ownership_rejects_explicit_std_include_import_syntax_family() {
+    assert_builtin_include_imports_rejected("std");
+}
+
+#[test]
+fn ownership_rejects_explicit_core_include_import_syntax_family() {
+    assert_builtin_include_imports_rejected("core");
+}
+
+#[test]
+fn ownership_keeps_builtin_include_imports_in_unowned_modules_out_of_scope() {
+    for root in ["std", "core"] {
+        for import in builtin_include_imports(root) {
+            let owner = format!(
+                "mod framing; mod wire; mod controllers; {import} mod sessions {{ {import} }}"
+            );
+            let violations = owned_fixture(&owner, "");
+            assert!(violations.is_empty(), "{owner}: {violations:?}");
+        }
+    }
+}
+
+#[test]
+fn ownership_accepts_near_named_and_unrelated_imports() {
+    for root in ["std", "core"] {
+        for name in ["include_str", "include_bytes", "include_extra", "not_include"] {
+            for import in [
+                format!("use {root}::{name} as generated;"),
+                format!("use ::{{{root}::{{{{{name} as include}}}}}};"),
+                format!("use {root}::{name}::{{self as generated}};"),
+            ] {
+                let source = format!("{import} mod inline {{ {import} }}");
+                let violations = owned_fixture("mod framing; mod wire; mod controllers;", &source);
+                assert!(violations.is_empty(), "{source}: {violations:?}");
+            }
+        }
+    }
+    for import in [
+        "use other::include as generated;",
+        "use other::{std::{include as generated}};",
+        "use std::other::{include as generated};",
+        "use std::{self as include};",
+        "use core as include;",
+        "use std::*;",
+    ] {
+        let source = format!("{import} mod inline {{ {import} }}");
+        let violations = owned_fixture("mod framing; mod wire; mod controllers;", &source);
+        assert!(violations.is_empty(), "{source}: {violations:?}");
+    }
+}
