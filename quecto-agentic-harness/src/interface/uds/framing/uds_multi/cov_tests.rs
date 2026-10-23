@@ -1,0 +1,535 @@
+use super::*;
+
+fn idle_shutdown() -> super::super::uds_shutdown::ShutdownRequest {
+    super::super::uds_shutdown::ShutdownRequest::detached(std::sync::Arc::new(
+        tokio::sync::Notify::new(),
+    ))
+}
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+#[test]
+fn busy_guard_sets_flag_and_clears_on_drop() {
+    let flag: BusyFlag = Arc::new(AtomicBool::new(false));
+    {
+        let _guard = BusyGuard::new(&flag);
+        assert!(flag.load(Ordering::SeqCst));
+    }
+    assert!(!flag.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn client_guard_drop_decrements_and_sends_disconnect() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let live = Arc::new(AtomicU32::new(1));
+    let guard = ClientGuard {
+        live_clients: live.clone(),
+        disconnect_tx: tx,
+        client_id: 42,
+    };
+    drop(guard);
+
+    assert_eq!(live.load(Ordering::SeqCst), 0);
+    assert_eq!(rx.recv().await.unwrap().client_id, 42);
+}
+
+#[tokio::test]
+async fn client_guard_drop_ignores_closed_channel() {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(rx);
+    let live = Arc::new(AtomicU32::new(1));
+    let guard = ClientGuard {
+        live_clients: live.clone(),
+        disconnect_tx: tx,
+        client_id: 7,
+    };
+    drop(guard);
+    assert_eq!(live.load(Ordering::SeqCst), 0);
+}
+
+/// #1720: a busy dispatcher consumes nothing, so every short-lived poll
+/// connection used to leave a sentinel in the bounded command channel until
+/// it was full and steer/follow_up were rejected as "queue full". Sentinels
+/// now travel on their own channel; the dispatcher still learns about every
+/// disconnect, but a client's queued command is always handled before its
+/// own sentinel, as when both shared one channel.
+#[tokio::test]
+async fn disconnect_sentinels_never_consume_command_capacity() {
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(1);
+    let (disconnect_tx, mut disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
+    let live = Arc::new(AtomicU32::new(300));
+    for client_id in 0..300u64 {
+        drop(ClientGuard {
+            live_clients: live.clone(),
+            disconnect_tx: disconnect_tx.clone(),
+            client_id,
+        });
+    }
+    assert!(
+        cmd_tx.try_reserve().is_ok(),
+        "a steer must still find command capacity after 300 polls"
+    );
+    cmd_tx
+        .send(ClientMessage::SwarmWake { generation: 1 })
+        .await
+        .unwrap();
+    let shutdown = idle_shutdown();
+    let mut none = None;
+    let bounded = std::time::Duration::from_secs(2);
+    let mut order = Vec::new();
+    while let Ok(Some(DispatchMsg::Client(message))) = tokio::time::timeout(
+        bounded,
+        recv_next_message(&mut cmd_rx, &mut disconnect_rx, &mut none, &shutdown),
+    )
+    .await
+    {
+        order.push(match message {
+            ClientMessage::SwarmWake { .. } => "wake",
+            ClientMessage::Disconnected(_) => "disconnect",
+            ClientMessage::Command(_) => "command",
+            ClientMessage::RejectedControl(_) => "rejected",
+        });
+        if order.len() == 301 {
+            break;
+        }
+    }
+    assert_eq!(
+        order.first(),
+        Some(&"wake"),
+        "queued work outranks sentinels"
+    );
+    assert_eq!(
+        order.iter().filter(|kind| **kind == "disconnect").count(),
+        300,
+        "every sentinel still reaches the dispatcher: {}",
+        order.len()
+    );
+}
+
+#[tokio::test]
+async fn recv_next_message_prefers_client_message_when_ready() {
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(2);
+    let (_notif_tx, notif_rx) =
+        crate::infrastructure::tools::agents::subagent_registry::new_notification_channel();
+    cmd_tx
+        .send(ClientMessage::Command(ClientCommand {
+            line: r#"{"type":"get_state"}"#.to_string(),
+            client_id: 9,
+            admitted: None,
+        }))
+        .await
+        .unwrap();
+    let mut maybe_rx = Some(notif_rx);
+
+    match recv_next_message(
+        &mut cmd_rx,
+        &mut fresh_disconnects(),
+        &mut maybe_rx,
+        &idle_shutdown(),
+    )
+    .await
+    .unwrap()
+    {
+        DispatchMsg::Client(ClientMessage::Command(command)) => {
+            assert_eq!(command.client_id, 9);
+            assert!(command.line.contains("get_state"));
+        }
+        _ => panic!("expected client command"),
+    }
+}
+
+#[tokio::test]
+async fn recv_next_message_returns_notification_when_no_client_ready() {
+    let (_cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(1);
+    let (notif_tx, notif_rx) =
+        crate::infrastructure::tools::agents::subagent_registry::new_notification_channel();
+    notif_tx
+        .send(
+            crate::infrastructure::tools::agents::subagent_registry::SequencedSubagentNotification::new(
+                3,
+                crate::infrastructure::tools::agents::subagent_registry::SubagentNotification::Completed {
+                    agent_id: "child".to_string(),
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    let mut maybe_rx = Some(notif_rx);
+
+    match recv_next_message(
+        &mut cmd_rx,
+        &mut fresh_disconnects(),
+        &mut maybe_rx,
+        &idle_shutdown(),
+    )
+    .await
+    .unwrap()
+    {
+        DispatchMsg::Notification(notification) => {
+            assert_eq!(notification.sequence, 3);
+            assert_eq!(notification.dedupe_key().0, "child");
+        }
+        DispatchMsg::Client(_) | DispatchMsg::Shutdown => panic!("expected notification"),
+    }
+}
+
+#[tokio::test]
+async fn recv_next_message_returns_none_when_command_channel_closed() {
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(1);
+    drop(cmd_tx);
+    let mut no_notifications = None;
+    assert!(
+        recv_next_message(
+            &mut cmd_rx,
+            &mut fresh_disconnects(),
+            &mut no_notifications,
+            &idle_shutdown()
+        )
+        .await
+        .is_none()
+    );
+}
+
+#[test]
+fn client_message_variants_carry_client_ids() {
+    let cmd = ClientMessage::Command(ClientCommand {
+        line: "line".to_string(),
+        client_id: 11,
+        admitted: None,
+    });
+    let disc = ClientMessage::Disconnected(ClientDisconnected { client_id: 12 });
+    match cmd {
+        ClientMessage::Command(command) => assert_eq!(command.client_id, 11),
+        ClientMessage::Disconnected(_)
+        | ClientMessage::SwarmWake { .. }
+        | ClientMessage::RejectedControl(_) => {
+            panic!("expected command")
+        }
+    }
+    match disc {
+        ClientMessage::Disconnected(disconnected) => assert_eq!(disconnected.client_id, 12),
+        ClientMessage::Command(_)
+        | ClientMessage::SwarmWake { .. }
+        | ClientMessage::RejectedControl(_) => {
+            panic!("expected disconnect")
+        }
+    }
+}
+
+#[tokio::test]
+async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
+    let (server, client) = tokio::net::UnixStream::pair().unwrap();
+    let (broadcast_tx, broadcast_rx) = tokio::sync::broadcast::channel::<String>(1);
+    broadcast_tx.send(r#"{"type":"old"}"#.to_string()).unwrap();
+    broadcast_tx.send(r#"{"type":"new"}"#.to_string()).unwrap();
+    let (targeted_tx, targeted_rx) = tokio::sync::mpsc::channel::<String>(2);
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(4);
+    let (guard_tx, mut disconnects) = tokio::sync::mpsc::unbounded_channel();
+    let live = Arc::new(AtomicU32::new(1));
+    let registry = crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry();
+    let turn_control: crate::interface::uds::controllers::uds_cancel::TurnControlHandle =
+        Arc::default();
+    let cancel_handle: crate::interface::uds::controllers::uds_cancel::CancelHandle = Arc::new(
+        std::sync::Mutex::new(crate::interface::uds::controllers::uds_cancel::CancelSlot::Idle),
+    );
+    let session =
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
+
+    let task = tokio::spawn(handle_client(ClientHandlerArgs {
+        stream: server,
+        broadcast_rx,
+        targeted_rx,
+        cmd_tx,
+        cancel_handle,
+        turn_control: turn_control.clone(),
+        client_id: 77,
+        client_tool_registry: registry,
+        session,
+        subagent_registry: None,
+        teardown: None,
+        swarm_boards: None,
+        _guard: ClientGuard {
+            live_clients: live.clone(),
+            disconnect_tx: guard_tx,
+            client_id: 77,
+        },
+    }));
+
+    let (reader, mut writer) = tokio::io::split(client);
+    let mut lines = tokio::io::BufReader::new(reader).lines();
+
+    let lag_line = lines.next_line().await.unwrap().unwrap();
+    assert!(lag_line.contains("dropped 1 events"), "{lag_line}");
+    let new_line = lines.next_line().await.unwrap().unwrap();
+    assert!(new_line.contains(r#""type":"new""#), "{new_line}");
+
+    targeted_tx
+        .send(r#"{"type":"execute_tool","toolName":"owned"}"#.to_string())
+        .await
+        .unwrap();
+    let targeted_line = lines.next_line().await.unwrap().unwrap();
+    assert!(targeted_line.contains("execute_tool"), "{targeted_line}");
+
+    writer
+        .write_all(
+            br#"{"type":"abort","id":"a1"}
+{"type":"get_state","id":"s1"}
+"#,
+        )
+        .await
+        .unwrap();
+    writer.shutdown().await.unwrap();
+
+    match cmd_rx.recv().await.unwrap() {
+        ClientMessage::Command(command) => {
+            assert_eq!(command.client_id, 77);
+            assert!(command.line.contains("abort"));
+        }
+        ClientMessage::Disconnected(_)
+        | ClientMessage::SwarmWake { .. }
+        | ClientMessage::RejectedControl(_) => {
+            panic!("expected abort command first")
+        }
+    }
+    assert!(turn_control.is_abort_pending());
+    match cmd_rx.recv().await.unwrap() {
+        ClientMessage::Command(command) => assert!(command.line.contains("get_state")),
+        ClientMessage::Disconnected(_)
+        | ClientMessage::SwarmWake { .. }
+        | ClientMessage::RejectedControl(_) => {
+            panic!("expected get_state command second")
+        }
+    }
+    assert_eq!(disconnects.recv().await.unwrap().client_id, 77);
+    assert!(
+        cmd_rx.try_recv().is_err(),
+        "no sentinel on the command channel"
+    );
+    assert_eq!(live.load(Ordering::SeqCst), 0);
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
+    let (server, mut client) = tokio::net::UnixStream::pair().unwrap();
+    let (broadcast_tx, broadcast_rx) = tokio::sync::broadcast::channel::<String>(1);
+    let (_targeted_tx, targeted_rx) = tokio::sync::mpsc::channel::<String>(1);
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(2);
+    let (disconnect_tx, mut disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
+    let live = Arc::new(AtomicU32::new(1));
+    let registry = crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry();
+    let session =
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
+
+    let task = tokio::spawn(handle_client(ClientHandlerArgs {
+        stream: server,
+        broadcast_rx,
+        targeted_rx,
+        cmd_tx: cmd_tx.clone(),
+        cancel_handle: Arc::new(std::sync::Mutex::new(
+            crate::interface::uds::controllers::uds_cancel::CancelSlot::Idle,
+        )),
+        turn_control: Arc::default(),
+        client_id: 88,
+        client_tool_registry: registry,
+        session,
+        subagent_registry: None,
+        teardown: None,
+        swarm_boards: None,
+        _guard: ClientGuard {
+            live_clients: live.clone(),
+            disconnect_tx,
+            client_id: 88,
+        },
+    }));
+    drop(broadcast_tx);
+
+    client.write_all(&[0xFF, 0, 0, 0]).await.unwrap();
+    task.await.unwrap();
+    assert_eq!(live.load(Ordering::SeqCst), 0);
+    assert_eq!(disconnect_rx.recv().await.unwrap().client_id, 88);
+}
+
+#[tokio::test]
+async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_killed_tombstones() {
+    use crate::application::sessions::ports::SessionStore;
+    use crate::domain::conversation::value_objects::message::Message;
+    use crate::domain::sessions::entities::session::{
+        PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
+    };
+    use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
+    use crate::infrastructure::tools::agents::subagent_registry::new_registry;
+
+    fn row(
+        agent_uuid: &str,
+        restore_reason: SubagentRestoreReason,
+    ) -> PersistedSubagentRosterEntry {
+        PersistedSubagentRosterEntry {
+            agent_uuid: agent_uuid.into(),
+            display_name: agent_uuid.into(),
+            session_key: agent_uuid.into(),
+            liveness: SubagentLiveness::Dead,
+            restore_reason,
+            parent_id: None,
+            read_only: false,
+            delivered_message_ordinal: None,
+            pending_message_reports: std::collections::VecDeque::new(),
+            status: None,
+        }
+    }
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = FileSessionStore::new(
+        crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout::new(
+            tmp.path(),
+        ),
+    );
+    let previous_roster = vec![
+        row(
+            "live-at-barrier",
+            SubagentRestoreReason::OrdinaryTuiExitStopped,
+        ),
+        row(
+            "dead-before-barrier",
+            SubagentRestoreReason::ExplicitlyKilled,
+        ),
+    ];
+    store
+        .save(&Session {
+            key: crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key("cli:test"),
+            messages: vec![Message::user("saved")],
+            workflow_run: None,
+            subagent_roster: previous_roster.clone(),
+        })
+        .await
+        .unwrap();
+
+    let registry = Some(new_registry());
+    let roster =
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::persisted_roster_via_save_async(
+            &registry,
+            SubagentRestoreReason::LegacyUnspecified,
+        )
+        .await;
+
+    assert!(roster.is_empty());
+    assert_eq!(
+        store
+            .load(&crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key("cli:test"))
+            .await
+            .unwrap()
+            .unwrap()
+            .messages
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
+    use crate::application::sessions::ports::SessionStore;
+    use crate::domain::conversation::value_objects::message::Message;
+    use crate::domain::sessions::entities::session::{
+        PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
+    };
+    use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
+    use crate::infrastructure::tools::agents::subagent_registry::new_registry;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = FileSessionStore::new(
+        crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout::new(
+            tmp.path(),
+        ),
+    );
+    store
+        .save(&Session {
+            key: crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key("cli:test"),
+            messages: vec![Message::user("saved")],
+            workflow_run: None,
+            subagent_roster: vec![PersistedSubagentRosterEntry {
+                agent_uuid: "child".into(),
+                display_name: "child".into(),
+                session_key: "child".into(),
+                liveness: SubagentLiveness::Dead,
+                restore_reason: SubagentRestoreReason::OrdinaryTuiExitStopped,
+                parent_id: None,
+                read_only: false,
+                delivered_message_ordinal: None,
+                pending_message_reports: std::collections::VecDeque::new(),
+                status: None,
+            }],
+        })
+        .await
+        .unwrap();
+
+    let registry = Some(new_registry());
+    let roster =
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::persisted_roster_via_save_async(
+            &registry,
+            SubagentRestoreReason::LegacyUnspecified,
+        )
+        .await;
+
+    assert!(roster.is_empty());
+    assert_eq!(
+        store
+            .load(&crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key("cli:test"))
+            .await
+            .unwrap()
+            .unwrap()
+            .messages
+            .len(),
+        1
+    );
+}
+
+fn fresh_disconnects() -> tokio::sync::mpsc::UnboundedReceiver<ClientDisconnected> {
+    tokio::sync::mpsc::unbounded_channel().1
+}
+
+/// #1720: the command-first order also holds with a live sub-agent
+/// notification channel (the production shape).
+#[tokio::test]
+async fn commands_outrank_sentinels_with_a_live_notification_channel() {
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(2);
+    let (disconnect_tx, mut disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (_notif_tx, notif_rx) =
+        crate::infrastructure::tools::agents::subagent_registry::new_notification_channel();
+    let mut with_notifications = Some(notif_rx);
+    disconnect_tx
+        .send(ClientDisconnected { client_id: 5 })
+        .unwrap();
+    cmd_tx
+        .send(ClientMessage::SwarmWake { generation: 1 })
+        .await
+        .unwrap();
+    let shutdown = idle_shutdown();
+    let first = recv_next_message(
+        &mut cmd_rx,
+        &mut disconnect_rx,
+        &mut with_notifications,
+        &shutdown,
+    )
+    .await;
+    assert!(
+        matches!(
+            first,
+            Some(DispatchMsg::Client(ClientMessage::SwarmWake { .. }))
+        ),
+        "queued work outranks the sentinel"
+    );
+    let second = recv_next_message(
+        &mut cmd_rx,
+        &mut disconnect_rx,
+        &mut with_notifications,
+        &shutdown,
+    )
+    .await;
+    assert!(matches!(
+        second,
+        Some(DispatchMsg::Client(ClientMessage::Disconnected(
+            ClientDisconnected { client_id: 5 }
+        )))
+    ));
+}

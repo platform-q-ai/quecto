@@ -22,7 +22,7 @@ use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSes
 use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
+use quecto::interface::uds::controllers::uds::{UdsLoopArgs, run_uds_loop};
 use std::collections::HashMap;
 use std::future::Future;
 use std::io::Write;
@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 
 /// Authoritative protocol page size, imported so this suite cannot drift from
 /// the protocol constant. Asserted behaviourally below, never sent on the wire.
-use quecto::interface::cli::protocol::HISTORY_PAGE_SIZE as PAGE;
+use quecto::interface::uds::wire::protocol::HISTORY_PAGE_SIZE as PAGE;
 pub(super) const PAGED_SESSION: &str = "paged-history";
 const STUB_SESSION: &str = "paged-stub";
 /// The seeded reply: long enough that its recall stub is cheaper than it,
@@ -1006,7 +1006,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
             broadcast_tx: None,
             parent_control: None,
             teardown_graph: None,
-            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
+            turn_session: quecto::composition::bootstrap::agent_turn::build_turn_session,
             environment_control: None,
         })
     });

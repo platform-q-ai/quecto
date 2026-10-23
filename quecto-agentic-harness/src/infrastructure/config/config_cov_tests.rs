@@ -182,3 +182,26 @@ fn a_workflow_step_error_never_quotes_a_value_and_escapes_what_it_names() {
         }
     }
 }
+
+// #996 item 10: the dead `auth_method` field is gone; legacy configs
+// that still carry the key keep loading (serde ignores unknown keys).
+#[test]
+fn provider_entry_loads_ignoring_dead_auth_method() {
+    use crate::infrastructure::config::ProviderEntry;
+    // A legacy config blob that still carries the removed `auth_method` key.
+    let json =
+        r#"{ "api_key": "sk-x", "api_base": "https://example.test", "auth_method": "api_key" }"#;
+    let entry: ProviderEntry = serde_json::from_str(json).expect("legacy config must still load");
+    assert_eq!(entry.api_key, "sk-x");
+    assert_eq!(entry.api_base, "https://example.test");
+    // The removal itself is enforced at COMPILE time, not by the asserts above
+    // (those passed before the change too, since `auth_method` used to be a
+    // known field). This exhaustive struct literal fails to build if the field
+    // is reintroduced.
+    let _explicit = ProviderEntry {
+        stream_limits: Default::default(),
+        api_key: "k".into(),
+        api_base: "b".into(),
+        disable_codex_routing: false,
+    };
+}

@@ -1,8 +1,9 @@
-use super::protocol::{SessionState, SessionStats, TokenStats};
 use crate::application::agent_turn::agent_loop::UsageTotals;
+use crate::application::agent_turn::use_cases::inspect_session_usage::InspectSessionUsage;
 use crate::domain::conversation::services::visible_thinking::has_visible_thinking;
 /// UDS session state — in-memory tracker and statistics for an active UDS connection.
 use crate::domain::conversation::value_objects::message::{Message, Role};
+use crate::interface::uds::wire::protocol::{SessionState, SessionStats, TokenStats};
 // ─── Session state tracker ────────────────────────────────────────────────────
 /// In-memory state for an active UDS session.
 #[path = "uds_session_notify.rs"]
@@ -20,21 +21,22 @@ pub struct AgentSession {
     /// each with the model it is about: a switch keeps only those about the
     /// model now active.
     startup_warnings: Vec<(String, String)>,
-    extensions: super::uds_extensions::Extensions, // #2446: warnings, generation
+    extensions: crate::interface::uds::controllers::uds_extensions::Extensions, // #2446: warnings, generation
     runtime_store: Option<crate::application::provider_runtime::RuntimeSnapshotStore>,
     streaming: bool,
     /// Whether automatic turns run, why not, and what re-arms them
     /// (#1721, #1909): the agent-turn use case composition built.
     automatic_turns: ResumeAfterProviderFailure,
     generation: u64,
-    /// Cumulative provider-reported usage for this in-memory UDS session.
-    usage: SessionUsage,
+    /// The usage retained across this session's turns (#1855): the
+    /// inspect-session-usage use case composition built.
+    usage: InspectSessionUsage,
     /// Latest user-facing context occupancy reported by the agent loop:
     /// provider-truth when available, estimate fallback otherwise.
     context_tokens: usize,
     /// `VecDeque` supports O(1) push_back (enqueue) and push_front (prepend/steer).
     pending: std::collections::VecDeque<PendingMessage>,
-    control_receipts: Vec<super::protocol::ControlReceipt>,
+    control_receipts: Vec<crate::interface::uds::wire::protocol::ControlReceipt>,
     last_subagent_notification: std::collections::HashMap<String, u64>,
     last_failure_notifications: std::collections::HashMap<String, String>,
     repeated_failure_notifications: u64,
@@ -218,7 +220,11 @@ fn escape_text(value: &str) -> String {
         .replace('>', "&gt;")
 }
 impl AgentSession {
-    pub fn new(model: String, automatic_turns: ResumeAfterProviderFailure) -> Self {
+    pub fn new(
+        model: String,
+        automatic_turns: ResumeAfterProviderFailure,
+        usage: InspectSessionUsage,
+    ) -> Self {
         Self {
             model,
             admission_warnings: Vec::new(),
@@ -228,7 +234,7 @@ impl AgentSession {
             streaming: false,
             automatic_turns,
             generation: 1,
-            usage: SessionUsage::default(),
+            usage,
             context_tokens: 0,
             pending: std::collections::VecDeque::new(),
             control_receipts: Vec::new(),
@@ -308,69 +314,40 @@ impl AgentSession {
     /// Accumulate the billed usage of one turn; `session_key` is the active
     /// session's key, named by the normalized usage log (#1567).
     pub fn record_usage(&mut self, session_key: &str, usage: UsageTotals) {
-        let UsageTotals {
-            billed_input_tokens: input_tokens,
-            billed_output_tokens: output_tokens,
-            cache_read_tokens,
-            cache_write_tokens,
-            cost_micro_usd,
-            ..
-        } = usage;
-        self.usage.tokens.input = self.usage.tokens.input.saturating_add(input_tokens);
-        self.usage.tokens.output = self.usage.tokens.output.saturating_add(output_tokens);
-        self.usage.tokens.cache_read = self
-            .usage
-            .tokens
-            .cache_read
-            .saturating_add(cache_read_tokens);
-        self.usage.tokens.cache_write = self
-            .usage
-            .tokens
-            .cache_write
-            .saturating_add(cache_write_tokens);
-        self.usage.tokens.total = self
-            .usage
-            .tokens
-            .input
-            .saturating_add(self.usage.tokens.output);
-        self.usage.cost_micro_usd = self.usage.cost_micro_usd.saturating_add(cost_micro_usd);
-        // The normalized usage log (#1567) rides every production usage path,
-        // not only the legacy whole-result accumulator.
-        if input_tokens > 0
-            || output_tokens > 0
-            || cache_read_tokens > 0
-            || cache_write_tokens > 0
-            || cost_micro_usd > 0
-        {
-            let ratio = self.usage.cache_hit_ratio();
-            tracing::info!(
-                target: "session_usage",
-                session_key = %session_key,
-                input = self.usage.tokens.input,
-                output = self.usage.tokens.output,
-                cacheRead = self.usage.tokens.cache_read,
-                cacheWrite = self.usage.tokens.cache_write,
-                total = self.usage.tokens.total,
-                contextTokens = self.context_tokens,
-                costMicroUsd = self.usage.cost_micro_usd,
-                cacheHitRatio = ratio,
-                "normalized session usage recorded"
-            );
-        }
+        self.usage
+            .record_turn(session_key, usage, self.context_tokens);
     }
     pub(crate) fn record_request_diagnostics(
         &mut self,
         diagnostics: crate::domain::inference::events::request_observation::RequestDiagnostics,
     ) {
-        self.usage.request_diagnostics.merge(diagnostics);
+        self.usage.record_request_diagnostics(diagnostics);
         self.bump_visible_generation();
     }
 
-    pub fn usage_snapshot(&self) -> SessionUsage {
-        self.usage.clone()
+    /// The usage retained across this session's turns (#1855).
+    pub fn usage_snapshot(
+        &self,
+    ) -> crate::application::agent_turn::dto::session_usage::SessionUsage {
+        self.usage.usage().clone()
+    }
+    /// The session's usage report over its visible `messages` (#1855), at
+    /// the latest context occupancy against the model's window.
+    pub fn usage_report(
+        &self,
+        session_key: &str,
+        messages: &[Message],
+        max_context_tokens: usize,
+    ) -> crate::application::agent_turn::dto::session_usage::SessionUsageReport {
+        self.usage.report(
+            session_key,
+            messages,
+            self.context_tokens,
+            max_context_tokens,
+        )
     }
     pub fn clear_usage(&mut self) {
-        self.usage = SessionUsage::default();
+        self.usage.clear();
         self.context_tokens = 0;
     }
     /// Maximum number of pending (steer/follow_up) messages buffered at once.
@@ -411,7 +388,7 @@ impl AgentSession {
                 self.record_control(
                     Some(&id),
                     &command,
-                    super::protocol::ControlStatus::Cancelled,
+                    crate::interface::uds::wire::protocol::ControlStatus::Cancelled,
                 );
             }
         }
@@ -440,7 +417,7 @@ impl AgentSession {
         message_count: usize,
         workflow: Option<serde_json::Value>,
         max_context_tokens: usize,
-        effort: impl Into<crate::interface::uds::catalogue::effort_presenter::EffortStateView>,
+        effort: impl Into<crate::interface::uds::presenters::effort_presenter::EffortStateView>,
     ) -> SessionState {
         let effort = effort.into();
         SessionState {
@@ -472,7 +449,7 @@ impl AgentSession {
 // ─── Session statistics ───────────────────────────────────────────────────────
 #[path = "uds_session_usage.rs"]
 mod usage_projection;
-pub use usage_projection::{SessionUsage, compute_session_stats, compute_session_stats_with_usage};
+pub use usage_projection::{history_session_stats, present_session_stats};
 #[path = "uds_session_history.rs"]
 pub(crate) mod uds_session_history;
 /// Test rig: the `get_messages` data for `messages` paged through the
@@ -484,7 +461,7 @@ pub(crate) fn messages_page_json(
     before: Option<&str>,
 ) -> serde_json::Value {
     let handles =
-        crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
     history_page_json(
         handles
             .read_history
@@ -590,8 +567,7 @@ mod prompt_images;
 pub(crate) use prompt_images::{PromptBody, add_image_summary, command_message};
 #[path = "uds_session_message_range.rs"]
 mod uds_session_message_range;
-#[path = "uds_visible_thinking_wire.rs"]
-mod uds_visible_thinking_wire;
+use crate::interface::uds::wire::uds_visible_thinking_wire;
 pub(crate) use uds_session_message_range::recovered_content_json;
 #[cfg(test)]
 #[path = "uds_session_coalesce_tests.rs"]

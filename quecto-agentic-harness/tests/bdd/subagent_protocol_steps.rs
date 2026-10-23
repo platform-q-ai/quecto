@@ -2,9 +2,8 @@ use super::*;
 use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry,
 };
-use quecto::interface::cli::protocol::{
-    AgentCommand, AgentEvent, SubagentInfo, build_subagent_info_list,
-};
+use quecto::interface::uds::presenters::subagent_info_list::build_subagent_info_list;
+use quecto::interface::uds::wire::protocol::{AgentCommand, AgentEvent, SubagentInfo};
 
 // ─── World fields ─────────────────────────────────────────────────────────────
 // Uses: world.subagent_infos, world.subagent_info_json, world.parsed_command,

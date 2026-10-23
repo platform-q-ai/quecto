@@ -306,7 +306,7 @@ async fn busy_get_state_snapshot_without_live_reply_for(
 }
 
 fn busy_get_state_changed_snapshot() -> serde_json::Value {
-    let state = crate::interface::cli::protocol::SessionState {
+    let state = crate::interface::uds::wire::protocol::SessionState {
         admission_warnings: Vec::new(),
         startup_warnings: Vec::new(),
         control_receipts: vec![],
@@ -325,7 +325,7 @@ fn busy_get_state_changed_snapshot() -> serde_json::Value {
         execution: None,
         sync: 0,
     };
-    serde_json::to_value(crate::interface::cli::protocol::AgentEvent::ok(
+    serde_json::to_value(crate::interface::uds::wire::protocol::AgentEvent::ok(
         None,
         "get_state",
         Some(state.slim_projection()),

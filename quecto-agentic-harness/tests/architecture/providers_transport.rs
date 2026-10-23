@@ -480,7 +480,7 @@ fn the_scan_refuses_every_way_of_naming_a_vendor() {
         "const FILE: &str = include_str!(concat!(\"../\", \"x.rs\"));",
         "#[doc = include_str!(\"vendor.md\")]\nfn o() {}",
         "use crate::infrastructure::providers::ProviderBindingWire;",
-        "use crate::infrastructure::providers::AttemptTransportBinding;",
+        "use crate::infrastructure::providers::routing::provider_factory::AttemptTransportBinding;",
         // #2605 review round 3.
         "macro_rules! join { ($($s:tt)*) => { $($s)::* } }\n\
          fn p(_: join!(crate infrastructure providers routing retry RetryConfig)) {}",

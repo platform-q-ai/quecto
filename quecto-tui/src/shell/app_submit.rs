@@ -85,6 +85,13 @@ impl App {
                     self.attach_image_file(&trimmed["/image".len()..]);
                     return;
                 }
+                _ if trimmed.strip_prefix("/admission").is_some_and(|rest| {
+                    rest.is_empty() || rest.starts_with(char::is_whitespace)
+                }) =>
+                {
+                    self.handle_admission_command(&trimmed["/admission".len()..]);
+                    return;
+                }
                 "/refresh-models" => {
                     self.send_refresh_models();
                     return;

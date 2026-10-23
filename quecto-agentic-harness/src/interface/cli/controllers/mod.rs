@@ -19,13 +19,13 @@ pub mod container_handles;
 pub(super) mod container_inventory;
 pub(super) mod container_setup;
 pub(super) mod help;
-pub(in crate::interface::cli) mod launch_rollback_wait;
+pub(in crate::interface) mod launch_rollback_wait;
 pub(super) mod models;
 pub mod retention_handles;
 pub mod run_end_fleet;
 pub mod shared;
 pub mod swarm_board_handles;
-pub(in crate::interface::cli) mod swarm_composition;
+pub(in crate::interface) mod swarm_composition;
 pub(crate) mod tool_runtime;
 
 #[cfg(test)]

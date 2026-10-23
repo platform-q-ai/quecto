@@ -68,7 +68,8 @@ async fn handler_emits_text_delta_then_done_on_completed() {
             assert_eq!(usage.completion_tokens, 1);
             assert_eq!(usage.cache_read_tokens, Some(1));
             assert_eq!(usage.context_tokens, Some(3));
-            assert_eq!(usage.cost.expect("stream cost").total_cost_micro_usd, 8);
+            // #1855: the provider reports usage; the turn prices it.
+            assert!(usage.cost.is_none(), "the provider prices nothing");
         }
         other => panic!("unexpected: {other:?}"),
     }

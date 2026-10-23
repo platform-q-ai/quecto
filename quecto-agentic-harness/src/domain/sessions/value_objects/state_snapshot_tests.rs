@@ -22,7 +22,7 @@ fn full_json() -> serde_json::Value {
                                   "lastRefusal": "busy"}],
                       "counters": {"completed": 0, "refused": 0, "cancelled": 0, "abandoned": 0},
                       "hidden": 0, "revision": 1, "directory": "/d", "epoch": 1,
-                      "connected": true, "authorityStatus": "connected"},
+                      "connected": true, "authorityStatus": "connected", "restartRequired": true},
         "admissionWarnings": [{"slot": "s", "code": "c", "message": "m"}],
         "startupWarnings": ["agent: warning: w"],
         "modelTurn": {"elapsedMs": 1, "outputCapBytes": 8,

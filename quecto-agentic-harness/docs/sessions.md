@@ -233,7 +233,7 @@ the architecture tests refuse a use case the docs do not name.
 | `ListRetainedContext` | #1866 | the context-pruning policy | the retention index and presence, never content |
 
 Each transaction has exactly one owner: the handlers in
-`src/interface/cli/uds_dispatch_session.rs` admit (the streaming refusal),
+`src/interface/uds/controllers/uds/uds_dispatch_session.rs` admit (the streaming refusal),
 request the injected use case and present the response; they sequence nothing.
 
 ### Ports
@@ -251,7 +251,7 @@ Declared only under `src/application/sessions/ports/`, each with a contract suit
 | `DurablePrefixObservation` | `application/agent_turn/agent_loop/durable_prefix.rs` (`DurablePrefixLatch`) | the agent loop's dirty-prefix latch the save drains |
 | `WorkflowRunSource` | `infrastructure/persistence/file/sessions/session_snapshot_sources.rs` | the workflow run the save records |
 | `HistoricalRosterSource` | `infrastructure/persistence/file/sessions/session_snapshot_sources.rs` | the sub-agent rows the save records as history |
-| `TurnAccountingReset` | `interface/cli/uds_turn_accounting.rs`, `uds_session_switch_runtime.rs` | usage/context/pending reset when history is replaced |
+| `TurnAccountingReset` | `interface/uds/controllers/uds_turn_accounting.rs`, `uds_session_switch_runtime.rs` | usage/context/pending reset when history is replaced |
 | `FreshSessionIdentityGenerator` | `infrastructure/persistence/file/sessions/fresh_session_identity.rs` | wall clock + pid + counter → a fresh `chat-…` identity |
 | `FleetSettlement` | `composition/fleet_settlement.rs` (adapts `TerminateAllDelegatedAgents`) | settle delegated children before a switch (#1938) |
 | `DelegatedChildrenRoster` | `infrastructure/tools/agents/delegated_roster.rs` | live delegated rows and roster replacement |
@@ -512,12 +512,13 @@ nothing follows**: the descope of #2045 removed the resume actions (Open
 original, Fork, Locate, Associate, Cancel), their capability set, their
 composition and their refusal codes — quecto is a lightweight harness, and a
 session from another folder is resumed by opening quecto there. The client is
-told how: `domain/sessions/value_objects/session_open_command.rs` spells `cd '<folder>' && quecto-tui`
+told how: `domain/sessions/value_objects/session_open_command.rs` spells `cd '<folder>' && quecto-tui --resume='<key>'`
 from the REAL folder as one POSIX single-quoted word (a contract test runs it
 in `sh` against hostile names), or spells **no command** when it would not
 read the way it runs — a folder that is not UTF-8, or one holding a control,
-Bidi_Control or invisible format character. `quecto-tui` takes no session
-flag, so the second step travels as its own field (`/resume <key>`). Both are
+Bidi_Control or invisible format character. The command also resumes the
+session there (`… && quecto-tui --resume='<key>'`, #2615); the same resume
+typed inside an open quecto travels as its own field (`/resume <key>`). Both are
 sent for ONE kind only — `ResumeDecisionKind::resumes_by_opening_quecto_there`
 (cross-folder): a changed home may be this very folder, a missing one cannot
 be entered, and an unknown or unrecorded one names nowhere to go, so those
@@ -556,9 +557,9 @@ never share a token. A `list_sessions` row carries
 contract `resume_decision_listing.rs` pins row version == authority version
 for every home state, cold and index-seeded, and that a well-formed lying
 index yields only `StaleHomeVersion`; `resume_refusal.rs` pins every kind, the
-no-effect invariants and the single ownership over the real adapters. The UDS edge is `interface/uds/sessions/
+no-effect invariants and the single ownership over the real adapters. The UDS edge is `interface/uds/controllers/
 resume_session_controller.rs` (wire fields → request) and
-`interface/cli/uds_dispatch_resume.rs` (typed answers, untrusted text made
+`interface/uds/controllers/uds/uds_dispatch_session/uds_dispatch_resume.rs` (typed answers, untrusted text made
 safe); the TUI shows the refusal as a plain notice
 (`sessions/resume_decision.rs`) that sends nothing, and a selection sends
 identity + the listed version — never an action.
@@ -593,7 +594,7 @@ a copy (#1979).
   `ListRetainedContext` over one store.
 - `src/composition/fleet_settlement.rs` — the fleet adaptation of the switch.
 
-The interface holds plain handle structs (`src/interface/cli/uds_session_handles.rs`,
+The interface holds plain handle structs (`src/interface/uds/controllers/uds_session_handles.rs`,
 `src/interface/cli/controllers/retention_handles.rs`) filled through `CliComposition`; it names neither the
 composition layer nor an adapter, converts no raw key, and reaches no store
 method — the architecture tests under `tests/architecture/sessions_*.rs` pin

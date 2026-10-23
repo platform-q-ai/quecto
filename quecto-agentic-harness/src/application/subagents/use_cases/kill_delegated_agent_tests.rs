@@ -15,19 +15,19 @@ use crate::domain::identity::ids::AgentUuid;
 use super::super::lifecycle_fakes::*;
 use super::super::teardown_fakes::*;
 
-struct Rig {
+pub(super) struct Rig {
     registry: Arc<FakeRegistry>,
     routing: Arc<FakeRouting>,
     lifecycle: Arc<FakeLifecycle>,
     termination: Arc<FakeTermination>,
     compensation: Arc<FakeCompensation>,
-    use_case: KillDelegatedAgent,
+    pub(super) use_case: KillDelegatedAgent,
 }
 
 /// The route is composed as this harness's own owner conclusion, exactly
 /// as production composes it: the kill claims, the route concludes and
 /// compensates a direct child, the kill joins.
-fn rig(
+pub(super) fn rig(
     registry: Arc<FakeRegistry>,
     lineage: LineageSnapshot,
     conclusion: TerminationConclusion,
@@ -65,7 +65,7 @@ fn rig(
 
 /// Rows for the fake tree: A and D are direct children (owned), B and C
 /// are A's children reported upward.
-fn tree_registry() -> Arc<FakeRegistry> {
+pub(super) fn tree_registry() -> Arc<FakeRegistry> {
     FakeRegistry::new()
         .with_row("A", 1, "alpha")
         .holding_process("A")
@@ -75,13 +75,13 @@ fn tree_registry() -> Arc<FakeRegistry> {
         .holding_process("D")
 }
 
-fn kill(reference: &str) -> KillDelegatedAgentRequest {
+pub(super) fn kill(reference: &str) -> KillDelegatedAgentRequest {
     KillDelegatedAgentRequest {
         reference: reference.to_owned(),
     }
 }
 
-async fn bounded<T>(future: impl std::future::Future<Output = T>) -> T {
+pub(super) async fn bounded<T>(future: impl std::future::Future<Output = T>) -> T {
     tokio::time::timeout(std::time::Duration::from_secs(5), future)
         .await
         .expect("the use case must settle within the bound")

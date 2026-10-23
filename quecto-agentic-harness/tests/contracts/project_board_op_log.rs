@@ -27,6 +27,7 @@ fn record() -> BoardOpRecord {
         front_end: FrontEnd::Cli,
         client: Client::Cli,
         access: Access::Read,
+        board: None,
         outcome: OpOutcome::Ok,
         fault: None,
         task: None,
@@ -46,7 +47,9 @@ fn record() -> BoardOpRecord {
         status_to: None,
         claim: None,
         attempts: None,
-        lost: None,
+        races_lost: None,
+        lock_races: None,
+        swarm_report: None,
         pause_ms: None,
         completion: None,
         normalised: None,
@@ -281,6 +284,7 @@ fn fold_back_record() -> FoldBackRecord {
     FoldBackRecord {
         task: TaskRef::of(&Slug::parse("board-store").unwrap()),
         run: 1,
+        board: None,
         outcome: OpOutcome::Ok,
         run_outcome: Some(RunOutcomeKind::Stopped),
         items: None,
@@ -290,8 +294,10 @@ fn fold_back_record() -> FoldBackRecord {
         evidence_dropped: Some(1),
         cost_tokens: Some(9),
         attempts: Some(1),
-        lost: Some(0),
+        races_lost: Some(0),
+        lock_races: None,
         bytes: Some(0),
+        head: None,
         duration_us: 3,
     }
 }

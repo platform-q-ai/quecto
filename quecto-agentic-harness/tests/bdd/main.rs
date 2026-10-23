@@ -865,9 +865,9 @@ pub struct QuectoWorld {
     // V1 BDD workflow fields removed. V2 workflow is covered by unit tests in:
     //   src/domain/workflow/mod_tests.rs
     //   src/infrastructure/tools/native/workflow_tool_comprehensive_tests.rs
-    //   src/interface/cli/controllers/shared_tests.rs
+    //   src/interface/cli/controllers/shared/tests.rs
     //   src/interface/cli/controllers/agent_tests.rs
-    //   src/interface/cli/protocol_tests.rs
+    //   src/interface/uds/wire/protocol/tests.rs
     //   src/infrastructure/persistence/file/sessions/session_store.rs
     // --- Extension system BDD fields ---
     /// Test extension for extension trait scenarios (Debug-opaque)
@@ -964,25 +964,25 @@ pub struct QuectoWorld {
     pub monitor_abort_result: Option<bool>,
     // --- Subagent protocol (#524) ---
     /// SubagentInfo list from get_subagents
-    pub subagent_infos: Vec<quecto::interface::cli::protocol::SubagentInfo>,
+    pub subagent_infos: Vec<quecto::interface::uds::wire::protocol::SubagentInfo>,
     /// Single SubagentInfo under test
-    pub subagent_info_single: Option<quecto::interface::cli::protocol::SubagentInfo>,
+    pub subagent_info_single: Option<quecto::interface::uds::wire::protocol::SubagentInfo>,
     /// Serialized SubagentInfo JSON
     pub subagent_info_json: serde_json::Value,
     /// Raw JSON command string for parsing
     pub protocol_command_json: String,
     /// Parsed command
-    pub parsed_command: Option<quecto::interface::cli::protocol::AgentCommand>,
+    pub parsed_command: Option<quecto::interface::uds::wire::protocol::AgentCommand>,
     /// Protocol event under test
-    pub protocol_event: Option<quecto::interface::cli::protocol::AgentEvent>,
+    pub protocol_event: Option<quecto::interface::uds::wire::protocol::AgentEvent>,
     /// Deserialized event for round-trip test
-    pub deserialized_event: Option<quecto::interface::cli::protocol::AgentEvent>,
+    pub deserialized_event: Option<quecto::interface::uds::wire::protocol::AgentEvent>,
     /// Registry for protocol BDD scenarios
     pub subagent_protocol_registry:
         Option<quecto::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     // --- Subagent widget (#525) ---
     /// Simulated subagent infos for widget BDD tests
-    pub widget_subagent_infos: Vec<quecto::interface::cli::protocol::SubagentInfo>,
+    pub widget_subagent_infos: Vec<quecto::interface::uds::wire::protocol::SubagentInfo>,
     /// Rendered widget lines
     pub widget_bar_lines: Vec<String>,
     // --- Multi-client UDS (#318) ---

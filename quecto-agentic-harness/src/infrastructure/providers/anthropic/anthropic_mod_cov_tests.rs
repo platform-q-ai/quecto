@@ -1,14 +1,14 @@
 // Region-coverage tests for anthropic/mod.rs.
 //
 // Targets branches not exercised elsewhere: header construction (OAuth vs
-// API key), cancellation short-circuits, attach_cost, parse_response error
+// API key), cancellation short-circuits, parse_response error
 // and OAuth-remap arms, tool_result image blocks, cache-control array/no-user
 // branches, tool_choice OAuth remap, metadata edge cases, invalid tool schema.
 // All inputs are in-memory; cancellation tests short-circuit before any I/O.
 
 use super::*;
 use crate::application::providers::ports::ChatRequest;
-use crate::domain::conversation::value_objects::message::{LlmResponse, Message, UsageInfo};
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::inference::value_objects::cancel_flag::CancelFlag;
 use crate::domain::inference::value_objects::provider::{RequestMetadata, StreamEvent, ToolChoice};
 use crate::domain::tool_policy::value_objects::tool::{ImageBlock, ToolDefinition};
@@ -90,55 +90,6 @@ fn apply_headers_api_key_sets_x_api_key() {
     assert_eq!(h.get("x-api-key").unwrap(), "sk-ant-test");
     assert!(h.get("Authorization").is_none());
     assert_eq!(h.get("anthropic-version").unwrap(), "2023-06-01");
-}
-
-// --- attach_cost -------------------------------------------------------------
-
-fn response_with_usage() -> LlmResponse {
-    LlmResponse {
-        content: Some("x".to_string()),
-        tool_calls: vec![],
-        usage: Some(UsageInfo {
-            prompt_tokens: 1000,
-            completion_tokens: 1000,
-            cache_read_tokens: None,
-            cache_write_tokens: None,
-            context_tokens: None,
-            cost: None,
-        }),
-        stop_reason: None,
-        thinking_blocks: vec![],
-    }
-}
-
-#[test]
-fn attach_cost_sets_cost_for_known_model() {
-    let mut resp = response_with_usage();
-    crate::domain::inference::services::usage_accounting::attach_cost(&mut resp, "claude-opus-4-6");
-    assert!(resp.usage.unwrap().cost.is_some());
-}
-
-#[test]
-fn attach_cost_leaves_none_for_unknown_model() {
-    let mut resp = response_with_usage();
-    crate::domain::inference::services::usage_accounting::attach_cost(
-        &mut resp,
-        "totally-unknown-model-xyz",
-    );
-    assert!(resp.usage.unwrap().cost.is_none());
-}
-
-#[test]
-fn attach_cost_noop_when_no_usage() {
-    let mut resp = LlmResponse {
-        content: Some("x".to_string()),
-        tool_calls: vec![],
-        usage: None,
-        stop_reason: None,
-        thinking_blocks: vec![],
-    };
-    crate::domain::inference::services::usage_accounting::attach_cost(&mut resp, "claude-opus-4-6");
-    assert!(resp.usage.is_none());
 }
 
 // --- parse_response edge arms ------------------------------------------------

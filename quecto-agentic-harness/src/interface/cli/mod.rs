@@ -1,4 +1,8 @@
 pub mod controllers;
+/// Drive an in-process harness through the termination-signal path (#1938)
+/// without signalling the test process.
+#[cfg(any(test, feature = "test-support"))]
+pub use crate::interface::uds::framing::uds_shutdown::test_support::deliver_termination_signal;
 pub use controllers::container::{
     ContainerDoctorBuilder, ContainerInitBuilder, ContainerInventoryBuilder,
     ContainerStatusBuilder, EnvironmentRegistryBuilder,
@@ -8,89 +12,22 @@ use controllers::{
     configuration_handles, container_config_handles, retention_handles, run_end_fleet,
     swarm_board_handles,
 };
-pub mod protocol;
-pub mod uds;
-mod uds_admission_projection;
-#[cfg(test)]
-#[path = "uds_admission_projection_tests.rs"]
-mod uds_admission_projection_tests;
-mod uds_busy_get_message;
-mod uds_busy_subagents;
-#[cfg(test)]
-mod uds_busy_subagents_tests;
-pub mod uds_cancel;
-mod uds_cancel_history;
-mod uds_control_forward;
-mod uds_delete_all_subagents;
-mod uds_dispatch_reload;
-pub mod uds_execution_state;
-mod uds_progress_forward;
 
-#[cfg(any(test, feature = "test-support"))]
-mod uds_test_support;
-#[cfg(any(test, feature = "test-support"))]
-pub use uds_test_support::{
-    AdmissionStateProbe, admission_broadcast_hook, busy_reader_dispatch,
-    completed_live_execution_state, ledger_hint_lines_for_turn_events,
-    live_execution_state_for_events,
-};
-#[cfg(any(test, feature = "test-support"))]
-mod uds_busy_test_support;
-#[cfg(any(test, feature = "test-support"))]
-pub use uds_busy_test_support::{busy_reader_intercept, busy_reader_intercept_with_fleet};
-/// Drive an in-process harness through the termination-signal path (#1938)
-/// without signalling the test process.
-#[cfg(any(test, feature = "test-support"))]
-pub use uds_shutdown::test_support::deliver_termination_signal;
-
-mod uds_admission_warnings;
-pub mod uds_discovery_handles;
-#[cfg(test)]
-mod uds_execution_state_tests;
-mod uds_ext_protocol;
-mod uds_extensions;
-mod uds_latest_report;
-mod uds_lifecycle;
-pub mod uds_models;
-pub(crate) mod uds_multi;
-mod uds_multi_accept;
-mod uds_owner_exit;
-pub mod uds_parent_control;
-mod uds_query;
-mod uds_reader;
-mod uds_reader_dispatch;
+pub(in crate::interface) mod uds_lifecycle;
 pub mod uds_session;
 #[cfg(test)]
 mod uds_session_admission_tests;
-pub mod uds_session_handles;
 pub mod uds_session_switch_runtime;
-mod uds_shutdown;
-mod uds_single_client;
-mod uds_snapshots;
-mod uds_socket;
-mod uds_state_projection;
+pub(in crate::interface) mod uds_snapshots;
+pub(in crate::interface) mod uds_state_projection;
 #[cfg(test)]
 mod uds_state_projection_tests;
-mod uds_swarm_board;
-mod uds_swarm_control;
-mod uds_sync;
-#[cfg(test)]
-mod uds_sync_tests;
-pub(crate) mod uds_teardown_adapters;
-pub mod uds_teardown_handles;
 #[cfg(test)]
 mod uds_thinking_1231_tests;
-mod uds_tool_intercept;
-pub mod uds_turn_accounting;
-pub mod uds_wire;
-mod uds_workflow_nudge;
 
 use crate::application::configuration::dto::{ConfigSelection, ConfigSelectionRequest};
 use controllers::config_flag::{extract_config_flag, strip_global_config_flag};
 use std::path::PathBuf;
-
-// Re-export shared functions for backward compatibility.
-pub use controllers::shared::merge_prompts;
 
 /// Result of a CLI invocation, capturing stdout, stderr, and exit code.
 #[derive(Debug, Clone)]
@@ -148,14 +85,18 @@ pub type KillToolBuilder = fn(KillToolWiring) -> bool;
 /// context; the loop hands over its runtime inputs and holds only the
 /// use-case and controller handles back, never the graph between them.
 pub type TeardownHandlesBuilder =
-    fn(uds_teardown_handles::TeardownLoopInputs) -> uds_teardown_handles::TeardownHandles;
+    fn(
+        crate::interface::uds::controllers::uds_teardown_handles::TeardownLoopInputs,
+    ) -> crate::interface::uds::controllers::uds_teardown_handles::TeardownHandles;
 
 /// Composition's builder of the handles one loop holds on the sessions
 /// capability (#1970): the session store and the saved-session queries,
 /// composed over the loop's base directory. Injected through the CLI
 /// context; the interface never constructs a store or a use case.
 pub type SessionHandlesBuilder =
-    fn(uds_session_handles::SessionLoopInputs) -> uds_session_handles::SessionHandles;
+    fn(
+        crate::interface::uds::controllers::uds_session_handles::SessionLoopInputs,
+    ) -> crate::interface::uds::controllers::uds_session_handles::SessionHandles;
 
 /// Composition's builder of the handles one run holds on retained context
 /// (D9 #1978): the retention store, the recall use case and the pruning
@@ -164,9 +105,10 @@ pub type SessionHandlesBuilder =
 /// store or the recall graph.
 pub type RetentionHandlesBuilder = fn(&std::path::Path) -> retention_handles::RetentionHandles;
 
-/// Composition's builder of a session's automatic turns (#1909): the
-/// resume-after-a-provider-failure use case a UDS loop's session holds.
-pub type AutomaticTurnsBuilder = fn() -> crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure;
+/// Composition's builder of a UDS loop's session tracker for a model
+/// (#1909, #1855): it holds the agent-turn use cases composition builds,
+/// resume-after-a-provider-failure and inspect-session-usage.
+pub type TurnSessionBuilder = fn(String) -> uds_session::AgentSession;
 
 /// Composition's builder of the fresh user-chat identity generator (D7
 /// #1976): the one source of a fresh key, for the startup identity of an
@@ -258,9 +200,9 @@ pub struct CliContext {
     /// refuses to start without it, since the interface never constructs
     /// a session store.
     pub sessions: Option<SessionHandlesBuilder>,
-    /// Composition's automatic-turns builder (#1909); a UDS loop refuses to
-    /// start without it.
-    pub automatic_turns: Option<AutomaticTurnsBuilder>,
+    /// Composition's turn-session builder (#1909, #1855); a UDS loop
+    /// refuses to start without it.
+    pub turn_session: Option<TurnSessionBuilder>,
     /// Composition's retained-context handles builder (#1978). Supplied by
     /// the binary's `main` through [`run`]'s [`CliComposition`]; an agent
     /// run refuses to start without it, since the interface never
@@ -414,7 +356,7 @@ pub struct CliComposition {
     pub teardown_graph: TeardownHandlesBuilder,
     pub kill_tool: crate::interface::cli::KillToolBuilder,
     pub sessions: SessionHandlesBuilder,
-    pub automatic_turns: AutomaticTurnsBuilder,
+    pub turn_session: TurnSessionBuilder,
     pub retention: RetentionHandlesBuilder,
     pub fresh_session_identity: FreshSessionIdentityBuilder,
     pub configuration: ConfigurationHandlesBuilder,
@@ -504,7 +446,7 @@ fn composed_context(
         teardown_graph: Some(composition.teardown_graph),
         kill_tool: Some(composition.kill_tool),
         sessions: Some(composition.sessions),
-        automatic_turns: Some(composition.automatic_turns),
+        turn_session: Some(composition.turn_session),
         retention: Some(composition.retention),
         fresh_session_identity: Some(composition.fresh_session_identity),
         configuration: Some(composition.configuration),

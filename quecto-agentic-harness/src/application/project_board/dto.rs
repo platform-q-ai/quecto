@@ -419,6 +419,7 @@ impl ShownTask {
             return Err(ProjectBoardError::Quarantined {
                 key,
                 path: file.path.clone(),
+                object: file.object.clone(),
             });
         }
         if let Some(plan) = self
@@ -561,6 +562,8 @@ pub enum ProjectBoardError {
     Quarantined {
         key: ArtifactKey,
         path: String,
+        /// The file's object, as `clear_set_aside` names it (#2659).
+        object: String,
     },
     /// The board holds the artifact `key` more than once: its store broke
     /// the contract of one artifact per key, so what it holds is unknown.

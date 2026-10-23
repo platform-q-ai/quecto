@@ -163,6 +163,8 @@ impl<'a> Reader<'a> {
         let schema = schema.ok_or(MarkdownError::Marker)?;
         let title = self.peek(1).and_then(|line| line.strip_prefix("# "));
         let title = title.ok_or(MarkdownError::Title)?;
+        // Its backslashes as the heading escapes them, read back (#2668).
+        let title = super::inline::backslashes_unescaped(title, 2)?;
         self.at = 2;
         let mut fields = vec![];
         if let (Some(""), Some("| Field | Value |")) = (self.peek(0), self.peek(1)) {
@@ -207,7 +209,7 @@ impl<'a> Reader<'a> {
         }
         Ok(Document {
             schema,
-            title: title.into(),
+            title,
             fields,
             sections,
         })
@@ -315,9 +317,11 @@ impl<'a> Reader<'a> {
     }
 
     /// A line of text: the backslash the writer adds taken off, and one a
-    /// block would start, left unescaped, refused.
+    /// block would start, left unescaped, refused; then its backslashes as
+    /// the writer escapes them read back (#2668).
     fn text(&self, line: &str) -> Result<String, MarkdownError> {
-        unescaped(line).ok_or(MarkdownError::BlockLike { line: self.line() })
+        let inline = unescaped(line).ok_or(MarkdownError::BlockLike { line: self.line() })?;
+        super::inline::backslashes_unescaped(&inline, self.line())
     }
 
     /// Fenced code: its lines verbatim up to the closing fence.

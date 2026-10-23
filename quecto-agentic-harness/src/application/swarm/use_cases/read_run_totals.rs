@@ -7,10 +7,10 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::OverRepository;
-use crate::application::swarm::board_operation::operation;
-use crate::application::swarm::board_read_models::counts;
 use crate::application::swarm::dto::RunTotalsView;
 use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
+use crate::application::swarm::services::board_operation::operation;
+use crate::application::swarm::services::board_read_models::counts;
 use crate::domain::swarm::{services::policy::Access, value_objects::board_error::BoardError};
 
 /// Through the operation gate as a read (any member, a dead one

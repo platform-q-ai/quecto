@@ -1,0 +1,92 @@
+//! Cancellation history (#483): what an interrupted turn leaves in the live
+//! conversation — the tail after the cancelled prompt is truncated to the
+//! tool-call steps and tool results already recorded (and a watermark cut's
+//! stub, #2403), and every unanswered
+//! tool call gets a synthetic `aborted by user` error result so the
+//! transcript stays replayable. Owner role: cancellation. Reads and edits
+//! the loop's live `Vec<Message>` only; no session persistence, no store.
+use std::collections::HashSet;
+
+use crate::domain::conversation::value_objects::message::{Message, Role};
+use crate::domain::conversation::value_objects::user_kind::UserKind;
+
+fn prompt_position(messages: &[Message], prompt_id: uuid::Uuid) -> Option<usize> {
+    messages
+        .iter()
+        .position(|message| message.id() == prompt_id)
+}
+
+pub(super) struct FinalizedInterruptedTurn {
+    pub retained_tail: Vec<Message>,
+    pub synthetic_results: Vec<Message>,
+}
+
+impl FinalizedInterruptedTurn {
+    pub fn recordable_messages(&self) -> Vec<Message> {
+        self.retained_tail
+            .iter()
+            .chain(self.synthetic_results.iter())
+            .cloned()
+            .collect()
+    }
+}
+
+pub(super) fn finalize_interrupted_turn(
+    messages: &mut Vec<Message>,
+    prompt_id: uuid::Uuid,
+) -> FinalizedInterruptedTurn {
+    let Some(index) = prompt_position(messages, prompt_id) else {
+        return FinalizedInterruptedTurn {
+            retained_tail: Vec::new(),
+            synthetic_results: Vec::new(),
+        };
+    };
+
+    let interrupted_tail = messages.split_off(index + 1);
+    let mut retained_tail = Vec::new();
+    for message in interrupted_tail {
+        match message.role {
+            // A message already sent is never edited (#2403): its text and
+            // reasoning stay, so the next request still extends the last.
+            Role::Assistant if !message.tool_calls.is_empty() => retained_tail.push(message),
+            Role::Tool => retained_tail.push(message),
+            // A watermark cut's stub stays where it is (#2403).
+            Role::User if message.user_kind == UserKind::ArchiveStub => retained_tail.push(message),
+            _ => {}
+        }
+    }
+
+    let mut answered = HashSet::new();
+    for message in &retained_tail {
+        if matches!(message.role, Role::Tool) {
+            if let Some(id) = &message.tool_call_id {
+                answered.insert(id.clone());
+            }
+        }
+    }
+
+    let mut synthetic_results = Vec::new();
+    for message in &retained_tail {
+        if matches!(message.role, Role::Assistant) {
+            for call in &message.tool_calls {
+                if !answered.contains(&call.id) {
+                    let mut result = Message::tool(call.id.clone(), "aborted by user");
+                    result.is_error = true;
+                    result.tool_name = Some(call.name.clone());
+                    synthetic_results.push(result);
+                    answered.insert(call.id.clone());
+                }
+            }
+        }
+    }
+
+    let finalized = FinalizedInterruptedTurn {
+        retained_tail,
+        synthetic_results,
+    };
+    messages.extend(finalized.recordable_messages());
+    finalized
+}
+
+#[cfg(test)]
+mod tests;

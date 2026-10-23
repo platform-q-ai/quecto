@@ -1,7 +1,7 @@
 //! #1942 ledger row 12: every production agent construction, the plain CLI
 //! run, the UDS agent and a spawned child of either, builds its web_fetch
 //! tool through `build_agent_from_config`, which hands the web-fetch
-//! factory `interface::shared::web_fetch_client_recipe()`. A recording
+//! factory `interface::cli::controllers::shared::web_fetch_client_recipe()`. A recording
 //! factory (the real composition underneath) shows the recipe each got, and
 //! the built agent is shown to carry the very tool the factory returned,
 //! which fetches from a local listener. (The recording factory builds the

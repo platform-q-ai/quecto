@@ -26,7 +26,7 @@ fn recorded(
     result: &Result<FoldedBack, ProjectBoardError>,
     facts: &FoldBackFacts,
 ) -> serde_json::Value {
-    FoldBackCall::new(recording(records)).record(FoldBackOutcome {
+    FoldBackCall::new(recording(records), None).record(FoldBackOutcome {
         task: &slug("board-store"),
         run: 3,
         result,
@@ -80,7 +80,7 @@ fn a_refused_fold_back_is_recorded_with_its_code_and_rule() {
         items: vec![],
         observed_tokens: 9,
     };
-    let call = FoldBackCall::new(recording(&records));
+    let call = FoldBackCall::new(recording(&records), None);
     let result = use_case.execute_recorded(&slug("board-store"), 1, &view, Some(&call));
     assert_eq!(
         result,

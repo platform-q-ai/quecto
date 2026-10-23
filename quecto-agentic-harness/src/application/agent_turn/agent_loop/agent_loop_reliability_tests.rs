@@ -11,6 +11,7 @@ async fn successful_usage_is_retained_when_a_later_provider_request_fails() {
         )),
         Err(DomainError::Provider("HTTP 429: insufficient_quota".into())),
     ]));
+    let mut agent = priced_per_token(agent);
     assert!(
         agent
             .run_loop(&mut vec![Message::user("read")])
@@ -21,7 +22,7 @@ async fn successful_usage_is_retained_when_a_later_provider_request_fails() {
     assert_eq!(usage.billed_input_tokens, 10);
     assert_eq!(usage.billed_output_tokens, 2);
     assert_eq!(usage.cache_read_tokens, 3);
-    assert_eq!(usage.cost_micro_usd, 1000);
+    assert_eq!(usage.cost_micro_usd, 10 + 2 + 3 + 4, "priced, not reported");
     assert_eq!(agent.take_unreported_usage().billed_input_tokens, 0);
 }
 
@@ -467,4 +468,65 @@ async fn a_provider_rebuilt_mid_session_sees_the_previous_requests_baseline() {
         .unwrap();
     assert_eq!(*first.seen.lock().unwrap(), vec![Some(0)]);
     assert_eq!(*rebuilt.seen.lock().unwrap(), vec![Some(1)]);
+}
+
+/// #1855: one micro-dollar per token of every kind, so a priced turn's cost
+/// is its token count; a provider's own figure is never the authority.
+fn priced_per_token(agent: AgentLoopImpl) -> AgentLoopImpl {
+    use crate::domain::inference::value_objects::model_price::ModelPrice;
+    agent.with_model_limits(crate::application::catalogue::dto::ModelLimits {
+        price: Some(ModelPrice {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 1_000_000,
+            cache_write: 1_000_000,
+        }),
+        ..Default::default()
+    })
+}
+
+#[tokio::test]
+async fn test_agent_result_accumulates_usage_cache_and_cost_across_llm_calls() {
+    let (agent, _) = make_agent(
+        vec![
+            tool_call_response_with_usage(
+                "read",
+                r#"{"path":"x"}"#,
+                UsageFixture(10, 2, 3, 4, 1_000),
+            ),
+            text_response_with_usage("final", UsageFixture(20, 5, 6, 7, 2_500)),
+        ],
+        vec![("read", "content")],
+    );
+    let mut agent = priced_per_token(agent);
+    let mut messages = vec![Message::user("read")];
+
+    let result = agent.run_loop(&mut messages).await.unwrap();
+
+    assert_eq!(result.response, "final");
+    assert_eq!(result.input_tokens, 20);
+    assert_eq!(result.output_tokens, 7);
+    assert_eq!(result.billed_input_tokens, 30);
+    assert_eq!(result.billed_output_tokens, 7);
+    assert_eq!(result.cache_read_tokens, 9);
+    assert_eq!(result.cache_write_tokens, 11);
+    // Priced per token (10+2+3+4 and 20+5+6+7), not the 3,500 reported.
+    assert_eq!(result.cost_micro_usd, 19 + 38);
+}
+
+/// #1855: the tokens a cut-short reply spent are costed at the model's
+/// catalogue price too (through the request's trace), not left uncosted.
+#[tokio::test]
+async fn a_cut_short_replys_spend_is_costed_at_the_catalogue_price() {
+    let (mut agent, _) = make_agent(vec![], vec![]);
+    agent.provider = Arc::new(CutShortAfterUsage);
+    let mut agent = priced_per_token(agent);
+    assert!(
+        agent
+            .run_loop(&mut vec![Message::user("hi")])
+            .await
+            .is_err()
+    );
+    // 1234 input, 5 output and 6 cache-read tokens at one micro-USD each.
+    assert_eq!(agent.take_unreported_usage().cost_micro_usd, 1234 + 5 + 6);
 }

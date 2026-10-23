@@ -6,7 +6,7 @@ use quecto::domain::audit::AuditEvent;
 use quecto::domain::project_board::value_objects::code_ref::CommitId;
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::telemetry::{
-    Access, BoardOpRecord, ClaimFacts, Client, CompletionFacts, CompletionKind, FaultKind,
+    Access, BoardId, BoardOpRecord, ClaimFacts, Client, CompletionFacts, CompletionKind, FaultKind,
     FoldBackRecord, FrontEnd, ItemCounts, ListingCounts, Normalised, OpKind, OpOutcome,
     RequestFault, RunOutcomeKind, StaticKind, TaskRef, TextChange,
 };
@@ -47,6 +47,7 @@ fn full() -> BoardOpRecord {
         front_end: FrontEnd::Tool,
         client: Client::Agent,
         access: Access::Write,
+        board: BoardId::of_hex("0123456789abcdef"),
         outcome: OpOutcome::Refused {
             code: StaticKind::new("rule"),
             rule: Some(StaticKind::new("not_holder")),
@@ -83,7 +84,9 @@ fn full() -> BoardOpRecord {
             holder_is_writer: true,
         }),
         attempts: Some(2),
-        lost: Some(1),
+        races_lost: Some(1),
+        lock_races: Some(1),
+        swarm_report: Some(StaticKind::new("kept")),
         pause_ms: Some(1),
         completion: Some(CompletionFacts {
             completion: CompletionKind::Failed,
@@ -92,7 +95,7 @@ fn full() -> BoardOpRecord {
             prs_linked: 1,
             prs_pending: Some(1),
             completion_attempts: Some(1),
-            completion_lost: Some(0),
+            completion_races_lost: Some(0),
             completion_pause_ms: Some(1),
         }),
         normalised: Some(Normalised {
@@ -140,6 +143,7 @@ fn every_field_a_fold_back_record_writes_is_documented_and_no_other() {
     let record = FoldBackRecord {
         task: TaskRef::of(&Slug::parse("a").unwrap()),
         run: 1,
+        board: BoardId::of_hex("0123456789abcdef"),
         outcome: OpOutcome::Refused {
             code: StaticKind::new("rule"),
             rule: Some(StaticKind::new("no_such_run")),
@@ -158,8 +162,10 @@ fn every_field_a_fold_back_record_writes_is_documented_and_no_other() {
         evidence_dropped: Some(1),
         cost_tokens: Some(1),
         attempts: Some(1),
-        lost: Some(0),
+        races_lost: Some(0),
+        lock_races: Some(1),
         bytes: Some(1),
+        head: CommitId::parse("0123456789abcdef0123456789abcdef01234567").ok(),
         duration_us: 1,
     };
     let line = serde_json::to_value(AuditEvent::BoardFoldBack(Box::new(record))).unwrap();
@@ -237,6 +243,7 @@ fn every_field_a_start_record_writes_is_documented_and_no_other() {
     let record = BoardStartRecord {
         task: TaskRef::of(&Slug::parse("a").unwrap()),
         client: Client::Agent,
+        board: BoardId::of_hex("0123456789abcdef"),
         outcome: OpOutcome::Refused {
             code: StaticKind::new("brief"),
             rule: Some(StaticKind::new("no_task_items")),

@@ -86,6 +86,7 @@ const USE_CASES: &[&str] = &[
     "InitialiseStandardContainer",
     "ImportExternalCredentials",
     "InspectAuthStatus",
+    "InspectSessionUsage",
     "InspectEffectiveConfiguration",
     "InspectAuthority",
     "InspectEndedChild",
@@ -97,6 +98,7 @@ const USE_CASES: &[&str] = &[
     "KillEnvironment",
     "ListContainerConfigs",
     "ListEnvironmentsQuery",
+    "ListLeftRuns",
     "ReadSwarmBoard",
     "ListFileOwners",
     "ListModels",
@@ -144,6 +146,7 @@ const USE_CASES: &[&str] = &[
     "ReloadRuntimeConfiguration",
     "ReserveFiles",
     "ResetAuthority",
+    "RestartAuthority",
     "RestoreAuthority",
     "ResolveCatalogueUseCase",
     "ResolveEffectiveConfig",
@@ -575,7 +578,7 @@ fn interface_declares_handles_and_composition_fills_them() {
         !Path::new("src/interface/cli/uds_teardown_graph.rs").exists(),
         "the interface graph module was retired"
     );
-    let handles = production_code("src/interface/cli/uds_teardown_handles.rs");
+    let handles = production_code("src/interface/uds/controllers/uds_teardown_handles.rs");
     for declared in [
         "pub struct TeardownLoopInputs {",
         "pub struct TeardownHandles {",
@@ -609,11 +612,11 @@ fn interface_declares_handles_and_composition_fills_them() {
     }));
     // The per-loop handles are built by the composition-provided builder
     // the loop was handed, with the loop's own runtime inputs.
-    let multi = production_code("src/interface/cli/uds_multi.rs");
+    let multi = production_code("src/interface/uds/framing/uds_multi.rs");
     assert!(
-        multi
-            .iter()
-            .any(|(_, l)| l.contains("build(super::uds_teardown_handles::TeardownLoopInputs {")),
+        multi.iter().any(|(_, l)| {
+            l.contains("build(controllers::uds_teardown_handles::TeardownLoopInputs {")
+        }),
         "the loop calls composition's builder with its runtime inputs"
     );
     // Infrastructure's inbound event sources hold handles or slots.

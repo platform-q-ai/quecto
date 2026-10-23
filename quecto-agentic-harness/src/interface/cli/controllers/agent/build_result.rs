@@ -25,6 +25,9 @@ pub(crate) struct AgentBuildResult {
     pub notification_rx: Option<NotificationRx>,
     pub subagent_registry: Option<SubagentRegistry>,
     pub harness_lifecycle: Option<SharedHarnessLifecycle>,
+    /// The parent's `board` tool, which ends the runs its starts left open
+    /// as the one-shot run ends (#2655).
+    pub board_tool: Option<Arc<crate::interface::tools::project_board::tool::BoardTool>>,
     /// The environment control slot (#2070) the loop hands its teardown.
     pub environment_control:
         Option<crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot>,

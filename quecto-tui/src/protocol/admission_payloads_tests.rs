@@ -141,13 +141,29 @@ fn the_authority_badge_reflects_broker_health() {
     let mut view = AdmissionView::default();
     assert_eq!(view.authority_badge(), None);
     view.authority_status = Some("connected".into());
-    assert_eq!(view.authority_badge().as_deref(), Some("admission ✓"));
+    assert_eq!(
+        view.authority_badge().as_deref(),
+        Some("admission ✓ connected")
+    );
     view.authority_status = Some("reconnecting".into());
-    assert_eq!(view.authority_badge().as_deref(), Some("admission ⟳"));
+    assert_eq!(
+        view.authority_badge().as_deref(),
+        Some("admission ⟳ reconnecting")
+    );
     view.authority_status = Some("unavailable".into());
-    assert_eq!(view.authority_badge().as_deref(), Some("admission ✗"));
+    assert_eq!(
+        view.authority_badge().as_deref(),
+        Some("admission ✗ unavailable")
+    );
     view.authority_status = Some("something-else".into());
     assert_eq!(view.authority_badge(), None);
+    // #2615: while this session has attempts waiting, the queue depth.
+    view.authority_status = Some("connected".into());
+    view.waiting = 3;
+    assert_eq!(
+        view.authority_badge().as_deref(),
+        Some("admission ✓ connected · 3 queued here")
+    );
 }
 
 #[test]
@@ -158,5 +174,39 @@ fn parse_admission_reads_the_authority_status() {
     });
     let view = parse_admission(&value, &|s: &str| s.to_string()).unwrap();
     assert_eq!(view.authority_status.as_deref(), Some("connected"));
-    assert_eq!(view.authority_badge().as_deref(), Some("admission ✓"));
+    assert_eq!(
+        view.authority_badge().as_deref(),
+        Some("admission ✓ connected")
+    );
+}
+
+#[test]
+fn a_restart_answer_is_read_sanitized_and_unreadable_data_is_empty() {
+    let sanitize = |s: &str| s.replace('\u{1b}', "");
+    let value = serde_json::json!({"outcome": "restarted", "authorityStatus": "conn\u{1b}ected"});
+    let view = parse_admission_restart(Some(&value), &sanitize);
+    assert_eq!(view.outcome.as_deref(), Some("restarted"));
+    assert_eq!(view.authority_status.as_deref(), Some("connected"));
+    let empty = parse_admission_restart(Some(&serde_json::json!("nope")), &sanitize);
+    assert_eq!(empty, AdmissionRestartView::default());
+    assert_eq!(
+        parse_admission_restart(None, &sanitize),
+        AdmissionRestartView::default()
+    );
+}
+
+#[test]
+fn a_required_session_restart_is_read_from_the_view_and_the_answer() {
+    let view = parse_admission(
+        &serde_json::json!({"authorityStatus": "unavailable", "restartRequired": true}),
+        &|s: &str| s.to_string(),
+    )
+    .unwrap();
+    assert!(view.restart_required);
+    let answer = parse_admission_restart(
+        Some(&serde_json::json!({"outcome": "restarted", "sessionRestartRequired": true})),
+        &|s: &str| s.to_string(),
+    );
+    assert!(answer.session_restart_required);
+    assert!(!AdmissionView::default().restart_required);
 }

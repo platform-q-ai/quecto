@@ -23,6 +23,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 mod claim_condition;
 mod record_lookup;
+mod record_metadata;
 mod record_residue;
 #[cfg(test)]
 mod resolve_hook;
@@ -31,6 +32,8 @@ pub use claim_condition::{
     MAX_CREATOR_KEY_BYTES,
 };
 pub use record_lookup::{EnvironmentLookupError, EnvironmentStatus, EnvironmentTarget};
+pub use record_metadata::CHECKOUT_KEY;
+use record_metadata::RETAINED_KEY;
 pub use record_residue::GONE_AT_RESTORE;
 
 /// One committed script-managed environment known to this session.
@@ -118,11 +121,9 @@ impl EnvironmentRecord {
     pub fn retain_with(&mut self, reason: &str) {
         self.status = EnvironmentStatus::Retained;
         self.members.clear();
-        if let Some(object) = self.metadata.as_object_mut() {
-            object.insert("retained".to_string(), serde_json::json!(reason));
-        } else {
-            self.metadata = serde_json::json!({ "retained": reason });
-        }
+        let mut object = self.metadata.as_object().cloned().unwrap_or_default();
+        object.insert(RETAINED_KEY.to_string(), serde_json::json!(reason));
+        self.metadata = serde_json::Value::Object(object);
     }
 }
 

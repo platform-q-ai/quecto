@@ -10,7 +10,7 @@ fn accepted() -> Plan {
 }
 
 fn start_at(task: &Task, runs: &[Run], by: &str, now: &str) -> Result<Started, BoardRuleError> {
-    start(task, runs, Some(&accepted()), &person(by), &at(now))
+    start(task, &[], runs, Some(&accepted()), &person(by), &at(now))
 }
 
 /// A state a start may find: the task, its runs, the starter, the time,
@@ -53,15 +53,16 @@ fn a_start_claims_a_ready_task_or_works_under_the_starters_own_claim() {
         ("in progress, the starter's claim expired", task(InProgress), vec![], "Ada", "11:30:00", Ok(InProgress)),
         ("in review, the starter's claim expired", task(Review), vec![], "Ada", "11:30:00", Ok(Review)),
         ("blocked, the starter's claim expired", task(Blocked), vec![], "Ada", "11:30:00", Ok(Blocked)),
-        // Someone else's claim, live or expired, is theirs until taken over.
+        // Someone else's claim, live or expired, is theirs until taken over;
+        // an expired one says so (#2683).
         ("claimed by someone else", task(Claimed), vec![], "Bob", "10:00:00", Err(BoardRuleError::NotHolder)),
         ("in progress by someone else", task(InProgress), vec![], "Bob", "10:00:00", Err(BoardRuleError::NotHolder)),
         ("in review by someone else", task(Review), vec![], "Bob", "10:00:00", Err(BoardRuleError::NotHolder)),
         ("blocked by someone else", task(Blocked), vec![], "Bob", "10:00:00", Err(BoardRuleError::NotHolder)),
-        ("claimed by someone else, expired", task(Claimed), vec![], "Bob", "11:30:00", Err(BoardRuleError::NotHolder)),
-        ("in progress by someone else, expired", task(InProgress), vec![], "Bob", "11:30:00", Err(BoardRuleError::NotHolder)),
-        ("in review by someone else, expired", task(Review), vec![], "Bob", "11:30:00", Err(BoardRuleError::NotHolder)),
-        ("blocked by someone else, expired", task(Blocked), vec![], "Bob", "11:30:00", Err(BoardRuleError::NotHolder)),
+        ("claimed by someone else, expired", task(Claimed), vec![], "Bob", "11:30:00", Err(BoardRuleError::NotHolderExpired)),
+        ("in progress by someone else, expired", task(InProgress), vec![], "Bob", "11:30:00", Err(BoardRuleError::NotHolderExpired)),
+        ("in review by someone else, expired", task(Review), vec![], "Bob", "11:30:00", Err(BoardRuleError::NotHolderExpired)),
+        ("blocked by someone else, expired", task(Blocked), vec![], "Bob", "11:30:00", Err(BoardRuleError::NotHolderExpired)),
         ("held by nobody", without_claim(task(Review)), vec![], "Ada", "10:00:00", Err(BoardRuleError::NoClaim)),
         ("a run open", task(InProgress), vec![open_run(1, 1)], "Ada", "10:00:00", Err(BoardRuleError::RunOpen(1))),
         ("a draft", task(Draft), vec![], "Ada", "10:00:00", not_allowed(Draft)),
@@ -135,6 +136,7 @@ fn a_start_runs_only_the_tasks_accepted_plan() {
             start(
                 &unplanned,
                 &[],
+                &[],
                 given.as_ref(),
                 &person("Bob"),
                 &at("10:00:00")
@@ -143,7 +145,14 @@ fn a_start_runs_only_the_tasks_accepted_plan() {
         );
     }
     assert_eq!(
-        start(&task(Ready), &[], None, &person("Bob"), &at("10:00:00")),
+        start(
+            &task(Ready),
+            &[],
+            &[],
+            None,
+            &person("Bob"),
+            &at("10:00:00")
+        ),
         Err(BoardRuleError::UnknownPlanVersion(1))
     );
     for (given, refused) in [
@@ -159,6 +168,7 @@ fn a_start_runs_only_the_tasks_accepted_plan() {
         assert_eq!(
             start(
                 &task(Ready),
+                &[],
                 &[],
                 Some(&given),
                 &person("Bob"),

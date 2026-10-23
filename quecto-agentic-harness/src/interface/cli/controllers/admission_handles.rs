@@ -8,7 +8,7 @@ use crate::infrastructure::admission::AuthorityUseCaseBuilder;
 
 use crate::application::admission::use_cases::{
     InspectAuthority, InstallAuthorityService, NegotiateAuthority, ResetAuthority,
-    UninstallAuthorityService,
+    RestartAuthority, UninstallAuthorityService,
 };
 
 #[derive(Clone)]
@@ -21,6 +21,8 @@ pub struct AdmissionHandles {
     pub install: Arc<InstallAuthorityService>,
     /// `admission-broker uninstall-service`.
     pub uninstall: Arc<UninstallAuthorityService>,
+    /// `/admission restart` (#2615): restart the broker a root uses.
+    pub restart: Arc<RestartAuthority>,
     /// Startup negotiation: how a process joins the authority (#2023).
     pub negotiate: Arc<NegotiateAuthority>,
     /// `admission-broker run`: builds the running authority's durability use

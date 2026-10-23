@@ -169,7 +169,6 @@ pub fn append_extension_prompt(system: &mut String, snippets: &str) {
 pub type WorkflowStateHandle =
     std::sync::Arc<std::sync::Mutex<crate::domain::workflow::WorkflowEngine>>;
 
-#[path = "shared_workflow.rs"]
 mod shared_workflow;
 #[cfg(any(test, feature = "test-support"))]
 pub use shared_workflow::register_workflow_tool;
@@ -434,10 +433,6 @@ pub fn register_bundled_native_extension_tools(
     }
 }
 
-pub(crate) use super::tool_runtime::{
-    ToolEntrypoint, ToolRuntimeBuildArgs, ToolRuntimeWorkflowPolicy, build_tool_runtime,
-};
-
 /// Resolve the XDG runtime directory or fall back to temp.
 ///
 /// Returns `$XDG_RUNTIME_DIR` if it exists, is a directory, and is writable.
@@ -457,17 +452,13 @@ pub fn xdg_runtime_dir_or_temp() -> std::path::PathBuf {
 }
 
 #[cfg(test)]
-#[path = "native_provider_catalogue_tests.rs"]
 mod native_provider_catalogue_tests;
 
 #[cfg(test)]
-#[path = "shared_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "shared_cov_tests.rs"]
 mod cov_tests;
 
 #[cfg(test)]
-#[path = "shared_parent_policy_tests.rs"]
 mod parent_policy_tests;

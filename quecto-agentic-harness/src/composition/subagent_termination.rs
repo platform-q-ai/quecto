@@ -23,11 +23,12 @@ use crate::application::tools::ports::Tool;
 use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use crate::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
 use crate::infrastructure::tools::agents::environment_member_shutdown::DelegatedMemberShutdown;
+use crate::infrastructure::tools::agents::kept_environments::RegistryKeptEnvironments;
 use crate::infrastructure::tools::agents::subagent_teardown_registry::RegistryDelegatedAgents;
 use crate::infrastructure::tools::swarm::swarm_member_termination::DelegatedSwarmMemberTermination;
 use crate::interface::cli::KillToolWiring;
-use crate::interface::cli::uds_teardown_adapters::RegistryLifecycleRepository;
 use crate::interface::tools::agent_cmd_kill::KillDelegatedAgentTool;
+use crate::interface::uds::controllers::uds_teardown_adapters::RegistryLifecycleRepository;
 
 /// The parent-hand termination owners of one harness over one shared
 /// delegated-agent graph (#1936, #1939): the `agent_cmd kill` tool, the
@@ -80,6 +81,10 @@ pub fn install_termination_owners(inputs: KillToolWiring) -> bool {
 /// graph: the operator kill tool, the environment member shutdown and the
 /// swarm member termination.
 pub fn build_termination_owners(inputs: KillToolWiring) -> TerminationOwners {
+    // #2681: what the kill's teardown kept of the session's environments.
+    let kept = Arc::new(RegistryKeptEnvironments::new(
+        inputs.environment_registry.clone(),
+    ));
     let agents = Arc::new(RegistryDelegatedAgents::new(
         inputs.registry.clone(),
         inputs.broadcast_tx,
@@ -106,14 +111,17 @@ pub fn build_termination_owners(inputs: KillToolWiring) -> TerminationOwners {
             },
         ),
     );
-    let kill = Arc::new(KillDelegatedAgent::new(
-        route,
-        KillDelegatedAgentPorts {
-            registry: agents.clone(),
-            lifecycle,
-            compensation: agents.clone(),
-        },
-    ));
+    let kill = Arc::new(
+        KillDelegatedAgent::new(
+            route,
+            KillDelegatedAgentPorts {
+                registry: agents.clone(),
+                lifecycle,
+                compensation: agents.clone(),
+            },
+        )
+        .reporting_kept(kept),
+    );
     let settle = Arc::new(SettleDelegatedChild::new(SettleDelegatedChildPorts {
         registry: agents.clone(),
         routing,
@@ -131,3 +139,7 @@ pub fn build_termination_owners(inputs: KillToolWiring) -> TerminationOwners {
         )),
     }
 }
+
+#[cfg(test)]
+#[path = "subagent_termination_tests.rs"]
+mod tests;

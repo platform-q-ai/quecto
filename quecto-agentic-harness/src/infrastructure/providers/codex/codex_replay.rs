@@ -176,8 +176,8 @@ impl CodexProvider {
                 Profile::new(&CODEX_WIRE, Surface::Assembled, self.stream_idle),
                 |raw| {
                     let mut parsed = Self::parse_sse_reply(raw)
-                        .map_err(|cut| cut.account(call.trace.as_deref(), &call.model))?;
-                    Self::finish_response(&mut parsed, &call.model, &call.origin);
+                        .map_err(|cut| cut.account(call.trace.as_deref()))?;
+                    Self::finish_response(&mut parsed, &call.origin);
                     Ok(parsed)
                 },
             )
@@ -226,11 +226,10 @@ impl CodexProvider {
                     }
                 })?,
         };
-        let parsed = Self::parse_sse_reply(&raw)
-            .map_err(|cut| cut.account(call.trace.as_deref(), &call.model));
+        let parsed = Self::parse_sse_reply(&raw).map_err(|cut| cut.account(call.trace.as_deref()));
         attempt.iter().for_each(|a| a.parsed(&parsed));
         let mut parsed = parsed?;
-        Self::finish_response(&mut parsed, &call.model, &call.origin);
+        Self::finish_response(&mut parsed, &call.origin);
         Ok(parsed)
     }
 

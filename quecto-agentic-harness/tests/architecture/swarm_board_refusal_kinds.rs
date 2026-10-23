@@ -25,62 +25,62 @@ use super::dependency_scan;
 /// production sources, one row per site.
 pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
     (
-        "src/application/swarm/board_control.rs:current",
+        "src/application/swarm/services/board_control.rs:current",
         "coordination run missing",
         "RunMissing",
     ),
     (
-        "src/application/swarm/board_control.rs:edited",
+        "src/application/swarm/services/board_control.rs:edited",
         "the board's {record} is not as the board writes it",
         "Store",
     ),
     (
-        "src/application/swarm/board_control.rs:pause_started",
+        "src/application/swarm/services/board_control.rs:pause_started",
         "paused run has no pause record",
         "Internal",
     ),
     (
-        "src/application/swarm/board_operation.rs:atomic",
+        "src/application/swarm/services/board_operation.rs:atomic",
         "coordination store committed without running its work",
         "Internal",
     ),
     (
-        "src/application/swarm/board_operation.rs:atomic",
+        "src/application/swarm/services/board_operation.rs:atomic",
         "coordination store ran a transaction's work twice",
         "Internal",
     ),
     (
-        "src/application/swarm/board_operation.rs:operation",
+        "src/application/swarm/services/board_operation.rs:operation",
         "coordination run missing",
         "RunMissing",
     ),
     (
-        "src/application/swarm/board_operation.rs:read",
+        "src/application/swarm/services/board_operation.rs:read",
         "coordination store ended a read without running its work",
         "Internal",
     ),
     (
-        "src/application/swarm/board_operation.rs:read",
+        "src/application/swarm/services/board_operation.rs:read",
         "coordination store ran a read's work twice",
         "Internal",
     ),
     (
-        "src/application/swarm/board_operation.rs:read_operation",
+        "src/application/swarm/services/board_operation.rs:read_operation",
         "coordination run missing",
         "RunMissing",
     ),
     (
-        "src/application/swarm/board_recovery.rs:python_str",
+        "src/application/swarm/services/board_recovery.rs:python_str",
         "a task id that finds a task is text or a number",
         "Internal",
     ),
     (
-        "src/application/swarm/board_tasks.rs:owned",
+        "src/application/swarm/services/board_tasks.rs:owned",
         "stale or unowned claim",
         "StaleToken",
     ),
     (
-        "src/application/swarm/board_tasks.rs:read_task",
+        "src/application/swarm/services/board_tasks.rs:read_task",
         "unknown task",
         "NotFound",
     ),
@@ -295,12 +295,12 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "WrongState",
     ),
     (
-        "src/application/swarm/use_cases/verify_task.rs:VerifyTask::execute",
+        "src/application/swarm/use_cases/verify_task.rs:VerifyTask::verify",
         "stale claim or work not submitted",
         "StaleToken",
     ),
     (
-        "src/application/swarm/use_cases/verify_task.rs:current_revision",
+        "src/application/swarm/use_cases/verify_task.rs:stale",
         "stale evidence revision",
         "StaleRevision",
     ),

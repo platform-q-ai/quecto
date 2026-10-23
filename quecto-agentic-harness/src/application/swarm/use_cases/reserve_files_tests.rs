@@ -4,11 +4,11 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use super::ReserveFiles;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::{Reservation, ReserveFilesRequest};
+use crate::application::swarm::test_support::{
     BoardState, CounterIds, LexicalCheckout, MemoryBoard, SteppingClock, StoredFile, member_row,
     running_board, stored_task,
 };
-use crate::application::swarm::dto::{Reservation, ReserveFilesRequest};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };

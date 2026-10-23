@@ -27,8 +27,12 @@ mod bdd_lanes;
 /// (#1637).
 #[path = "architecture/dependency_scan.rs"]
 mod dependency_scan;
+#[path = "architecture/external_child_ownership.rs"]
+mod external_child_ownership;
 #[path = "architecture/layout.rs"]
 mod layout;
+#[path = "architecture/uds_canonical_modules.rs"]
+mod uds_canonical_modules;
 
 use quote::ToTokens;
 use std::collections::{BTreeMap, BTreeSet};
@@ -119,17 +123,19 @@ fn collect_rs_files(dir: &Path, files: &mut Vec<String>) {
         if path.is_dir() {
             collect_rs_files(&path, files);
         } else if path.extension().is_some_and(|ext| ext == "rs") {
-            // Files named `*_tests.rs` are test-only modules included via
-            // `#[cfg(test)]`, not production architecture dependencies.
-            if path
+            // Canonical controller children use their real AST ownership;
+            // retain the existing filename policy everywhere else.
+            let legacy = path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with("_tests.rs"))
-            {
-                continue;
+                .is_some_and(|name| !name.ends_with("_tests.rs"));
+            if uds_canonical_modules::production_scan_file(
+                path.to_str().expect("source filename"),
+                legacy,
+            ) {
+                let content = fs::read_to_string(&path).expect("read file");
+                files.push(format!("{}:\n{}", path.display(), content));
             }
-            let content = fs::read_to_string(&path).expect("read file");
-            files.push(format!("{}:\n{}", path.display(), content));
         }
     }
 }
@@ -1102,7 +1108,7 @@ fn kill_environment_orchestration_stays_out_of_interface_handlers() {
     // to `ListEnvironmentsQuery` or `KillEnvironment`, and encode results —
     // kill_container orchestration must never live in `uds_query.rs`.
     let handler_files = [
-        "src/interface/cli/uds_query.rs",
+        "src/interface/uds/controllers/uds_query.rs",
         "src/infrastructure/tools/agents/agent_cmd.rs",
         "src/infrastructure/tools/agents/agent_cmd_containers.rs",
     ];
@@ -3455,8 +3461,8 @@ fn cargo_toml_section_contains_dependency(section: &str, dependency: &str) -> bo
 #[test]
 fn all_four_socket_consumers_read_via_the_shared_frame_reader() {
     let consumers = [
-        "src/interface/cli/uds_reader.rs",
-        "src/interface/cli/uds_multi_client.rs",
+        "src/interface/uds/framing/uds_reader.rs",
+        "src/interface/uds/framing/uds_multi/client.rs",
         "src/infrastructure/tools/agents/subagent_monitor.rs",
         // The parent→child query path (agent tool + TUI inspector poll) is a
         // socket consumer too; it must not be stranded on legacy NDJSON reads
@@ -3499,8 +3505,8 @@ fn multi_client_agent_announces_protocol_version_via_shared_helper() {
     );
     // And the helper itself must include the version token, so the emitted
     // announcement is never just the legacy socket line.
-    let wire = fs::read_to_string("src/interface/cli/uds_wire.rs")
-        .expect("read src/interface/cli/uds_wire.rs");
+    let wire = fs::read_to_string("src/interface/uds/framing/uds_wire.rs")
+        .expect("read src/interface/uds/framing/uds_wire.rs");
     assert!(
         wire.contains("PROTOCOL_ANNOUNCE_PREFIX") && wire.contains("PROTOCOL_VERSION"),
         "socket_announcement must include the PROTOCOL_ANNOUNCE_PREFIX + PROTOCOL_VERSION token"
@@ -4137,6 +4143,17 @@ fn the_authority_surface_is_an_exhaustive_allowlist() {
         "disconnect",
         "cancellation_due",
         "next_wake",
+        // #2664: a rebound scope is live again, a lost scope whose lease
+        // cleared is released, and a held wait says what held it.
+        "attach",
+        "release_idle_detached",
+        "held",
+        // #2664 review: a lease that clears on time is checkpointed.
+        "record_durable",
+        "checkpoint_due",
+        // #2615: a settling turn reports whether the authority holds
+        // anything, for the idle stop of a broker started on demand.
+        "holds_anything",
     ];
     let source = production_source("src/application/admission/services/inference_authority.rs");
     let file = syn::parse_file(&source).expect("the authority parses");
@@ -4350,10 +4367,34 @@ fn the_authority_server_neither_reads_the_journal_nor_builds_the_authority() {
         "src/infrastructure/admission/server_actor.rs",
     ] {
         let source = production_source(file);
-        for needle in ["FileJournal", "AdmissionAuthority::", ".checkpoint"] {
+        for needle in [
+            "FileJournal",
+            "AdmissionAuthority::",
+            "authority.checkpoint",
+            "CheckpointLedger",
+        ] {
             assert!(!source.contains(needle), "{file} names `{needle}`");
         }
     }
+    // #2664: the actor checkpoints the ledger as it stops only through the
+    // settle use case, never by touching the journal or the authority.
+    let actor: String = production_source("src/infrastructure/admission/server_actor.rs")
+        .split_whitespace()
+        .collect();
+    assert_eq!(
+        actor.matches("checkpoint").count(),
+        actor
+            .matches("use_cases.settle.checkpoint_on_stop(&mutself.authority,")
+            .count(),
+        "every checkpoint in the actor goes through use_cases.settle"
+    );
+    assert_eq!(
+        actor
+            .matches("use_cases.settle.checkpoint_on_stop(&mutself.authority,")
+            .count(),
+        1,
+        "the actor checkpoints once, as it stops"
+    );
     let compact: String = server.split_whitespace().collect();
     assert!(
         compact.contains("use_cases.restore.execute("),
@@ -5061,9 +5102,9 @@ fn find_composition_delegation_allowed(file: &str, source: &str) -> bool {
                     file,
                     "src/interface/cli/controllers/agent/agent_tool_registry.rs"
                         | "src/interface/cli/controllers/find_runtime_tests.rs"
-                        | "src/interface/cli/controllers/shared_cov_tests.rs"
-                        | "src/interface/cli/controllers/tool_runtime_catalogue_tests.rs"
-                        | "src/interface/cli/controllers/tool_runtime_profile_tests.rs"
+                        | "src/interface/cli/controllers/shared/cov_tests.rs"
+                        | "src/interface/cli/controllers/tool_runtime/catalogue_tests.rs"
+                        | "src/interface/cli/controllers/tool_runtime/profile_tests.rs"
                 ),
                 ["crate", "composition", ..] => file == "src/composition/find.rs",
                 _ => true,
@@ -5186,6 +5227,8 @@ const TEARDOWN_PORTS: &[&str] = &[
     "OwnedChildTermination",
     "DelegatedAgentRegistry",
     "TeardownCompensation",
+    // The environments a selected termination kept (#2681).
+    "KeptEnvironments",
     // Container config selection at launch (#2024 S4a): the launch
     // policy's read of the configuration capability's effective container
     // configs for the launching agent's checkout.
@@ -5232,7 +5275,14 @@ fn teardown_interface_dependency_allowed(path: &str) -> bool {
     match parts.as_slice() {
         ["crate", "domain", ..]
         | ["crate", "application", "subagents", ..]
-        | ["crate", "interface", "uds", ..] => true,
+        // Its own edge files and the wire schema; never the dispatch loop's
+        // controllers, which share its role folders since #2370.
+        | ["crate", "interface", "uds", "wire", ..] => true,
+        ["crate", "interface", "uds", "controllers" | "mapping" | "presenters", name, ..]
+            if TEARDOWN_EDGE_MODULES.contains(name) =>
+        {
+            true
+        }
         ["crate", ..] => false,
         ["super", "super", "super", ..] => false,
         ["tokio" | "quecto_line_io" | "reqwest" | "futures", ..] => false,
@@ -5303,16 +5353,75 @@ fn subagent_teardown_domain_is_pure() {
     }
 }
 
+/// The UDS edge files of each capability (#2370 folded the capability
+/// folders into the adapter's role folders): its module names, which the
+/// capability's own files may name, and the files each edge rule reads.
+const TEARDOWN_EDGE_MODULES: &[&str] = &[
+    "subagent_teardown_controller",
+    "subagent_teardown_mapping",
+    "subagent_teardown_presenter",
+];
+const TEARDOWN_EDGE_FILES: &[&str] = &[
+    "src/interface/uds/controllers/subagent_teardown_controller.rs",
+    "src/interface/uds/mapping/subagent_teardown_mapping.rs",
+    "src/interface/uds/presenters/subagent_teardown_presenter.rs",
+    "src/interface/uds/wire/subagent_teardown_wire.rs",
+    "src/interface/uds/wire/parent_control_wire.rs",
+];
+const SESSIONS_EDGE_MODULES: &[&str] = &[
+    "sessions_controller",
+    "export_report_controller",
+    "read_history_controller",
+    "recover_message_controller",
+    "resume_session_controller",
+    "rewind_conversation_controller",
+    "search_session_metadata_controller",
+    "synchronize_transcript_controller",
+];
+const CATALOGUE_EDGE_FILES: &[&str] = &[
+    "src/interface/uds/controllers/list_models_controller.rs",
+    "src/interface/uds/presenters/effort_presenter.rs",
+    "src/interface/uds/presenters/list_models_presenter.rs",
+    "src/interface/uds/presenters/model_presenter.rs",
+    "src/interface/uds/presenters/refresh_presenter.rs",
+    "src/interface/uds/presenters/reload_presenter.rs",
+    "src/interface/uds/mapping/persist_scope.rs",
+];
+
+/// The module name of an edge file: its basename without `.rs`.
+fn edge_module_name(file: &str) -> &str {
+    file.rsplit('/')
+        .next()
+        .and_then(|name| name.strip_suffix(".rs"))
+        .expect("edge files are named Rust sources")
+}
+
+fn sessions_edge_files() -> Vec<String> {
+    SESSIONS_EDGE_MODULES
+        .iter()
+        .map(|name| format!("src/interface/uds/controllers/{name}.rs"))
+        .collect()
+}
+
+/// As `assert_dependencies`, over registered owners' production module
+/// closures: each owner must exist, and every dependency must pass `allowed`.
+fn assert_file_dependencies<S: AsRef<str>>(files: &[S], allowed: fn(&str) -> bool) {
+    assert!(!files.is_empty(), "an edge rule must name its files");
+    for path in dependency_scan::production_closure(files) {
+        let source =
+            fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {path}: {error}"));
+        let paths = dependency_paths(&source).unwrap_or_else(|| panic!("parse {path}"));
+        let violations: Vec<_> = paths.iter().filter(|dep| !allowed(dep)).collect();
+        assert!(
+            violations.is_empty(),
+            "{path} depends outward or on forbidden vocabulary: {violations:?}"
+        );
+    }
+}
+
 #[test]
 fn subagent_teardown_interface_only_parses_maps_and_presents() {
-    assert_dependencies(
-        "src/interface/uds/subagent_teardown",
-        teardown_interface_dependency_allowed,
-    );
-    assert_dependencies(
-        "src/interface/uds/parent_control",
-        teardown_interface_dependency_allowed,
-    );
+    assert_file_dependencies(TEARDOWN_EDGE_FILES, teardown_interface_dependency_allowed);
 }
 
 /// The UDS sessions edge (#1970) maps the wire command onto the sessions
@@ -5322,9 +5431,14 @@ fn subagent_teardown_interface_only_parses_maps_and_presents() {
 fn sessions_interface_dependency_allowed(path: &str) -> bool {
     let parts: Vec<_> = path.split("::").collect();
     match parts.as_slice() {
-        ["crate", "domain", ..]
-        | ["crate", "application", "sessions", "dto" | "use_cases", ..]
-        | ["crate", "interface", "uds", "sessions", ..] => true,
+        ["crate", "domain", ..] | ["crate", "application", "sessions", "dto" | "use_cases", ..] => {
+            true
+        }
+        ["crate", "interface", "uds", "controllers", name, ..]
+            if SESSIONS_EDGE_MODULES.contains(name) =>
+        {
+            true
+        }
         ["crate", ..] => false,
         ["super", "super", "super", ..] => false,
         ["tokio" | "quecto_line_io" | "reqwest" | "futures", ..] => false,
@@ -5344,8 +5458,42 @@ fn catalogue_interface_dependency_allowed(path: &str) -> bool {
     let parts: Vec<_> = path.split("::").collect();
     match parts.as_slice() {
         ["crate", "domain", ..]
-        | ["crate", "application", "catalogue", "dto" | "use_cases", ..]
-        | ["crate", "interface", "uds", "catalogue", ..] => true,
+        | ["crate", "application", "catalogue", "dto" | "use_cases", ..] => true,
+        [
+            "crate",
+            "interface",
+            "uds",
+            "controllers" | "mapping" | "presenters",
+            name,
+            ..,
+        ] if CATALOGUE_EDGE_FILES
+            .iter()
+            .any(|file| edge_module_name(file) == *name) =>
+        {
+            true
+        }
+        ["crate", ..] => false,
+        ["super", "super", "super", ..] => false,
+        ["tokio" | "quecto_line_io" | "reqwest" | "futures", ..] => false,
+        [
+            "std",
+            "fs" | "io" | "net" | "os" | "process" | "env" | "thread" | "time",
+            ..,
+        ] => false,
+        _ => true,
+    }
+}
+
+/// The admission edge (#2615) may name only the domain, the admission
+/// capability's DTOs and use cases, and itself — it invokes the restart use
+/// case and presents its report; the binding and the broker stay behind
+/// the use case's ports.
+fn admission_interface_dependency_allowed(path: &str) -> bool {
+    let parts: Vec<_> = path.split("::").collect();
+    match parts.as_slice() {
+        ["crate", "domain", ..]
+        | ["crate", "application", "admission", "dto" | "use_cases", ..]
+        | ["crate", "interface", "uds", "admission", ..] => true,
         ["crate", ..] => false,
         ["super", "super", "super", ..] => false,
         ["tokio" | "quecto_line_io" | "reqwest" | "futures", ..] => false,
@@ -5359,36 +5507,70 @@ fn catalogue_interface_dependency_allowed(path: &str) -> bool {
 }
 
 #[test]
-fn catalogue_interface_only_parses_maps_and_presents() {
+fn admission_interface_only_parses_maps_and_presents() {
     assert_dependencies(
-        "src/interface/uds/catalogue",
-        catalogue_interface_dependency_allowed,
+        "src/interface/uds/admission",
+        admission_interface_dependency_allowed,
     );
 }
 
 #[test]
+fn catalogue_interface_only_parses_maps_and_presents() {
+    assert_file_dependencies(CATALOGUE_EDGE_FILES, catalogue_interface_dependency_allowed);
+}
+
+#[test]
 fn sessions_interface_only_parses_maps_and_presents() {
-    assert_dependencies(
-        "src/interface/uds/sessions",
+    assert_file_dependencies(
+        &sessions_edge_files(),
         sessions_interface_dependency_allowed,
     );
-    // Every UDS edge directory is covered by exactly one of the edge rules.
-    let mut edges: Vec<_> = fs::read_dir("src/interface/uds")
+    // The adapter's role folders, held to the layout policy (`MIGRATED`):
+    // `framing` and `wire` are its transport roles (#2368), `controllers` its
+    // dispatch (#2369) and `presenters`/`mapping` its result and request
+    // mapping (#2370), with the socket rules
+    // (`all_four_socket_consumers_read_via_the_shared_frame_reader`,
+    // `multi_client_agent_announces_protocol_version_via_shared_helper`).
+    let mut roles: Vec<_> = fs::read_dir("src/interface/uds")
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_dir())
         .map(|e| e.file_name().to_string_lossy().to_string())
         .collect();
-    edges.sort();
+    roles.sort();
     assert_eq!(
-        edges,
+        roles,
         [
-            "catalogue",
-            "parent_control",
-            "sessions",
-            "subagent_teardown"
+            "admission",
+            "controllers",
+            "framing",
+            "mapping",
+            "presenters",
+            "test_support",
+            "wire"
         ]
     );
+    // Every capability controller, presenter and mapping in the role folders
+    // is held by exactly one edge rule.
+    let edge_files: Vec<String> = TEARDOWN_EDGE_FILES
+        .iter()
+        .chain(CATALOGUE_EDGE_FILES)
+        .map(|file| file.to_string())
+        .chain(sessions_edge_files())
+        .collect();
+    for role in ["controllers", "presenters", "mapping"] {
+        for entry in fs::read_dir(format!("src/interface/uds/{role}")).unwrap() {
+            let name = entry.unwrap().file_name().to_string_lossy().to_string();
+            let edge = ["_controller.rs", "_presenter.rs", "_mapping.rs"]
+                .iter()
+                .any(|suffix| name.ends_with(suffix));
+            if edge {
+                let path = format!("src/interface/uds/{role}/{name}");
+                let held = edge_files.iter().filter(|file| **file == path).count();
+                assert_eq!(held, 1, "{path} must be held by exactly one edge rule");
+            }
+        }
+    }
 }
 
 /// `pub trait` names declared in a source file, in declaration order.
@@ -5484,6 +5666,7 @@ const SUBAGENT_PORT_FILES: &[&str] = &[
     "delegated_agent_registry.rs",
     "ended_child_records.rs",
     "harness_shutdown.rs",
+    "kept_environments.rs",
     "mod.rs",
     "owned_child_termination.rs",
     "teardown_compensation.rs",
@@ -5557,7 +5740,7 @@ fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
         "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
         "crate::application::sessions::ports::SessionStore",
         "crate::application::environments::use_cases::ListEnvironmentsQuery",
-        "crate::interface::uds::subagent_teardown::wire::TeardownResponse",
+        "crate::interface::uds::wire::subagent_teardown_wire::TeardownResponse",
         "tokio::sync::Notify",
         "serde_json::Value",
         "std::process::Command",
@@ -5583,7 +5766,7 @@ fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
     }
     for dep in [
         "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
-        "crate::interface::cli::uds::DispatchCtx",
+        "crate::interface::uds::controllers::uds::DispatchCtx",
         "crate::application::sessions::ports::SessionStore",
         "tokio::net::UnixStream",
         "std::os::unix::net::UnixStream",
@@ -5595,7 +5778,7 @@ fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
     }
     for dep in [
         "crate::application::subagents::use_cases::PrepareHarnessShutdown",
-        "crate::interface::uds::subagent_teardown::wire::TeardownResponse",
+        "crate::interface::uds::wire::subagent_teardown_wire::TeardownResponse",
         "serde::Deserialize",
         "serde_json::from_str",
     ] {
@@ -5853,15 +6036,15 @@ const SUBAGENT_PROCESS_MODULES: &[&str] = &[
     "src/infrastructure/processes/direct_child_routing.rs",
     "src/infrastructure/processes/owned_child_termination.rs",
     "src/infrastructure/processes/parent_control.rs",
-    "src/interface/cli/uds_multi.rs",
-    "src/interface/cli/uds_multi_client.rs",
-    "src/interface/cli/uds_parent_control.rs",
-    "src/interface/cli/uds_teardown_adapters.rs",
-    "src/interface/cli/uds_teardown_handles.rs",
-    "src/interface/cli/uds_shutdown.rs",
-    "src/interface/cli/uds_delete_all_subagents.rs",
-    "src/interface/cli/uds_busy_subagents.rs",
-    "src/interface/cli/uds_dispatch_session.rs",
+    "src/interface/uds/framing/uds_multi.rs",
+    "src/interface/uds/framing/uds_multi/client.rs",
+    "src/interface/uds/controllers/uds_parent_control.rs",
+    "src/interface/uds/controllers/uds_teardown_adapters.rs",
+    "src/interface/uds/controllers/uds_teardown_handles.rs",
+    "src/interface/uds/framing/uds_shutdown.rs",
+    "src/interface/uds/controllers/uds_delete_all_subagents.rs",
+    "src/interface/uds/controllers/uds_busy_subagents.rs",
+    "src/interface/uds/controllers/uds/uds_dispatch_session.rs",
     "src/composition/subagent_teardown.rs",
     "src/composition/subagent_lifecycle.rs",
     "src/composition/environments.rs",
@@ -6018,7 +6201,7 @@ fn processes_dependency_allowed(file: &str, path: &str) -> bool {
 fn process_adapters_depend_only_inward() {
     assert_dependencies_by_file("src/infrastructure/processes", processes_dependency_allowed);
     for dep in [
-        "crate::interface::cli::uds_multi::BusyFlag",
+        "crate::interface::uds::framing::uds_multi::BusyFlag",
         "crate::composition::processes::owned_child_supervisor",
         "crate::application::subagents::use_cases::ExecuteHarnessShutdown",
         "crate::infrastructure::tools::agents::spawn::SpawnTool",
@@ -6147,11 +6330,11 @@ fn termination_paths_never_consult_a_lease_or_a_pid() {
         "src/application/subagents/use_cases/harness_shutdown.rs",
         "src/infrastructure/tools/agents/spawn_registry.rs",
         "src/infrastructure/tools/agents/process_tree.rs",
-        "src/interface/cli/uds_delete_all_subagents.rs",
-        "src/interface/cli/uds_busy_subagents.rs",
-        "src/interface/cli/uds_shutdown.rs",
-        "src/interface/cli/uds_dispatch_session.rs",
-        "src/interface/cli/uds_multi.rs",
+        "src/interface/uds/controllers/uds_delete_all_subagents.rs",
+        "src/interface/uds/controllers/uds_busy_subagents.rs",
+        "src/interface/uds/framing/uds_shutdown.rs",
+        "src/interface/uds/controllers/uds/uds_dispatch_session.rs",
+        "src/interface/uds/framing/uds_multi.rs",
         "src/composition/subagent_teardown.rs",
         "src/application/subagents/use_cases/observe_owned_child_exit.rs",
         "src/application/subagents/use_cases/compensate_failed_launch.rs",
@@ -6466,13 +6649,13 @@ fn kill_result_vocabulary_is_graceful_fallback_already_exited_failed() {
 #[test]
 fn no_interface_registry_drain_remains_after_the_fleet_teardown() {
     for path in [
-        "src/interface/cli/uds_delete_all_subagents.rs",
-        "src/interface/cli/uds_busy_subagents.rs",
-        "src/interface/cli/uds_shutdown.rs",
-        "src/interface/cli/uds_dispatch_session.rs",
-        "src/interface/cli/uds_multi.rs",
-        "src/interface/cli/uds_multi_client.rs",
-        "src/interface/cli/uds_query.rs",
+        "src/interface/uds/controllers/uds_delete_all_subagents.rs",
+        "src/interface/uds/controllers/uds_busy_subagents.rs",
+        "src/interface/uds/framing/uds_shutdown.rs",
+        "src/interface/uds/controllers/uds/uds_dispatch_session.rs",
+        "src/interface/uds/framing/uds_multi.rs",
+        "src/interface/uds/framing/uds_multi/client.rs",
+        "src/interface/uds/controllers/uds_query.rs",
     ] {
         let source = production_source(path);
         for forbidden in [
@@ -6549,13 +6732,13 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
             );
         }
     }
-    let handles = production_source("src/interface/cli/uds_teardown_handles.rs");
+    let handles = production_source("src/interface/uds/controllers/uds_teardown_handles.rs");
     assert!(handles.contains("pub fleet: Arc<TerminateAllDelegatedAgents>"));
     assert!(handles.contains("pub controller: Arc<SubagentTeardownController>"));
     let composition = production_source("src/composition/subagent_teardown.rs");
     assert!(composition.contains("children: fleet.clone()"));
     // The signal watcher and the last client deliver to the controller.
-    let shutdown = production_source("src/interface/cli/uds_shutdown.rs");
+    let shutdown = production_source("src/interface/uds/framing/uds_shutdown.rs");
     assert!(shutdown.contains(".termination_signal("));
     assert!(shutdown.contains(".last_client_disconnected("));
     // Session transitions settle the fleet before anything is replaced
@@ -6593,7 +6776,7 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
         .find(".session_key_changed(&target.identity)")
         .unwrap();
     assert!(claim < settle && settle < reset && reset < propagate);
-    let session = production_source("src/interface/cli/uds_dispatch_session.rs");
+    let session = production_source("src/interface/uds/controllers/uds/uds_dispatch_session.rs");
     assert!(
         !session.contains(".settle(") && !session.contains(".reset_roster("),
         "the interface orders no settlement or roster replacement"
@@ -6657,6 +6840,9 @@ fn catalogue_defaults_mapping_is_pure_and_implements_both_ports() {
 const ENVIRONMENT_PORTS: &[&str] = &[
     "EnvironmentProcessCommands",
     "HostedSwarmRunObservation",
+    // Where a succeeded board run's completion went, judged on its
+    // owner's kill (#2666): an undelivered run keeps its box.
+    "CompletionDeliveryCheck",
     // The hosted board the parent socket's board view reads (#2478).
     "HostedSwarmBoard",
     // The same store read synchronously for the restore and the collector
@@ -6725,7 +6911,7 @@ fn environments_application_depends_only_inward() {
     );
     for dep in [
         "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
-        "crate::interface::cli::uds_query::respond",
+        "crate::interface::uds::controllers::uds_query::respond",
         "crate::application::subagents::ports::child_routing::DirectChildRouting",
         "tokio::process::Command",
         "std::process::Command",
@@ -6901,7 +7087,7 @@ fn external_agent_application_depends_only_inward() {
     }
     for dep in [
         "crate::infrastructure::external_agents::claude_code::stream_json::StreamJsonDecoder",
-        "crate::interface::cli::protocol::SessionStats",
+        "crate::interface::uds::wire::protocol::SessionStats",
         "crate::application::subagents::ports::child_routing::DirectChildRouting",
         "tokio::process::Command",
         "std::process::Command",
@@ -7240,6 +7426,9 @@ const SWARM_BOARD_PORTS: &[&str] = &[
     // reservations normalise paths in the checkout, an effect (#2275).
     "BoardMessages",
     "CheckoutPaths",
+    // Verification carries a submission's evidence to the coordinator's
+    // commit when the checkout's history confirms it (#2687), an effect.
+    "CheckoutHistory",
     // The wake frontiers (#2276): notification and wake cursors.
     "BoardWakes",
     // The usage report the control receipt carries (#2273; S9 adds the

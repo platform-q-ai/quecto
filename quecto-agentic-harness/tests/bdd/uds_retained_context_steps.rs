@@ -6,7 +6,7 @@
 //! loop's own wire events and the on-disk `spill.jsonl`.
 use super::*;
 use quecto::application::agent_turn::agent_loop::AgentLoopConfig;
-use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
+use quecto::interface::uds::controllers::uds::{UdsLoopArgs, run_uds_loop};
 use std::io::{Read, Write};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -202,7 +202,7 @@ fn when_model_recalls(world: &mut QuectoWorld) {
             broadcast_tx: None,
             parent_control: None,
             teardown_graph: None,
-            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
+            turn_session: quecto::composition::bootstrap::agent_turn::build_turn_session,
             environment_control: None,
         })
     });

@@ -1,0 +1,554 @@
+/// UDS protocol types and wire-format helpers for `quecto agent --mode uds`.
+/// Length-prefixed UTF-8 JSON protocol over a Unix domain socket.
+use serde::{Deserialize, Serialize};
+/// Authoritative protocol page size for paged conversation history (#1061).
+///
+/// The single definition every producer, consumer, and test suite shares —
+/// per-call-site literals are forbidden by the #1061 constraint. `pub` (not
+/// crate-private) so the BDD integration targets assert against the same value.
+pub const HISTORY_PAGE_SIZE: usize = 64;
+// ─── Public parse helper ──────────────────────────────────────────────────────
+/// Parse a single JSON line into an [`AgentCommand`].
+/// Returns `Err` for invalid JSON or an unrecognised command type.
+pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
+    if line.trim().is_empty() {
+        return Err("empty line".to_string());
+    }
+    serde_json::from_str(line)
+        .or_else(|e| protocol_search_rescue::rescued(line).ok_or(e))
+        .map_err(|e| format!("parse error: {e}"))
+}
+mod protocol_commands;
+mod protocol_search_rescue;
+pub use protocol_commands::{
+    AgentCommand, ImagePayload, SessionListScopeCommand, StreamingBehavior,
+    ToolPolicyApplyModeCommand, ToolPolicyMutationCommand, ToolPolicyOperationCommand,
+    ToolRegistration, WireImageBlocks,
+};
+
+// ─── Events (stdout) ─────────────────────────────────────────────────────────
+
+/// An event emitted over the UDS socket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentEvent {
+    /// Agent begins processing a prompt.
+    AgentStart,
+    /// Announces the harness workspace path to socket clients (#1350).
+    #[serde(rename_all = "camelCase")]
+    Workspace { path: String },
+    /// Agent finished processing. Identifies this run's messages by stable refs
+    /// (#1060 / ADR-0008 part 2). Legacy full-content `messages` is emptied;
+    /// clients that already hold stream tokens need no fetch; partial observers
+    /// use `get_message` by ref. This is a turn boundary only; workflow
+    /// continuation may still follow.
+    AgentEnd {
+        /// Legacy field: always empty after #1060 (content is not re-carried).
+        #[serde(default)]
+        messages: Vec<serde_json::Value>,
+        /// Stable domain message ids for messages appended during this run.
+        #[serde(rename = "messageRefs", default)]
+        message_refs: Vec<String>,
+        /// Byte length of the run's reply text, as `turn_end` reports it: 0
+        /// for a run that recorded no reply (#2434). Absent from older
+        /// harnesses and from runs that end before a turn.
+        #[serde(
+            rename = "contentLength",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        content_length: Option<u64>,
+    },
+    /// The post-turn drain made no further workflow continuation runnable.
+    /// Emitted only after pending work and automatic workflow nudges settle.
+    /// `reason` distinguishes intervention-worthy exhaustion from deliberate
+    /// outcomes (explicit abort, completion) so supervisors don't raise a
+    /// stall alert for a stop they requested (#1082 review). Optional for
+    /// wire back-compat: events from older producers deserialize with
+    /// `reason: None` and must never be classified as a stall.
+    WorkflowIdle {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<WorkflowIdleReason>,
+    },
+    /// A swarm member's idle boundary after a client's `prompt`, `steer` or
+    /// `follow_up` ran (#2471): its reply is ready. Its launching coordinator
+    /// is woken by this rather than by each of its turn ends.
+    ReplyReady,
+    /// A swarm coordinator's idle boundary (#2467): what its run's board says
+    /// the parent should hear. Only a process launched as its run's
+    /// coordinator sends it. `prompted`: a client's prompt ran since the
+    /// last boundary, so its reply is due whatever the wake.
+    SwarmState {
+        wake: crate::domain::swarm::services::parent_wake::WakeKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+        #[serde(default)]
+        prompted: bool,
+    },
+    /// An incremental text token from the LLM during streaming.
+    Token { token: String },
+    /// A display-safe model thinking/reasoning delta from the LLM during streaming.
+    Thinking { text: String },
+    /// A new LLM call begins.
+    TurnStart,
+    /// LLM call completed.
+    TurnEnd {
+        message: TurnMessage,
+        #[serde(rename = "toolResults")]
+        tool_results: Vec<ToolResultEvent>,
+    },
+    /// A tool began executing.
+    ToolExecutionStart {
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "toolName")]
+        tool_name: String,
+        args: serde_json::Value,
+    },
+    /// A tool finished executing.
+    ToolExecutionEnd {
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "toolName")]
+        tool_name: String,
+        result: ToolResultContent,
+        #[serde(rename = "isError")]
+        is_error: bool,
+    },
+    /// Response to a command.
+    Response {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        command: String,
+        success: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data: Option<serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// Rich catalogue changed after tool registration/unregistration.
+    #[serde(rename_all = "camelCase")]
+    ToolCatalogueChanged {
+        changed_tools: Vec<String>,
+        before: Vec<serde_json::Value>,
+        after: Vec<serde_json::Value>,
+        reason: String,
+    },
+    /// Runtime tool policy changed after live reconciliation.
+    #[serde(rename_all = "camelCase")]
+    ToolPolicyChanged {
+        changed_tools: Vec<String>,
+        results: Vec<serde_json::Value>,
+        apply_mode: String,
+        reason: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        correlation_id: Option<String>,
+    },
+    /// Request sent to an extension client to execute a tool.
+    ///
+    /// Routed only to the client that registered the tool — not broadcast.
+    ExecuteTool {
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "toolName")]
+        tool_name: String,
+        arguments: String,
+    },
+    /// Broadcast when a subagent emits a passive notification for human/UI visibility.
+    #[serde(rename_all = "camelCase")]
+    SubagentNotification {
+        agent_id: String,
+        sequence: u64,
+        message: String,
+    },
+    /// Broadcast when a subagent's status changes (#524).
+    /// Contains the full list of subagents (clients do a simple replace).
+    SubagentStateChanged { subagents: Vec<SubagentInfo> },
+    /// Broadcast after every admission transition of this process (#1679 P4):
+    /// the full bounded admission view (clients do a simple replace). Never a
+    /// lifecycle state; `get_state` folds the same revision into `generation`.
+    AdmissionStateChanged {
+        admission: crate::interface::uds::presenters::uds_admission_projection::AdmissionSnapshot,
+    },
+    /// One provider request of this agent ended (#2436): every attempt,
+    /// retries included, whatever its provider. A token count the provider
+    /// did not report is omitted, never zero. Emitted on the agent's own
+    /// socket only: a parent's monitor never forwards a child's.
+    #[serde(rename_all = "camelCase")]
+    RequestCompleted {
+        model: String,
+        provider: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cached_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_write_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_tokens: Option<u64>,
+        duration_ms: u64,
+        /// How long it waited to be admitted; omitted when it never waited.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        queued_ms: Option<u64>,
+        outcome: crate::domain::inference::events::request_completion::RequestOutcome,
+        /// This agent's requests so far, this one included.
+        request_index: u64,
+        /// Its number within its logical request, from 1.
+        attempt: u32,
+    },
+    /// Emitted when an agent completes a turn, carrying the messages appended
+    /// during that turn (assistant message + any tool results). A sub-agent
+    /// emits this on its own stream with an empty `agent_id`; the parent's
+    /// monitor re-stamps it with the child's id and forwards it so the TUI
+    /// inspector can stream the sub-agent's output turn-by-turn (#797).
+    SubagentMessagesAppended {
+        agent_id: String,
+        /// Legacy field: always empty after #1060 (content is not re-carried).
+        #[serde(default)]
+        messages: Vec<serde_json::Value>,
+        /// Stable domain message ids for messages appended during this child turn.
+        #[serde(rename = "messageRefs", default)]
+        message_refs: Vec<String>,
+    },
+    /// Broadcast when workflow state changes.
+    #[serde(rename_all = "camelCase")]
+    WorkflowState {
+        enabled: bool,
+        guards_enabled: bool,
+        mode: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        active_template: Option<serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        active_issue: Option<serde_json::Value>,
+        progress: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        current_step: Option<serde_json::Value>,
+        steps: Vec<serde_json::Value>,
+        available_templates: Vec<serde_json::Value>,
+    },
+}
+
+/// Why a `workflow_idle` boundary was reached (#1082 review). Only
+/// intervention-worthy reasons (`Exhausted`) should be classified as a stall
+/// by supervising monitors; deliberate stops must stay silent. `Unknown`
+/// absorbs reason strings from newer producers so typed deserialization
+/// never fails across versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowIdleReason {
+    /// Auto-continuation gave up: no-progress tolerance or nudge cap reached,
+    /// or no nudge was applicable while the workflow is still unfinished.
+    Exhausted,
+    /// The parent explicitly aborted; this stop was requested, not a stall.
+    ExplicitAbort,
+    /// The bound workflow reached a terminal state (or no workflow is bound).
+    Completed,
+    /// A reason this build does not recognize (newer producer). Never
+    /// produced by this build — it exists for deserialization only — and
+    /// never classified as a stall.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Snapshot of a single subagent's state, used in `get_subagents` responses
+/// and `subagent_state_changed` events (#524).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentInfo {
+    /// Compatibility field: user-facing display label (spawn `agent_id`).
+    pub agent_id: String,
+    /// Hidden durable identity minted for this spawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_uuid: Option<String>,
+    /// User-facing display label, explicit alias for `agent_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Live status: "starting", "idle", "running", "error", "exited".
+    pub status: String,
+    /// Cross-process liveness: "live", "detached", or "dead" (#1461).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liveness: Option<String>,
+    /// Name of the last tool being executed, or `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_tool: Option<String>,
+    /// Description of the last error, or `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    /// Child process PID.
+    pub pid: u32,
+    /// Filesystem path to this sub-agent's own UDS socket, surfaced so the TUI
+    /// can open a direct connect-on-select connection to its live stream (#800).
+    /// Local use only — sub-agent sockets are filesystem-permission scoped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub socket_path: Option<String>,
+    /// The spawning agent's id, for reconstructing the unit tree (PRD Stage B).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// Latest workflow snapshot for this subagent, if any (PRD Stage B).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<crate::infrastructure::tools::agents::subagent_registry::WorkflowSnapshot>,
+    /// Whether this sub-agent was spawned read-only (`write` + `edit` disabled).
+    /// The TUI renders an observer marker next to its name when true (#966).
+    #[serde(default)]
+    pub read_only: bool,
+    /// How this sub-agent runs: `local` process or script-managed (`script`).
+    /// Additive versioned field (#1369 slice 4); defaults to `local` for
+    /// snapshots from older producers.
+    #[serde(default = "default_execution_backend")]
+    pub execution_backend: String,
+    /// Environment metadata for script-managed sub-agents; absent for local
+    /// ones. Additive versioned field (#1369 slice 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<
+        crate::infrastructure::tools::agents::subagent_environment_wire::SubagentEnvironmentWire,
+    >,
+    /// The generation a selected termination addresses this agent by
+    /// (#1936): minted by the harness that launched it. Absent for rows
+    /// that are not delegated agents. Additive versioned field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_generation: Option<u64>,
+}
+
+fn default_execution_backend() -> String {
+    crate::infrastructure::tools::agents::subagent_environment_wire::BACKEND_LOCAL.to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnMessage {
+    pub role: String,
+    /// Legacy full content — emptied on the wire after #1060 (ADR-0008 part 2).
+    /// Clients reconstruct from stream tokens or `get_message` by ref.
+    #[serde(default)]
+    pub content: String,
+    /// Stable domain message ids for messages completed in this LLM call.
+    #[serde(rename = "messageRefs", default, skip_serializing_if = "Vec::is_empty")]
+    pub message_refs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TurnUsage>,
+    #[serde(rename = "stopReason", skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+    /// Estimated tokens currently occupying the active, pruned context.
+    #[serde(rename = "contextTokens", skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<u64>,
+    /// The active model's context-window limit (tokens), so the TUI footer can
+    /// render context usage against it. `None` when unknown.
+    #[serde(rename = "maxContextTokens", skip_serializing_if = "Option::is_none")]
+    pub max_context_tokens: Option<u64>,
+    /// Byte length of the assistant text for this turn (not the body). Clients
+    /// use this to detect truncated streams without re-carrying content (#1060).
+    #[serde(rename = "contentLength", skip_serializing_if = "Option::is_none")]
+    pub content_length: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnUsage {
+    pub input: u32,
+    pub output: u32,
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResultEvent {
+    #[serde(rename = "toolCallId")]
+    pub tool_call_id: String,
+    pub content: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResultContent {
+    pub content: Vec<serde_json::Value>,
+}
+
+/// The unit tree reconstructed purely from an identity-tagged event stream
+/// (PRD Stage B / R-B4). Each `workflow_state` / subagent event carries
+/// `agent_id` + `parent_id`, so any consumer can rebuild the parent→child
+/// structure without a side channel.
+#[derive(Debug, Default, Clone)]
+pub struct UnitTree {
+    /// agent_id → its parent_id (None at the root).
+    parents: std::collections::HashMap<String, Option<String>>,
+}
+
+impl UnitTree {
+    /// Build the tree from a slice of identity-tagged events. Any event with an
+    /// `agent_id` contributes a node; later events overwrite earlier parentage.
+    pub fn from_events(events: &[serde_json::Value]) -> Self {
+        let mut parents = std::collections::HashMap::new();
+        for ev in events {
+            if let Some(agent) = ev.get("agent_id").and_then(|v| v.as_str()) {
+                let parent = ev
+                    .get("parent_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                parents.insert(agent.to_string(), parent);
+            }
+        }
+        Self { parents }
+    }
+
+    /// Direct parent of `agent`, or `None` if it is a root (or unknown).
+    pub fn parent_of(&self, agent: &str) -> Option<&str> {
+        self.parents.get(agent).and_then(|p| p.as_deref())
+    }
+}
+
+// ─── Response helpers ────────────────────────────────────────────────────────
+
+impl AgentEvent {
+    /// Build a success response.
+    pub fn ok(id: Option<&str>, command: &str, data: Option<serde_json::Value>) -> Self {
+        Self::Response {
+            id: id.map(str::to_owned),
+            command: command.to_owned(),
+            success: true,
+            data,
+            error: None,
+        }
+    }
+
+    /// Build an error response.
+    pub fn err(id: Option<&str>, command: &str, message: impl Into<String>) -> Self {
+        Self::Response {
+            id: id.map(str::to_owned),
+            command: command.to_owned(),
+            success: false,
+            data: None,
+            error: Some(message.into()),
+        }
+    }
+
+    /// Serialize the event to a JSON line (no trailing newline).
+    pub fn to_json_line(&self) -> String {
+        serde_json::to_string(self).expect("AgentEvent is always serializable")
+    }
+}
+
+// ─── Event line cap (#1047) ──────────────────────────────────────────────────
+//
+// The authoritative value lives in `crate::infrastructure::processes::line_cap` so
+// interface and infrastructure emitters share the reader-side framing bound.
+pub use crate::infrastructure::processes::line_cap::{
+    EVENT_LINE_CAP_BYTES, EVENT_LINE_JSON_BUDGET,
+};
+
+// ─── Session state snapshot ──────────────────────────────────────────────────
+
+pub use crate::domain::sessions::value_objects::state_snapshot::{ControlReceipt, ControlStatus};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionState {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admission_warnings:
+        Vec<crate::domain::sessions::value_objects::state_snapshot::AdmissionBindingWarning>,
+    /// The warnings the startup model drew (#2435, #2126).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub startup_warnings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub control_receipts: Vec<ControlReceipt>,
+    #[serde(default)]
+    pub automatic_turns_suspended: bool,
+    #[serde(default)]
+    pub repeated_failure_notifications: u64,
+    pub model: String,
+    #[serde(default)]
+    pub generation: u64,
+    pub is_streaming: bool,
+    pub session_key: String,
+    pub message_count: usize,
+    pub pending_message_count: usize,
+    /// The active model's context-window limit (tokens). `0` when unknown.
+    pub max_context_tokens: usize,
+    /// The session's effective reasoning-effort level (#1067): the level
+    /// string when set (config default or runtime `set_effort`), an explicit
+    /// `null` when unset — so clients can distinguish "provider default"
+    /// from a missing capability. Always serialized, on both the live-query
+    /// and busy-connect snapshot paths.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// The effort vocabulary valid for the active model's provider (#1067).
+    /// Agent-side source of truth so clients never duplicate the
+    /// provider→levels rule.
+    #[serde(default)]
+    pub effort_levels: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution:
+        Option<crate::interface::uds::presenters::uds_execution_state::ExecutionSnapshot>,
+    #[serde(default)]
+    pub sync: u8,
+}
+
+impl SessionState {
+    /// Canonical bounded inspection projection shared by live and connect replies.
+    pub fn slim_projection(&self) -> serde_json::Value {
+        crate::interface::cli::uds_state_projection::slim_state_projection(self)
+    }
+}
+
+// ─── Session statistics ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStats {
+    #[serde(default)]
+    pub runtime: Option<crate::domain::inference::events::request_observation::RuntimeIdentity>,
+    #[serde(default)]
+    pub request_diagnostics:
+        crate::domain::inference::events::request_observation::RequestDiagnostics,
+    pub session_key: String,
+    pub user_messages: usize,
+    pub assistant_messages: usize,
+    pub tool_calls: usize,
+    pub tool_results: usize,
+    pub total_messages: usize,
+    pub tokens: TokenStats,
+    #[serde(skip_serializing, default)]
+    pub cost: f64,
+    /// What the session's usage cost, `null` when it billed usage none of
+    /// which was priced (#1855): unpriced is never zero. Always present.
+    #[serde(default)]
+    pub cost_micro_usd: Option<u64>,
+    /// Provider attempts that reported usage with no price to cost it at
+    /// (#1855), counted as `cost_micro_usd` is summed: every attempt that
+    /// reported usage, a cut-short attempt included, not logical requests.
+    /// Their usage counts, but their cost is unknown, never zero.
+    #[serde(default)]
+    pub unpriced_attempts: u64,
+    #[serde(default)]
+    pub cache_hit_ratio: Option<f64>,
+    /// User-facing context occupancy: provider-reported prompt tokens when
+    /// available, otherwise the local active-message estimate fallback.
+    pub context_tokens: usize,
+    /// The active model's context-window limit (tokens). `0` when unknown.
+    pub max_context_tokens: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenStats {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub total: u64,
+}
+
+#[cfg(test)]
+mod protocol_roster_tests;
+#[cfg(test)]
+mod protocol_tests;
+#[cfg(test)]
+mod tests_1586;
+
+#[cfg(test)]
+mod event_tests;
+
+#[cfg(test)]
+mod policy_tests;
+#[cfg(test)]
+mod shape_tests;
+
+#[cfg(test)]
+mod protocol_1060_tests;

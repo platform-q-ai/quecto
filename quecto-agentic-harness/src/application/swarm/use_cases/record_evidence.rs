@@ -8,12 +8,12 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::OverRepository;
-use crate::application::swarm::board_completion::definition;
-use crate::application::swarm::board_operation::{detail, operation, text};
 use crate::application::swarm::dto::{
     EvidenceTransition, NewEvidence, RecordEvidenceRequest, RecordedEvidence,
 };
 use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
+use crate::application::swarm::services::board_completion::definition;
+use crate::application::swarm::services::board_operation::{detail, operation, text};
 use crate::domain::swarm::{
     events::telemetry::RefusalKind,
     services::policy::Access,

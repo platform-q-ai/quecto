@@ -3,7 +3,7 @@ use super::*;
 #[cfg(test)]
 #[test]
 fn identical_failure_notifications_do_not_reopen_an_idle_turn() {
-    let mut session = AgentSession::new("test".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("test".into());
     assert!(
         session
             .enqueue_subagent_notification(
@@ -64,7 +64,7 @@ fn identical_failure_notifications_do_not_reopen_an_idle_turn() {
 #[test]
 fn a_repeated_swarm_state_note_still_reopens_an_idle_turn() {
     use crate::interface::cli::uds_session::NoteClass;
-    let mut session = AgentSession::new("test".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("test".into());
     let idle = "Swarm coordinator 'coord' reports its run running with nothing in flight";
     for sequence in 1..=2 {
         assert!(
@@ -87,7 +87,7 @@ fn a_repeated_swarm_state_note_still_reopens_an_idle_turn() {
 #[test]
 fn swarm_state_notes_are_not_coalesced_with_turn_ends() {
     use crate::interface::cli::uds_session::NoteClass;
-    let mut session = AgentSession::new("test".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("test".into());
     for (agent, class) in [
         ("a", NoteClass::State),
         ("b", NoteClass::State),
@@ -155,7 +155,7 @@ fn each_note_is_queued_in_its_class() {
 #[test]
 fn a_pending_swarm_state_is_not_replaced_by_a_turn_end() {
     use crate::interface::cli::uds_session::NoteClass;
-    let mut session = AgentSession::new("test".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("test".into());
     let finished = "coord reports its run succeeded";
     for (sequence, content, class) in [
         (1, finished, NoteClass::State),
@@ -181,7 +181,7 @@ fn a_pending_swarm_state_is_not_replaced_by_a_turn_end() {
 #[test]
 fn a_swarm_state_clears_the_remembered_failure_and_never_replaces_one() {
     use crate::interface::cli::uds_session::NoteClass;
-    let mut session = AgentSession::new("test".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("test".into());
     let failure = "coord failed: rate limited";
     let enqueue = |session: &mut AgentSession, sequence, content: &str, class| {
         session
@@ -208,7 +208,7 @@ fn the_dispatch_enqueue_keeps_every_repeated_swarm_state() {
     use crate::infrastructure::tools::agents::subagent_registry::{
         SequencedSubagentNotification, SubagentNotification, SwarmNoteState,
     };
-    let mut session = AgentSession::new("test".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("test".into());
     for sequence in 1..=3 {
         let note = SequencedSubagentNotification::new(
             sequence,

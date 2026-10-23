@@ -128,3 +128,42 @@ fn kill_refuses_a_stopped_environment_whose_container_still_runs() {
     assert!(dir.path().join("state/env-four/workspace").exists());
     assert_eq!(on_file(&ctx), ["C2 stopped", "C4 stopped"], "untouched");
 }
+
+/// #2684 round 1: a stopped environment whose box went by the time it is
+/// killed (its state directory gone with its container; here its own
+/// inspect is the last to see it) left nothing: the kill says so, runs no
+/// cleanup, and forgets the record.
+#[test]
+fn kill_says_nothing_is_left_of_a_stopped_environment_that_left_nothing() {
+    let (dir, ctx, log) = stopped_leftovers();
+    let state = dir.path().join("state");
+    let vanishing = script(
+        dir.path(),
+        "vanishing.sh",
+        &format!(
+            "rm -rf '{}'; printf '{{\"status\":\"exited\",\"metadata\":{{}}}}'",
+            state.join("env-two").display()
+        ),
+    );
+    let store = FileEnvironmentRegistryStore::for_base_dir(&ctx.base_dir());
+    let mut c2 = store
+        .load()
+        .unwrap()
+        .into_iter()
+        .find(|record| record.environment_ref == "C2")
+        .unwrap();
+    c2.retained_inspect_argv = vanishing;
+    store.record(&c2).unwrap();
+    let output = run(&["container", "kill", "C2"], &ctx);
+    assert_eq!(output.exit_code, 0, "{output:?}");
+    assert_eq!(
+        output.stdout,
+        "nothing left of stopped C2 (name-C2): its container and state directory were already gone; its record is forgotten\n"
+    );
+    assert!(
+        !log.exists(),
+        "no script ran: {:?}",
+        std::fs::read_to_string(&log)
+    );
+    assert_eq!(on_file(&ctx), ["C4 stopped"], "C2 forgotten on file");
+}

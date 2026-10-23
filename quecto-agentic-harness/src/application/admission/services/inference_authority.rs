@@ -10,7 +10,7 @@
 //! they hold the journal port and drive the raw operations here, which are
 //! visible only inside the capability. The authority is the single owner of
 //! the journal-health flag; only those use cases set it.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::application::admission::dto::broker::{AuthorityError, AuthorityStatus, Credential};
 use crate::application::admission::ports::inference_admission::{
@@ -43,8 +43,15 @@ pub struct AdmissionAuthority<S> {
     service: AdmissionService,
     secrets: S,
     issued: BTreeMap<ScopeId, Issued>,
+    /// Scopes whose connection ended while they still held active work, and
+    /// that no connection has bound since: once that work leaves (its lease
+    /// clears, #2664) nothing can use the capability, so it is released.
+    detached: BTreeSet<ScopeId>,
     groups: Vec<GroupId>,
     journal_healthy: bool,
+    /// Outstanding attempts in the last durable ledger: occupancy that left
+    /// without a write since (a cleared lease, #2664) is checkpointed.
+    durable_outstanding: usize,
 }
 
 impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
@@ -77,8 +84,10 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
             service,
             secrets,
             issued: BTreeMap::new(),
+            detached: BTreeSet::new(),
             groups,
             journal_healthy: true,
+            durable_outstanding: 0,
         }
     }
 
@@ -110,6 +119,21 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
     /// The journal's last outcome, recorded by the use case that wrote it.
     pub(in crate::application::admission) fn record_journal(&mut self, healthy: bool) {
         self.journal_healthy = healthy;
+    }
+
+    /// The ledger the journal accepted: how many attempts it holds.
+    pub(in crate::application::admission) fn record_durable(&mut self, ledger: &AdmissionLedger) {
+        self.durable_outstanding = ledger.outstanding.len();
+    }
+
+    /// Whether occupancy left since the last durable ledger without a write
+    /// of its own (#2664: a lease or orphan cleared on time), so the journal
+    /// must not bring it back after a restart.
+    pub(in crate::application::admission) fn checkpoint_due(
+        &mut self,
+        now: u64,
+    ) -> Result<bool, AuthorityError> {
+        Ok(self.service.ledger(now)?.outstanding.len() < self.durable_outstanding)
     }
 
     /// The current ledger, for a use case to make durable.
@@ -269,6 +293,7 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
         self.authenticate(credential)?;
         self.service.retire(credential.scope)?;
         self.issued.remove(&credential.scope);
+        self.detached.remove(&credential.scope);
         Ok(())
     }
 
@@ -280,7 +305,49 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
     ) -> Result<(), AuthorityError> {
         self.service.retire(scope)?;
         self.issued.remove(&scope);
+        self.detached.remove(&scope);
         Ok(())
+    }
+
+    /// A connection bound `scope`'s capability: it is live again, so its
+    /// cleared work never releases it.
+    pub(in crate::application::admission) fn attach(&mut self, scope: ScopeId) {
+        self.detached.remove(&scope);
+    }
+
+    /// Release every detached scope that no longer holds active work (#2664)
+    /// and answer how many were released. A scope still holding work stays;
+    /// one the policy no longer knows is forgotten.
+    pub(in crate::application::admission) fn release_idle_detached(&mut self) -> usize {
+        let mut released = 0;
+        for scope in std::mem::take(&mut self.detached) {
+            match self.service.retire(scope) {
+                Ok(()) => {
+                    self.issued.remove(&scope);
+                    released += 1;
+                }
+                Err(AdmissionError::Busy) => {
+                    self.detached.insert(scope);
+                }
+                Err(AdmissionError::UnknownScope | AdmissionError::StaleEpoch) => {
+                    self.issued.remove(&scope);
+                }
+                Err(other) => {
+                    debug_assert!(false, "retire refuses only busy or unknown: {other:?}");
+                    self.detached.insert(scope);
+                }
+            }
+        }
+        released
+    }
+
+    /// The uncertain leases the expired wait `id` was held by (#2664).
+    pub(in crate::application::admission) fn held(
+        &mut self,
+        id: RequestId,
+        now: u64,
+    ) -> Result<Option<UncertainHold>, AuthorityError> {
+        Ok(self.service.held(id.scope, id.sequence, now)?)
     }
 
     /// A parent retires a descendant it registered (for example a launch that
@@ -299,6 +366,7 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
         }
         self.service.retire(child)?;
         self.issued.remove(&child);
+        self.detached.remove(&child);
         Ok(())
     }
 
@@ -309,7 +377,11 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
         scope: ScopeId,
         now: u64,
     ) -> Result<AbandonReport, AuthorityError> {
-        Ok(self.service.abandon(scope, now)?)
+        let report = self.service.abandon(scope, now)?;
+        if report.active > 0 {
+            self.detached.insert(scope);
+        }
+        Ok(report)
     }
 
     /// Active attempts whose owners must terminate their local transport.
@@ -346,6 +418,30 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
         now: u64,
     ) -> Result<Option<u64>, AuthorityError> {
         Ok(self.service.next_wake(now)?)
+    }
+
+    /// Whether the authority holds anything a stop would lose (#2615,
+    /// ADR-0032): a root scope; any attempt outstanding in the ledger, which
+    /// is every permit and lease, uncertain and restart-orphaned ones
+    /// included (a lost scope still owing work owes it there); or a queued
+    /// wait. A state it cannot read counts as holding, so the idle stop
+    /// fails safe.
+    pub(in crate::application::admission) fn holds_anything(&mut self, now: u64) -> bool {
+        let roots = self.issued.values().any(|issued| issued.parent.is_none());
+        let outstanding = self
+            .service
+            .ledger(now)
+            .map_or(true, |ledger| !ledger.outstanding.is_empty());
+        let queued = self.groups.iter().any(|group| {
+            self.service
+                .snapshot(group, now)
+                .map_or(true, |snapshot| snapshot.queued > 0)
+        });
+        debug_assert!(
+            outstanding || self.detached.is_empty(),
+            "a lost scope is kept only while it owes outstanding work"
+        );
+        roots || outstanding || queued
     }
 
     pub fn inspect(&mut self, now: u64) -> AuthorityStatus {
@@ -392,6 +488,7 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
         let epoch = self.service.reset(now)?;
         debug_assert_eq!(epoch, durable_epoch, "durable epoch matches policy");
         self.issued.clear();
+        self.detached.clear();
         Ok(epoch)
     }
 }

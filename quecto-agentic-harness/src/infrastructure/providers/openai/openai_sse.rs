@@ -93,17 +93,13 @@ impl OpenAiSseHandler {
                 signature: String::new(),
             }]
         };
-        let mut response = LlmResponse {
+        LlmResponse {
             content,
             tool_calls: std::mem::take(&mut self.tool_calls),
             usage: self.usage.take(),
             stop_reason: self.stop_reason.take(),
             thinking_blocks,
-        };
-        if let Some(model) = &self.model {
-            crate::domain::inference::services::usage_accounting::attach_cost(&mut response, model);
         }
-        response
     }
 }
 
@@ -209,7 +205,6 @@ impl SseHandler for OpenAiSseHandler {
             crate::infrastructure::providers::transport::sse_end::record_unfinished_usage(
                 self.trace.as_deref(),
                 self.usage.take(),
-                self.model.as_deref().unwrap_or_default(),
             );
             let error = crate::infrastructure::providers::transport::sse_end::ended_early(
                 self.saw_event,
@@ -280,3 +275,6 @@ mod finish_reason_tests;
 #[cfg(test)]
 #[path = "openai_sse_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "openai_sse_wire_cov_tests.rs"]
+mod wire_cov_tests;

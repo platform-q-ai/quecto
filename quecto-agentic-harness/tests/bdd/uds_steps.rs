@@ -23,7 +23,7 @@ use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSes
 use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
+use quecto::interface::uds::controllers::uds::{UdsLoopArgs, run_uds_loop};
 use wiremock::Request;
 
 fn bdd_workflow_config_with_feature(
@@ -463,7 +463,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             broadcast_tx: None,
             parent_control: None,
             teardown_graph: None,
-            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
+            turn_session: quecto::composition::bootstrap::agent_turn::build_turn_session,
             environment_control: None,
         })
     });
@@ -506,7 +506,8 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
     // socket_override path skips the real eprint!, so we inject the SAME
     // production-built string here so announcement steps assert on the real
     // format.
-    world.agent_stderr = quecto::interface::cli::uds_wire::socket_announcement(&socket_path);
+    world.agent_stderr =
+        quecto::interface::uds::framing::uds_wire::socket_announcement(&socket_path);
 
     // Capture socket path for transport assertions.
     world._uds_socket_path = Some(socket_path);
@@ -1136,7 +1137,7 @@ fn agent_event_types(world: &QuectoWorld) -> Vec<String> {
 /// (captured `agent_events` lines have the newline stripped, hence `< cap`).
 #[then("every emitted event line should fit within the event line cap")]
 fn then_every_event_line_fits_cap(world: &mut QuectoWorld) {
-    use quecto::interface::cli::protocol::EVENT_LINE_CAP_BYTES;
+    use quecto::interface::uds::wire::protocol::EVENT_LINE_CAP_BYTES;
     assert!(
         !world.agent_events.is_empty(),
         "expected the agent to have emitted event lines"
@@ -2228,7 +2229,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             broadcast_tx: None,
             parent_control: None,
             teardown_graph: None,
-            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
+            turn_session: quecto::composition::bootstrap::agent_turn::build_turn_session,
             environment_control: None,
         })
     });
@@ -2623,7 +2624,7 @@ fn mc_spawn_agent(
     let base_for_thread = base.to_path_buf();
     let sp = socket_path.clone();
     let handle = std::thread::spawn(move || {
-        quecto::interface::cli::uds::run_uds_loop(UdsLoopArgs {
+        quecto::interface::uds::controllers::uds::run_uds_loop(UdsLoopArgs {
             extensions: Default::default(),
             agent,
             retention: None,
@@ -2653,7 +2654,7 @@ fn mc_spawn_agent(
             broadcast_tx,
             parent_control: None,
             teardown_graph: None,
-            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
+            turn_session: quecto::composition::bootstrap::agent_turn::build_turn_session,
             environment_control: None,
         })
     });

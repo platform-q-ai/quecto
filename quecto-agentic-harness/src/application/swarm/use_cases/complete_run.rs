@@ -4,11 +4,12 @@
 use std::sync::Arc;
 
 use super::OverRepository;
-use crate::application::swarm::board_completion::{evidence_rows, task_record};
-use crate::application::swarm::board_control::current;
-use crate::application::swarm::board_operation::{detail, end, operation};
 use crate::application::swarm::dto::CompleteRunRequest;
 use crate::application::swarm::ports::{board_repository::BoardRepository, lifecycle::Clock};
+use crate::application::swarm::services::board_completion::{evidence_rows, task_record};
+use crate::application::swarm::services::board_control::current;
+use crate::application::swarm::services::board_operation::{detail, end, operation};
+use crate::domain::swarm::value_objects::lifecycle::COMPLETED_AT;
 use crate::domain::swarm::{
     entities::records::{RunRecord, RunState},
     events::telemetry::RefusalKind,
@@ -86,7 +87,7 @@ impl CompleteRun {
                     &*self.clock,
                     actor,
                     outcome.as_str(),
-                    &format!("completed at {revision}"),
+                    &format!("{COMPLETED_AT}{revision}"),
                 )?;
                 let ended = current(transaction)?;
                 debug_assert_eq!(

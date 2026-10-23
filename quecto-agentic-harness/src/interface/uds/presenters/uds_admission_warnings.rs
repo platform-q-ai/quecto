@@ -1,0 +1,42 @@
+//! Startup presentation of the published runtime's advisory admission slots.
+
+pub(in crate::interface) fn publish_startup_warnings(
+    store: &crate::application::provider_runtime::RuntimeSnapshotStore,
+) -> Vec<String> {
+    let slots = store
+        .current()
+        .map(|snapshot| snapshot.admission_binding_diagnostic.unbound_slots.clone())
+        .unwrap_or_default();
+    let unique: Vec<String> = slots
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    for slot in &unique {
+        eprintln!(
+            "warning: {}",
+            crate::domain::sessions::value_objects::state_snapshot::AdmissionBindingWarning::new(
+                slot
+            )
+            .message
+        );
+    }
+    unique
+}
+
+/// Overlay the latest published generation for a busy/connect-time inspector read.
+pub(in crate::interface) fn overlay_current(
+    state: &mut crate::interface::uds::wire::protocol::SessionState,
+    store: &crate::application::provider_runtime::RuntimeSnapshotStore,
+) {
+    if let Some(runtime) = store.current() {
+        state.admission_warnings = runtime
+            .admission_binding_diagnostic
+            .unbound_slots
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|slot| crate::domain::sessions::value_objects::state_snapshot::AdmissionBindingWarning::new(slot))
+            .collect();
+    }
+}

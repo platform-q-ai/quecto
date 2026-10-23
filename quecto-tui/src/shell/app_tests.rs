@@ -301,6 +301,7 @@ fn builtin_commands_have_stable_order_and_names() {
             "refresh-models",
             "effort",
             "thinking",
+            "admission",
             "setup",
             "workflow",
             "workflow-auto",

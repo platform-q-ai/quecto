@@ -1,5 +1,5 @@
 use super::*;
-use quecto::interface::cli::protocol::{AgentEvent, SubagentInfo};
+use quecto::interface::uds::wire::protocol::{AgentEvent, SubagentInfo};
 
 // ─── SubagentBar widget integration steps (#525) ──────────────────────────────
 // These test the protocol data that feeds the TUI widget, not the widget itself.

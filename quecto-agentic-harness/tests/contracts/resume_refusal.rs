@@ -322,8 +322,8 @@ fn the_command_changes_into_exactly_that_folder_whatever_it_is_called() {
         std::fs::create_dir_all(&dir).unwrap();
         let cd = cd_there_command(&dir).expect(name);
         assert_eq!(
-            open_there_command(&dir),
-            Some(format!("{cd} && quecto-tui")),
+            open_there_command(&dir, "cli:foreign"),
+            Some(format!("{cd} && quecto-tui --resume='cli:foreign'")),
             "{name}"
         );
         let output = std::process::Command::new("sh")

@@ -194,7 +194,15 @@ Two session-level `agent_cmd` commands expose it (use `agent_id: "*"`):
   wrongly `stopped` while another live session still uses the box — or
   one it cannot be asked about is refused, the claim released and nothing
   touched; so is a script set that retained no `cleanup` (`quecto
-  container gc` collects that). "Gone" is the runtime's own word: the
+  container gc` collects that). A stopped environment whose container the
+  runtime reports gone and whose state directory is gone too — as a clean
+  kill leaves it — left nothing (#2684, the restore's own rule): its
+  record is forgotten, no script runs and no board is judged, and the kill
+  says so (the JSON result adds `"nothing_left": true`; `quecto container
+  kill` prints `nothing left of stopped <ref>`). That holds for a script set
+  that retained no `cleanup` too: such a box that left nothing is forgotten
+  the same way, and only one that may have left something is refused for
+  `quecto container gc`. "Gone" is the runtime's own word: the
   shipped Docker/Podman `inspect.sh` reports `dead` only when the runtime
   says the container does not exist ("no such container"/"no such
   object", naming it) or that its state is `exited`/`dead`/`stopped`, and fails —
@@ -707,7 +715,7 @@ line split on `\n`: control characters and U+2028, U+2029 and U+0085
 inside strings are escaped, so no other line break appears.
 
 ```json
-{"environments":[{"ref":"C1","name":"review-env","config":"standard","status":"running","members":0,"repository":"https://***@github.com/org/repo","created_by":"cli:pocket-42","created_at":1760000000,"age_s":5130,"unverified":null}],"hidden_stopped":2}
+{"environments":[{"ref":"C1","name":"review-env","config":"standard","status":"running","members":0,"repository":"https://***@github.com/org/repo","created_by":"cli:pocket-42","created_at":1760000000,"age_s":5130,"unverified":null,"retained":null}],"hidden_stopped":2}
 ```
 
 Keys appear in this order; absent values are `null`, never `"-"`:
@@ -724,6 +732,7 @@ Keys appear in this order; absent values are `null`, never `"-"`:
 | `created_at` | Creation time in Unix seconds, or `null` when the creator recorded none. |
 | `age_s` | Seconds since `created_at`, or `null`. |
 | `unverified` | Why this listing's restore could not check it against the runtime (the reason in the `note: <ref> could not be verified …` line on stderr; several are joined with `"; "`), or `null`. |
+| `retained` | Why a `retained` environment is kept, as its teardown recorded it (the reason in the `note: <ref> retained: …` line on stderr, #2681), or `null`. |
 
 `hidden_stopped` counts the `stopped` environments left out because
 `--all` was not given (`0` with `--all`). The restore's notes still go to

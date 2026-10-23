@@ -23,7 +23,7 @@ use quecto::infrastructure::persistence::file::sessions::session_store::FileSess
 use quecto::infrastructure::tools::agents::agent_cmd::{AgentCmdTool, SubagentRegistry};
 use quecto::infrastructure::tools::agents::spawn::SpawnTool;
 use quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry;
-use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
+use quecto::interface::uds::controllers::uds::{UdsLoopArgs, run_uds_loop};
 
 use crate::QuectoWorld;
 
@@ -348,7 +348,7 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             broadcast_tx,
             parent_control: None,
             teardown_graph: Some(build_teardown_graph),
-            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
+            turn_session: quecto::composition::bootstrap::agent_turn::build_turn_session,
             environment_control: None,
         })
     });

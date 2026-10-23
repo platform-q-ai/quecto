@@ -1,0 +1,411 @@
+//! #1072 end-to-end regression: `run_agent_message` driven with a stub agent
+//! whose turn shrinks history below its pre-turn length mid-run — the live
+//! panic shape (`range start index 180 out of range for slice of length 80`).
+//!
+//! The pre-fix code sliced `messages[before_len..]` for the AgentEnd payload
+//! and truncated at a pre-turn `user_msg_idx` on cancel; both panic or emit
+//! wrong data once pruning removes earlier vector entries. This test fails
+//! (by panic or by payload mismatch) if those call sites ever revert to
+//! positional slicing, and fails if the durable-prefix dirty latch is
+//! dropped from the pruning pass.
+
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+
+use super::{EventSink, PromptOutcome, PromptRun, run_agent_message};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::application::tools::ports::Tool;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
+use crate::domain::inference::value_objects::provider::StreamEvent;
+use crate::domain::shared::error::DomainError;
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
+
+/// Provider returning a scripted FIFO of responses.
+#[derive(Debug)]
+struct ScriptedProvider {
+    responses: Mutex<Vec<LlmResponse>>,
+}
+
+impl LlmProvider for ScriptedProvider {
+    fn route_order(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
+    fn name(&self) -> &str {
+        "scripted"
+    }
+
+    fn chat(
+        &self,
+        _request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<LlmResponse, DomainError>> + Send + '_>>
+    {
+        let response = self.responses.lock().unwrap().remove(0);
+        Box::pin(async move { Ok(response) })
+    }
+}
+
+struct FixedTool {
+    def: ToolDefinition,
+    output: String,
+}
+
+impl Tool for FixedTool {
+    fn definition(&self) -> ToolDefinition {
+        self.def.clone()
+    }
+
+    fn execute(
+        &self,
+        _arguments: &str,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ToolResult, DomainError>> + Send + '_>>
+    {
+        let output = self.output.clone();
+        Box::pin(async move {
+            Ok(ToolResult {
+                content: output,
+                is_error: false,
+                image_blocks: vec![],
+                delivery_metadata: None,
+            })
+        })
+    }
+}
+
+fn tool_call_response(name: &str) -> LlmResponse {
+    LlmResponse {
+        content: None,
+        tool_calls: vec![ToolCall {
+            id: format!("call_{name}"),
+            name: name.to_string(),
+            arguments: "{}".to_string(),
+        }],
+        usage: None,
+        stop_reason: None,
+        thinking_blocks: vec![],
+    }
+}
+
+fn text_response(content: &str) -> LlmResponse {
+    LlmResponse {
+        content: Some(content.to_string()),
+        tool_calls: vec![],
+        usage: None,
+        stop_reason: None,
+        thinking_blocks: vec![],
+    }
+}
+
+/// A big assistant message from an earlier prompt, droppable by ladder rung 2
+/// (no spill_id: rung 1 skips it, rung 2 drops it — pure physical shrink).
+fn droppable_history_message(turn: u32) -> Message {
+    let mut msg = Message::assistant("lorem ipsum dolor sit amet ".repeat(90), vec![]);
+    msg.turn = Some(turn);
+    msg
+}
+
+#[tokio::test]
+async fn scripted_provider_trait_surface_methods_are_invoked() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(vec![
+            LlmResponse {
+                content: Some("scripted-ok".into()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            },
+            LlmResponse {
+                content: Some("scripted-ok".into()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            },
+        ]),
+    };
+    assert_eq!(provider.name(), "scripted");
+    assert!(provider.as_any().is::<()>());
+
+    let request = ChatRequest {
+        trace: None,
+        admission: None,
+        messages: &[],
+        tools: &[],
+        model: "test",
+        max_tokens: 1,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    assert_eq!(
+        provider
+            .chat_stream(request)
+            .await
+            .unwrap()
+            .content
+            .as_deref(),
+        Some("scripted-ok")
+    );
+
+    let request = ChatRequest {
+        trace: None,
+        admission: None,
+        messages: &[],
+        tools: &[],
+        model: "test",
+        max_tokens: 1,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let mut rx = provider.chat_stream_incremental(request).await;
+    match rx.recv().await.unwrap() {
+        StreamEvent::Done(resp) => assert_eq!(resp.content.as_deref(), Some("scripted-ok")),
+        other => panic!("unexpected stream event: {other:?}"),
+    }
+}
+
+/// Drives the full production prompt pipeline (`run_agent_message`) with a
+/// stub agent whose mid-run pruning shrinks the conversation BELOW its
+/// pre-turn length, then asserts:
+///   1. the run completes (the pre-fix positional slice aborts here);
+///   2. AgentEnd carries exactly the messages this run appended;
+///   3. the agent latch reports the durable prefix dirty, so persistence
+///      reconciles.
+#[tokio::test]
+async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag() {
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    registry.register(Arc::new(FixedTool {
+        def: ToolDefinition {
+            name: "bulk".to_string().into(),
+            description: "bulk".to_string().into(),
+            parameters_schema: r#"{"type":"object"}"#.to_string().into(),
+        },
+        output: "tool-output-payload".to_string(),
+    }));
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: Arc::new(ScriptedProvider {
+            responses: Mutex::new(vec![
+                tool_call_response("bulk"),
+                text_response("final answer"),
+            ]),
+        }),
+        tool_registry: Box::new(registry),
+        model: "stub".into(),
+        max_tokens: 100,
+        temperature: 0.0,
+        retention: None,
+        session_key: "cli:test".into(),
+        max_context_tokens: 700,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_marks: Default::default(),
+        model_context_window: None,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
+    });
+
+    // 8 oversized prior turns: the 700-token budget forces rung 2 to drop
+    // most of them on the first prune, before any provider call.
+    let mut messages: Vec<Message> = (1..=8).map(droppable_history_message).collect();
+    let pre_turn_len = messages.len() + 1; // history + the incoming prompt
+
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
+    let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+    let mut notification_rx = None;
+    let subagent_registry = None;
+    let mut writer_bytes: Vec<u8> = Vec::new();
+    let outcome = {
+        let mut sink = EventSink::writer(&mut writer_bytes);
+        run_agent_message(PromptRun {
+            execution_state: None,
+            agent: &mut agent,
+            messages: &mut messages,
+            active_session: None,
+            session: &mut session,
+            sink: &mut sink,
+            message: Message::user("go"),
+            system_prompt: "",
+            cancel_rx,
+            notification_rx: &mut notification_rx,
+            subagent_registry: &subagent_registry,
+            turn_save: None,
+        })
+        .await
+    };
+
+    // The live failure shape really happened: post-turn length is below the
+    // pre-turn watermark, so `messages[before_len..]` would have panicked.
+    assert!(
+        messages.len() < pre_turn_len,
+        "scenario setup: pruning must shrink history below its pre-turn \
+         length ({pre_turn_len} -> {})",
+        messages.len()
+    );
+
+    assert!(
+        matches!(outcome, PromptOutcome::Success),
+        "the shrinking run must still complete successfully"
+    );
+    assert!(
+        agent.take_durable_prefix_dirty(),
+        "a run that dropped pre-existing history must latch the durable \
+         prefix dirty so persistence reconciles — the latch (drained by \
+         persist_current_session) is the single authoritative channel"
+    );
+
+    let agent_end = String::from_utf8(writer_bytes)
+        .expect("writer output is UTF-8")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("event JSON"))
+        .find(|event| event["type"] == "agent_end")
+        .expect("an agent_end event must be emitted");
+    // #1060: AgentEnd identifies the run via messageRefs (not full content).
+    let refs: Vec<String> = agent_end["messageRefs"]
+        .as_array()
+        .expect("messageRefs array")
+        .iter()
+        .map(|r| r.as_str().expect("ref is a string").to_string())
+        .collect();
+    assert_eq!(
+        refs.len(),
+        3,
+        "AgentEnd must ref exactly the messages this run appended \
+         (assistant tool call, tool result, final reply), got {agent_end}"
+    );
+    assert!(
+        refs.iter().all(|s| !s.is_empty()),
+        "refs must be non-empty stable ids"
+    );
+
+    // Cardinality alone does not prove identity/order. Resolve each ref against
+    // the run's ledger and assert the exact assistant-tool-call -> tool-result
+    // -> final-assistant sequence the refs are meant to denote (#1060 review).
+    use crate::domain::conversation::value_objects::message::Role;
+    let resolved: Vec<&Message> = refs
+        .iter()
+        .map(|id| {
+            messages
+                .iter()
+                .find(|m| m.id().to_string() == *id)
+                .expect("ref must resolve to a ledger message")
+        })
+        .collect();
+    assert!(
+        matches!(resolved[0].role, Role::Assistant) && !resolved[0].tool_calls.is_empty(),
+        "first ref must be the assistant tool-call message; got role {:?}, {} tool_calls",
+        resolved[0].role,
+        resolved[0].tool_calls.len()
+    );
+    assert!(
+        matches!(resolved[1].role, Role::Tool),
+        "second ref must be the tool-result message; got role {:?}",
+        resolved[1].role
+    );
+    assert!(
+        matches!(resolved[2].role, Role::Assistant)
+            && resolved[2].tool_calls.is_empty()
+            && resolved[2].content.contains("final answer"),
+        "third ref must be the final assistant reply carrying the response"
+    );
+
+    let payload = agent_end["messages"].as_array().expect("messages array");
+    assert!(
+        payload.is_empty(),
+        "AgentEnd must not re-carry full message content after #1060: {payload:?}"
+    );
+}
+
+/// Clean-side boundary (#1072 review, coverage finding 2), dispatch level: a
+/// turn far under budget must leave the agent's dirty latch CLEAR so the
+/// UDS layer keeps the append-only `save_clean_delta` fast path. Fails if the
+/// latch is hardcoded true or latched on a non-mutating prune pass.
+#[tokio::test]
+async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: Arc::new(ScriptedProvider {
+            responses: Mutex::new(vec![text_response("ok")]),
+        }),
+        tool_registry: Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
+        model: "stub".into(),
+        max_tokens: 100,
+        temperature: 0.0,
+        retention: None,
+        session_key: "cli:test".into(),
+        max_context_tokens: 190_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_marks: Default::default(),
+        model_context_window: None,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
+    });
+    let mut messages = vec![
+        Message::user("earlier"),
+        Message::assistant("prior", vec![]),
+    ];
+
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
+    let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+    let mut notification_rx = None;
+    let subagent_registry = None;
+    let mut writer_bytes: Vec<u8> = Vec::new();
+    let outcome = {
+        let mut sink = EventSink::writer(&mut writer_bytes);
+        run_agent_message(PromptRun {
+            execution_state: None,
+            agent: &mut agent,
+            messages: &mut messages,
+            active_session: None,
+            session: &mut session,
+            sink: &mut sink,
+            message: Message::user("hi"),
+            system_prompt: "",
+            cancel_rx,
+            notification_rx: &mut notification_rx,
+            subagent_registry: &subagent_registry,
+            turn_save: None,
+        })
+        .await
+    };
+
+    assert!(
+        matches!(outcome, PromptOutcome::Success),
+        "the under-budget turn must complete successfully"
+    );
+    assert!(
+        !agent.take_durable_prefix_dirty(),
+        "an under-budget turn must NOT latch the durable prefix dirty — a \
+         spurious dirty latch forces a full compact-rewrite every turn and \
+         defeats the save_clean_delta fast path"
+    );
+}
+
+#[test]
+fn fixed_tool_default_session_key_is_noop_for_1072_helper() {
+    let tool = FixedTool {
+        def: ToolDefinition {
+            name: "fixed1072".into(),
+            description: "fixed helper".into(),
+            parameters_schema: "{}".into(),
+        },
+        output: "ok".into(),
+    };
+    Tool::set_session_key(&tool, "session".into());
+    assert_eq!(Tool::definition(&tool).name, "fixed1072");
+}

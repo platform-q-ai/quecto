@@ -7,7 +7,9 @@
 //! on one line or several) is refused, so no `[label]` on the page can
 //! resolve to a hidden address.
 use super::chars::check_line;
-use super::inline::{check_inline, starts_with_link};
+use super::inline::{
+    backslashes_escaped, check_inline, starts_with_link, with_literal_backslashes,
+};
 use super::{Block, MarkdownError};
 
 /// Whether a paragraph or list item of `texts`, its lines as a domain
@@ -86,6 +88,9 @@ pub fn list_number(line: &str) -> Option<usize> {
 /// would start with, or before an ordered marker's `.` or `)`.
 pub fn escaped(line: &str) -> String {
     match (line.chars().next(), list_number(line)) {
+        // A backslash a text escapes (#2668) opens the line: no block
+        // starts with one, and a backslash before it would pair with it.
+        _ if doubled_first(line) => line.to_string(),
         // A link opens the line. Where a definition could start (a
         // paragraph's first line, an item) one is refused before this
         // ([`opens_freely`]); inside a paragraph none can, and a code span
@@ -96,6 +101,18 @@ pub fn escaped(line: &str) -> String {
         (_, Some(digits)) => format!("{}\\{}", &line[..digits], &line[digits..]),
         _ => line.to_string(),
     }
+}
+
+/// Whether `line` opens with a backslash a text escapes (#2668): two,
+/// then ASCII punctuation or nothing. [`escaped`] writes a backslash
+/// before a line that opens with one backslash and anything else (`\x`
+/// as `\\x`), so that one is told apart by what follows the two.
+fn doubled_first(line: &str) -> bool {
+    line.strip_prefix("\\\\").is_some_and(|rest| {
+        rest.chars()
+            .next()
+            .is_none_or(|next| next.is_ascii_punctuation())
+    })
 }
 
 /// The text a line of a paragraph or list item holds: [`escaped`] undone.
@@ -109,6 +126,7 @@ pub fn unescaped(line: &str) -> Option<String> {
         .then(|| format!("{}{}", &line[..digits], &line[digits + 1..]))
         .filter(|marker| list_number(marker) == Some(digits));
     match (first, second, marker) {
+        _ if doubled_first(line) => Some(line.to_string()),
         (Some('\\'), Some(next), _) if opens_escaped(next) => Some(line[1..].to_string()),
         (_, _, Some(marker)) => Some(marker),
         (Some('['), ..) if starts_with_link(line) => Some(line.to_string()),
@@ -119,12 +137,12 @@ pub fn unescaped(line: &str) -> Option<String> {
 }
 
 /// One line of text in a paragraph or list: not empty, no leading space,
-/// and the inline rules.
+/// and the inline rules, each backslash it escapes (#2668) read as itself.
 fn text_line(text: &str, at: usize) -> Result<(), MarkdownError> {
     let expected = "a line of text with no space before it";
     match text.is_empty() || text.starts_with(' ') {
         true => Err(MarkdownError::Structure { line: at, expected }),
-        false => check_inline(text, at),
+        false => check_inline(&with_literal_backslashes(text, at)?, at),
     }
 }
 
@@ -164,16 +182,26 @@ pub fn render(
         };
         match block {
             Block::Paragraph(texts) | Block::List(texts) if texts.is_empty() => return Err(empty),
-            Block::Paragraph(texts) if opens_freely(texts) => {
-                for text in texts {
-                    text_line(text, lines.len() + 1)?;
-                    lines.push(escaped(text));
+            Block::Paragraph(texts) => {
+                // Judged as a reader reads it: its backslashes escaped.
+                let written = texts
+                    .iter()
+                    .enumerate()
+                    .map(|(index, text)| backslashes_escaped(text, at + index))
+                    .collect::<Result<Vec<_>, _>>()?;
+                match opens_freely(&written) {
+                    true => {}
+                    false => return Err(MarkdownError::ReferenceDefinition { line: at }),
+                }
+                for (index, (text, written)) in texts.iter().zip(&written).enumerate() {
+                    text_line(text, at + index)?;
+                    lines.push(escaped(written));
                 }
             }
-            Block::Paragraph(_) => return Err(MarkdownError::ReferenceDefinition { line: at }),
             Block::List(items) => {
                 for item in items {
                     text_line(item, lines.len() + 1)?;
+                    let item = &backslashes_escaped(item, lines.len() + 1)?;
                     // An item is a paragraph of its own: it may not open
                     // as a definition either.
                     match opens_freely(std::slice::from_ref(item)) {

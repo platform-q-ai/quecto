@@ -10,17 +10,17 @@
 //! (`uds_sync`, #1973), `get_report` through the composed export controller
 //! (#1974); the rewind's ledger reset and the session switch are the
 //! transactions' own (#1975, #1976).
-use super::protocol::{AgentEvent, SessionState};
-use super::uds::DispatchCtx;
-use super::uds_session::{HISTORY_PAGE_SIZE, compute_session_stats_with_usage, history_page_json};
-use super::uds_session_handles::SessionReadHandles;
+use super::uds_session::{HISTORY_PAGE_SIZE, history_page_json, present_session_stats};
 use crate::application::sessions::dto::HistoryPage;
 use crate::domain::conversation::services::conversation_view::user_visible_messages;
+use crate::interface::uds::controllers::uds::DispatchCtx;
+use crate::interface::uds::controllers::uds_session_handles::SessionReadHandles;
+use crate::interface::uds::wire::protocol::{AgentEvent, SessionState};
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
 
 pub(crate) type SessionStatsSnapshot =
-    std::sync::Arc<tokio::sync::RwLock<crate::interface::cli::protocol::SessionStats>>;
+    std::sync::Arc<tokio::sync::RwLock<crate::interface::uds::wire::protocol::SessionStats>>;
 
 /// Refresh every busy-child snapshot (state / conversation / session_stats /
 /// extensions) at once. Called per INNER turn inside the drain/nudge loop so a
@@ -29,14 +29,14 @@ pub(crate) type SessionStatsSnapshot =
 /// dispatched command returns (#899). The `snapshot: true` staleness marker is
 /// retained — a busy snapshot may still lag the in-flight turn by design, but it
 /// must not lag by an entire workflow.
-pub(super) async fn refresh_busy_snapshots(ctx: &DispatchCtx<'_>) {
+pub(in crate::interface) async fn refresh_busy_snapshots(ctx: &DispatchCtx<'_>) {
     refresh_conversation_snapshot(ctx).await;
     refresh_state_snapshot(ctx).await;
     refresh_session_stats_snapshot(ctx).await;
     refresh_tool_catalogue_snapshot(ctx).await;
 }
 
-pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
+pub(in crate::interface) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
     let mut session = ctx.sessions.active_session.write().await;
     let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
     let advance = session.publish(&visible_messages);
@@ -52,7 +52,7 @@ pub(super) async fn refresh_conversation_snapshot(ctx: &DispatchCtx<'_>) {
     }
 }
 
-pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
+pub(in crate::interface) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
     let workflow = ctx.workflow_state.as_ref().map(|ws| {
         let engine = crate::domain::workflow::lock_engine(ws);
         let mut value = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
@@ -76,20 +76,18 @@ pub(super) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) {
     *ctx.state_snapshot.write().await = state;
 }
 
-pub(super) async fn refresh_session_stats_snapshot(ctx: &DispatchCtx<'_>) {
+pub(in crate::interface) async fn refresh_session_stats_snapshot(ctx: &DispatchCtx<'_>) {
     let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
     let session_key = ctx.sessions.current_session_key().await;
-    let stats = compute_session_stats_with_usage(
+    let stats = present_session_stats(ctx.session.usage_report(
         &session_key,
         &visible_messages,
-        ctx.session.usage_snapshot(),
-        ctx.session.context_tokens(),
         ctx.agent.max_context_tokens(),
-    );
+    ));
     *ctx.session_stats_snapshot.write().await = stats;
 }
 
-pub(super) async fn refresh_tool_catalogue_snapshot(ctx: &DispatchCtx<'_>) {
+pub(in crate::interface) async fn refresh_tool_catalogue_snapshot(ctx: &DispatchCtx<'_>) {
     let mut snap = ctx.tool_catalogue_snapshot.write().await;
     *snap = ctx
         .agent
@@ -136,7 +134,7 @@ pub(crate) fn build_get_subagents_line(
 }
 
 pub(crate) fn build_get_session_stats_line(
-    stats: &crate::interface::cli::protocol::SessionStats,
+    stats: &crate::interface::uds::wire::protocol::SessionStats,
 ) -> String {
     let mut data = serde_json::to_value(stats).unwrap_or_default();
     if let Some(obj) = data.as_object_mut() {
@@ -163,11 +161,12 @@ pub(crate) struct BusySnapshotSources<'a> {
     pub state: &'a StateSnapshot,
     pub session: &'a SessionReadHandles,
     pub session_stats: &'a SessionStatsSnapshot,
-    pub tool_catalogue: &'a crate::interface::cli::uds_extensions::ToolCatalogueSnapshot,
+    pub tool_catalogue:
+        &'a crate::interface::uds::controllers::uds_extensions::ToolCatalogueSnapshot,
     pub subagents:
         &'a Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     pub workflow: &'a Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
-    pub execution: &'a super::uds_execution_state::ExecutionStateHandle,
+    pub execution: &'a crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle,
 }
 
 pub(crate) async fn busy_connect_snapshot_lines(sources: BusySnapshotSources<'_>) -> [String; 5] {
@@ -211,14 +210,14 @@ pub(crate) async fn busy_connect_snapshot_lines(sources: BusySnapshotSources<'_>
 pub(crate) fn build_busy_get_state_line(
     state: &SessionState,
     workflow_state: &Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
-    execution_state: &super::uds_execution_state::ExecutionStateHandle,
+    execution_state: &crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle,
 ) -> String {
     build_connect_get_state_line(state, workflow_state, execution_state, true)
 }
 pub(crate) fn build_connect_get_state_line(
     state: &SessionState,
     workflow_state: &Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
-    execution_state: &super::uds_execution_state::ExecutionStateHandle,
+    execution_state: &crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle,
     is_busy: bool,
 ) -> String {
     let mut live = state.clone();

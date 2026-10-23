@@ -8,7 +8,7 @@ use std::path::Path;
 use crate::domain::agents::entities::parent_control::ParentControlBinding;
 use crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime;
 use crate::infrastructure::processes::parent_control::take_sidecar;
-use crate::interface::cli::uds_parent_control::{
+use crate::interface::uds::controllers::uds_parent_control::{
     BIND_DEADLINE_ENV, BindDeadline, DEFAULT_BIND_DEADLINE, ParentControlLaunch,
 };
 
@@ -95,7 +95,10 @@ pub(super) fn auto_socket_path() -> std::path::PathBuf {
     // regardless of age; the 24 h threshold only gates files whose probe
     // is inconclusive). Drop guards do not run on SIGKILL so dead
     // sockets can accumulate.
-    crate::interface::cli::uds::reap_stale_sockets(&dir, std::time::Duration::from_secs(86_400));
+    crate::interface::uds::controllers::uds::reap_stale_sockets(
+        &dir,
+        std::time::Duration::from_secs(86_400),
+    );
     let id = uuid::Uuid::new_v4();
     dir.join(format!("quecto-agent-{id}.sock"))
 }

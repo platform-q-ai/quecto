@@ -3,7 +3,7 @@
 use super::AgentOutput;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::interface::cli::uds_session_handles::SessionHandles;
+use crate::interface::uds::controllers::uds_session_handles::SessionHandles;
 
 pub(super) struct TranscriptSave<'a> {
     rt: &'a tokio::runtime::Runtime,

@@ -4,7 +4,7 @@
 //! routing adapter to direct children, the supervised owned-handle fallback,
 //! and the launch-bound parent binding the connection layer consults. The
 //! interface declares the loop inputs and the handles it holds
-//! (`interface::cli::uds_teardown_handles`) and receives this builder
+//! (`interface::uds::controllers::uds_teardown_handles`) and receives this builder
 //! through its `CliContext` (`run_composed`); it never names this module.
 use crate::infrastructure::tools::agents::retained_environment_teardown::SlotRetainedEnvironmentTeardown;
 use std::sync::{Arc, Mutex};
@@ -22,22 +22,24 @@ use crate::infrastructure::tools::agents::harness_lifecycle::{
 };
 use crate::infrastructure::tools::agents::subagent_registry::{NotificationTx, SubagentRegistry};
 use crate::infrastructure::tools::agents::subagent_teardown_registry::RegistryDelegatedAgents;
-use crate::interface::cli::uds_teardown_adapters::{
+use crate::interface::uds::controllers::subagent_teardown_controller::SubagentTeardownController;
+use crate::interface::uds::controllers::uds_teardown_adapters::{
     DeferredLoopPersistence, LoopExitReadiness, LoopTurnCancellation, MonotonicShutdownClock,
     RegistryLifecycleRepository, TokioShutdownRunSpawner,
 };
-use crate::interface::uds::subagent_teardown::controller::SubagentTeardownController;
 
-pub use crate::interface::cli::uds_parent_control::{
+pub use crate::interface::uds::controllers::uds_parent_control::{
     ConnectionRole, ConnectionTeardown, ParentControlLaunch,
 };
 #[cfg(any(test, feature = "test-support"))]
-pub use crate::interface::cli::uds_teardown_adapters::HOLD_EXIT_AFTER_ACK_ENV;
-pub use crate::interface::cli::uds_teardown_adapters::{
+pub use crate::interface::uds::controllers::uds_teardown_adapters::HOLD_EXIT_AFTER_ACK_ENV;
+pub use crate::interface::uds::controllers::uds_teardown_adapters::{
     DeferredLoopPersistence as LoopPersistenceAdapter, LoopExitReadiness as LoopExitAdapter,
     RegistryLifecycleRepository as LifecycleAdapter,
 };
-pub use crate::interface::cli::uds_teardown_handles::{TeardownHandles, TeardownLoopInputs};
+pub use crate::interface::uds::controllers::uds_teardown_handles::{
+    TeardownHandles, TeardownLoopInputs,
+};
 
 /// What the fleet teardown of one harness is built over.
 pub struct FleetTeardownWiring {

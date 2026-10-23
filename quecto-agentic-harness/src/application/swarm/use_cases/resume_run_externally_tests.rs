@@ -1,10 +1,10 @@
 use serde_json::json;
 
 use super::ResumeRunExternally;
-use crate::application::swarm::board_test_support::{
+use crate::application::swarm::dto::RunTransition;
+use crate::application::swarm::test_support::{
     MemoryBoard, SteppingClock, member_row, paused, running_board, usage,
 };
-use crate::application::swarm::dto::RunTransition;
 use crate::domain::swarm::{
     entities::records::RunState, events::telemetry::RefusalKind,
     value_objects::board_error::BoardError,

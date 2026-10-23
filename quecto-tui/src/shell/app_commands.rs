@@ -65,6 +65,10 @@ static BUILTIN_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
             description: "Toggle model thinking visibility".into(),
         },
         SlashCommand {
+            name: "admission".into(),
+            description: "Show the admission broker's health; /admission restart restarts it and reconnects".into(),
+        },
+        SlashCommand {
             name: "setup".into(),
             description: "Ask the agent to walk through quecto setup (or one area: model|admission|container|auth)".into(),
         },

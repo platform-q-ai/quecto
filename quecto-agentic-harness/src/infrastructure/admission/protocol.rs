@@ -332,6 +332,8 @@ pub enum Op {
     },
     Inspect,
     Reset,
+    /// Owner-only: stop serving, as SIGTERM would (#2615 restart).
+    Stop,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -399,6 +401,14 @@ pub enum Body {
         journal_healthy: bool,
         live_scopes: usize,
         groups: BTreeMap<String, SnapshotWire>,
+        /// Started on demand: stops itself when idle (#2615). Absent from an
+        /// older broker, which reads as always-on.
+        #[serde(default)]
+        on_demand: bool,
+        /// This run of the authority: a restarted one answers another
+        /// (#2615). Absent from an older broker.
+        #[serde(default)]
+        instance: u64,
     },
     Reset {
         epoch: u64,
@@ -435,11 +445,38 @@ pub fn error_body(error: &AuthorityError) -> Body {
             code: ErrorCode::Admission,
             reason: format!("{e:?}"),
         },
+        AuthorityError::HeldByUncertainLease(hold) => Body::Error {
+            code: ErrorCode::Timeout,
+            reason: held_reason(hold),
+        },
     }
 }
 
-pub fn status_body(status: &AuthorityStatus) -> Body {
+/// The reason a plain queue timeout carries.
+pub const QUEUE_TIMEOUT_REASON: &str = "queue wait deadline elapsed";
+
+/// A queue timeout behind uncertain leases (#2664): which group, how many
+/// leases, when they clear by themselves and how to clear them now. It
+/// extends [`QUEUE_TIMEOUT_REASON`], so a client that knows only the plain
+/// timeout still reads it as one.
+fn held_reason(hold: &UncertainHold) -> String {
+    let plural = if hold.leases == 1 { "" } else { "s" };
+    format!(
+        "{QUEUE_TIMEOUT_REASON}: group `{group}` is held by {leases} uncertain lease{plural} \
+         whose client or broker was lost mid-request; it clears by itself in about {secs} s, or \
+         `quecto admission-broker reset` clears it now (revoking every session's capability)",
+        group = hold.group.as_str(),
+        leases = hold.leases,
+        // Recorded and read in different turns, so a hold can be due by
+        // now: it is still at least a second away from the waiter's view.
+        secs = hold.clears_in_ms.div_ceil(1_000).max(1),
+    )
+}
+
+pub fn status_body(status: &AuthorityStatus, on_demand: bool, instance: u64) -> Body {
     Body::Status {
+        on_demand,
+        instance,
         epoch: status.epoch,
         journal_healthy: status.journal_healthy,
         live_scopes: status.live_scopes,

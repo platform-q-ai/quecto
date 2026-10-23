@@ -435,7 +435,7 @@ fn test_parse_response_extracts_cache_usage() {
     // Context occupancy = input_tokens + cache_read + cache_creation.
     assert_eq!(usage.context_tokens, Some(200));
     // Billing inputs stay separate: prompt_tokens must NOT absorb cache tokens,
-    // otherwise cache reads would be double-charged in `ModelPricing::cost_for`.
+    // otherwise cache reads would be double-charged by `ModelPrice::cost_of`.
     assert_eq!(usage.prompt_tokens, 100);
 }
 

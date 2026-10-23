@@ -1,4 +1,3 @@
-use super::uds_session::AgentSession;
 #[test]
 fn advisory_is_read_from_published_runtime_and_deduplicated() {
     use crate::application::catalogue::{
@@ -77,7 +76,7 @@ fn advisory_is_read_from_published_runtime_and_deduplicated() {
     }
     let store = crate::application::provider_runtime::RuntimeSnapshotStore::new();
     let catalogue = CatalogueSnapshotStore::empty();
-    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
     session.observe_runtime(store.clone());
     assert!(session.current_admission_warnings().is_empty());
     let ports = CompositionPorts {

@@ -73,6 +73,23 @@ pub(super) fn mounted_under(prefix: &[&str]) -> Vec<(PathBuf, Vec<String>, bool)
     mounted_in(crate_tree(), prefix)
 }
 
+/// The canonical production module closure of registered owner files.
+/// Keep capability policies scoped to their owners, not shared role folders.
+pub(super) fn production_closure<S: AsRef<str>>(owners: &[S]) -> Vec<String> {
+    assert!(!owners.is_empty(), "a closure must name its owners");
+    let mut files = std::collections::BTreeSet::new();
+    for owner in owners.iter().map(AsRef::as_ref) {
+        assert!(production_file(owner), "{owner} must be a production owner");
+        let module = module_path(owner);
+        for (file, child) in &crate_tree().production {
+            if child.starts_with(&module) {
+                files.insert(file.to_str().expect("source paths are UTF-8").to_string());
+            }
+        }
+    }
+    files.into_iter().collect()
+}
+
 /// [`mounted_under`] in the synthetic crate `files` (relative path →
 /// source, rooted at `lib.rs`), with paths relative to it.
 pub(super) fn fixture_mounted_under(

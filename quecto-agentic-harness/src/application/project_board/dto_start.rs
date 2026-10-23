@@ -73,6 +73,12 @@ pub struct EndedRun {
     pub run: crate::domain::project_board::entities::run::Run,
     pub liveness: LivenessCheck,
     pub report: RunReport,
+    /// For a success recorded from its swarm's kept board, how many of its
+    /// recorded items' evidence entries name no commit the push rule
+    /// checked: none at all, or one shorter than 12 hex digits or longer
+    /// than a full id; each entry counted, repeats included (#2666). `None`
+    /// for any other end.
+    pub unchecked: Option<u64>,
 }
 
 /// Where an end_run took the run's task items from (#2481 S4c follow-up):

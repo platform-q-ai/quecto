@@ -7,7 +7,7 @@
 //! no view's scope, so it blocks none. A view sees keys only: a kept file
 //! set aside with no key (its artifact unknown) blocks no view, so a link
 //! through [`all_changes`] still refuses while one exists
-//! (`change_board_task`'s `board_readable_for` runs first). An artifact a
+//! (`change_board_task`'s `links_readable` runs first). An artifact a
 //! view finds more than once (a store that broke its contract of one
 //! artifact per key) is refused as [`ProjectBoardError::Duplicate`], never
 //! a panic.
@@ -156,6 +156,15 @@ pub fn naming(board: &BoardSnapshot, id: &Slug) -> Result<Option<IdUser>, Projec
     Ok(named)
 }
 
+/// No task file is set aside (#2661): an archive waits, as one may be a
+/// child of the task archived.
+///
+/// # Errors
+/// The least task a set-aside file names.
+pub(super) fn tasks_clear(board: &BoardSnapshot) -> Result<(), ProjectBoardError> {
+    clear_of(board, |key| matches!(key, ArtifactKey::Task(_)))
+}
+
 /// Refuses with the least key in scope that a set-aside file names, so a
 /// refusal is the same however the store orders the files.
 fn clear_of(
@@ -171,13 +180,14 @@ fn first_set_aside(
 ) -> Result<(), ProjectBoardError> {
     let blocking = quarantined
         .iter()
-        .filter_map(|file| file.key.as_ref().map(|key| (key, &file.path)))
-        .filter(|(key, _)| in_scope(key))
+        .filter_map(|file| file.key.as_ref().map(|key| (key, &file.path, &file.object)))
+        .filter(|(key, ..)| in_scope(key))
         .min();
     match blocking {
-        Some((key, path)) => Err(ProjectBoardError::Quarantined {
+        Some((key, path, object)) => Err(ProjectBoardError::Quarantined {
             key: key.clone(),
             path: path.clone(),
+            object: object.clone(),
         }),
         None => Ok(()),
     }

@@ -185,3 +185,61 @@ fn the_board_view_reads_through_a_board_of_its_own() {
         assert!(!view.is_the_same_board(process));
     }
 }
+
+/// #2684 round 1: the session's environment control (`kill_container`)
+/// judges a stopped box's leftovers on disk: one whose container its
+/// inspect reports gone and whose state directory is gone too answers
+/// nothing left, and runs no cleanup.
+#[tokio::test]
+async fn the_session_kill_says_nothing_is_left_of_a_box_that_left_nothing() {
+    use crate::domain::environments::entities::environment_registry::{
+        EnvironmentRegistry, EnvironmentTarget,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let inspect = dir.path().join("inspect.sh");
+    std::fs::write(
+        &inspect,
+        "printf '{\"status\":\"exited\",\"metadata\":{}}'\n",
+    )
+    .unwrap();
+    let cleanup_log = dir.path().join("cleanup.log");
+    let cleanup = dir.path().join("cleanup.sh");
+    std::fs::write(
+        &cleanup,
+        format!("echo ran >> '{}'\n", cleanup_log.display()),
+    )
+    .unwrap();
+    let registry = EnvironmentRegistry::new();
+    let env_ref = registry.mint_ref().unwrap();
+    registry.commit(EnvironmentRecord {
+        environment_ref: env_ref.clone(),
+        environment_id: "env-gone".into(),
+        environment_uuid: "uuid-gone".into(),
+        name: None,
+        // The state root is on disk; the environment's directory is not.
+        workspace_path: dir.path().join("env-gone").join("workspace"),
+        repository: String::new(),
+        script_name: "default".into(),
+        retained_exec_argv: vec![],
+        retained_kill_argv: vec!["true".into()],
+        retained_cleanup_argv: vec!["bash".into(), cleanup.display().to_string()],
+        retained_inspect_argv: vec!["bash".into(), inspect.display().to_string()],
+        members: vec![],
+        status: EnvironmentStatus::Stopped,
+        metadata: serde_json::json!({}),
+        last_error: None,
+        origin: EnvironmentOrigin::Created,
+        created_by: String::new(),
+        created_at: None,
+    });
+    let control =
+        super::build_environment_control(registry.clone(), Arc::new(super::NoReachableMembers));
+    let killed = control
+        .kill
+        .kill_container(&EnvironmentTarget::Ref(env_ref.clone()))
+        .await
+        .expect("nothing left is a success");
+    assert!(killed.removed_stopped && killed.nothing_left, "{killed:?}");
+    assert!(!cleanup_log.exists(), "no cleanup ran");
+    assert!(registry.get(&env_ref).is_none(), "forgotten");
+}

@@ -12,7 +12,7 @@ use crate::infrastructure::persistence::file::turn_origin_names;
 
 use super::{message_to_json, role_wire_name};
 
-pub(crate) use super::super::protocol::HISTORY_PAGE_SIZE;
+pub(crate) use crate::interface::uds::wire::protocol::HISTORY_PAGE_SIZE;
 
 pub(crate) const HISTORY_PAGE_JSON_BUDGET: usize =
     crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET / 2;

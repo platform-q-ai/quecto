@@ -7,14 +7,14 @@
 //! the calling thread before it is tried again.
 use std::sync::Arc;
 
-use super::board_change::{checked_writer, commit, task_on, written_plan};
+use super::board_change::{checked_writer, commit, owned, task_on, written_plan};
 use super::board_view;
 use crate::application::project_board::dto::{PlanDiscard, ProjectBoardError};
 use crate::application::project_board::ports::{BoardArtifact, BoardClock, ProjectBoardStore};
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::Plan;
-use crate::domain::project_board::services::plans::{Moment, discard};
+use crate::domain::project_board::services::plans::{DraftOf, Moment, discard};
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 
 pub struct DiscardPlan {
@@ -78,15 +78,25 @@ impl DiscardPlan {
                 // This attempt's read, or none: never an earlier one's.
                 read = None;
                 let task = task_on(board, id)?;
-                let plan = board_view::plans_of(board, id)?
-                    .into_iter()
+                let versions = owned(board_view::plans_of(board, id)?);
+                let plan = versions
+                    .iter()
                     .find(|plan| plan.fields().version == version);
                 if noting {
                     read = plan.map(|plan| plan.fields().state);
                 }
                 let plan = plan.ok_or(BoardRuleError::UnknownPlanVersion(version))?;
                 let expected = request.expected_updated.as_ref();
-                let discarded = discard(task, plan, expected, actor, &Moment::from(when))?;
+                let discarded = discard(
+                    DraftOf {
+                        task,
+                        versions: &versions,
+                        plan,
+                    },
+                    expected,
+                    actor,
+                    &Moment::from(when),
+                )?;
                 Ok(vec![BoardArtifact::Plan(discarded)])
             },
         )

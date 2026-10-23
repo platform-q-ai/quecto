@@ -82,16 +82,36 @@ impl App {
             .master_session
             .footer
             .set_admission(label.clone(), view.compact_label());
-        // Broker health (#2024 S3): update only when the agent reported an
-        // authority status. A bound harness pushes it on every
+        // Broker health (#2024 S3): the status moves only when the agent
+        // reported one. A bound harness pushes it on every
         // `admission_state_changed` (including link-health changes), so the
         // badge is live; an older harness's activity-only event must not
-        // clear the badge the last `get_state` established.
-        if let Some(health) = view.authority_badge() {
+        // clear the status the last `get_state` established, while its
+        // queue depth (#2615) follows every view.
+        if let Some(status) = &view.authority_status {
+            self.ac_mut().admission_authority = Some(status.clone());
+            let was = self.ac().admission_restart_required;
+            self.ac_mut().admission_restart_required = view.restart_required;
+            if view.restart_required && !was {
+                self.offer_session_restart();
+            }
+        }
+        let alert = self.ac().admission_restart_required;
+        self.ac_mut()
+            .master_session
+            .footer
+            .set_admission_alert(alert);
+        let badge = match self.ac().admission_restart_required {
+            true => Some(crate::protocol::admission_payloads::RESTART_REQUIRED_BADGE.to_string()),
+            false => self.ac().admission_authority.as_deref().and_then(|status| {
+                crate::protocol::admission_payloads::authority_badge(status, view.waiting)
+            }),
+        };
+        if let Some(badge) = badge {
             self.ac_mut()
                 .master_session
                 .footer
-                .set_admission_health(Some(health));
+                .set_admission_health(Some(badge));
         }
         match label.filter(|_| waiting) {
             Some(label) => {
@@ -122,6 +142,12 @@ impl App {
     /// authority): drop the label and release the spinner message.
     pub(in crate::shell::app) fn clear_master_admission(&mut self) {
         self.ac_mut().admission_view = None;
+        self.ac_mut().admission_authority = None;
+        self.ac_mut().admission_restart_required = false;
+        self.ac_mut()
+            .master_session
+            .footer
+            .set_admission_alert(false);
         self.ac_mut()
             .master_session
             .footer

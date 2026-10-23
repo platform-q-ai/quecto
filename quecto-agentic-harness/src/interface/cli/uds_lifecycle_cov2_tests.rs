@@ -4,7 +4,7 @@ use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::shared::error::DomainError;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
-use crate::interface::cli::uds_single_client::{SingleClientArgs, single_client_loop};
+use crate::interface::uds::framing::uds_single_client::{SingleClientArgs, single_client_loop};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -88,7 +88,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         broadcast_tx: None,
         parent_control: None,
         teardown_graph: None,
-        automatic_turns: crate::composition::bootstrap::agent_turn::build_automatic_turns,
+        turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
         environment_control: None,
     }
 }
@@ -259,7 +259,7 @@ async fn single_client_socket_override_serves_get_state() {
             .unwrap();
         rt.block_on(async move {
             let store = crate::composition::sessions::build_session_handles(
-                crate::interface::cli::uds::dispatch_session_roster_tests::loop_inputs(
+                crate::interface::uds::controllers::uds::dispatch_session_roster_tests::loop_inputs(
                     dir.path(),
                     "cli:cov",
                 ),
@@ -267,8 +267,7 @@ async fn single_client_socket_override_serves_get_state() {
             single_client_loop(
                 SingleClientArgs {
                     agent: make_agent(),
-                    automatic_turns:
-                        crate::composition::bootstrap::agent_turn::build_automatic_turns,
+                    turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
                     workspace: dir.path(),
                     messages: Vec::new(),
                     model: "stub".into(),
@@ -578,7 +577,7 @@ fn the_single_client_loop_waits_for_a_launch_rollback_at_exit() {
             .unwrap();
         rt.block_on(async move {
             let store = crate::composition::sessions::build_session_handles(
-                crate::interface::cli::uds::dispatch_session_roster_tests::loop_inputs(
+                crate::interface::uds::controllers::uds::dispatch_session_roster_tests::loop_inputs(
                     dir.path(),
                     "cli:cov",
                 ),
@@ -586,8 +585,7 @@ fn the_single_client_loop_waits_for_a_launch_rollback_at_exit() {
             single_client_loop(
                 SingleClientArgs {
                     agent: make_agent(),
-                    automatic_turns:
-                        crate::composition::bootstrap::agent_turn::build_automatic_turns,
+                    turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
                     workspace: dir.path(),
                     messages: Vec::new(),
                     model: "stub".into(),

@@ -72,7 +72,7 @@ fn teardown_graph_and_shutdown_delivery_are_composed_in_composition() {
             .any(|(_, l)| l.contains("pub fn install_termination_owners"))
     );
     // Signal delivery reaches the controller through the graph only.
-    let shutdown = production_code("src/interface/cli/uds_shutdown.rs");
+    let shutdown = production_code("src/interface/uds/framing/uds_shutdown.rs");
     assert!(
         shutdown
             .iter()
@@ -129,10 +129,12 @@ fn whole_crate_dependency_direction_holds() {
     for (layer, outward) in forbidden {
         let mut files = Vec::new();
         walk(Path::new(layer), &mut files);
-        for path in files
-            .iter()
-            .filter(|p| !p.ends_with("_tests.rs") && !p.contains("/tests/"))
-        {
+        for path in files.iter().filter(|p| {
+            super::uds_canonical_modules::production_scan_file(
+                p,
+                !p.ends_with("_tests.rs") && !p.contains("/tests/"),
+            )
+        }) {
             for (line_no, line) in production_code(path) {
                 for dependency in *outward {
                     if !line.contains(dependency) {
@@ -514,22 +516,31 @@ fn teardown_interface_only_parses_maps_and_presents() {
         "claim_terminal(",
     ];
     let mut files = Vec::new();
-    walk(Path::new("src/interface/uds/subagent_teardown"), &mut files);
     files.extend(
         [
-            "src/interface/tools/agent_cmd_kill.rs",
-            "src/interface/cli/uds_delete_all_subagents.rs",
-            "src/interface/cli/uds_busy_subagents.rs",
-            "src/interface/cli/uds_shutdown.rs",
-            "src/interface/cli/uds_dispatch_session.rs",
-            "src/interface/cli/uds_parent_control.rs",
-            "src/interface/cli/uds_teardown_handles.rs",
+            "src/interface/uds/controllers/subagent_teardown_controller.rs",
+            "src/interface/uds/mapping/subagent_teardown_mapping.rs",
+            "src/interface/uds/presenters/subagent_teardown_presenter.rs",
+            "src/interface/uds/wire/subagent_teardown_wire.rs",
         ]
         .into_iter()
         .map(str::to_string),
     );
-    for path in files.iter().filter(|p| !p.ends_with("_tests.rs")) {
-        for (line_no, line) in production_code(path) {
+    files.extend(
+        [
+            "src/interface/tools/agent_cmd_kill.rs",
+            "src/interface/uds/controllers/uds_delete_all_subagents.rs",
+            "src/interface/uds/controllers/uds_busy_subagents.rs",
+            "src/interface/uds/framing/uds_shutdown.rs",
+            "src/interface/uds/controllers/uds/uds_dispatch_session.rs",
+            "src/interface/uds/controllers/uds_parent_control.rs",
+            "src/interface/uds/controllers/uds_teardown_handles.rs",
+        ]
+        .into_iter()
+        .map(str::to_string),
+    );
+    for path in super::dependency_scan::production_closure(&files) {
+        for (line_no, line) in production_code(&path) {
             for needle in forbidden {
                 assert!(
                     !line.contains(needle),

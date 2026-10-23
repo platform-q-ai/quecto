@@ -9,6 +9,14 @@ pub struct UsageTotals {
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
     pub cost_micro_usd: u64,
+    /// Provider attempts that reported usage with no price to cost it at
+    /// (#1855), counted as `cost_micro_usd` is summed: every attempt that
+    /// reported usage, a cut-short attempt included, not logical requests.
+    /// Their usage counts, but their cost is unknown, never zero.
+    pub unpriced_attempts: u64,
+    /// Provider attempts whose usage was priced, at any rate, zero included
+    /// (#2635 review): a declared-free model's usage is priced at $0.
+    pub priced_attempts: u64,
 }
 
 impl UsageTotals {
@@ -46,10 +54,19 @@ impl UsageTotals {
         self.cache_write_tokens = self
             .cache_write_tokens
             .saturating_add(usage.cache_write_tokens.unwrap_or(0) as u64);
-        if let Some(cost) = &usage.cost {
-            self.cost_micro_usd = self
-                .cost_micro_usd
-                .saturating_add(cost.total_cost_micro_usd);
+        let billed = usage.prompt_tokens > 0
+            || usage.completion_tokens > 0
+            || usage.cache_read_tokens.is_some_and(|tokens| tokens > 0)
+            || usage.cache_write_tokens.is_some_and(|tokens| tokens > 0);
+        match (&usage.cost, billed) {
+            (Some(cost), _) => {
+                self.cost_micro_usd = self
+                    .cost_micro_usd
+                    .saturating_add(cost.total_cost_micro_usd);
+                self.priced_attempts = self.priced_attempts.saturating_add(1);
+            }
+            (None, true) => self.unpriced_attempts = self.unpriced_attempts.saturating_add(1),
+            (None, false) => {}
         }
     }
 }

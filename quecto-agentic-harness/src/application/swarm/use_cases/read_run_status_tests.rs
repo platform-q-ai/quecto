@@ -2,10 +2,8 @@ use super::ReadRunStatus;
 use crate::application::swarm::use_cases::OverRepository;
 use serde_json::Value;
 
-use crate::application::swarm::board_test_support::{
-    BoardState, MemoryBoard, member_row, running_board,
-};
 use crate::application::swarm::dto::MemberClaimCounts;
+use crate::application::swarm::test_support::{BoardState, MemoryBoard, member_row, running_board};
 
 #[test]
 fn a_board_without_a_run_reads_as_setup_with_no_deadline() {

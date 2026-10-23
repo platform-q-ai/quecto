@@ -8,7 +8,7 @@
 //! thread.
 use std::sync::Arc;
 
-use super::board_change::{Attempt, checked_writer, retried};
+use super::board_change::{Attempt, checked_writer, note_lock_races, retried};
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{
     BoardClock, BoardHead, BoardWrite, KeepCopy, ProjectBoardStore, QuarantinedFile, SetAsideClear,
@@ -64,7 +64,10 @@ impl ClearSetAside {
             object: object.to_string(),
             repeated: repeated.clone(),
         };
-        retried(&*self.clock, facts, || {
+        let mut facts = facts;
+        // The store's count before this clear, so its own races are told.
+        let races = facts.as_ref().map(|_| self.store.lock_races());
+        let cleared = retried(&*self.clock, facts.as_deref_mut(), || {
             let board = self.store.read()?;
             // The path is one the board set aside: the store's own list is
             // the check, and the store owns what a name may be.
@@ -89,7 +92,11 @@ impl ClearSetAside {
                 BoardWrite::Lost => Ok(Attempt::Lost),
                 BoardWrite::Refused(reason) => Err(ProjectBoardError::Refused(reason)),
             }
-        })
+        });
+        if let (Some(facts), Some(before)) = (facts, races) {
+            note_lock_races(&*self.store, before, facts);
+        }
+        cleared
     }
 }
 

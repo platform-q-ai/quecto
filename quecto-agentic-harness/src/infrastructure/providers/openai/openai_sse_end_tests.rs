@@ -11,7 +11,9 @@ use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
 use crate::domain::shared::error::DomainError;
-use crate::infrastructure::providers::stream_idle_provider_tests::{Vendor, request, traced};
+use crate::infrastructure::providers::routing::vendor_stream_bounds_idle_tests::{
+    Vendor, request, traced,
+};
 use crate::infrastructure::providers::transport::stream_idle::tests::{LIVE, bounded, servers};
 
 const TEXT: &str = r#"data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}"#;

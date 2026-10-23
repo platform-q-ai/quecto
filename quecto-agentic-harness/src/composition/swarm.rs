@@ -11,12 +11,14 @@
 //! graph over injected ports, for the differential harness's
 //! deterministic clock and ids. The file reservations (#2275) normalise
 //! paths in the board's checkout, through `CheckoutPaths` bound to
-//! `BoardLocation::checkout`.
+//! `BoardLocation::checkout`; verification asks that checkout's history
+//! whether a submission's evidence may be carried to the coordinator's
+//! commit (#2687), through `CheckoutHistory` bound to the same checkout.
 use std::sync::Arc;
 
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{
-    board_files::CheckoutPaths,
+    board_files::{CheckoutHistory, CheckoutPaths},
     board_repository::{BoardRepository, IdSource},
     board_telemetry::{BoardOpLog, SessionOpLog},
     lifecycle::Clock,
@@ -46,6 +48,7 @@ use crate::infrastructure::tools::swarm::swarm_board_dispatch::{
 };
 pub use crate::infrastructure::tools::swarm::swarm_bridge::SwarmBoard;
 use crate::infrastructure::tools::swarm::swarm_lifecycle::SystemClock;
+use crate::infrastructure::workspace::checkout_history::GitCheckoutHistory;
 use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 /// The board handles over the SQLite file at `location`, recording each
@@ -57,10 +60,11 @@ pub fn build_swarm_board_handles(
 ) -> SwarmBoardHandles {
     let repository = SqliteBoardRepository::new(&location);
     let (clock, ids) = (Arc::new(SystemClock), Arc::new(Uuid4Ids));
+    let history = Arc::new(GitCheckoutHistory::new(location.checkout.clone()));
     let checkout = Arc::new(ResolvedCheckout::new(location.checkout));
     match event_log {
-        Some(event_log) => with_event_log(repository, clock, ids, checkout, event_log),
-        None => build_swarm_board_handles_with(Arc::new(repository), clock, ids, checkout),
+        Some(event_log) => with_event_log(repository, clock, ids, checkout, history, event_log),
+        None => build_swarm_board_handles_with(Arc::new(repository), clock, ids, checkout, history),
     }
 }
 
@@ -105,6 +109,7 @@ pub fn build_swarm_board_handles_with(
     clock: Arc<dyn Clock + Send + Sync>,
     ids: Arc<dyn IdSource>,
     checkout: Arc<dyn CheckoutPaths>,
+    history: Arc<dyn CheckoutHistory>,
 ) -> SwarmBoardHandles {
     SwarmBoardHandles {
         create_run: Arc::new(CreateRun::new(
@@ -155,7 +160,7 @@ pub fn build_swarm_board_handles_with(
             clock.clone(),
             Arc::new(PyJsonEncoding),
         )),
-        verify_task: Arc::new(VerifyTask::new(repository.clone(), clock.clone())),
+        verify_task: Arc::new(VerifyTask::new(repository.clone(), clock.clone(), history)),
         pause_run: Arc::new(PauseRun::new(repository.clone(), clock.clone())),
         resume_run: Arc::new(ResumeRun::new()),
         resume_run_externally: Arc::new(ResumeRunExternally::new(
@@ -253,10 +258,11 @@ pub fn with_event_log(
     clock: Arc<dyn Clock + Send + Sync>,
     ids: Arc<dyn IdSource>,
     checkout: Arc<dyn CheckoutPaths>,
+    history: Arc<dyn CheckoutHistory>,
     event_log: Arc<dyn BoardOpLog>,
 ) -> SwarmBoardHandles {
     let handles =
-        build_swarm_board_handles_with(Arc::new(repository.clone()), clock, ids, checkout);
+        build_swarm_board_handles_with(Arc::new(repository.clone()), clock, ids, checkout, history);
     SwarmBoardHandles {
         telemetry: Some(BoardTelemetry {
             log: event_log.clone(),

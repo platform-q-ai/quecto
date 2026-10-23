@@ -18,7 +18,7 @@ use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::test_support::memory_pull_requests::MemoryPullRequests;
 use std::sync::Arc;
 
-fn seed(store: &MemoryBoardStore, fields: TaskFields) {
+pub(super) fn seed(store: &MemoryBoardStore, fields: TaskFields) {
     let task = Task::new(TaskFields {
         created: at("08:00:00"),
         updated: at("09:10:00"),
@@ -29,7 +29,7 @@ fn seed(store: &MemoryBoardStore, fields: TaskFields) {
     store.write_tasks(&head, &[task], "seed").unwrap();
 }
 
-fn held_by_ada(status: TaskStatus) -> TaskFields {
+pub(super) fn held_by_ada(status: TaskStatus) -> TaskFields {
     let claim = Claim {
         holder: person("Ada"),
         since: at("09:00:00"),
@@ -43,7 +43,7 @@ fn held_by_ada(status: TaskStatus) -> TaskFields {
 }
 
 /// The change use case over `store`, writing as `who`.
-fn change(store: &MemoryBoardStore, who: &str, time: &str) -> ChangeBoardTask {
+pub(super) fn change(store: &MemoryBoardStore, who: &str, time: &str) -> ChangeBoardTask {
     ChangeBoardTask::new(Arc::new(store.client_as(person(who))), SetClock::at(time)).unwrap()
 }
 
@@ -79,10 +79,10 @@ fn a_task_is_claimed_worked_linked_and_completed_when_its_pr_merges() {
     );
     let host = MemoryPullRequests::default();
     host.set(7, PullRequestState::Merged);
-    let system = CompleteMergedTask::new(
+    let system = CompleteMergedTask::reading(
         Arc::new(store.client_as(person("Bob"))),
         SetClock::at("10:20:00"),
-        Arc::new(host),
+        Ok(Arc::new(host)),
     )
     .unwrap();
     let done = system.execute(&a).unwrap();
@@ -212,7 +212,8 @@ fn a_task_from_the_future_and_a_refusal_are_reported() {
         SetClock::with_reference("09:00:00", Some("09:00:00")),
     )
     .unwrap();
-    let ahead = skewed.execute(&slug("a"), &BoardOp::Renew);
+    // A write (a renewal this early writes nothing, #2656).
+    let ahead = skewed.execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress));
     assert_eq!(
         ahead,
         Err(ProjectBoardError::TaskAhead {
@@ -221,7 +222,8 @@ fn a_task_from_the_future_and_a_refusal_are_reported() {
         })
     );
     store.refuse_next_write("a hook said no");
-    let refused = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Renew);
+    let refused = change(&store, "Ada", "10:00:00")
+        .execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress));
     assert_eq!(
         refused,
         Err(ProjectBoardError::Refused("a hook said no".into()))
@@ -275,7 +277,7 @@ fn a_task_stamped_at_the_bound_is_built_on_and_a_second_past_it_is_not() {
             SetClock::with_reference("09:00:30", Some("09:00:00")),
         )
         .unwrap()
-        .execute(&slug("a"), &BoardOp::Renew)
+        .execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress))
     };
     let at_bound = built_on("09:01:30").unwrap();
     assert_eq!(
@@ -323,10 +325,10 @@ fn a_store_with_an_invalid_writer_is_refused_when_built() {
         Err(ProjectBoardError::InvalidWriter(_))
     ));
     assert!(matches!(
-        CompleteMergedTask::new(
+        CompleteMergedTask::reading(
             invalid(),
             SetClock::at("10:00:00"),
-            Arc::new(MemoryPullRequests::default())
+            Ok(Arc::new(MemoryPullRequests::default())),
         ),
         Err(ProjectBoardError::InvalidWriter(_))
     ));
@@ -336,9 +338,10 @@ fn a_store_with_an_invalid_writer_is_refused_when_built() {
     ));
 }
 
-/// A client 55 s fast (inside the 60 s bound) renews a dozen times in a
-/// row; each stamp is a second past the last, edging past the bound, yet
-/// a writer whose clock is right still builds on the task.
+/// A client 55 s fast (inside the 60 s bound) writes a dozen times in a
+/// row (moves, as a renewal this early writes nothing, #2656); each stamp
+/// is a second past the last, edging past the bound, yet a writer whose
+/// clock is right still builds on the task.
 #[test]
 fn quick_writes_from_a_fast_clock_never_lock_out_a_right_one() {
     let store = board();
@@ -355,8 +358,8 @@ fn quick_writes_from_a_fast_clock_never_lock_out_a_right_one() {
         SetClock::with_reference("09:00:55", Some("09:00:00")),
     )
     .unwrap();
-    for _ in 0..12 {
-        fast.execute(&slug("a"), &BoardOp::Renew).unwrap();
+    for to in [TaskStatus::Blocked, TaskStatus::InProgress].repeat(6) {
+        fast.execute(&slug("a"), &BoardOp::Move(to)).unwrap();
     }
     assert!(
         current(&store).updated > at("09:01:00"),
@@ -367,8 +370,8 @@ fn quick_writes_from_a_fast_clock_never_lock_out_a_right_one() {
         SetClock::with_reference("09:00:00", Some("09:00:00")),
     )
     .unwrap();
-    let renewed = right.execute(&slug("a"), &BoardOp::Renew);
-    assert!(renewed.is_ok(), "{renewed:?}");
+    let moved = right.execute(&slug("a"), &BoardOp::Move(TaskStatus::Blocked));
+    assert!(moved.is_ok(), "{moved:?}");
 }
 
 /// A pull request another task on the board links is not linked again.
@@ -591,7 +594,10 @@ fn a_move_that_reads_a_set_aside_run_or_change_of_its_task_waits() {
             moved,
             Err(ProjectBoardError::Quarantined {
                 key,
-                path: path.into()
+                path: path.into(),
+                object: crate::infrastructure::test_support::memory_board_store::memory_object(
+                    path
+                ),
             })
         );
     }
@@ -656,6 +662,8 @@ fn a_pull_request_another_tasks_change_links_is_not_linked_again() {
 /// Epic #2481 T4: what a noted change saw.
 #[path = "change_board_task_noted_tests.rs"]
 mod noted;
+#[path = "change_board_task_renew_tests.rs"]
+mod renew;
 
 /// The real case (Pocket's Delete on a reviewed task): a task in review
 /// whose run succeeded, and whose holder's claim lapsed hours ago, is
@@ -703,5 +711,38 @@ fn anyone_archives_a_reviewed_task_whose_run_ended_and_claim_lapsed() {
     assert_eq!(
         (archived.status, archived.claim, archived.updated),
         (TaskStatus::Archived, None, at("14:00:00"))
+    );
+}
+
+/// #2661 review round 1: an archive waits while a task file is set aside,
+/// as it may be a child still being worked on.
+#[test]
+fn an_archive_waits_while_a_task_file_is_set_aside() {
+    let store = board();
+    seed(&store, fields("epic"));
+    seed(&store, fields("kid"));
+    store.quarantine("kid", "malformed");
+    assert_eq!(
+        change(&store, "Ada", "10:00:00")
+            .execute(&slug("epic"), &BoardOp::Move(TaskStatus::Archived)),
+        Err(set_aside_task("kid"))
+    );
+    // The move's own rules answer first (#2661 review round 2): a ready
+    // task, which the table lets anyone archive, with a child at work is
+    // refused as children_active, never as the file set aside.
+    seed(&store, fields("a"));
+    seed(
+        &store,
+        TaskFields {
+            id: slug("child"),
+            parent: Some(slug("a")),
+            ..held_by_ada(TaskStatus::InProgress)
+        },
+    );
+    assert_eq!(
+        change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived)),
+        Err(ProjectBoardError::Rule(BoardRuleError::ChildrenActive(
+            vec![slug("child")]
+        )))
     );
 }
