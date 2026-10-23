@@ -4,7 +4,7 @@ use super::project_board_git_store::Remote;
 use super::project_board_store::task;
 use quecto::application::project_board::ports::{
     BoardArtifact, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite, ProjectBoardStore,
-    SetAsideClear,
+    QuarantinedFile, SetAsideClear,
 };
 use std::collections::BTreeMap;
 
