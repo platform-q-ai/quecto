@@ -33,5 +33,4 @@ pub fn render(outcome: &ReloadOutcome) -> Result<Option<serde_json::Value>, Stri
 }
 
 #[cfg(test)]
-#[path = "reload_presenter_tests.rs"]
 mod tests;

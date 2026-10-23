@@ -191,5 +191,4 @@ fn admit_forwarded_images(
 }
 
 #[cfg(test)]
-#[path = "uds_control_forward_tests.rs"]
 mod tests;

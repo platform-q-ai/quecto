@@ -74,5 +74,4 @@ impl std::fmt::Debug for RecoverMessageController {
 }
 
 #[cfg(test)]
-#[path = "recover_message_controller_tests.rs"]
 mod tests;

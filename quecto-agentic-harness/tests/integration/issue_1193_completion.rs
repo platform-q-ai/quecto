@@ -57,7 +57,7 @@ fn set_model_derives_limits_from_the_published_snapshot_only() {
     // and the dispatch-level re-clamp test
     // (`uds_dispatch_935_clamp_tests::dispatch_set_model_re_clamps_effective_max_tokens`).
     let dispatch = std::fs::read_to_string(
-        harness_root().join("src/interface/uds/controllers/uds_dispatch_runtime.rs"),
+        harness_root().join("src/interface/uds/controllers/uds/uds_dispatch_runtime.rs"),
     )
     .unwrap();
     assert!(

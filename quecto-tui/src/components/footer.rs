@@ -4,6 +4,10 @@ use crate::components::component::Component;
 use crate::components::theme;
 use crate::components::utils::{truncate_to_width, visible_width};
 
+/// The badge's short form on a narrow line when it reports something to act
+/// on (#2615).
+pub const ADMISSION_ALERT: &str = "admission!";
+
 /// Footer status bar.
 pub struct Footer {
     model: String,
@@ -15,6 +19,8 @@ pub struct Footer {
     context_used: Option<u64>,
     /// Cumulative session cost in USD. `None` until the first stats report.
     session_cost: Option<f64>,
+    /// Some of the session's usage could not be priced (#1855).
+    session_cost_unpriced: bool,
     session_cache_read: u64,
     session_cache_write: u64,
     session_cache_hit_ratio: Option<f64>,
@@ -26,9 +32,13 @@ pub struct Footer {
     admission: Option<String>,
     /// The panel-row form of the same label ("12s").
     admission_compact: Option<String>,
-    /// Broker health badge (#2024 S3): "admission ✓" / "⟳" / "✗"; `None` when
+    /// Broker health badge (#2024 S3, #2615): "admission ✓ connected" /
+    /// "⟳ reconnecting" / "✗ unavailable", plus "· N queued"; `None` when
     /// the agent reported no authority status.
     admission_health: Option<String>,
+    /// The badge reports something to act on (#2615: restart required): on
+    /// a line too narrow for it, a short marker stays ahead of the model.
+    admission_alert: bool,
     /// Cached working directory (read once at construction).
     pwd: String,
 }
@@ -51,6 +61,7 @@ impl Footer {
             context_window: 0,
             context_used: None,
             session_cost: None,
+            session_cost_unpriced: false,
             session_cache_read: 0,
             session_cache_write: 0,
             session_cache_hit_ratio: None,
@@ -59,6 +70,7 @@ impl Footer {
             admission: None,
             admission_compact: None,
             admission_health: None,
+            admission_alert: false,
             pwd,
         }
     }
@@ -73,6 +85,11 @@ impl Footer {
     /// Show (or clear) the broker-health badge (#2024 S3), presentation only.
     pub fn set_admission_health(&mut self, health: Option<String>) {
         self.admission_health = health;
+    }
+
+    /// Whether the badge reports something to act on (#2615).
+    pub fn set_admission_alert(&mut self, alert: bool) {
+        self.admission_alert = alert;
     }
 
     pub fn admission_health(&self) -> Option<&str> {
@@ -139,6 +156,7 @@ impl Footer {
         self.context_used = None;
         if percent.is_none() && window == 0 {
             self.session_cost = None;
+            self.session_cost_unpriced = false;
             self.session_cache_read = 0;
             self.session_cache_write = 0;
             self.session_cache_hit_ratio = None;
@@ -166,11 +184,6 @@ impl Footer {
 
     pub fn is_streaming(&self) -> bool {
         self.is_streaming
-    }
-
-    /// Record cumulative session cost (USD). `None` hides the indicator.
-    pub fn set_cost(&mut self, cost: Option<f64>) {
-        self.session_cost = cost.filter(|c| c.is_finite() && *c > 0.0);
     }
 
     /// Apply typed `get_state` footer fields (model + context-window + effort).
@@ -210,12 +223,22 @@ impl Footer {
     /// Apply a parsed session-stats snapshot to the context + cost gauges.
     /// Single source of truth for the stats→footer mapping shared by the master
     /// footer path and per-session sub-agent footers (#805) — keeps the cost
-    /// gate (`cost > 0`) from drifting between the two.
+    /// rule from drifting between the two: a known cost shows when above $0
+    /// or beside unpriced usage, an unknown one only as unpriced (#1855).
     pub fn apply_session_stats(&mut self, stats: &crate::protocol::session_payloads::SessionStats) {
         if let Some((used, window)) = stats.context_usage {
             self.update_context_usage(used, window);
         }
-        self.set_cost((stats.cost > 0.0).then_some(stats.cost));
+        // #1855: a known cost is shown when it is above $0, or beside
+        // unpriced usage (a declared-free model's $0 + unpriced); an
+        // unknown one is only "unpriced".
+        let unpriced = stats.unpriced_attempts > 0;
+        self.session_cost = match (stats.cost_micro_usd, unpriced) {
+            (Some(micro), true) => Some(micro as f64 / 1_000_000.0),
+            (Some(micro), false) if micro > 0 => Some(micro as f64 / 1_000_000.0),
+            (Some(_), false) | (None, _) => None,
+        };
+        self.session_cost_unpriced = unpriced;
         self.session_cache_read = stats.cache_read_tokens;
         self.session_cache_write = stats.cache_write_tokens;
         self.session_cache_hit_ratio = stats.cache_hit_ratio;
@@ -258,8 +281,12 @@ impl Component for Footer {
         if let Some(ratio) = self.session_cache_hit_ratio {
             left_parts.push(format!("hit {:.1}%", ratio * 100.0));
         }
-        if let Some(cost) = self.session_cost {
-            left_parts.push(format!("cost ${cost:.6}"));
+        // #1855: usage the harness could not price is unknown, never $0.
+        match (self.session_cost, self.session_cost_unpriced) {
+            (Some(cost), false) => left_parts.push(format!("cost ${cost:.6}")),
+            (Some(cost), true) => left_parts.push(format!("cost ${cost:.6} + unpriced")),
+            (None, true) => left_parts.push("cost unpriced".to_string()),
+            (None, false) => {}
         }
         let left = left_parts.join(" · ");
         // Prefix the model with a streaming indicator while a response is
@@ -285,13 +312,22 @@ impl Component for Footer {
         // Broker health rides beside the model regardless of wait state
         // (#2024 S3): a session shows its authority is reachable even when
         // nothing is queued. Presentation only.
+        // The badge yields first when the line is too narrow (#2615 review):
+        // the model and effort are what the line is for.
+        let left_width = visible_width(&left);
+        let min_padding = 2;
         if let Some(health) = &self.admission_health {
-            right = format!("{health} · {right}");
+            let with_health = format!("{health} · {right}");
+            if left_width + min_padding + visible_width(&with_health) <= width {
+                right = with_health;
+            } else if self.admission_alert {
+                // Something to act on is never squeezed out: a short marker
+                // stays ahead of the model, which is then cut at its end.
+                right = format!("{ADMISSION_ALERT} · {right}");
+            }
         }
         let right = right.as_str();
-        let left_width = visible_width(&left);
         let right_width = visible_width(right);
-        let min_padding = 2;
 
         let stats_line = if left_width + min_padding + right_width <= width {
             let padding = " ".repeat(width - left_width - right_width);

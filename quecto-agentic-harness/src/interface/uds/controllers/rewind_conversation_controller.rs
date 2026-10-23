@@ -35,5 +35,4 @@ impl RewindFields {
 }
 
 #[cfg(test)]
-#[path = "rewind_conversation_controller_tests.rs"]
 mod tests;

@@ -65,5 +65,4 @@ pub fn bound_ack_line() -> String {
 }
 
 #[cfg(test)]
-#[path = "parent_control_wire_tests.rs"]
 mod tests;

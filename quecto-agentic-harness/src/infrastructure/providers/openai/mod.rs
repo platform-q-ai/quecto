@@ -397,7 +397,6 @@ impl LlmProvider for OpenAiProvider {
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         let cancel = request.cancel_flag.clone();
         let trace = request.trace.clone();
-        let model = request.model.to_string();
         let body = self.build_request_body(&request);
         let url = format!("{}/chat/completions", self.api_base);
 
@@ -420,11 +419,7 @@ impl LlmProvider for OpenAiProvider {
                         let json = serde_json::from_str(text).map_err(|e| {
                             DomainError::Provider(format!("failed to parse response JSON: {e}"))
                         })?;
-                        let mut parsed = Self::parse_response(&json)?;
-                        crate::domain::inference::services::usage_accounting::attach_cost(
-                            &mut parsed,
-                            &model,
-                        );
+                        let parsed = Self::parse_response(&json)?;
                         Ok(parsed)
                     },
                 )
@@ -490,8 +485,7 @@ impl LlmProvider for OpenAiProvider {
                     DomainError::Provider(format!("failed to parse response JSON: {}", e))
                 })?;
 
-            let mut parsed = Self::parse_response(&response_json).inspect_err(|_| rejected())?;
-            crate::domain::inference::services::usage_accounting::attach_cost(&mut parsed, &model);
+            let parsed = Self::parse_response(&response_json).inspect_err(|_| rejected())?;
             attempt.iter().for_each(|a| a.completed());
             Ok(parsed)
         })

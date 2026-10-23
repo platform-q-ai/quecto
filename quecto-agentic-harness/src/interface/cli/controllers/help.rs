@@ -20,7 +20,7 @@ pub(in crate::interface::cli) fn help_text(out: &mut String) {
     out.push_str("\nCommands:\n");
     out.push_str("  admission-broker run|status|reset|install-service|uninstall-service\n");
     out.push_str("              Shared inference admission authority (requires an `admission` config section)\n");
-    out.push_str("              [--config <file>|--directory <dir>] on every action; run [--accept-missing-ledger];\n");
+    out.push_str("              [--config <file>|--directory <dir>] on every action; run [--accept-missing-ledger] [--stop-when-idle];\n");
     out.push_str("              install-service|uninstall-service [--dry-run]\n");
     out.push_str("  agent       Run a one-shot agent session (-m required)\n");
     out.push_str("              Options: -s <name>  Named session (default: \"default\")\n");
@@ -67,12 +67,7 @@ pub(in crate::interface::cli) fn help_text(out: &mut String) {
         "              <op> [--<field> <value>]... [--input <json>|-] [--repo <path>] [--remote <name>]\n",
     );
     out.push_str("                  [--json]\n");
-    out.push_str(
-        "                  ops: bootstrap list list-ready list-takeable show create update-draft\n",
-    );
-    out.push_str(
-        "                  move renew take-over link-pr unlink-pr complete clear-set-aside\n",
-    );
+    board_ops(out);
     out.push_str(
         "                  prints one JSON answer; a write needs git's user.name and user.email\n",
     );
@@ -141,4 +136,25 @@ pub(in crate::interface::cli) fn help_text(out: &mut String) {
     out.push_str("  status      Show status\n");
     out.push_str("  help        Show this help\n");
     out.push_str("  version     Show version information\n");
+}
+
+/// The ops `quecto board` takes, from its own list (#2660), wrapped as the
+/// help's other lines are.
+fn board_ops(out: &mut String) {
+    const INDENT: &str = "                  ";
+    const WIDTH: usize = 92;
+    let mut line = format!("{INDENT}ops:");
+    for op in crate::interface::cli::board::command_line_ops() {
+        if line.len() + 1 + op.len() > WIDTH {
+            out.push_str(&line);
+            out.push('\n');
+            line = INDENT.to_string();
+            line.push_str(&op);
+        } else {
+            line.push(' ');
+            line.push_str(&op);
+        }
+    }
+    out.push_str(&line);
+    out.push('\n');
 }

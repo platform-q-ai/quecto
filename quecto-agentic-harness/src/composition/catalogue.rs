@@ -115,6 +115,9 @@ mod tests;
 mod refresh_tests;
 
 #[cfg(test)]
+#[path = "catalogue_price_tests.rs"]
+mod price_tests;
+#[cfg(test)]
 #[path = "catalogue_resolve_tests.rs"]
 mod resolve_tests;
 

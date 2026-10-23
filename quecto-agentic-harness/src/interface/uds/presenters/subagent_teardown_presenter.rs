@@ -152,5 +152,4 @@ pub async fn deliver(
 }
 
 #[cfg(test)]
-#[path = "subagent_teardown_presenter_tests.rs"]
 mod tests;

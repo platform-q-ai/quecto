@@ -6,14 +6,14 @@ use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::interface::cli::uds_lifecycle;
-use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
+use crate::interface::cli::uds_session::history_session_stats;
 use crate::interface::uds::controllers::uds::{DispatchCtx, run_command_loop};
 use crate::interface::uds::controllers::uds_session_handles::SessionHandles;
 use crate::interface::uds::controllers::{uds_cancel, uds_ext_protocol, uds_extensions};
 
 pub(in crate::interface) struct SingleClientArgs<'a> {
     pub(in crate::interface) agent: AgentLoopImpl,
-    pub(in crate::interface) automatic_turns: crate::interface::cli::AutomaticTurnsBuilder,
+    pub(in crate::interface) turn_session: crate::interface::cli::TurnSessionBuilder,
     pub(in crate::interface) workspace: &'a std::path::Path,
     pub(in crate::interface) messages: Vec<Message>,
     pub(in crate::interface) model: String,
@@ -34,7 +34,7 @@ pub(in crate::interface) async fn single_client_loop(
 ) -> i32 {
     let SingleClientArgs {
         mut agent,
-        automatic_turns,
+        turn_session,
         workspace,
         mut messages,
         model,
@@ -62,14 +62,14 @@ pub(in crate::interface) async fn single_client_loop(
 
     uds_lifecycle::inject_system_prompt(&mut messages, &system_prompt);
 
-    let mut agent_session = AgentSession::new(model, automatic_turns());
+    let mut agent_session = turn_session(model);
     agent_session.set_admission_warnings(&admission_slots);
     agent_session.set_startup_warnings(&catalogue.startup_warnings);
     agent_session.observe_runtime(catalogue.runtime_store.clone());
     let effort = catalogue.effort_view(agent.effort(), agent_session.model());
     let initial_state =
         agent_session.state_snapshot(&session_key, 0, None, agent.max_context_tokens(), effort);
-    let initial_stats = compute_session_stats(&session_key, &messages);
+    let initial_stats = history_session_stats(&session_key, &messages);
     let session_reads = sessions.read_handles();
     let _ = session_reads
         .active_session

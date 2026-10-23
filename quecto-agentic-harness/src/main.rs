@@ -12,7 +12,7 @@ fn main() {
             teardown_graph: quecto::composition::subagent_teardown::build_teardown_graph,
             kill_tool: quecto::composition::subagent_termination::install_termination_owners,
             sessions: quecto::composition::sessions::build_session_handles,
-            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
+            turn_session: quecto::composition::bootstrap::agent_turn::build_turn_session,
             retention: quecto::composition::sessions::build_retention_handles,
             fresh_session_identity: quecto::composition::sessions::build_fresh_session_identity,
             configuration: quecto::composition::configuration::build_configuration_handles,

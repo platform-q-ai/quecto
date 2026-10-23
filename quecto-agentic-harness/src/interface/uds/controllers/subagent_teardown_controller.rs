@@ -393,11 +393,8 @@ async fn reject(
 }
 
 #[cfg(test)]
-#[path = "subagent_teardown_controller_rig_tests.rs"]
 mod rig;
 #[cfg(test)]
-#[path = "subagent_teardown_controller_routing_tests.rs"]
 mod routing_tests;
 #[cfg(test)]
-#[path = "subagent_teardown_controller_tests.rs"]
 mod tests;

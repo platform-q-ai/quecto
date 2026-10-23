@@ -27,6 +27,9 @@ impl SwarmReport {
 pub enum BoardRuleError {
     /// No row of the transition table moves a task between these statuses.
     NotAllowed { from: TaskStatus, to: TaskStatus },
+    /// Another's claim has expired: only its holder may do this, and
+    /// anyone may take the task over first (#2659).
+    NotHolderExpired,
     /// Only the claim's holder may do this.
     NotHolder,
     /// The task has no claim to act on.
@@ -88,6 +91,12 @@ pub enum BoardRuleError {
         items: Vec<Slug>,
         report: SwarmReport,
     },
+    /// The run would end as succeeded while `revisions` of the commits its
+    /// task items' evidence names (by full id or a 12-digit prefix) are
+    /// not on the board's remote, on a branch or tag there (#2666): its
+    /// work never left the swarm's container, so a success is not
+    /// recorded over it. Evidence that names no commit is not counted.
+    NotPushed { run: u32, revisions: usize },
     /// The change was stamped by a clock running ahead of the outside
     /// time: building on it would drag the board ahead too.
     ChangeAhead { change: u32, updated: Timestamp },
@@ -161,6 +170,17 @@ pub enum BoardRuleError {
     /// Other tasks took this one over (`by`): it is archived as
     /// superseded, never done.
     Superseded { by: Vec<Slug> },
+    /// These tasks the task depends on are not done or archived (or not on
+    /// the board): it is claimed or started only once each is (#2661).
+    DependencyNotDone {
+        /// On the board, not done or archived.
+        undone: Vec<Slug>,
+        /// Not on the board, or set aside.
+        missing: Vec<Slug>,
+    },
+    /// These child tasks of the task are held (claimed, in progress, in
+    /// review or blocked): it is archived only once none is (#2661).
+    ChildrenActive(Vec<Slug>),
     /// Two tasks name the same issue.
     IssueShared { issue: u64, tasks: [Slug; 2] },
     /// `task`'s issue is a pull request `pr_holder` links on the board
@@ -184,6 +204,15 @@ pub enum BoardRuleError {
     InvalidPlan(SchemaError),
 }
 
+/// `word` after the article it reads with (`an accepted`, `a ready`):
+/// `an` before a vowel, as every status word starts (#2659).
+fn with_article(word: &str) -> String {
+    match word.starts_with(['a', 'e', 'i', 'o', 'u']) {
+        true => format!("an {word}"),
+        false => format!("a {word}"),
+    }
+}
+
 impl fmt::Display for BoardRuleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -196,6 +225,10 @@ impl fmt::Display for BoardRuleError {
                 )
             }
             Self::NotHolder => f.write_str("only the claim's holder may do this"),
+            Self::NotHolderExpired => f.write_str(
+                "only the claim's holder may do this, and the task's claim has expired: take the task \
+                 over first with take_over(task)",
+            ),
             Self::NoClaim => f.write_str("the task has no claim"),
             Self::ClaimLive => f.write_str("the claim has not expired"),
             Self::ClaimExpired => f.write_str("the claim has expired; renew it first"),
@@ -203,13 +236,17 @@ impl fmt::Display for BoardRuleError {
             Self::RunEnded(run) => write!(f, "run {run} has already ended"),
             Self::PlanNotDraft(state) => write!(
                 f,
-                "a {} plan is not a draft: only drafts are edited, accepted or discarded",
-                state.as_str()
+                "{} plan is not a draft: only drafts are edited, accepted or discarded",
+                with_article(state.as_str())
             ),
             Self::NotThisTasks => f.write_str("it belongs to another task or plan version"),
             Self::NotThisChange => f.write_str("the review is of another change"),
             Self::TaskFinished(status) => {
-                write!(f, "a {} task's plans are settled", status.as_str())
+                write!(
+                    f,
+                    "{} task's plans are settled",
+                    with_article(status.as_str())
+                )
             }
             Self::UnknownPlanVersion(version) => {
                 write!(f, "the task has no plan version {version}")
@@ -280,6 +317,13 @@ impl fmt::Display for BoardRuleError {
                  task items done (the coordinator was not torn down here, or this session \
                  restarted); ask the user whether the work was done before ending it"
             ),
+            Self::NotPushed { run, revisions } => write!(
+                f,
+                "run {run} cannot end as succeeded: {revisions} commit(s) its evidence names \
+                 are on no branch or tag of the board's remote, so its work has not left the \
+                 swarm's container; push them and call end_run again, or, if they went with \
+                 the container, end it as \"failed\" and tell the user"
+            ),
             Self::ChangeAhead { change, updated } => write!(
                 f,
                 "change {change} was stamped {} by a clock that ran ahead",
@@ -335,10 +379,17 @@ impl fmt::Display for BoardRuleError {
             Self::ChangesUnmerged(numbers) => write!(f, "changes {numbers:?} have not merged"),
             Self::ChangesInconsistent(why) => write!(f, "the task's changes contradict: {why}"),
             Self::NotTakeable(status) => {
-                write!(f, "a {} task cannot be taken over", status.as_str())
+                write!(
+                    f,
+                    "{} task cannot be taken over",
+                    with_article(status.as_str())
+                )
             }
             Self::AlreadyHolder => f.write_str("the holder renews rather than takes over"),
-            Self::NoPrs => f.write_str("the task links no pull request"),
+            Self::NoPrs => f.write_str(
+                "the task links no pull request; its holder finishes it with move(task, to done) \
+                 from review",
+            ),
             Self::PrsUnmerged(open) => write!(f, "pull requests {open:?} are not merged"),
             Self::PrsLinked(prs) => write!(
                 f,
@@ -349,8 +400,8 @@ impl fmt::Display for BoardRuleError {
             Self::PrAlreadyLinked(pr) => write!(f, "the task already links pull request {pr}"),
             Self::NotDraft(status) => write!(
                 f,
-                "a {} task is not a draft: only drafts are edited",
-                status.as_str()
+                "{} task is not a draft: only drafts are edited",
+                with_article(status.as_str())
             ),
             Self::NoEdit => f.write_str("the edit changes nothing"),
             Self::Superseded { by } => {
@@ -359,6 +410,44 @@ impl fmt::Display for BoardRuleError {
                     f,
                     "other tasks took this one over ({}): archive it as superseded instead",
                     by.join(", ")
+                )
+            }
+            Self::DependencyNotDone { undone, missing } => {
+                let named = |tasks: &[Slug]| {
+                    tasks
+                        .iter()
+                        .map(Slug::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                let missing_text = |ids: &[Slug]| {
+                    format!(
+                        "tasks not on the board or set aside: {} (add or mend them first)",
+                        named(ids)
+                    )
+                };
+                let held = match (undone.as_slice(), missing.as_slice()) {
+                    ([_, ..], []) => format!("tasks not done yet: {}", named(undone)),
+                    ([], [_, ..]) => missing_text(missing),
+                    (_, _) => format!(
+                        "tasks not done yet: {}, and on {}",
+                        named(undone),
+                        missing_text(missing)
+                    ),
+                };
+                write!(
+                    f,
+                    "the task depends on {held}; it can be claimed or started once each is done \
+                     or archived"
+                )
+            }
+            Self::ChildrenActive(tasks) => {
+                let tasks: Vec<&str> = tasks.iter().map(Slug::as_str).collect();
+                write!(
+                    f,
+                    "its child tasks are still being worked on: {}; finish or release them \
+                     before archiving it",
+                    tasks.join(", ")
                 )
             }
             Self::IssueShared { issue, tasks } => write!(
@@ -389,3 +478,7 @@ impl fmt::Display for BoardRuleError {
 }
 
 impl std::error::Error for BoardRuleError {}
+
+#[cfg(test)]
+#[path = "rule_error_tests.rs"]
+mod tests;

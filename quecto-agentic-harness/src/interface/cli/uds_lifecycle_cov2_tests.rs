@@ -88,7 +88,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         broadcast_tx: None,
         parent_control: None,
         teardown_graph: None,
-        automatic_turns: crate::composition::bootstrap::agent_turn::build_automatic_turns,
+        turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
         environment_control: None,
     }
 }
@@ -267,8 +267,7 @@ async fn single_client_socket_override_serves_get_state() {
             single_client_loop(
                 SingleClientArgs {
                     agent: make_agent(),
-                    automatic_turns:
-                        crate::composition::bootstrap::agent_turn::build_automatic_turns,
+                    turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
                     workspace: dir.path(),
                     messages: Vec::new(),
                     model: "stub".into(),
@@ -586,8 +585,7 @@ fn the_single_client_loop_waits_for_a_launch_rollback_at_exit() {
             single_client_loop(
                 SingleClientArgs {
                     agent: make_agent(),
-                    automatic_turns:
-                        crate::composition::bootstrap::agent_turn::build_automatic_turns,
+                    turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
                     workspace: dir.path(),
                     messages: Vec::new(),
                     model: "stub".into(),

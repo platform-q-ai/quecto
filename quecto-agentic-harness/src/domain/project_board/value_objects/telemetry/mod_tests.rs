@@ -16,6 +16,7 @@ fn bare() -> BoardOpRecord {
         front_end: FrontEnd::Cli,
         client: Client::PocketRelay,
         access: Access::Read,
+        board: None,
         outcome: OpOutcome::Ok,
         fault: None,
         task: None,
@@ -35,7 +36,9 @@ fn bare() -> BoardOpRecord {
         status_to: None,
         claim: None,
         attempts: None,
-        lost: None,
+        races_lost: None,
+        lock_races: None,
+        swarm_report: None,
         pause_ms: None,
         completion: None,
         normalised: None,
@@ -53,6 +56,7 @@ fn full() -> BoardOpRecord {
         front_end: FrontEnd::Tool,
         client: Client::Agent,
         access: Access::Write,
+        board: BoardId::of_hex("0123456789abcdef"),
         outcome: OpOutcome::Refused {
             code: StaticKind::new("rule"),
             rule: Some(StaticKind::new("not_holder")),
@@ -89,7 +93,9 @@ fn full() -> BoardOpRecord {
             holder_is_writer: false,
         }),
         attempts: Some(2),
-        lost: Some(1),
+        races_lost: Some(1),
+        lock_races: Some(3),
+        swarm_report: Some(StaticKind::new("kept")),
         pause_ms: Some(40),
         completion: Some(CompletionFacts {
             completion: CompletionKind::Failed,
@@ -98,7 +104,7 @@ fn full() -> BoardOpRecord {
             prs_linked: 2,
             prs_pending: Some(1),
             completion_attempts: Some(2),
-            completion_lost: Some(1),
+            completion_races_lost: Some(1),
             completion_pause_ms: Some(20),
         }),
         normalised: Some(Normalised {
@@ -125,9 +131,9 @@ fn every_field_serializes_as_its_golden_line() {
         "truncated_more": 10, "set_aside": 3, "set_aside_more": 1, "plans": 3, "runs": 2,
         "status_from": "in_progress", "status_to": "review",
         "claim": {"held_s": 5400, "left_s": -120, "holder_is_writer": false},
-        "attempts": 2, "lost": 1, "pause_ms": 40, "completion": "failed",
+        "attempts": 2, "races_lost": 1, "pause_ms": 40, "completion": "failed",
         "completion_code": "rule", "completion_rule": "prs_unmerged", "prs_linked": 2,
-        "prs_pending": 1, "completion_attempts": 2, "completion_lost": 1,
+        "prs_pending": 1, "completion_attempts": 2, "completion_races_lost": 1,
         "completion_pause_ms": 20,
         "cancelled": true,
         "build_us": 41_000, "result_bytes": 412, "duration_us": 1_830_000,
@@ -138,6 +144,8 @@ fn every_field_serializes_as_its_golden_line() {
     let plan = json!({
         "plan_version": 2, "items": 5, "roles": 2,
         "plan_state_from": "draft", "plan_state_to": "accepted", "run": 1, "run_outcome": "failed",
+        // #2663: the board, the store's lock races and the swarm report.
+        "board": "0123456789abcdef", "lock_races": 3, "swarm_report": "kept",
         "normalised": {
             "title": [], "description": ["crlf", "trailing_space"],
             "approach": ["edge_blank_lines"], "items": ["edge_space"],
@@ -220,7 +228,7 @@ fn no_kind_is_ever_renamed_or_removed() {
     ];
     frozen(OpKind::ALL, OpKind::as_str, &ops);
     frozen(FrontEnd::ALL, FrontEnd::as_str, &["tool", "cli"]);
-    let clients = ["agent", "pocket_relay", "cli", "other"];
+    let clients = ["agent", "pocket_relay", "cli", "other", "session_end"];
     frozen(Client::ALL, Client::as_str, &clients);
     frozen(Access::ALL, Access::as_str, &["read", "write"]);
     let faults = [
@@ -264,6 +272,7 @@ fn a_start_serializes_as_its_golden_line() {
     let started = BoardStartRecord {
         task: TaskRef::of(&Slug::parse("demo-hello").unwrap()),
         client: Client::PocketRelay,
+        board: BoardId::of_hex("0123456789abcdef"),
         outcome: OpOutcome::Ok,
         run: Some(1),
         plan_version: Some(2),
@@ -280,7 +289,7 @@ fn a_start_serializes_as_its_golden_line() {
     let line = serde_json::to_value(AuditEvent::BoardStart(Box::new(started))).unwrap();
     let golden = json!({
         "event": "board_start", "task": "demo-hello", "client": "pocket_relay",
-        "outcome": "ok", "run": 1, "plan_version": 2, "members": 3, "roles": 2, "items": 4,
+        "board": "0123456789abcdef", "outcome": "ok", "run": 1, "plan_version": 2, "members": 3, "roles": 2, "items": 4,
         "not_applied": 1, "claim": "fresh", "launch_us": 250_000, "run_state": "folded",
         "released": false, "duration_us": 900_000,
     });
@@ -288,6 +297,7 @@ fn a_start_serializes_as_its_golden_line() {
     let refused = BoardStartRecord {
         task: TaskRef::of(&Slug::parse("demo-hello").unwrap()),
         client: Client::Agent,
+        board: None,
         outcome: OpOutcome::Refused {
             code: StaticKind::new("rule"),
             rule: Some(StaticKind::new("no_accepted_plan")),
@@ -352,6 +362,7 @@ fn a_fold_back_serializes_as_its_golden_line() {
     let folded = FoldBackRecord {
         task: TaskRef::of(&Slug::parse("demo-hello").unwrap()),
         run: 1,
+        board: BoardId::of_hex("0123456789abcdef"),
         outcome: OpOutcome::Ok,
         run_outcome: Some(RunOutcomeKind::of(RunOutcome::Succeeded)),
         items: Some(ItemCounts {
@@ -367,23 +378,27 @@ fn a_fold_back_serializes_as_its_golden_line() {
         evidence_dropped: Some(1),
         cost_tokens: Some(812_000),
         attempts: Some(1),
-        lost: Some(0),
+        races_lost: Some(0),
+        lock_races: Some(0),
         bytes: Some(1_900),
+        head: CommitId::parse(HEAD).ok(),
         duration_us: 120_000,
     };
     let line = serde_json::to_value(AuditEvent::BoardFoldBack(Box::new(folded))).unwrap();
     let golden = json!({
-        "event": "board_fold_back", "task": "demo-hello", "run": 1, "outcome": "ok",
+        "event": "board_fold_back", "task": "demo-hello", "run": 1,
+        "board": "0123456789abcdef", "outcome": "ok",
         "run_outcome": "succeeded",
         "items": {"todo": 0, "doing": 0, "review": 1, "done": 2, "blocked": 0},
         "unmatched": 0, "extra": 1, "evidence": 5, "evidence_dropped": 1,
-        "cost_tokens": 812_000, "attempts": 1, "lost": 0, "bytes": 1_900,
-        "duration_us": 120_000,
+        "cost_tokens": 812_000, "attempts": 1, "races_lost": 0, "lock_races": 0,
+        "bytes": 1_900, "head": HEAD, "duration_us": 120_000,
     });
     assert_eq!(line, golden);
     let bare = FoldBackRecord {
         task: TaskRef::of(&Slug::parse("demo-hello").unwrap()),
         run: 1,
+        board: None,
         outcome: OpOutcome::Refused {
             code: StaticKind::new("contended"),
             rule: None,
@@ -396,8 +411,10 @@ fn a_fold_back_serializes_as_its_golden_line() {
         evidence_dropped: None,
         cost_tokens: None,
         attempts: None,
-        lost: None,
+        races_lost: None,
+        lock_races: None,
         bytes: None,
+        head: None,
         duration_us: 9,
     };
     let line = serde_json::to_value(AuditEvent::BoardFoldBack(Box::new(bare))).unwrap();

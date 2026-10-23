@@ -14,7 +14,8 @@ use quecto::interface::uds::presenters::uds_execution_state::{
 };
 
 fn accounted_session() -> AgentSession {
-    let mut session = AgentSession::new("model".into(), quecto::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session =
+        quecto::composition::bootstrap::agent_turn::build_turn_session("model".into());
     session.record_usage("cli:contract", UsageTotals::billed(10, 5, 2, 1, 7));
     session.set_context_tokens(42);
     assert!(session.enqueue_pending("follow-up".into()));
@@ -56,7 +57,8 @@ fn a_history_replacement_resets_usage_context_and_pending_and_reports_the_count(
 
 #[test]
 fn a_reset_on_a_fresh_runtime_is_idempotent_and_still_reports_the_count() {
-    let mut session = AgentSession::new("model".into(), quecto::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session =
+        quecto::composition::bootstrap::agent_turn::build_turn_session("model".into());
     let execution = execution_state();
     let mut adapter = LoopTurnAccounting::new(&mut session, &execution);
     adapter.history_replaced(0);

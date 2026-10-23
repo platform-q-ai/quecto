@@ -40,5 +40,4 @@ impl SessionDiscoveryHandles {
 }
 
 #[cfg(test)]
-#[path = "uds_discovery_handles_tests.rs"]
 mod tests;

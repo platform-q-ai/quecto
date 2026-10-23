@@ -15,6 +15,7 @@
 //! modules, met the child before it was bound (it then exits at the 30 s bind
 //! deadline instead of on connection loss, past the test's 20 s bound).
 
+mod admission_on_demand;
 mod configured_extensions;
 mod docker_create_admission_mask;
 mod docker_create_image_contract;
@@ -70,6 +71,7 @@ mod swarm_board_diff_tasks;
 mod swarm_board_diff_usage;
 mod swarm_board_diff_wakes;
 mod swarm_board_diff_wire;
+mod swarm_board_evidence_carry;
 mod swarm_board_goldens;
 mod swarm_board_legacy;
 mod swarm_board_mixed;

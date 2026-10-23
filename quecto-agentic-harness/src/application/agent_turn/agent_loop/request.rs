@@ -135,6 +135,11 @@ impl AgentLoopImpl {
                 request.max_tokens,
             ),
         );
+        // #1855: usage is costed at the active model's catalogue price.
+        let price = self.model_traits.price;
+        if let Some(price) = price {
+            trace.set_price(price);
+        }
         // #2436: each attempt is counted and announced as it ends.
         trace.on_attempt_end(self.request_completion_sink(request.model));
         request.trace = Some(trace.clone());
@@ -167,7 +172,14 @@ impl AgentLoopImpl {
         // Whether the failed reply had shown output travels beside the
         // error, which is observed and accounted as before (#2155).
         let (result, emitted_event, source) = match outcome {
-            Ok(response) => (Ok(response), false, FailureSource::Provider),
+            Ok(mut response) => {
+                // #1855: the reply's usage is costed here, once, before it
+                // is counted, observed or accounted; providers never price.
+                if let Some(usage) = response.usage.as_mut() {
+                    crate::domain::inference::services::usage_accounting::price(usage, price);
+                }
+                (Ok(response), false, FailureSource::Provider)
+            }
             Err(failure) => (Err(failure.error), failure.emitted_event, failure.source),
         };
         {
@@ -332,3 +344,8 @@ impl AgentLoopImpl {
 #[cfg(test)]
 #[path = "agent_loop_2459_tests.rs"]
 mod terminal_guidance_tests;
+
+// #1855: usage is costed at the active model's catalogue price.
+#[cfg(test)]
+#[path = "agent_loop_1855_tests.rs"]
+mod catalogue_price_tests;

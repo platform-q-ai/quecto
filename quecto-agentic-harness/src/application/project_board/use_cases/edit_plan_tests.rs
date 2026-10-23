@@ -102,6 +102,10 @@ fn a_field_given_replaces_the_drafts_whole() {
         plan_version: Some(1),
         items: Some(2),
         roles: Some(0),
+        // The commit the write made (#2663).
+        head: Some(crate::application::project_board::ports::BoardHead(
+            "r3".into(),
+        )),
         ..OpFacts::default()
     };
     assert_eq!(facts, want);

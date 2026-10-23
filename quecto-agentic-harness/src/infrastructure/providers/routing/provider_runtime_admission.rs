@@ -12,9 +12,8 @@ use crate::application::provider_runtime::dto::ProviderRuntimeOutcome;
 use crate::application::providers::ports::LlmProvider;
 use crate::domain::admission::value_objects::inference_admission::{AdmissionConfig, GroupPolicy};
 use crate::infrastructure::config::Config;
-use crate::infrastructure::providers::{
-    AttemptTransportBinding, transport::single_attempt_client::SingleAttemptClient,
-};
+use crate::infrastructure::providers::routing::provider_factory::AttemptTransportBinding;
+use crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient;
 
 /// Binding key that catches every provider slot with no explicit binding
 /// (#2024 S3). Its alias must still exist, like any other binding.

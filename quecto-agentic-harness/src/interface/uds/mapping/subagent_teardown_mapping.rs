@@ -68,5 +68,4 @@ pub fn map_command(command: &SubagentTeardownCommand) -> Result<TeardownRequest,
 }
 
 #[cfg(test)]
-#[path = "subagent_teardown_mapping_tests.rs"]
 mod tests;

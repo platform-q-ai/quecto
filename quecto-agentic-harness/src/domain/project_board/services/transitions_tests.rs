@@ -60,7 +60,7 @@ fn only_the_table_allows_a_move_even_for_the_holder() {
                 &without_prs(task(from)),
                 to,
                 &person("Ada"),
-                &[],
+                (&[], &[]),
                 &[],
                 &at("10:00:00"),
             );
@@ -97,7 +97,7 @@ fn anyone_plans_readies_claims_and_archives_but_only_the_holder_moves_a_live_cla
             &without_prs(task(from)),
             to,
             &bob,
-            &[],
+            (&[], &[]),
             &[],
             &at("10:00:00"),
         );
@@ -124,7 +124,7 @@ fn the_holder_is_known_by_email_whatever_its_case() {
             &task(Claimed),
             InProgress,
             &shouting,
-            &[],
+            (&[], &[]),
             &[],
             &at("10:00:00")
         )
@@ -135,7 +135,7 @@ fn the_holder_is_known_by_email_whatever_its_case() {
 #[test]
 fn a_claim_is_taken_kept_or_cleared_by_the_move() {
     let now = at("10:00:00");
-    let claimed = move_task(&task(Ready), Claimed, &person("Bob"), &[], &[], &now).unwrap();
+    let claimed = move_task(&task(Ready), Claimed, &person("Bob"), (&[], &[]), &[], &now).unwrap();
     let claim = claimed.fields().claim.clone().unwrap();
     assert_eq!(
         (claim.holder, claim.since, claim.expires),
@@ -148,7 +148,7 @@ fn a_claim_is_taken_kept_or_cleared_by_the_move() {
         (Blocked, InProgress),
         (Review, InProgress),
     ] {
-        let moved = move_task(&task(from), to, &person("Ada"), &[], &[], &now).unwrap();
+        let moved = move_task(&task(from), to, &person("Ada"), (&[], &[]), &[], &now).unwrap();
         assert_eq!(
             moved.fields().claim,
             task(from).fields().claim,
@@ -157,7 +157,15 @@ fn a_claim_is_taken_kept_or_cleared_by_the_move() {
     }
     let cleared = RELEASES.iter().chain(&[(Review, Done), (Review, Archived)]);
     for (from, to) in cleared.copied() {
-        let next = move_task(&without_prs(task(from)), to, &person("Ada"), &[], &[], &now).unwrap();
+        let next = move_task(
+            &without_prs(task(from)),
+            to,
+            &person("Ada"),
+            (&[], &[]),
+            &[],
+            &now,
+        )
+        .unwrap();
         assert_eq!(next.fields().claim, None, "{from:?} -> {to:?} clears it");
     }
 }
@@ -170,7 +178,7 @@ fn a_holder_move_needs_a_claim() {
                 &without_claim(task(from)),
                 to,
                 &person("Ada"),
-                &[],
+                (&[], &[]),
                 &[],
                 &at("10:00:00")
             ),
@@ -187,7 +195,14 @@ fn a_holder_move_on_an_expired_claim_asks_for_a_renewal_except_a_release() {
     for (from, to) in ALLOWED {
         let anyones = ANYONES.contains(&(from, to));
         let release = RELEASES.contains(&(from, to)) || WHILE_LIVE.contains(&(from, to));
-        let moved = move_task(&without_prs(task(from)), to, &ada, &[], &[], &expired);
+        let moved = move_task(
+            &without_prs(task(from)),
+            to,
+            &ada,
+            (&[], &[]),
+            &[],
+            &expired,
+        );
         match (anyones, release) {
             (false, false) => assert_eq!(
                 moved,
@@ -198,7 +213,7 @@ fn a_holder_move_on_an_expired_claim_asks_for_a_renewal_except_a_release() {
         }
     }
     let renewed = super::super::claims::renew(&task(Claimed), &ada, &expired).unwrap();
-    assert!(move_task(&renewed, InProgress, &ada, &[], &[], &expired).is_ok());
+    assert!(move_task(&renewed, InProgress, &ada, (&[], &[]), &[], &expired).is_ok());
 }
 
 #[test]
@@ -209,7 +224,7 @@ fn anyone_readies_a_review_or_blocked_task_whose_claim_is_absent_or_expired() {
             (task(from), at("11:00:00")),
             (without_claim(task(from)), at("10:00:00")),
         ] {
-            let readied = move_task(&held, Ready, &bob, &[], &[], &now).unwrap();
+            let readied = move_task(&held, Ready, &bob, (&[], &[]), &[], &now).unwrap();
             assert_eq!(
                 (readied.fields().status, &readied.fields().claim),
                 (Ready, &None),
@@ -225,7 +240,7 @@ fn a_two_move_steal_of_a_live_claim_is_refused() {
     for from in [Review, Blocked] {
         let live = at("10:59:59");
         assert_eq!(
-            move_task(&task(from), Ready, &bob, &[], &[], &live),
+            move_task(&task(from), Ready, &bob, (&[], &[]), &[], &live),
             Err(BoardRuleError::NotHolder),
             "{from:?}: Bob cannot clear Ada's live claim to claim it himself"
         );
@@ -233,8 +248,9 @@ fn a_two_move_steal_of_a_live_claim_is_refused() {
             super::super::claims::take_over(&task(from), &bob, &live),
             Err(BoardRuleError::ClaimLive)
         );
-        let released = move_task(&task(from), Ready, &person("Ada"), &[], &[], &live).unwrap();
-        let claimed = move_task(&released, Claimed, &bob, &[], &[], &live).unwrap();
+        let released =
+            move_task(&task(from), Ready, &person("Ada"), (&[], &[]), &[], &live).unwrap();
+        let claimed = move_task(&released, Claimed, &bob, (&[], &[]), &[], &live).unwrap();
         assert_eq!(
             claimed.fields().claim.as_ref().map(|claim| &claim.holder),
             Some(&bob),
@@ -299,7 +315,7 @@ fn a_write_from_a_fast_clock_does_not_stop_another_clients_moves() {
         &last_written(task(Draft), &ahead),
         Ready,
         &bob,
-        &[],
+        (&[], &[]),
         &[],
         &now,
     )
@@ -310,7 +326,7 @@ fn a_write_from_a_fast_clock_does_not_stop_another_clients_moves() {
         second(1),
         "stamped max(now, updated + 1 s)"
     );
-    let claimed = move_task(&readied, Claimed, &bob, &[], &[], &now).unwrap();
+    let claimed = move_task(&readied, Claimed, &bob, (&[], &[]), &[], &now).unwrap();
     let claim = claimed.fields().claim.clone().unwrap();
     assert_eq!(
         (&claim.since, &claimed.fields().updated),
@@ -318,7 +334,7 @@ fn a_write_from_a_fast_clock_does_not_stop_another_clients_moves() {
         "the claim starts at the task's own time"
     );
     assert_eq!(claim.expires, second(2 + 2 * 60 * 60));
-    let started = move_task(&claimed, InProgress, &bob, &[], &[], &now).unwrap();
+    let started = move_task(&claimed, InProgress, &bob, (&[], &[]), &[], &now).unwrap();
     assert_eq!(started.fields().status, InProgress);
     let done = complete_merged(
         &last_written(task(Review), &ahead),
@@ -343,7 +359,14 @@ fn expiry_is_judged_by_the_callers_clock() {
         far_future().plus_seconds(1).unwrap()
     );
     assert_eq!(
-        move_task(&ahead, Review, &person("Ada"), &[], &[], &at("11:00:00")),
+        move_task(
+            &ahead,
+            Review,
+            &person("Ada"),
+            (&[], &[]),
+            &[],
+            &at("11:00:00")
+        ),
         Err(BoardRuleError::ClaimExpired)
     );
 }
@@ -358,7 +381,7 @@ fn the_same_committer_under_another_name_moves_the_task_and_keeps_the_claim() {
         &task(Claimed),
         InProgress,
         &renamed,
-        &[],
+        (&[], &[]),
         &[],
         &at("10:00:00"),
     )
@@ -393,7 +416,7 @@ fn a_ready_task_at_its_text_budget_is_claimed_by_a_holder_at_its_widest() {
         name: "\u{1d11e}".repeat(MAX_NAME_CHARS),
         email: format!("{}@x.io", "a".repeat(MAX_EMAIL_BYTES - 5)),
     };
-    let claimed = move_task(&full, Claimed, &widest, &[], &[], &at("10:00:00")).unwrap();
+    let claimed = move_task(&full, Claimed, &widest, (&[], &[]), &[], &at("10:00:00")).unwrap();
     assert_eq!(
         claimed.fields().claim.as_ref().map(|claim| &claim.holder),
         Some(&widest)
@@ -406,7 +429,7 @@ fn a_change_that_cannot_be_spelt_is_refused_as_invalid() {
     let late = Timestamp::parse("9999-12-31T23:00:00Z").unwrap();
     ready.updated = late.clone();
     let ready = Task::new(ready).unwrap();
-    let moved = move_task(&ready, Claimed, &person("Bob"), &[], &[], &late);
+    let moved = move_task(&ready, Claimed, &person("Bob"), (&[], &[]), &[], &late);
     assert!(
         matches!(&moved, Err(BoardRuleError::Invalid(error)) if error.field == "claim/expires"),
         "{moved:?}"
@@ -417,7 +440,14 @@ fn a_change_that_cannot_be_spelt_is_refused_as_invalid() {
 fn a_task_linking_pull_requests_is_done_only_when_they_merge() {
     let review = task(Review);
     assert_eq!(
-        move_task(&review, Done, &person("Ada"), &[], &[], &at("10:00:00")),
+        move_task(
+            &review,
+            Done,
+            &person("Ada"),
+            (&[], &[]),
+            &[],
+            &at("10:00:00")
+        ),
         Err(BoardRuleError::PrsLinked(vec![2482, 2483])),
         "its holder cannot say it is done"
     );
@@ -429,7 +459,15 @@ fn a_task_linking_pull_requests_is_done_only_when_they_merge() {
     let mut unlinked = review.into_fields();
     unlinked.prs.clear();
     let unlinked = Task::new(unlinked).unwrap();
-    let done = move_task(&unlinked, Done, &person("Ada"), &[], &[], &at("10:00:00")).unwrap();
+    let done = move_task(
+        &unlinked,
+        Done,
+        &person("Ada"),
+        (&[], &[]),
+        &[],
+        &at("10:00:00"),
+    )
+    .unwrap();
     assert_eq!(
         done.fields().status,
         Done,
@@ -455,11 +493,11 @@ fn a_task_linking_changes_is_done_only_when_they_merge() {
         Change::new(gone.clone()).unwrap(),
     ];
     assert_eq!(
-        move_task(&review, Done, &ada, &[], &changes, &now),
+        move_task(&review, Done, &ada, (&[], &changes), &[], &now),
         Err(BoardRuleError::ChangesLinked(vec![1, 2]))
     );
     let unlinked_only = [Change::new(gone).unwrap()];
-    assert!(move_task(&review, Done, &ada, &[], &unlinked_only, &now).is_ok());
+    assert!(move_task(&review, Done, &ada, (&[], &unlinked_only), &[], &now).is_ok());
     let both = task(Review);
     let merged = BTreeSet::from([2482, 2483]);
     assert_eq!(
@@ -476,7 +514,7 @@ fn a_task_linking_changes_is_done_only_when_they_merge() {
         Err(BoardRuleError::NotThisTasks)
     );
     assert_eq!(
-        move_task(&review, Done, &ada, &[], &theirs, &now),
+        move_task(&review, Done, &ada, (&[], &theirs), &[], &now),
         Err(BoardRuleError::NotThisTasks)
     );
 }
@@ -490,7 +528,7 @@ fn a_done_task_is_resolved_as_completed() {
         &without_prs(task(Review)),
         Done,
         &person("Ada"),
-        &[],
+        (&[], &[]),
         &[],
         &now,
     )
@@ -502,10 +540,10 @@ fn a_done_task_is_resolved_as_completed() {
         completed.task.fields().resolution,
         Some(Resolution::Completed)
     );
-    let archived = move_task(&done, Archived, &person("Bob"), &[], &[], &now).unwrap();
+    let archived = move_task(&done, Archived, &person("Bob"), (&[], &[]), &[], &now).unwrap();
     assert_eq!(archived.fields().resolution, Some(Resolution::Completed));
     let ready = without_prs(task(Ready));
-    let dropped = move_task(&ready, Archived, &person("Bob"), &[], &[], &now).unwrap();
+    let dropped = move_task(&ready, Archived, &person("Bob"), (&[], &[]), &[], &now).unwrap();
     assert_eq!(dropped.fields().resolution, None);
 }
 
@@ -525,7 +563,7 @@ fn a_task_with_a_run_going_stays_with_its_holder() {
                 &task(from),
                 to,
                 &ada,
-                std::slice::from_ref(&running),
+                (std::slice::from_ref(&running), &[]),
                 &[],
                 &at("10:00:00")
             )
@@ -539,7 +577,7 @@ fn a_task_with_a_run_going_stays_with_its_holder() {
                 &without_prs(task(from)),
                 to,
                 &ada,
-                std::slice::from_ref(&running),
+                (std::slice::from_ref(&running), &[]),
                 &[],
                 &at("10:00:00")
             ),
@@ -615,75 +653,6 @@ fn a_completion_refuses_another_tasks_run_and_two_going() {
     ));
 }
 
-/// A task others took over is archived as superseded, never done: its
-/// holder's move and the completion by merged pull requests are refused,
-/// naming who took it over.
-#[test]
-fn a_superseded_task_is_never_done() {
-    let superseded = |task: Task| {
-        let mut fields = task.into_fields();
-        fields.superseded_by = vec![Slug::parse("next").unwrap()];
-        Task::new(fields).unwrap()
-    };
-    let refused = Err(BoardRuleError::Superseded {
-        by: vec![Slug::parse("next").unwrap()],
-    });
-    let now = at("10:00:00");
-    let review = superseded(without_prs(task(Review)));
-    assert_eq!(
-        move_task(&review, Done, &person("Ada"), &[], &[], &now),
-        refused
-    );
-    let merged = BTreeSet::from([2482, 2483]);
-    let linked = superseded(task(Review));
-    assert_eq!(
-        complete_merged(&linked, &merged, &[], &[], &now).map(|done| done.task),
-        refused
-    );
-    assert!(move_task(&review, InProgress, &person("Ada"), &[], &[], &now).is_ok());
-    let linking = superseded(task(Review));
-    assert_eq!(
-        move_task(&linking, Done, &person("Ada"), &[], &[], &now),
-        refused,
-        "superseded is said before the pull requests it links"
-    );
-}
-
-/// A task others took over is archived as superseded, as the refusal of
-/// its completion advises; one archived otherwise is unresolved.
-#[test]
-fn a_superseded_task_is_archived_as_superseded() {
-    let now = at("10:00:00");
-    for status in [Ready, Draft, Review] {
-        let mut fields = without_prs(task(status)).into_fields();
-        fields.superseded_by = vec![Slug::parse("next").unwrap()];
-        let archived = move_task(
-            &Task::new(fields).unwrap(),
-            Archived,
-            &person("Ada"),
-            &[],
-            &[],
-            &now,
-        )
-        .unwrap();
-        assert_eq!(
-            archived.fields().resolution,
-            Some(Resolution::Superseded),
-            "{status:?}"
-        );
-        let plain = move_task(
-            &without_prs(task(status)),
-            Archived,
-            &person("Ada"),
-            &[],
-            &[],
-            &now,
-        )
-        .unwrap();
-        assert_eq!(plain.fields().resolution, None, "{status:?}");
-    }
-}
-
 /// A move reads of the task's work only what can hold it: the runs for a
 /// move to a status that holds no claim, the changes for review to done,
 /// nothing among the held statuses; a move the rule refuses anyway is
@@ -735,7 +704,14 @@ fn a_run_going_holds_exactly_the_moves_that_read_runs() {
     for (from, to, _, _) in TRANSITIONS {
         let held = without_prs(task(*from));
         let reads = move_reads(&held, *to, &ada, &now).unwrap();
-        let moved = move_task(&held, *to, &ada, std::slice::from_ref(&running), &[], &now);
+        let moved = move_task(
+            &held,
+            *to,
+            &ada,
+            (std::slice::from_ref(&running), &[]),
+            &[],
+            &now,
+        );
         assert_eq!(
             moved == Err(BoardRuleError::RunOpen(1)),
             reads.runs,

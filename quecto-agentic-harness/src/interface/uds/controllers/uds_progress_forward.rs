@@ -139,5 +139,4 @@ fn to_json<T: serde::Serialize>(value: T) -> serde_json::Value {
 }
 
 #[cfg(test)]
-#[path = "uds_progress_forward_tests.rs"]
 mod tests;

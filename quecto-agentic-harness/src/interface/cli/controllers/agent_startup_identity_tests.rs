@@ -9,7 +9,7 @@ fn the_startup_identity_is_ephemeral_named_or_a_fresh_chat_key() {
     use crate::domain::sessions::entities::session::USER_CHAT_PREFIX;
     let ctx = CliContext {
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
@@ -55,7 +55,7 @@ fn an_unnamed_chat_run_refuses_to_start_without_a_composed_identity_generator() 
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
@@ -80,7 +80,7 @@ fn an_agent_run_refuses_to_start_without_a_composed_provider_runtime() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
@@ -109,7 +109,7 @@ fn an_agent_run_refuses_to_start_without_composed_tool_policy_persistence() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
@@ -139,7 +139,7 @@ fn an_agent_run_refuses_to_start_without_composed_container_configs() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
@@ -169,7 +169,7 @@ fn an_agent_run_refuses_to_start_without_a_composed_admission_builder() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         fresh_session_identity: Some(crate::composition::sessions::build_fresh_session_identity),
@@ -203,14 +203,14 @@ fn an_agent_run_refuses_to_start_without_composed_automatic_turns() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: None,
+        turn_session: None,
         ..Default::default()
     };
     let mut stderr = String::new();
     assert!(composed_loop_builders(&ctx, &mut stderr).is_none());
     assert_eq!(stderr, "agent: agent-turn capability not composed\n");
     let ctx = CliContext {
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         ..Default::default()
     };
     let mut stderr = String::new();

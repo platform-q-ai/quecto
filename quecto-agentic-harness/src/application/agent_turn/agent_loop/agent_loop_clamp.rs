@@ -52,6 +52,7 @@ impl AgentLoopImpl {
         self.model_context_window = limits.context_window;
         self.model_traits.prompt_limit = limits.prompt_limit;
         self.model_traits.image_input = limits.image_input;
+        self.model_traits.price = limits.price;
         self.sync_context_limits();
     }
 
@@ -250,6 +251,8 @@ pub(super) struct ModelTraits {
     pub(super) image_input: ImageInput,
     /// Which GIFs already seen are animated, kept across model switches.
     pub(super) gif_verdicts: GifVerdicts,
+    /// The active model's catalogue price, its usage is costed at (#1855).
+    pub(super) price: Option<crate::domain::inference::value_objects::model_price::ModelPrice>,
 }
 
 /// Why the active model's window is worth a line in the log (#2405).

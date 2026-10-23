@@ -38,5 +38,4 @@ impl std::fmt::Debug for ListSessionsController {
 }
 
 #[cfg(test)]
-#[path = "sessions_controller_tests.rs"]
 mod tests;

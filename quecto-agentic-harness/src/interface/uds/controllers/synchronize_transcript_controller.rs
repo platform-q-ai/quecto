@@ -75,5 +75,4 @@ impl std::fmt::Debug for SynchronizeTranscriptController {
 }
 
 #[cfg(test)]
-#[path = "synchronize_transcript_controller_tests.rs"]
 mod tests;

@@ -287,6 +287,7 @@ async fn set_model_rederives_the_context_window_budget() {
             context_window: Some(1_000_000),
             prompt_limit: Default::default(),
             image_input: Default::default(),
+            price: None,
         },
     );
     assert_eq!(
@@ -303,6 +304,7 @@ async fn set_model_rederives_the_context_window_budget() {
             context_window: Some(32_768),
             prompt_limit: Default::default(),
             image_input: Default::default(),
+            price: None,
         },
     );
     assert_eq!(
@@ -319,6 +321,7 @@ async fn set_model_rederives_the_context_window_budget() {
             context_window: None,
             prompt_limit: Default::default(),
             image_input: Default::default(),
+            price: None,
         },
     );
     assert_eq!(

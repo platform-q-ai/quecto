@@ -71,5 +71,4 @@ fn present(outcome: &FleetTeardownOutcome) -> serde_json::Value {
 }
 
 #[cfg(test)]
-#[path = "uds_delete_all_subagents_tests.rs"]
 mod tests;

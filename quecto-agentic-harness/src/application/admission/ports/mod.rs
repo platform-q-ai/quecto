@@ -27,6 +27,9 @@ pub trait AuthorityAdmin: Send + Sync {
     fn inspect(&self, directory: &Path) -> Result<AuthorityReport, AuthorityAdminError>;
     /// Start a new accounting epoch at `directory`.
     fn reset(&self, directory: &Path) -> Result<ResetReport, AuthorityAdminError>;
+    /// Ask the authority at `directory` to stop serving, as SIGTERM would
+    /// (#2615): outstanding work stays journaled for the next start.
+    fn stop(&self, directory: &Path) -> Result<(), AuthorityAdminError>;
 }
 
 /// The systemd user unit as the manager should persist it.
@@ -67,4 +70,79 @@ pub trait AuthorityServiceManager: Send + Sync {
     fn disable_now(&self) -> Result<bool, String>;
     /// `systemctl --user restart <unit>`: pick up a rewritten unit.
     fn restart(&self) -> Result<(), String>;
+    /// `systemctl --user is-active <unit>`: whether its broker is running
+    /// (#2615); a stopped, failed or unknown unit is `Ok(false)`.
+    fn is_active(&self) -> Result<bool, String>;
+}
+
+/// What starting a broker on demand needs (#2615): the directory it must
+/// serve, the global config whose `admission` section it serves, and the
+/// base directory that config resolves against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorityLaunch {
+    pub directory: PathBuf,
+    pub config: PathBuf,
+    pub base_dir: PathBuf,
+}
+
+/// How a broker this process launched is doing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaunchState {
+    /// Still running: starting, or serving.
+    Running,
+    /// It exited Busy: another broker holds the directory's singleton lock.
+    LostRace,
+    /// It exited for any other reason, which names where to look.
+    Failed { reason: String },
+}
+
+/// Start the authority on demand (#2615, ADR-0032): probe its client
+/// socket, launch a detached broker, and pause between probes. The
+/// singleton lock settles concurrent launches; the adapter never decides
+/// whether to launch, only how.
+pub trait AuthorityLauncher: Send + Sync {
+    /// `Ok` when a broker accepts connections at `directory`'s client
+    /// socket; otherwise why not.
+    fn probe(&self, directory: &Path) -> Result<(), String>;
+    /// Launch a detached broker serving `launch`, stopping itself when idle.
+    fn launch(&self, launch: &AuthorityLaunch) -> Result<Box<dyn LaunchedAuthority>, String>;
+    /// Wait before probe `attempt` (0-based): the bounded, jittered backoff.
+    fn pause(&self, attempt: u32);
+}
+
+/// A broker this process launched.
+pub trait LaunchedAuthority: Send {
+    /// How it is doing now.
+    fn state(&mut self) -> LaunchState;
+}
+
+/// How this process joined the authority, as a restart needs it (#2615).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JoinedAuthority {
+    /// A root, registered at the broker serving this launch.
+    Root(AuthorityLaunch),
+    /// A child, bound to a capability its parent registered.
+    Child,
+}
+
+/// Why a session could not rejoin its restarted broker (#2615).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RejoinRefusal {
+    /// The broker publishes a different policy than the one this session
+    /// composed against: only a session restart adopts it.
+    PolicyChanged,
+    /// Anything else, with its reason.
+    Failed(String),
+}
+
+/// This process's own binding to the authority (#2615): how it joined, and
+/// rejoining after its broker was restarted.
+pub trait AuthoritySession: Send + Sync {
+    /// How this process joined; `None` when admission is off here.
+    fn joined(&self) -> Option<JoinedAuthority>;
+    /// Rejoin the authority through the link, as an attempt would, once
+    /// the old broker's connection has closed (bounded).
+    fn rejoin(&self) -> Result<(), RejoinRefusal>;
+    /// The link's health as `get_state` reports it (`connected`, …).
+    fn health(&self) -> String;
 }

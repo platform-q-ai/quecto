@@ -24,7 +24,7 @@ const SERVER: &str = "AuthorityServer";
 /// The server's items that start nothing: anything else named through the
 /// server outside `STARTERS` counts as a start (an allowlist, so a new start
 /// variant is caught without being listed).
-const NON_STARTING: &[&str] = &["directory", "shutdown"];
+const NON_STARTING: &[&str] = &["directory", "shutdown", "stopped"];
 
 /// The only files that may name the server at all (#2627 review): its module
 /// and re-export, composition, the broker's run path, and the tests that
@@ -418,7 +418,7 @@ fn composition_start_functions_are_test_support_only() {
                 .starts_with("start_authority")
         })
         .collect();
-    assert_eq!(starts.len(), 3, "the three start functions are declared");
+    assert_eq!(starts.len(), 4, "the four start functions are declared");
     for function in starts {
         assert!(
             super::cfg_test_gated(&function.attrs),

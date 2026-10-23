@@ -5,7 +5,7 @@ use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle;
 use crate::infrastructure::tools::agents::subagent_registry::{NotificationRx, SubagentRegistry};
-use crate::interface::cli::CliContext;
+use crate::interface::{cli::CliContext, uds::controllers::uds};
 use std::sync::Arc;
 /// Max byte length for `--socket` paths (the portable macOS/Linux limit).
 const MAX_SOCKET_PATH_BYTES: usize = 104;
@@ -308,7 +308,9 @@ pub(crate) fn cmd_agent(
             build.subagent_registry,
             build.harness_lifecycle,
             ctx.live_output,
-        ),
+        )
+        // A session's end ends the board runs its starts left open (#2655).
+        .ending_left_runs(build.board_tool.map(|board| board as _)),
     };
     let code = run_agent_session(&base_dir, sessions, agent, handles, &flags, &mut out);
     admission_startup::shutdown();
@@ -389,7 +391,7 @@ pub(crate) fn build_agent_from_config_in(
         stderr.push_str("agent: container-config handles capability not composed\n");
         return None;
     };
-    if !admission_startup::negotiate_from_flags(&config, flags, stderr) {
+    if !admission_startup::negotiate_from_flags(&config, base_dir, selection, flags, stderr) {
         return None;
     }
     let http_client = crate::interface::shared::build_http_client();
@@ -440,6 +442,7 @@ pub(crate) fn build_agent_from_config_in(
         notification_rx,
         subagent_registry,
         harness_lifecycle,
+        board_tool,
         environment_control,
         workflow_state,
         workspace,
@@ -532,6 +535,7 @@ pub(crate) fn build_agent_from_config_in(
         notification_rx,
         subagent_registry,
         harness_lifecycle,
+        board_tool,
         environment_control,
         workflow_state,
         workspace,
@@ -571,7 +575,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         return 1;
     };
 
-    let Some((sessions, automatic_turns)) = composed_loop_builders(ctx, stderr) else {
+    let Some((sessions, turn_session)) = composed_loop_builders(ctx, stderr) else {
         return 1;
     };
 
@@ -659,35 +663,33 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         return 1;
     }
     let retention = build.retention;
-    let code = crate::interface::uds::controllers::uds::run_uds_loop(
-        crate::interface::uds::controllers::uds::UdsLoopArgs {
-            agent,
-            retention: Some(retention.clone()),
-            base_dir: &base_dir,
-            workspace: &build.workspace,
-            identity: session_identity,
-            model,
-            ephemeral,
-            system_prompt,
-            socket_path,
-            socket_override: None,
-            sessions,
-            catalogue: build.catalogue,
-            ext_registry: Some(build.ext_registry),
-            lifetime,
-            notification_rx: build.notification_rx,
-            subagent_registry: build.subagent_registry,
-            harness_lifecycle: build.harness_lifecycle,
-            workflow_state: build.workflow_state,
-            workflow_config: build.workflow_config,
-            broadcast_tx,
-            parent_control,
-            teardown_graph: ctx.teardown_graph,
-            automatic_turns,
-            environment_control: build.environment_control,
-            extensions: build.extensions,
-        },
-    );
+    let code = uds::run_uds_loop(uds::UdsLoopArgs {
+        agent,
+        retention: Some(retention.clone()),
+        base_dir: &base_dir,
+        workspace: &build.workspace,
+        identity: session_identity,
+        model,
+        ephemeral,
+        system_prompt,
+        socket_path,
+        socket_override: None,
+        sessions,
+        catalogue: build.catalogue,
+        ext_registry: Some(build.ext_registry),
+        lifetime,
+        notification_rx: build.notification_rx,
+        subagent_registry: build.subagent_registry,
+        harness_lifecycle: build.harness_lifecycle,
+        workflow_state: build.workflow_state,
+        workflow_config: build.workflow_config,
+        broadcast_tx,
+        parent_control,
+        teardown_graph: ctx.teardown_graph,
+        turn_session,
+        environment_control: build.environment_control,
+        extensions: build.extensions,
+    });
     admission_startup::shutdown();
     // An ephemeral UDS server persisted spill content only for in-run recall.
     retention.recall.scrub_ephemeral(ephemeral);

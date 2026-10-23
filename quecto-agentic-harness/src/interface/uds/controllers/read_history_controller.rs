@@ -83,5 +83,4 @@ impl std::fmt::Debug for ReadHistoryController {
 }
 
 #[cfg(test)]
-#[path = "read_history_controller_tests.rs"]
 mod tests;

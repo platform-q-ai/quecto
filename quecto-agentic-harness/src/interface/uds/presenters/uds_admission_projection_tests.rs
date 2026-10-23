@@ -280,6 +280,7 @@ fn the_hook_broadcasts_one_admission_state_changed_event_per_transition() {
                 epoch: 4,
                 connected: true,
                 status: "connected",
+                restart_required: false,
             }
         })),
     );
@@ -293,6 +294,10 @@ fn the_hook_broadcasts_one_admission_state_changed_event_per_transition() {
     // The live authority view rides on the pushed event (M8).
     assert_eq!(event["admission"]["authorityStatus"], "connected");
     assert_eq!(event["admission"]["epoch"], 4);
+    assert!(
+        event["admission"].get("restartRequired").is_none(),
+        "absent unless a restart is required"
+    );
     assert!(rx.try_recv().is_err(), "exactly one event");
     // No connected client: the transition is dropped, never an error.
     drop(rx);
@@ -592,4 +597,28 @@ fn the_snapshot_and_pushed_events_follow_the_live_authority_link() {
     assert!(error.to_string().contains("admission"), "{error}");
     wait_for(&execution_state, (2, false, "unavailable"));
     wait_pushed(&mut rx, "unavailable");
+}
+
+/// #2615: a broker back with a different policy is carried as
+/// `restartRequired: true` beside `authorityStatus`, so a client can offer
+/// the session restart that adopts it.
+#[test]
+fn a_required_session_restart_rides_on_the_pushed_event() {
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
+    let hook = admission_event_hook(
+        tx.clone(),
+        Some(Arc::new(|| {
+            super::uds_admission_projection::AuthorityView {
+                directory: "/home/me/.quecto/admission".into(),
+                epoch: 4,
+                connected: false,
+                status: "unavailable",
+                restart_required: true,
+            }
+        })),
+    );
+    hook(&waiting_activity(3, 1_500));
+    let event: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+    assert_eq!(event["admission"]["authorityStatus"], "unavailable");
+    assert_eq!(event["admission"]["restartRequired"], true);
 }

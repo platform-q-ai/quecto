@@ -33,9 +33,9 @@ fn ambient_git_environment_does_not_redefine_the_requested_scope() {
     use quecto::application::sessions::ports::session_home::WorkspaceDiscovery;
     use quecto::domain::sessions::entities::session_home::WorkspaceGroup;
     use quecto::infrastructure::workspace::git_scope_discovery::GitScopeDiscovery;
-    use std::sync::{Mutex, OnceLock};
-    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _env = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+    let _env = crate::GIT_ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let repo = tempfile::tempdir().unwrap();
     assert!(
@@ -63,7 +63,7 @@ fn ambient_git_environment_does_not_redefine_the_requested_scope() {
     // The fixture helpers in this binary strip GIT_DIR/GIT_WORK_TREE from
     // their own git spawns, and the ceiling names only the plain folder,
     // which no other scenario walks through.
-    // SAFETY: ENV_LOCK serialises this process-wide mutation.
+    // SAFETY: GIT_ENV_LOCK serialises this process-wide mutation.
     unsafe {
         std::env::set_var("GIT_DIR", repo.path().join(".git"));
         std::env::set_var("GIT_WORK_TREE", repo.path());

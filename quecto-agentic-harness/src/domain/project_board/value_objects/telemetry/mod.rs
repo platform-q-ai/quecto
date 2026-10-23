@@ -36,7 +36,7 @@ use serde::Serialize;
 
 use super::code_ref::CommitId;
 use super::vocabulary::RunOutcome;
-pub use leaves::{StaticKind, TaskRef};
+pub use leaves::{BoardId, StaticKind, TaskRef};
 
 mod leaves;
 
@@ -84,7 +84,14 @@ impl OpKind {
 }
 
 kinds!(FrontEnd { Tool => "tool", Cli => "cli" });
-kinds!(Client { Agent => "agent", PocketRelay => "pocket_relay", Cli => "cli", Other => "other" });
+kinds!(
+    /// Who a call acts for: `session_end` is the harness itself, ending the
+    /// runs a session leaves open as it ends (#2655).
+    Client {
+        Agent => "agent", PocketRelay => "pocket_relay", Cli => "cli", Other => "other",
+        SessionEnd => "session_end",
+    }
+);
 kinds!(Access { Read => "read", Write => "write" });
 kinds!(
     /// How a request's field was wrong.
@@ -149,6 +156,10 @@ pub struct BoardOpRecord {
     pub front_end: FrontEnd,
     pub client: Client,
     pub access: Access,
+    /// The board the request reached, once its operations were built
+    /// (#2663).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board: Option<BoardId>,
     #[serde(flatten)]
     pub outcome: OpOutcome,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
@@ -199,11 +210,20 @@ pub struct BoardOpRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claim: Option<ClaimFacts>,
     /// The attempts a write began, and how many of them lost the race to
-    /// another writer (T4).
+    /// another writer (T4; `races_lost`, never a run's `lost`, #2663).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempts: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub lost: Option<u64>,
+    pub races_lost: Option<u64>,
+    /// How many times a write's fetches found the board's tracking ref
+    /// locked by another writer in the same clone, and fetched again
+    /// (#2654, #2663).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lock_races: Option<u64>,
+    /// Whether an `end_run` folded the swarm board its front end kept
+    /// (`kept`) or none (`none_kept`) (#2663).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub swarm_report: Option<StaticKind>,
     /// How long a write paused between its attempts, when it did (T4).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pause_ms: Option<u64>,
@@ -241,8 +261,8 @@ pub struct ListingCounts {
 
 /// A task's claim as a change found it (T4), never its holder: how long
 /// it had been held and had left, in seconds (`left_s` below zero once it
-/// lapsed; `held_s` below zero when the writer's clock reads before the
-/// claim began), and whether the writer holds it.
+/// lapsed; `held_s` never below zero, 0 when the writer's clock reads
+/// before the claim began), and whether the writer holds it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ClaimFacts {
     pub held_s: i64,
@@ -254,7 +274,7 @@ pub struct ClaimFacts {
 /// code of the refusal that failed it and, for a rule's, the rule's code;
 /// the pull requests the task links, and those not merged yet; and, for a
 /// completion run after a change, its own write's attempts, lost races
-/// and pause.
+/// (`completion_races_lost`, #2663) and pause.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CompletionFacts {
     pub completion: CompletionKind,
@@ -268,7 +288,7 @@ pub struct CompletionFacts {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completion_attempts: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub completion_lost: Option<u64>,
+    pub completion_races_lost: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completion_pause_ms: Option<u64>,
 }
@@ -322,6 +342,9 @@ impl RunOutcomeKind {
 pub struct BoardStartRecord {
     pub task: TaskRef,
     pub client: Client,
+    /// The board started on (#2663).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board: Option<BoardId>,
     #[serde(flatten)]
     pub outcome: OpOutcome,
     /// The run's number.
@@ -371,11 +394,14 @@ pub struct ClaimRenewalsRecord {
 /// A run folded back (S4): how it ended (`run_outcome`), where the plan's task items stood, the plan items the swarm
 /// never seeded (`unmatched`) and the swarm items no plan item matched
 /// (`extra`), the evidence lines kept and dropped, its cost, and its
-/// write's attempts, lost races and size.
+/// write's attempts, lost races, lock races, size and commit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FoldBackRecord {
     pub task: TaskRef,
     pub run: u64,
+    /// The board folded back onto (#2663).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board: Option<BoardId>,
     #[serde(flatten)]
     pub outcome: OpOutcome,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -395,9 +421,15 @@ pub struct FoldBackRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempts: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub lost: Option<u64>,
+    pub races_lost: Option<u64>,
+    /// As a `board_op`'s (#2663).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lock_races: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
+    /// The commit the fold-back wrote (#2663).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<CommitId>,
     pub duration_us: u64,
 }
 

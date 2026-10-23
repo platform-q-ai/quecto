@@ -24,6 +24,10 @@
 //! forgotten only after it succeeded. The claim is taken before the runtime
 //! is asked, and released untouched on a refusal. A removal whose cleanup
 //! failed stays owed: the next kill retries the removal, never the kill.
+//! A stopped environment whose container the runtime reports gone and
+//! whose state directory is gone too left nothing (#2684, the restore's
+//! own #2134 rule): its record is forgotten and the kill says so, with no
+//! board to judge and no script to run.
 //!
 //! Anything else leaves a truthful, retryable `cleanup-failed` state under
 //! the claim: an unsettled member (a termination still executing on it did
@@ -45,11 +49,12 @@ use crate::domain::environments::entities::environment_registry::{
     EnvironmentRegistry, EnvironmentTarget,
 };
 
-use super::super::dto::EnvironmentLiveness;
+use super::super::dto::{EnvironmentLiveness, StateOnDisk};
 
 use crate::application::environments::ports::{
     hosted_swarm::HostedSwarmRunObservation, process::EnvironmentMemberShutdown,
-    process::EnvironmentProcessCommands, process::MemberShutdownReport,
+    process::EnvironmentProcess, process::EnvironmentProcessCommands,
+    process::MemberShutdownReport,
 };
 use crate::domain::environments::services::environment_retention::SwarmRunObservation;
 
@@ -60,6 +65,9 @@ pub struct KillEnvironment {
     /// What a stopped environment's checkout hosts, judged before its
     /// leftovers are removed (#2206 round 4, the collector's own rule).
     hosted: Arc<dyn HostedSwarmRunObservation>,
+    /// Whether a stopped environment's state directory is still on disk
+    /// (#2684); `None`: not asked, its leftovers are judged as before.
+    disk: Option<Arc<dyn EnvironmentProcess>>,
 }
 
 impl fmt::Debug for KillEnvironment {
@@ -79,6 +87,10 @@ pub struct KilledEnvironment {
     /// A `stopped` environment's leftovers were removed and its record
     /// forgotten (#2206), rather than a live environment killed.
     pub removed_stopped: bool,
+    /// The `stopped` environment had left nothing to remove (#2684): its
+    /// container and state directory were already gone, so its record was
+    /// forgotten and nothing ran. Only with `removed_stopped`.
+    pub nothing_left: bool,
 }
 
 /// Every error names the state the registry was left in.
@@ -205,6 +217,18 @@ impl KillEnvironment {
             members,
             commands,
             hosted,
+            disk: None,
+        }
+    }
+
+    /// This use case, asking `disk` whether a stopped environment's state
+    /// directory is still there once the runtime reports its container
+    /// gone (#2684): one with neither left nothing, and is forgotten.
+    #[must_use]
+    pub fn judging_leftovers(self, disk: Arc<dyn EnvironmentProcess>) -> Self {
+        Self {
+            disk: Some(disk),
+            ..self
         }
     }
 
@@ -291,6 +315,7 @@ impl KillEnvironment {
                     record,
                     members,
                     removed_stopped: false,
+                    nothing_left: false,
                 })
             }
             Err(detail) => {
@@ -315,9 +340,7 @@ impl KillEnvironment {
         debug_assert!(record.members.is_empty(), "a stopped record has no members");
         let environment_ref = record.environment_ref.clone();
         if record.retained_cleanup_argv.is_empty() {
-            return Err(KillEnvironmentError::NothingToKill(format!(
-                "environment {environment_ref} is stopped and its script set retained no cleanup; `quecto container gc` collects what it left"
-            )));
+            return self.forget_if_nothing_left(record, condition).await;
         }
         // Claimed before the runtime is asked, so no kill or other removal
         // acts on the record between the answer and the cleanup.
@@ -343,6 +366,17 @@ impl KillEnvironment {
                 "environment {environment_ref} is stopped, but whether its container still runs could not be checked ({reason}); nothing was removed"
             )),
         };
+        // #2684: a container gone with its state directory left nothing,
+        // board included: forgotten, as the restore forgets it (#2134).
+        if refusal.is_none() && self.left_nothing(&record) {
+            self.registry.complete_removal(claim);
+            return Ok(Removal::Removed(KilledEnvironment {
+                record,
+                members: MemberShutdownReport::default(),
+                removed_stopped: true,
+                nothing_left: true,
+            }));
+        }
         // The collector's own rule (#2206 round 4): a stopped box whose
         // checkout hosts a swarm run its owner has not closed — or a board
         // that cannot be read — is the run's, not leftovers.
@@ -365,6 +399,7 @@ impl KillEnvironment {
                     record,
                     members: MemberShutdownReport::default(),
                     removed_stopped: true,
+                    nothing_left: false,
                 }))
             }
             Err(detail) => {
@@ -374,6 +409,60 @@ impl KillEnvironment {
                     detail,
                 })
             }
+        }
+    }
+
+    /// A stopped environment whose script set retained no `cleanup`: one
+    /// that left nothing (#2684 round 1: its container affirmed gone, its
+    /// state directory absent) is forgotten as nothing left, under the
+    /// removal claim; any other is the collector's, untouched. Without a
+    /// disk to ask, nothing is asked: refused as before.
+    async fn forget_if_nothing_left(
+        &self,
+        record: EnvironmentRecord,
+        condition: &ClaimCondition,
+    ) -> Result<Removal, KillEnvironmentError> {
+        let environment_ref = record.environment_ref.clone();
+        let refused = || {
+            KillEnvironmentError::NothingToKill(format!(
+                "environment {environment_ref} is stopped and its script set retained no cleanup; `quecto container gc` collects what it left"
+            ))
+        };
+        if self.disk.is_none() {
+            return Err(refused());
+        }
+        let claim = self
+            .registry
+            .begin_removal_if(&record.environment_ref, condition)
+            .map_err(claim_refused)?;
+        let gone = match self.commands.observe_liveness(&record).await {
+            EnvironmentLiveness::Gone => true,
+            EnvironmentLiveness::Running | EnvironmentLiveness::Unknown(_) => false,
+        };
+        if gone && self.left_nothing(&record) {
+            self.registry.complete_removal(claim);
+            return Ok(Removal::Removed(KilledEnvironment {
+                record,
+                members: MemberShutdownReport::default(),
+                removed_stopped: true,
+                nothing_left: true,
+            }));
+        }
+        self.registry.release_removal(claim);
+        Err(refused())
+    }
+
+    /// Whether `record`, whose container the runtime reports gone, left
+    /// nothing on disk either: its state directory is affirmed absent. A
+    /// workspace that names no state directory, or a disk that cannot be
+    /// told, is not proof (allowlist).
+    fn left_nothing(&self, record: &EnvironmentRecord) -> bool {
+        let (Some(disk), Some(dir)) = (&self.disk, record.environment_dir()) else {
+            return false;
+        };
+        match disk.state_on_disk(&dir) {
+            StateOnDisk::Absent => true,
+            StateOnDisk::Present | StateOnDisk::Unknown(_) => false,
         }
     }
 

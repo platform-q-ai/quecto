@@ -51,11 +51,10 @@ fn interface_contains_no_provider_construction_or_router_orchestration() {
                 offenders.push(format!("{name}: {symbol}"));
             }
         }
-        // Credential resolution is confined to the composition layer; the
-        // sole exception is the `auth` command surface, which manages the
-        // credential store itself (login/logout) rather than resolving
-        // credentials to build providers.
-        if name != "auth.rs" && source.contains("CredentialStore::new") {
+        // Credential resolution is confined to the composition layer: no
+        // interface module opens the credential store, the `auth` command
+        // included (its use cases reach the store through composed handles).
+        if source.contains("CredentialStore::new") {
             offenders.push(format!("{name}: CredentialStore::new"));
         }
     }

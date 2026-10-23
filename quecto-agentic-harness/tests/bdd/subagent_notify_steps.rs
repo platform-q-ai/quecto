@@ -4,7 +4,7 @@ use quecto::infrastructure::tools::agents::subagent_registry::{
     SequencedSubagentNotification, SubagentEntry, SubagentNotification, new_notification_channel,
     new_registry,
 };
-use quecto::interface::cli::uds_session::{AgentSession, NoteClass};
+use quecto::interface::cli::uds_session::NoteClass;
 use tokio::io::AsyncWriteExt;
 
 // ===========================================================================
@@ -284,7 +284,8 @@ fn next_sequence(world: &mut QuectoWorld, agent_id: &str) -> u64 {
 
 #[given("a parent session with no pending notes")]
 fn given_parent_session(world: &mut QuectoWorld) {
-    world.notify_parent_session = Some(AgentSession::new("model".to_string(), quecto::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new()));
+    world.notify_parent_session =
+        Some(quecto::composition::bootstrap::agent_turn::build_turn_session("model".to_string()));
 }
 
 #[given("the parent is busy processing a turn")]

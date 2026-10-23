@@ -28,6 +28,9 @@ pub(in crate::interface) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
         ctx.turn_control.mark_abort();
         super::uds_cancel::fire_cancel(ctx.cancel_handle);
     }
+    if intercept_admission_restart(&ctx) {
+        return true;
+    }
     if crate::interface::uds::presenters::uds_sync::intercept(
         &ctx.line,
         ctx.session,
@@ -112,11 +115,65 @@ pub(in crate::interface) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
     true
 }
 
+/// `restart_admission` (#2615) is answered here, busy or idle, on its own
+/// task and off the async runtime; the controller does the restart.
+fn intercept_admission_restart(ctx: &ReaderDispatchCtx<'_>) -> bool {
+    use crate::interface::uds::admission::restart_controller::{COMMAND, registered, respond};
+    // Most lines are prompts, some carrying images: only a line naming the
+    // command is parsed.
+    if !ctx.line.contains(COMMAND) {
+        return false;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(ctx.line.trim()) else {
+        return false;
+    };
+    match value.get("type").and_then(|kind| kind.as_str()) {
+        Some(COMMAND) => {}
+        _ => return false,
+    }
+    let id = value
+        .get("id")
+        .and_then(|id| id.as_str())
+        .map(str::to_owned);
+    let confirm = acknowledged_count(&value);
+    let (clients, client_id) = (ctx.registry.clone(), ctx.client_id);
+    tokio::spawn(async move {
+        let answered = tokio::task::spawn_blocking(move || respond(registered(), confirm)).await;
+        let id = id.as_deref();
+        let event = match answered {
+            Ok(Ok(data)) => {
+                crate::interface::uds::wire::protocol::AgentEvent::ok(id, COMMAND, Some(data))
+            }
+            Ok(Err(error)) => {
+                crate::interface::uds::wire::protocol::AgentEvent::err(id, COMMAND, error)
+            }
+            Err(error) => crate::interface::uds::wire::protocol::AgentEvent::err(
+                id,
+                COMMAND,
+                format!("admission restart task failed: {error}"),
+            ),
+        };
+        crate::interface::uds::controllers::uds_busy_subagents::write_event(
+            &clients, client_id, id, COMMAND, &event,
+        )
+        .await;
+    });
+    true
+}
+
+/// The count of other sessions and sub-agents a `restart_admission`
+/// request acknowledged (`confirm`): a non-negative integer, else none.
+fn acknowledged_count(request: &serde_json::Value) -> Option<usize> {
+    request
+        .get("confirm")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|count| usize::try_from(count).ok())
+}
+
 fn mark_steer_and_cancel(ctx: &ReaderDispatchCtx<'_>) {
     ctx.turn_control.mark_steer();
     super::uds_cancel::fire_cancel(ctx.cancel_handle);
 }
 
 #[cfg(test)]
-#[path = "uds_reader_dispatch_tests.rs"]
 mod tests;

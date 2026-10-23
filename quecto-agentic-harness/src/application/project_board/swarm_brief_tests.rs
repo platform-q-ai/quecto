@@ -88,7 +88,7 @@ fn plan_with(items: Vec<PlanItem>, team: Option<Team>, approach: &str) -> Plan {
 /// `plan`'s brief, the task started by Bob at 10:00.
 fn brief(plan: &Plan) -> Result<SwarmBrief, BriefRefusal> {
     let now = at("10:00:00");
-    let started = start(&task(), &[], Some(plan), &person("Bob"), &now).unwrap();
+    let started = start(&task(), &[], &[], Some(plan), &person("Bob"), &now).unwrap();
     brief_of(&started)
 }
 

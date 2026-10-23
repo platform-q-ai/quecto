@@ -15,6 +15,8 @@ pub(super) struct ToolRegistryBuild {
         Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     pub(super) harness_lifecycle:
         Option<crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle>,
+    /// The parent's `board` tool (#2655).
+    pub(super) board_tool: Option<Arc<crate::interface::tools::project_board::tool::BoardTool>>,
     /// The environment control slot (#2070) the loop hands its teardown.
     pub(super) environment_control:
         Option<crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot>,
@@ -196,6 +198,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         notification_rx: runtime.notification_rx,
         subagent_registry: runtime.subagent_registry,
         harness_lifecycle: runtime.harness_lifecycle,
+        board_tool: runtime.board_tool,
         environment_control: runtime.environment_control,
         workflow_state: runtime.workflow_state,
         workspace,

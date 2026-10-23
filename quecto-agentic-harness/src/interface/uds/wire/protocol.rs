@@ -18,9 +18,7 @@ pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
         .or_else(|e| protocol_search_rescue::rescued(line).ok_or(e))
         .map_err(|e| format!("parse error: {e}"))
 }
-#[path = "protocol_commands.rs"]
 mod protocol_commands;
-#[path = "protocol_search_rescue.rs"]
 mod protocol_search_rescue;
 pub use protocol_commands::{
     AgentCommand, ImagePayload, SessionListScopeCommand, StreamingBehavior,
@@ -508,8 +506,16 @@ pub struct SessionStats {
     pub tokens: TokenStats,
     #[serde(skip_serializing, default)]
     pub cost: f64,
+    /// What the session's usage cost, `null` when it billed usage none of
+    /// which was priced (#1855): unpriced is never zero. Always present.
     #[serde(default)]
-    pub cost_micro_usd: u64,
+    pub cost_micro_usd: Option<u64>,
+    /// Provider attempts that reported usage with no price to cost it at
+    /// (#1855), counted as `cost_micro_usd` is summed: every attempt that
+    /// reported usage, a cut-short attempt included, not logical requests.
+    /// Their usage counts, but their cost is unknown, never zero.
+    #[serde(default)]
+    pub unpriced_attempts: u64,
     #[serde(default)]
     pub cache_hit_ratio: Option<f64>,
     /// User-facing context occupancy: provider-reported prompt tokens when
@@ -530,26 +536,19 @@ pub struct TokenStats {
 }
 
 #[cfg(test)]
-#[path = "protocol_roster_tests.rs"]
 mod protocol_roster_tests;
 #[cfg(test)]
-#[path = "protocol_tests.rs"]
-mod tests;
+mod protocol_tests;
 #[cfg(test)]
-#[path = "protocol_1586_tests.rs"]
 mod tests_1586;
 
 #[cfg(test)]
-#[path = "protocol_event_tests.rs"]
 mod event_tests;
 
 #[cfg(test)]
-#[path = "protocol_policy_tests.rs"]
 mod policy_tests;
 #[cfg(test)]
-#[path = "protocol_shape_tests.rs"]
 mod shape_tests;
 
 #[cfg(test)]
-#[path = "protocol_1060_tests.rs"]
 mod protocol_1060_tests;

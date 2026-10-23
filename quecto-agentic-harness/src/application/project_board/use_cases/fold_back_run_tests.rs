@@ -19,6 +19,26 @@ use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutc
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 
+/// `run` of `task` ended as lost by Ada at 10:30, nothing reported.
+fn lost(
+    task: &Task,
+    run: &Run,
+) -> Result<Run, crate::domain::project_board::value_objects::rule_error::BoardRuleError> {
+    let nothing = crate::domain::project_board::services::runs::Reported {
+        items: vec![],
+        cost: None,
+        report: crate::domain::project_board::value_objects::rule_error::SwarmReport::NoneKept,
+        unpushed: 0,
+    };
+    end_lost(
+        task,
+        (run, &plan()),
+        nothing,
+        &person("Ada"),
+        &at("10:30:00"),
+    )
+}
+
 /// A board holding task `board-store`, started by Ada at 10:00 from its
 /// accepted plan: in progress, run 1 going.
 fn started() -> (MemoryBoardStore, Task, Run) {
@@ -29,6 +49,7 @@ fn started() -> (MemoryBoardStore, Task, Run) {
     let accepted = plan();
     let (task, run) = start(
         &ready,
+        &[],
         &[],
         Some(&accepted),
         &person("Ada"),
@@ -169,7 +190,7 @@ fn a_run_folds_back_once_and_a_run_ended_by_a_merge_is_done_quietly() {
 
     // Completed by a merge: the run was ended as lost with its task.
     let (store, task, run) = started();
-    let lost = end_lost(&task, &run, &person("Ada"), &at("10:30:00")).unwrap();
+    let lost = lost(&task, &run).unwrap();
     let head = store.read().unwrap().head;
     store
         .write(&head, &[BoardArtifact::Run(lost.clone())], "board: merged")
@@ -214,7 +235,7 @@ fn a_race_lost_to_another_fold_back_of_the_run_is_done_quietly() {
     let other = store.client();
     store.before_next_write(move |board| {
         let snapshot = board.read().unwrap();
-        let lost = end_lost(&task, &run, &person("Ada"), &at("10:30:00")).unwrap();
+        let lost = lost(&task, &run).unwrap();
         let written = other.write(&snapshot.head, &[BoardArtifact::Run(lost)], "board: lost");
         assert!(matches!(written, Ok(BoardWrite::Written(_))));
     });
@@ -440,7 +461,10 @@ fn a_noted_fold_back_tells_kinds_and_counts_and_an_unnoted_one_nothing() {
             cost_tokens: Some(52_000),
             attempts: Some(1),
             lost: Some(0),
+            lock_races: None,
             bytes: Some(bytes),
+            // A memory board's head is no commit id.
+            head: None,
         }
     );
     // A run already ended notes only its write's attempts.

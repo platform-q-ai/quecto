@@ -33,7 +33,7 @@ pub const CLOCK_AHEAD_SECONDS: u64 = 60;
 /// claim never spans more than that, so renewing restarts its window. An
 /// expired claim is renewed too, until someone takes it over.
 pub fn renew(task: &Task, holder: &Identity, now: &Timestamp) -> Result<Task, BoardRuleError> {
-    let claim = held_by(task, holder)?;
+    let claim = held_or_lapsed_by(task, holder, now)?;
     let at = stamp(task, now)?;
     let mut next = task.fields().clone();
     next.claim = Some(Claim {
@@ -74,6 +74,29 @@ pub(super) fn held_by<'a>(task: &'a Task, actor: &Identity) -> Result<&'a Claim,
     }
 }
 
+/// The task's claim, when `actor` holds it, live or expired, for the
+/// holder-only actions an expired claim still allows its holder (renew,
+/// release). Another's expired claim has a way on, as for every holder-only
+/// action: take the task over (#2659, #2683).
+pub(super) fn held_or_lapsed_by<'a>(
+    task: &'a Task,
+    actor: &Identity,
+    now: &Timestamp,
+) -> Result<&'a Claim, BoardRuleError> {
+    match held_by(task, actor) {
+        Err(BoardRuleError::NotHolder)
+            if task
+                .fields()
+                .claim
+                .as_ref()
+                .is_some_and(|claim| !is_live(claim, now)) =>
+        {
+            Err(BoardRuleError::NotHolderExpired)
+        }
+        held => held,
+    }
+}
+
 /// The task's claim, when `actor` holds it and it has not expired: the
 /// holder renews an expired claim before working under it again.
 pub(super) fn held_live_by<'a>(
@@ -81,12 +104,47 @@ pub(super) fn held_live_by<'a>(
     actor: &Identity,
     now: &Timestamp,
 ) -> Result<&'a Claim, BoardRuleError> {
-    let claim = held_by(task, actor)?;
+    let claim = held_or_lapsed_by(task, actor, now)?;
     if is_live(claim, now) {
         Ok(claim)
     } else {
         Err(BoardRuleError::ClaimExpired)
     }
+}
+
+/// Whether `holder`'s renewal of `task`'s claim at `now` is due (#2656):
+/// it is, unless `holder` holds the claim and `now` is before halfway
+/// through its own lease ([`renew_after`]). Anything else is the
+/// renewal's own rule to judge.
+pub fn renewal_due(task: &Task, holder: &Identity, now: &Timestamp) -> bool {
+    match &task.fields().claim {
+        Some(claim) if claim.holder.is(holder) => *now >= halfway(claim),
+        Some(_) | None => true,
+    }
+}
+
+/// When the claim `task` holds is next renewed (#2656): halfway through
+/// its own lease; `None` for a task that holds none. A task holds only a
+/// claim its board validated, whose lease is never negative.
+pub fn renew_after(task: &Task) -> Option<Timestamp> {
+    task.fields().claim.as_ref().map(halfway)
+}
+
+/// Halfway through `claim`'s lease, `since + (expires - since) / 2`,
+/// which lies between the two, so the board spells it whenever it spells
+/// the claim: for a task's validated claim only.
+fn halfway(claim: &Claim) -> Timestamp {
+    let lease = claim.expires.seconds_since(&claim.since);
+    let half = u64::try_from(lease / 2).unwrap_or(0);
+    let at = claim
+        .since
+        .plus_seconds(half)
+        .expect("halfway lies before the claim's expiry, which the board spells");
+    assert!(
+        claim.since <= at && at <= claim.expires,
+        "halfway is within the lease"
+    );
+    at
 }
 
 /// A claim is live until the moment it expires; from then on it is
@@ -98,10 +156,12 @@ pub fn is_live(claim: &Claim, now: &Timestamp) -> bool {
 /// What a change by `writer` at `now` finds of `task`'s claim (epic
 /// #2481 T4), `None` when it holds none: how long it has been held and
 /// has left, and whether the writer holds it ([`Identity::is`]); never
-/// who does.
+/// who does. A claim's `since` is a [`stamp`], which may run a second or
+/// more past the wall clock, so a `now` before it finds the claim held
+/// for no time, never less (#2662).
 pub fn claim_facts(task: &Task, writer: &Identity, now: &Timestamp) -> Option<ClaimFacts> {
     task.fields().claim.as_ref().map(|claim| ClaimFacts {
-        held_s: now.seconds_since(&claim.since),
+        held_s: now.seconds_since(&claim.since).max(0),
         left_s: claim.expires.seconds_since(now),
         holder_is_writer: claim.holder.is(writer),
     })
@@ -136,6 +196,28 @@ pub fn within_slack(updated: &Timestamp, latest: Option<&Timestamp>) -> bool {
 /// A task stamped at the last moment the board can spell.
 pub(super) fn stamp(task: &Task, now: &Timestamp) -> Result<Timestamp, BoardRuleError> {
     after_last(&task.fields().updated, now)
+}
+
+/// The time a change to another artifact of `task` (a plan, say) builds
+/// on: the caller's `now`, or, if the caller's clock reads earlier, the
+/// latest of the task's own `updated` and `stamps` (every artifact of the
+/// task of the kind changed, as the board holds them), so no artifact of
+/// one task is stamped before the task's last change or a sibling's, and
+/// stamps never run backwards on one task (#2662).
+pub(super) fn not_before<'a>(
+    task: &Task,
+    stamps: impl IntoIterator<Item = &'a Timestamp>,
+    now: &Timestamp,
+) -> Timestamp {
+    let floor = stamps
+        .into_iter()
+        .fold(&task.fields().updated, |latest, stamp| latest.max(stamp));
+    let at = now.max(floor).clone();
+    assert!(
+        at >= task.fields().updated,
+        "a task's stamps never run backwards"
+    );
+    at
 }
 
 /// When a change to an artifact last changed at `updated` happens: `now`,

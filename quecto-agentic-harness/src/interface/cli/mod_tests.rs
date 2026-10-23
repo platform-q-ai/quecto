@@ -39,7 +39,7 @@ fn test_composition() -> CliComposition {
         teardown_graph: crate::composition::subagent_teardown::build_teardown_graph,
         kill_tool: crate::composition::subagent_termination::install_termination_owners,
         sessions: crate::composition::sessions::build_session_handles,
-        automatic_turns: crate::composition::bootstrap::agent_turn::build_automatic_turns,
+        turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
         retention: crate::composition::sessions::build_retention_handles,
         fresh_session_identity: crate::composition::sessions::build_fresh_session_identity,
         configuration: crate::composition::configuration::build_configuration_handles,
@@ -413,4 +413,28 @@ fn a_linked_worktree_reports_and_applies_the_main_worktrees_overlay() {
         set.stderr
     );
     assert!(!layout.linked.join(".quecto").exists(), "nothing is copied");
+}
+
+/// #2660: `quecto help` lists every op `quecto board` takes, in its
+/// command-line spelling.
+#[test]
+fn help_lists_every_board_op_the_command_line_takes() {
+    let help = run_with_output(args("help"), &CliContext::default());
+    for op in [
+        "bootstrap",
+        "list-ready",
+        "list-takeable",
+        "update-draft",
+        "take-over",
+        "link-pr",
+        "unlink-pr",
+        "clear-set-aside",
+        "propose-plan",
+        "edit-plan",
+        "accept-plan",
+        "discard-plan",
+        "end-run",
+    ] {
+        assert!(help.stdout.contains(op), "{op} missing:\n{}", help.stdout);
+    }
 }

@@ -21,7 +21,7 @@ pub fn add_pr(
     board: Linked<'_>,
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
-    held_live_by(task, holder, now)?;
+    may_link(task, holder, now)?;
     let by_change = board
         .changes
         .iter()
@@ -44,6 +44,15 @@ pub fn add_pr(
             settle(next, &stamp(task, now)?)
         }
     }
+}
+
+/// Whether `holder` may link a pull request to `task` at `now`, judged on
+/// the task alone (#2686): only the holder of a live claim links one. What
+/// the rest of the board links is [`add_pr`]'s to judge, so a caller that
+/// must read the whole board for it asks this first, and a link the task's
+/// own rule refuses is refused as such, whatever else the board holds.
+pub fn may_link(task: &Task, holder: &Identity, now: &Timestamp) -> Result<(), BoardRuleError> {
+    held_live_by(task, holder, now).map(|_| ())
 }
 
 /// The task without pull request `pr`, unlinked deliberately by the

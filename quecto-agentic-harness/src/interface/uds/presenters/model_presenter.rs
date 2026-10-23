@@ -72,5 +72,4 @@ pub fn render_reason(reason: &UnavailableReason) -> String {
 }
 
 #[cfg(test)]
-#[path = "model_presenter_tests.rs"]
 mod tests;

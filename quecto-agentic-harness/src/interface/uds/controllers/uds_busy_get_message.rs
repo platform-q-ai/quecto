@@ -155,5 +155,4 @@ pub(super) fn parse(line: &str) -> Option<ParsedGetMessage> {
 }
 
 #[cfg(test)]
-#[path = "uds_busy_get_message_cov_tests.rs"]
 mod cov_tests;

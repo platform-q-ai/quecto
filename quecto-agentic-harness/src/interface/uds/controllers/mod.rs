@@ -1,7 +1,6 @@
 //! UDS controllers (#2369): the dispatch loop and the handlers that map one
 //! wire request to one use case.
 #[cfg(test)]
-#[path = "subagent_teardown_ack_fakes_tests.rs"]
 pub(crate) mod ack_fakes;
 pub mod export_report_controller;
 pub mod list_models_controller;

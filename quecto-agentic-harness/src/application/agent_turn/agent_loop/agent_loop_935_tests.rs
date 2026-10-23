@@ -132,6 +132,7 @@ async fn set_model_max_tokens_re_clamps_for_subsequent_turns() {
             context_window: None,
             prompt_limit: Default::default(),
             image_input: Default::default(),
+            price: None,
         },
     );
     let mut m2 = vec![Message::user("b")];

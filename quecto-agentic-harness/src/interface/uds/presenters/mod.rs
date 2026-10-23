@@ -8,7 +8,6 @@ pub mod subagent_info_list;
 pub mod subagent_teardown_presenter;
 pub(in crate::interface) mod uds_admission_projection;
 #[cfg(test)]
-#[path = "uds_admission_projection_tests.rs"]
 mod uds_admission_projection_tests;
 pub(in crate::interface) mod uds_admission_warnings;
 pub mod uds_execution_state;

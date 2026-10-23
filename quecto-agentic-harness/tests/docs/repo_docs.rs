@@ -743,3 +743,33 @@ fn agent_cmd_and_spawn_schema_guidance_stays_in_sync_for_get_messages() {
         );
     }
 }
+
+#[test]
+fn resume_controller_documentation_references_existing_source() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for document in [
+        "docs/architecture/harness-architecture-map.md",
+        "docs/sessions.md",
+    ] {
+        let text = read_repo_file(document);
+        let references: Vec<_> = text
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .filter(|path| {
+                path.starts_with("interface/") && path.ends_with("/uds_dispatch_resume.rs")
+            })
+            .collect();
+        assert_eq!(
+            references.len(),
+            1,
+            "{document}: expected one resume controller reference"
+        );
+        for reference in references {
+            assert!(
+                root.join("src").join(reference).is_file(),
+                "{document}: missing source reference {reference}"
+            );
+        }
+    }
+}

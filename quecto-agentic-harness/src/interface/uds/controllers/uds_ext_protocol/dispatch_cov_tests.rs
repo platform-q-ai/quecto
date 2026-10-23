@@ -1,0 +1,275 @@
+use super::cov_tests::{cov_agent_with_registry, tool_reg};
+use super::*;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
+use crate::interface::uds::controllers::uds::dispatch_session_roster_tests::list_handle;
+
+#[tokio::test]
+async fn dispatch_register_tools_rejects_disabled_core_shadow() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sandbox =
+        crate::infrastructure::security::sandbox::Sandbox::new(Some(tmp.path().to_path_buf()));
+    let mut registry = crate::infrastructure::extensions::native::build_official_tool_registry(
+        crate::composition::find::build_find_tool(
+            std::sync::Arc::new((tmp.path().to_path_buf()).clone()),
+            std::sync::Arc::new(sandbox.clone()),
+        ),
+        tmp.path().to_path_buf(),
+        sandbox,
+        Default::default(),
+    );
+    assert!(registry.disable_tool("bash"));
+    assert!(
+        !registry
+            .definitions()
+            .iter()
+            .any(|def| def.name.as_ref() == "bash"),
+        "disabled core tool should be hidden from model-visible definitions"
+    );
+    assert!(
+        registry
+            .descriptors()
+            .iter()
+            .any(|descriptor| descriptor.name() == "bash"),
+        "disabled core tool should remain in the descriptor catalogue"
+    );
+
+    let mut agent = cov_agent_with_registry(registry);
+    let mut messages = Vec::new();
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
+    let session_key = "cli:test".to_string();
+    let mut writer = tokio::io::sink();
+    let client_registry = new_client_tool_registry();
+    let state = session.state_snapshot("cli:test", 0, None, 0, None);
+    let initial_stats =
+        crate::interface::cli::uds_session::history_session_stats(&session_key, &messages);
+    let tools = [tool_reg("bash")];
+    let save_session =
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::save_handle_for(
+            &session_key,
+        );
+    let rewrite =
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::rewrite_handles_for(
+            &session_key,
+        );
+    let mut ctx = super::super::uds::DispatchCtx {
+        execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
+        wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
+        agent: &mut agent,
+        messages: &mut messages,
+        sessions: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
+        state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
+        session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+        tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        session: &mut session,
+        stdout: Some(&mut writer),
+        system_prompt: "",
+        cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
+            super::super::uds_cancel::CancelSlot::Idle,
+        )),
+        turn_control: std::sync::Arc::default(),
+        broadcast_tx: None,
+        _ext_registry: None,
+        client_tool_registry: client_registry.clone(),
+        current_client_id: 456,
+        subagent_registry: None,
+        notification_rx: None,
+        workflow_state: None,
+        workflow_config: None,
+        save_session,
+        rewrite,
+        switch: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::switch_handles_for(
+            &session_key,
+        ),
+        catalogue: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::catalogue_handles(
+            tmp.path(),
+        ),
+        fleet_teardown: None,
+        discovery: list_handle(tmp.path()),
+    };
+
+    dispatch_register_tools(&mut ctx, Some("shadow-disabled"), &tools).await;
+
+    assert!(ctx.agent.runtime_tool_names().is_empty());
+    assert!(
+        client_registry.lock().unwrap().get(&456).is_none(),
+        "rejected shadow must not create client tool state"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_register_tools_preflights_registry_rejection_before_client_state_mutation() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    registry.remove("blocked_ext");
+    let mut agent = cov_agent_with_registry(registry);
+    let mut messages = Vec::new();
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
+    let session_key = "cli:test".to_string();
+    let mut writer = tokio::io::sink();
+    let client_registry = new_client_tool_registry();
+    let state = session.state_snapshot("cli:test", 0, None, 0, None);
+    let initial_stats =
+        crate::interface::cli::uds_session::history_session_stats(&session_key, &messages);
+    let tools = [tool_reg("blocked_ext")];
+    let save_session =
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::save_handle_for(
+            &session_key,
+        );
+    let rewrite =
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::rewrite_handles_for(
+            &session_key,
+        );
+    let mut ctx = super::super::uds::DispatchCtx {
+        execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
+        wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
+        agent: &mut agent,
+        messages: &mut messages,
+        sessions: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
+        state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
+        session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+        tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        session: &mut session,
+        stdout: Some(&mut writer),
+        system_prompt: "",
+        cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
+            super::super::uds_cancel::CancelSlot::Idle,
+        )),
+        turn_control: std::sync::Arc::default(),
+        broadcast_tx: None,
+        _ext_registry: None,
+        client_tool_registry: client_registry.clone(),
+        current_client_id: 789,
+        subagent_registry: None,
+        notification_rx: None,
+        workflow_state: None,
+        workflow_config: None,
+        save_session,
+        rewrite,
+        switch: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::switch_handles_for(
+            &session_key,
+        ),
+        catalogue: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::catalogue_handles(
+            tmp.path(),
+        ),
+        fleet_teardown: None,
+        discovery: list_handle(tmp.path()),
+    };
+
+    dispatch_register_tools(&mut ctx, Some("deny-reg"), &tools).await;
+
+    assert!(ctx.agent.runtime_tool_names().is_empty());
+    assert!(
+        client_registry.lock().unwrap().get(&789).is_none(),
+        "staged UDS ownership must be rolled back when registry insertion rejects"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    let mut agent = cov_agent_with_registry(registry);
+    let mut messages = Vec::new();
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
+    let session_key = "cli:test".to_string();
+    let mut writer = tokio::io::sink();
+    let client_registry = new_client_tool_registry();
+    let state = session.state_snapshot("cli:test", 0, None, 0, None);
+    let initial_stats =
+        crate::interface::cli::uds_session::history_session_stats(&session_key, &messages);
+    let mut tool = tool_reg("weather");
+    tool.stable_id = Some("com.example.weather.v1".into());
+    let tools = [tool];
+    let save_session =
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::save_handle_for(
+            &session_key,
+        );
+    let rewrite =
+        crate::interface::uds::controllers::uds::dispatch_session_roster_tests::rewrite_handles_for(
+            &session_key,
+        );
+    let mut ctx = super::super::uds::DispatchCtx {
+        execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
+        wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
+        agent: &mut agent,
+        messages: &mut messages,
+        sessions: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::read_handles_for(
+            &session_key,
+            None,
+            &[],
+        ),
+        state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
+        session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
+        tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        session: &mut session,
+        stdout: Some(&mut writer),
+        system_prompt: "",
+        cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(
+            super::super::uds_cancel::CancelSlot::Idle,
+        )),
+        turn_control: std::sync::Arc::default(),
+        broadcast_tx: None,
+        _ext_registry: None,
+        client_tool_registry: client_registry,
+        current_client_id: 456,
+        subagent_registry: None,
+        notification_rx: None,
+        workflow_state: None,
+        workflow_config: None,
+        save_session,
+        rewrite,
+        switch: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::switch_handles_for(
+            &session_key,
+        ),
+        catalogue: crate::interface::uds::controllers::uds::dispatch_session_roster_tests::catalogue_handles(
+            tmp.path(),
+        ),
+        fleet_teardown: None,
+        discovery: list_handle(tmp.path()),
+    };
+
+    dispatch_register_tools(&mut ctx, Some("reg-stable"), &tools).await;
+    let entry = ctx
+        .agent
+        .tool_catalogue_entries()
+        .into_iter()
+        .find(|entry| entry.name == "weather")
+        .expect("registered UDS tool");
+    assert_eq!(entry.stable_id.as_ref(), "com.example.weather.v1");
+
+    let reconciliation = ctx
+        .agent
+        .request_tool_policy_mutation(
+            &[
+                crate::domain::tool_policy::value_objects::tool::ToolPolicyMutation::set_scope(
+                    "com.example.weather.v1",
+                    ProfileAvailabilityScope::Child,
+                    "stable id mutation",
+                ),
+            ],
+            crate::domain::tool_policy::value_objects::tool::ToolPolicyApplyMode::ImmediateIfIdle,
+        )
+        .expect("policy applies immediately while idle");
+    assert_eq!(
+        reconciliation.results[0].status,
+        crate::domain::tool_policy::value_objects::tool::ToolPolicyMutationStatus::Applied
+    );
+    let entry = ctx
+        .agent
+        .tool_catalogue_entries()
+        .into_iter()
+        .find(|entry| entry.name == "weather")
+        .expect("registered UDS tool");
+    assert_eq!(entry.profile_scope, Some(ProfileAvailabilityScope::Child));
+}

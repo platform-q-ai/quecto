@@ -8,7 +8,7 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 
 **Status vocabulary:** `Accepted` · `Proposed` (may be deferred) ·
 `Rejected — superseded by ADR-00NN`.
-**Numbering** is monotonic and may skip (0004 was never used). Next free: 0031.
+**Numbering** is monotonic and may skip (0004 was never used). Next free: 0033.
 
 | ADR | Title | Status | Decides |
 |----:|-------|--------|---------|
@@ -36,11 +36,13 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 | [0023](adr-0023-tui-is-a-multiplexer-of-replicant-agents.md) | The TUI Is a Multiplexer of Replicant Agents | ❌ Rejected → [0027](adr-0027-tui-is-a-single-connection-client.md) | Historical process-per-tab topology; superseded by the single-connection client. |
 | [0024](adr-0024-observation-tool-output-contract.md) | Observation Tools Use Projection, Delta, or Snapshot-to-File Outputs | ✅ Accepted | Observation tools default to bounded projections, use cursor deltas for polling, spill full-fidelity snapshots to files, exclude static echo data, carry freshness metadata, and degrade over-cap payloads to truncation plus file pointers. |
 | [0025](adr-0025-tui-ordinary-exit-terminates-owned-agents.md) | TUI Ordinary Exit Terminates Owned Agents After Durable Roster Capture | ❌ Rejected → [0027](adr-0027-tui-is-a-single-connection-client.md) | Historical multi-tab framing; its corrected ordinary-exit teardown semantics continue for the single owned agent. |
-| [0026](adr-0026-shared-inference-admission.md) | Single-host Shared Inference Admission | ✅ Accepted contract (partially superseded by ADR-0028) | Pure policy, private authority, per-attempt transport accounting and safety-first uncertainty; implementation pending #1679 P1–P4. |
+| [0026](adr-0026-shared-inference-admission.md) | Single-host Shared Inference Admission | ✅ Accepted contract (partially superseded by ADR-0028, ADR-0031 and ADR-0032) | Pure policy, private authority, per-attempt transport accounting and safety-first uncertainty; implementation pending #1679 P1–P4. |
 | [0028](adr-0028-advisory-unbound-admission.md) | Advisory admission bindings for usable provider slots | ✅ Accepted | Usable slots without an effective binding remain available without broker gating and produce an advisory warning. |
 | [0027](adr-0027-tui-is-a-single-connection-client.md) | The TUI Is a Single-Connection Client | ✅ Accepted | One TUI owns one connection and one agent; no tab multiplexer, tab-agent registry, workspace manifest, or request-id namespace. |
 | [0029](adr-0029-contain-tool-panics-with-unwind-and-a-fail-fast-hook.md) | Contain Tool Panics: Unwind in Release, Abort Everywhere Else | ✅ Accepted | Release builds unwind; a process hook contains panics inside a tool-execution scope and aborts on every other panic. |
 | [0030](adr-0030-swarm-board-in-rust.md) | The Swarm Board Runs in Rust, on the Same SQLite File | ✅ Accepted | The board, its policy and use cases are Rust over the unchanged schema and file; the harness calls it in-process; Python remained only for `op=run` until #2282 removed it. |
+| [0031](adr-0031-bounded-uncertain-admission-leases.md) | Uncertain admission leases clear at a bound | ✅ Accepted | An uncertain or restart-orphaned lease clears a margin after the later of its attempt deadline and the loss of its owner; waits held by one are told why; lost scopes are released. |
+| [0032](adr-0032-on-demand-admission-broker.md) | The admission broker starts on demand and stops itself when idle | ✅ Accepted | A root whose authority does not answer starts a detached broker; one started that way stops itself after an hour holding nothing; `install-service` stays always-on. |
 
 ## The ADR-0008 protocol series
 

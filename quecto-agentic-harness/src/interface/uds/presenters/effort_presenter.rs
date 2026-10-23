@@ -53,5 +53,4 @@ pub fn render_error(error: &EffortChangeError) -> String {
 }
 
 #[cfg(test)]
-#[path = "effort_presenter_tests.rs"]
 mod tests;

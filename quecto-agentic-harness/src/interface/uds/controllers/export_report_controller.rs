@@ -39,5 +39,4 @@ impl std::fmt::Debug for ExportSessionReportController {
 }
 
 #[cfg(test)]
-#[path = "export_report_controller_tests.rs"]
 mod tests;

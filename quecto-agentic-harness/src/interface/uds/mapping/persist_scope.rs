@@ -17,5 +17,4 @@ pub fn parse_persist_scope(persist: Option<&str>) -> Result<Option<DefaultScope>
 }
 
 #[cfg(test)]
-#[path = "persist_scope_tests.rs"]
 mod tests;

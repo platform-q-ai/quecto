@@ -104,5 +104,4 @@ pub(in crate::interface) fn bind_secure_socket(
 }
 
 #[cfg(test)]
-#[path = "uds_socket_tests.rs"]
-mod tests;
+mod uds_socket_tests;

@@ -35,5 +35,4 @@ impl std::fmt::Debug for SearchSessionMetadataController {
 }
 
 #[cfg(test)]
-#[path = "search_session_metadata_controller_tests.rs"]
 mod tests;

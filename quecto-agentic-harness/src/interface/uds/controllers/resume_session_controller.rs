@@ -47,5 +47,4 @@ impl From<&str> for ResumeFields {
 }
 
 #[cfg(test)]
-#[path = "resume_session_controller_tests.rs"]
 mod tests;

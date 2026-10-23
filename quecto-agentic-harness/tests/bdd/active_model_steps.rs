@@ -328,6 +328,7 @@ fn then_loop_runs_with_limits(world: &mut QuectoWorld, model: String, max: u32, 
             context_window: Some(window),
             prompt_limit: Default::default(),
             image_input: Default::default(),
+            price: None,
         }
     );
 }

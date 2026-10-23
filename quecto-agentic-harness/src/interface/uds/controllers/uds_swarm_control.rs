@@ -12,6 +12,16 @@ pub(super) const SWARM_WAKE: &str = "swarm_wake";
 /// task-item words (#2478 slice B, owner-approved 2026-10-12).
 pub(super) const RESUMED_WAKE: &str = "The swarm was resumed after a provider failure interrupted your turn. Continue your interrupted work: inspect summary using your last event_cursor, read and acknowledge relevant durable inbox messages, work only on actionable task items and yield when none remain.";
 
+/// The wake a member re-armed after a recoverable provider failure reads
+/// (#2531): it continues the work the failure interrupted.
+pub(super) const RECOVERED_WAKE: &str = "A provider failure interrupted your turn. Continue your interrupted work: inspect summary using your last event_cursor, read and acknowledge relevant durable inbox messages, work only on actionable task items and yield when none remain.";
+
+/// Why a suspended member's automatic turns came back (#1721, #2531).
+const REARMED_BY_RESUME: &str =
+    "automatic turns re-armed by a swarm resume after a provider failure";
+const REARMED_BY_WAKE: &str =
+    "automatic turns re-armed by a swarm wake after a recoverable provider failure";
+
 /// The wake a member reads when swarm work changed (#2478 slice B wording).
 pub(super) const CHANGED_WAKE: &str = "Swarm work changed. Inspect summary using your last event_cursor, then read and acknowledge relevant durable inbox messages. Work only on actionable task items; yield when none remain.";
 
@@ -132,20 +142,21 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
             }
             (Some(generation), Some(_), Err(tokio::sync::mpsc::error::TrySendError::Full(_))) => {
                 // A wake message is already pending only when the coalescing
-                // slot was occupied: then this generation rides that message.
-                // If the slot was empty nothing would drain it, so refuse.
-                if ctx.turn_control.queue_swarm_wake(generation) {
-                    ctx.turn_control.take_swarm_wake(0);
-                    crate::interface::uds::wire::protocol::AgentEvent::err(
-                        id.as_deref(),
-                        "swarm_control",
-                        "wake queue full; the durable inbox remains authoritative",
-                    )
-                } else {
+                // slot is occupied: then this generation rides that message.
+                // If the slot is empty nothing would drain it, so refuse. The
+                // join and the check are one step under the slot's lock, so
+                // a refused wake never touches a concurrent rider (#2626).
+                if ctx.turn_control.join_pending_swarm_wake(generation) {
                     crate::interface::uds::wire::protocol::AgentEvent::ok(
                         id.as_deref(),
                         "swarm_control",
                         Some(serde_json::json!({"status":"coalesced"})),
+                    )
+                } else {
+                    crate::interface::uds::wire::protocol::AgentEvent::err(
+                        id.as_deref(),
+                        "swarm_control",
+                        "wake queue full; the durable inbox remains authoritative",
                     )
                 }
             }
@@ -253,11 +264,13 @@ fn self_wake(ctx: &ReaderDispatchCtx<'_>, generation: u64) -> Option<String> {
             None
         }
         Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {
-            if ctx.turn_control.queue_swarm_wake(generation) {
-                ctx.turn_control.take_swarm_wake(0);
-                Some("self-wake queue full; suspended members re-arm on their next wake".into())
-            } else {
-                None
+            // Rides a pending wake message, or is refused without touching
+            // the slot (one step under its lock, #2626).
+            match ctx.turn_control.join_pending_swarm_wake(generation) {
+                true => None,
+                false => {
+                    Some("self-wake queue full; suspended members re-arm on their next wake".into())
+                }
             }
         }
         Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {
@@ -289,14 +302,45 @@ pub(in crate::interface) async fn handle_wake(
     };
     use crate::interface::uds::wire::protocol::AgentEvent;
 
-    let generation = ctx.turn_control.take_swarm_wake(generation);
+    let (generation, self_wake_epoch) = ctx.turn_control.take_swarm_wake_from(generation);
     let Some(control) = ctx.turn_control.swarm_control.clone() else {
         return false;
     };
+    // A self-wake for a suspension a newer one has replaced is stale: the
+    // newer one's own self-wake keeps its delay (#2626 review).
+    let current_epoch = ctx.session.automatic_turns().suspension_epoch();
+    match self_wake_epoch {
+        // A wake from outside this process, or a self-wake for this one.
+        None => {}
+        Some(epoch) if epoch == current_epoch => {}
+        // A self-wake for an older suspension, but the member takes turns
+        // again: the wake is claimed as any other (it may carry a deferred
+        // outside wake, #2626 review round 4).
+        Some(_) if ctx.session.automatic_turns_allowed() => {}
+        // Stale: it held the one self-wake slot, so the newer suspension
+        // could not schedule its own (#2626 review round 3). Keep what the
+        // wake carried (a deferred outside wake folds into it) and schedule
+        // the newer suspension's self-wake now.
+        Some(_) => {
+            ctx.turn_control.defer_swarm_wake(generation);
+            // Reported only when a newer self-wake was scheduled (a newer
+            // terminal suspension or store rejection takes none).
+            if keep_self_waking(ctx) {
+                let event = AgentEvent::ok(
+                    None,
+                    SWARM_WAKE,
+                    Some(serde_json::json!({"status": "handed_over", "generation": generation})),
+                );
+                emit_event_to_broadcast_or_writer(ctx, &event).await;
+            }
+            return false;
+        }
+    }
     // #1721: while suspended, learn the control generation without claiming
-    // wake events; a pause/resume since the provider failure re-arms us.
+    // wake events; a pause/resume since the provider failure re-arms us, and
+    // so does this wake after a recoverable failure (#2531).
     if !ctx.session.automatic_turns_allowed() {
-        use crate::application::agent_turn::use_cases::resume_after_provider_failure::SuspendedProbe;
+        use crate::domain::inference::services::turn_suspension::WakeOutcome;
         match ctx
             .session
             .automatic_turns()
@@ -304,16 +348,19 @@ pub(in crate::interface) async fn handle_wake(
             .await
         {
             Ok(probe) => {
-                let (SuspendedProbe::Rearmed { generation: seen }
-                | SuspendedProbe::StillSuspended { generation: seen }) = probe;
+                let seen = probe.generation;
                 ctx.turn_control.observe_control_generation(seen);
-                if let SuspendedProbe::Rearmed { generation: seen } = probe {
+                let reason = match probe.outcome {
+                    WakeOutcome::RearmedByResume => Some(REARMED_BY_RESUME),
+                    WakeOutcome::RearmedAfterRecoverableFailure => Some(REARMED_BY_WAKE),
+                    WakeOutcome::NotSuspended | WakeOutcome::StillSuspended => None,
+                };
+                if let Some(reason) = reason {
                     let event = AgentEvent::ok(
                         None,
                         SWARM_WAKE,
                         Some(serde_json::json!({
-                            "status": "resumed", "generation": seen,
-                            "reason": "automatic turns re-armed by a swarm resume after a provider failure"
+                            "status": "resumed", "generation": seen, "reason": reason
                         })),
                     );
                     emit_event_to_broadcast_or_writer(ctx, &event).await;
@@ -335,6 +382,11 @@ pub(in crate::interface) async fn handle_wake(
                     ),
                 );
                 emit_event_to_broadcast_or_writer(ctx, &event).await;
+                // A locked store must not strand a member no one else
+                // wakes (#2626 review): wake again after the delay.
+                if deferred {
+                    keep_self_waking(ctx);
+                }
                 return false;
             }
         }
@@ -351,22 +403,29 @@ pub(in crate::interface) async fn handle_wake(
                 .observe_control_generation(Some(receipt.generation));
             // A re-armed member owes the run a turn to continue its
             // interrupted work, whether or not this wake targets it.
+            use crate::domain::inference::services::turn_suspension::OwedTurn;
             let runnable = matches!(receipt.status, RunStatus::Setup | RunStatus::Running);
-            let resume_turn = runnable && ctx.session.automatic_turns().take_owed_turn();
-            if resume_turn {
+            let owed_turn = match runnable {
+                true => ctx.session.automatic_turns().take_owed_turn(),
+                false => None,
+            };
+            if let Some(owed_turn) = owed_turn {
                 super::uds::handle_prompt(
                     ctx,
                     super::uds::PromptCommand {
                         id: None,
                         type_name: SWARM_WAKE.into(),
-                        message: RESUMED_WAKE.into(),
+                        message: match owed_turn {
+                            OwedTurn::AfterResume => RESUMED_WAKE.into(),
+                            OwedTurn::AfterRecoverableFailure => RECOVERED_WAKE.into(),
+                        },
                         streaming_behavior: None,
                         work: crate::domain::inference::services::turn_suspension::Work::Automatic,
                     },
                 )
                 .await;
             } else if receipt.wake_allowed {
-                // The change wake is the member's turn: a turn a resume
+                // The change wake is the member's turn: a turn a re-arm
                 // owed it (a run paused again since) is done by this one.
                 ctx.session.automatic_turns().take_owed_turn();
                 super::uds::handle_prompt(
@@ -392,6 +451,9 @@ pub(in crate::interface) async fn handle_wake(
                     format!("generation {generation} deferred: {error}"),
                 );
                 emit_event_to_broadcast_or_writer(ctx, &event).await;
+                // The re-arm's owed turn waits for the next wake (#2626
+                // review): wake again after the delay.
+                keep_self_waking(ctx);
             }
             // A durable rejection stops automatic turns until a human prompt.
             StoreFailure::Durable => {
@@ -444,6 +506,28 @@ pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'
         .await;
     if let Some(generation) = dated {
         ctx.turn_control.observe_control_generation(generation);
+    }
+    // #2531: a swarm member a recoverable failure suspended wakes itself
+    // once after a delay, so the last active member (or a coordinator no
+    // member wakes) still continues; the wake re-arms it within the bound.
+    keep_self_waking(ctx);
+}
+
+/// Schedule a self-wake (#2531) while this swarm member needs one: a
+/// recoverable failure suspended it, or a re-arm owes the run a turn a
+/// locked store kept it from taking (#2626 review). Tagged with the
+/// suspension it is for, so it goes stale when a newer one begins.
+/// Returns whether one was scheduled.
+fn keep_self_waking(ctx: &mut super::uds::DispatchCtx<'_>) -> bool {
+    let turns = ctx.session.automatic_turns();
+    let needed = turns.needs_self_wake() || turns.owes_turn();
+    let epoch = turns.suspension_epoch();
+    match (needed, ctx.turn_control.swarm_control.is_some()) {
+        (true, true) => ctx.turn_control.schedule_self_wake(
+            crate::domain::inference::services::turn_suspension::RECOVERABLE_SELF_WAKE_DELAY,
+            epoch,
+        ),
+        (true, false) | (false, _) => false,
     }
 }
 
@@ -549,5 +633,4 @@ pub(super) fn store_failure(error: &crate::domain::shared::error::DomainError) -
 }
 
 #[cfg(test)]
-#[path = "uds_swarm_control_tests.rs"]
 mod tests;

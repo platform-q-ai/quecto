@@ -35,5 +35,4 @@ pub fn render(report: &CatalogueRefreshReport) -> serde_json::Value {
 }
 
 #[cfg(test)]
-#[path = "refresh_presenter_tests.rs"]
 mod tests;

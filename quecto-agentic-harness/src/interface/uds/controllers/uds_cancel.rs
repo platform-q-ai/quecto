@@ -46,7 +46,9 @@ pub type CancelHandle = std::sync::Arc<std::sync::Mutex<CancelSlot>>;
 /// - `pending_steers` counts admitted redirects: the auto-continue nudge yields
 ///   so the steered instruction is obeyed next instead of being overridden.
 pub struct TurnControl {
-    pending_swarm_wake: std::sync::Mutex<Option<u64>>,
+    /// The pending wake's generation, and the suspension epoch when only a
+    /// self-wake sent it (#2531, #2626 review).
+    pending_swarm_wake: std::sync::Mutex<Option<(u64, Option<u64>)>>,
     /// A wake the dispatch loop could not apply; folded into the next take (0 = none).
     deferred_swarm_wake: std::sync::atomic::AtomicU64,
     pub(crate) swarm_control:
@@ -73,9 +75,15 @@ pub struct TurnControl {
     /// Launched as its swarm's coordinator (#2461): only then is the board
     /// read at idle boundaries for the parent (#2467).
     pub(crate) launched_coordinator: bool,
+    /// The dispatch loop's command channel, held weakly so it never keeps
+    /// the loop alive: a recoverable failure's self-wake (#2531).
+    self_waker: std::sync::OnceLock<
+        tokio::sync::mpsc::WeakSender<crate::interface::uds::framing::uds_multi::ClientMessage>,
+    >,
+    /// A self-wake is scheduled and has not fired yet (#2531).
+    self_wake_scheduled: std::sync::atomic::AtomicBool,
 }
 
-#[path = "uds_turn_generation.rs"]
 mod turn_generation;
 
 /// Shared handle to [`TurnControl`], cloned into the reader task.
@@ -430,6 +438,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             PromptOutcome::Cancelled
         }
         Some(Ok(agent_result)) => {
+            agent_session.automatic_turns().turn_succeeded();
             agent_session.set_context_tokens(agent_result.context_tokens);
             // Tool events are forwarded in real-time via forward_progress_event
             // — emitting them again here would duplicate events with conflicting
@@ -507,7 +516,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
                 interrupted::restamp_ledger(&mut *session.write().await, messages);
             }
             // Dated by the dispatch loop once it knows the control generation.
-            agent_session.automatic_turns().suspend_after_failure();
+            agent_session.automatic_turns().suspend_after_failure(&e);
             sink.emit(&AgentEvent::err(None, "agent_error", format!("{e}")))
                 .await;
             PromptOutcome::Error
@@ -611,7 +620,6 @@ async fn run_with_token_drain(
     (result, notifications, tokens_emitted)
 }
 
-#[path = "uds_turn_progress.rs"]
 mod uds_turn_progress;
 pub(crate) use uds_turn_progress::publish_turn_progress;
 
@@ -722,20 +730,15 @@ fn update_execution(
     }
 }
 
-#[path = "uds_cancel_interrupted.rs"]
 mod interrupted;
 use interrupted::{InterruptedTurn, save_turn, settle_interrupted_turn};
 
 #[cfg(test)]
-#[path = "uds_cancel_1060_tests.rs"]
 mod issue_1060_tests;
 #[cfg(test)]
-#[path = "uds_1072_e2e_tests.rs"]
 mod issue_1072_e2e_tests;
 #[cfg(test)]
-#[path = "uds_empty_reply_2434_tests.rs"]
 mod issue_2434_tests;
 
-#[path = "uds_swarm_turn.rs"]
 mod swarm_turn;
 pub(in crate::interface) use swarm_turn::{arm_swarm_cancel, suspend_swarm_turn};

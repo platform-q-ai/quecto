@@ -227,5 +227,4 @@ impl TeardownResponse {
 }
 
 #[cfg(test)]
-#[path = "subagent_teardown_wire_tests.rs"]
 mod tests;

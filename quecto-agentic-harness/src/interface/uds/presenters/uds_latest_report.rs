@@ -79,5 +79,4 @@ pub(in crate::interface::uds) async fn intercept(
 }
 
 #[cfg(test)]
-#[path = "uds_latest_report_tests.rs"]
 mod tests;

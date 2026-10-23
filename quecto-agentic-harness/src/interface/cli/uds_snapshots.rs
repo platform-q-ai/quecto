@@ -10,7 +10,7 @@
 //! (`uds_sync`, #1973), `get_report` through the composed export controller
 //! (#1974); the rewind's ledger reset and the session switch are the
 //! transactions' own (#1975, #1976).
-use super::uds_session::{HISTORY_PAGE_SIZE, compute_session_stats_with_usage, history_page_json};
+use super::uds_session::{HISTORY_PAGE_SIZE, history_page_json, present_session_stats};
 use crate::application::sessions::dto::HistoryPage;
 use crate::domain::conversation::services::conversation_view::user_visible_messages;
 use crate::interface::uds::controllers::uds::DispatchCtx;
@@ -79,13 +79,11 @@ pub(in crate::interface) async fn refresh_state_snapshot(ctx: &DispatchCtx<'_>) 
 pub(in crate::interface) async fn refresh_session_stats_snapshot(ctx: &DispatchCtx<'_>) {
     let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
     let session_key = ctx.sessions.current_session_key().await;
-    let stats = compute_session_stats_with_usage(
+    let stats = present_session_stats(ctx.session.usage_report(
         &session_key,
         &visible_messages,
-        ctx.session.usage_snapshot(),
-        ctx.session.context_tokens(),
         ctx.agent.max_context_tokens(),
-    );
+    ));
     *ctx.session_stats_snapshot.write().await = stats;
 }
 

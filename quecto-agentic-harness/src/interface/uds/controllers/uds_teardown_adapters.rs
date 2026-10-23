@@ -299,5 +299,4 @@ impl AckWriter for ConnectionAckWriter {
 }
 
 #[cfg(test)]
-#[path = "uds_teardown_adapters_tests.rs"]
 mod tests;

@@ -104,9 +104,7 @@ struct SubagentInfoBuildEntry<'a> {
 }
 
 #[cfg(test)]
-#[path = "subagent_info_list_environment_tests.rs"]
 mod environment_tests;
 
 #[cfg(test)]
-#[path = "subagent_info_list_effective_status_tests.rs"]
 mod effective_status_tests;

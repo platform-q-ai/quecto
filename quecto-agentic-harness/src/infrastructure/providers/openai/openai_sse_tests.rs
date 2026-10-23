@@ -110,7 +110,8 @@ async fn handler_captures_usage_chunk_into_response() {
             assert_eq!(usage.completion_tokens, 56);
             assert_eq!(usage.cache_read_tokens, Some(34));
             assert_eq!(usage.context_tokens, Some(1234));
-            assert_eq!(usage.cost.expect("stream cost").total_cost_micro_usd, 1539);
+            // #1855: the provider reports usage; the turn prices it.
+            assert!(usage.cost.is_none(), "the provider prices nothing");
             assert_eq!(response.content.as_deref(), Some("hi"));
         }
         other => panic!("unexpected event: {other:?}"),

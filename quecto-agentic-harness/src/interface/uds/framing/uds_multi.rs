@@ -42,7 +42,6 @@ pub(in crate::interface) const BROADCAST_CHANNEL_CAPACITY: usize = 256;
 pub(super) static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
-#[path = "uds_multi_busy.rs"]
 mod busy;
 pub(crate) use busy::{BusyFlag, BusyGuard};
 
@@ -87,7 +86,7 @@ pub(in crate::interface) struct MultiClientArgs<'a> {
     /// Composition's teardown handles builder; without it the loop runs with
     /// no teardown edge (unit rigs only).
     pub teardown_graph: Option<cli::TeardownHandlesBuilder>,
-    pub automatic_turns: cli::AutomaticTurnsBuilder,
+    pub turn_session: cli::TurnSessionBuilder,
     /// The environment control slot (#2070): an owner exit ends retained boxes through it.
     pub environment_control: Option<EnvironmentControlSlot>,
     pub extensions: controllers::uds_extensions::Extensions, // #2446: see `clients`
@@ -174,7 +173,7 @@ pub(in crate::interface) async fn multi_client_loop(
         broadcast_tx: pre_broadcast_tx,
         parent_control,
         teardown_graph,
-        automatic_turns,
+        turn_session,
         environment_control,
         extensions,
     } = args;
@@ -193,7 +192,7 @@ pub(in crate::interface) async fn multi_client_loop(
         .await
         .publish(&messages);
 
-    let mut agent_session = cli::uds_session::AgentSession::new(model, automatic_turns());
+    let mut agent_session = turn_session(model);
     agent_session.set_admission_warnings(&admission_slots);
     agent_session.set_startup_warnings(&catalogue.startup_warnings);
     agent_session.observe_runtime(catalogue.runtime_store.clone());
@@ -209,13 +208,11 @@ pub(in crate::interface) async fn multi_client_loop(
     let execution_state: super::super::presenters::uds_execution_state::ExecutionStateHandle =
         std::sync::Arc::new(std::sync::Mutex::new(Default::default()));
     let session_stats_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
-        cli::uds_session::compute_session_stats_with_usage(
+        cli::uds_session::present_session_stats(agent_session.usage_report(
             &session_key,
             &messages,
-            agent_session.usage_snapshot(),
-            agent_session.context_tokens(),
             agent.max_context_tokens(),
-        ),
+        )),
     ));
     let tool_entries = agent.tool_catalogue_entries().into_iter();
     let tool_catalogue_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
@@ -509,9 +506,7 @@ async fn run_dispatch_loop(
     }
 }
 
-#[path = "uds_multi/clients.rs"]
 mod clients;
-#[path = "uds_multi_recv.rs"]
 mod recv;
 use recv::DispatchMsg;
 #[cfg(test)]
@@ -560,7 +555,6 @@ async fn handle_client_msg(
 
 // ─── Per-client handler ───────────────────────────────────────────────────────
 
-#[path = "uds_multi_client.rs"]
 mod client;
 pub(crate) use client::{ClientHandlerArgs, handle_client};
 
@@ -568,29 +562,20 @@ pub(crate) use client::{ClientHandlerArgs, handle_client};
 
 // Test modules for multi-client dispatch and passive-note delivery.
 #[cfg(test)]
-#[path = "uds_multi_accept_loop_tests.rs"]
 mod accept_loop_tests;
 #[cfg(test)]
-#[path = "uds_multi_cov2_tests.rs"]
 mod cov2_tests;
 #[cfg(test)]
-#[path = "uds_multi_cov_tests.rs"]
 mod cov_tests;
 #[cfg(test)]
-#[path = "uds_multi_926_wake_tests.rs"]
 mod issue_926_wake_tests;
 #[cfg(test)]
-#[path = "uds_994_tests.rs"]
 mod issue_994_tests;
 #[cfg(test)]
-#[path = "uds_multi_oversized_tests.rs"]
 mod oversized_tests;
 #[cfg(test)]
-#[path = "uds_paged_history_tests.rs"]
 mod paged_history_tests;
 #[cfg(test)]
-#[path = "uds_multi_shutdown_tests.rs"]
 mod shutdown_tests;
 #[cfg(test)]
-#[path = "uds_snapshot_tests.rs"]
 mod snapshot_tests;

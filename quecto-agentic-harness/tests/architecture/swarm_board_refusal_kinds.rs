@@ -295,12 +295,12 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "WrongState",
     ),
     (
-        "src/application/swarm/use_cases/verify_task.rs:VerifyTask::execute",
+        "src/application/swarm/use_cases/verify_task.rs:VerifyTask::verify",
         "stale claim or work not submitted",
         "StaleToken",
     ),
     (
-        "src/application/swarm/use_cases/verify_task.rs:current_revision",
+        "src/application/swarm/use_cases/verify_task.rs:stale",
         "stale evidence revision",
         "StaleRevision",
     ),

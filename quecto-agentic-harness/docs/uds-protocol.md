@@ -475,7 +475,7 @@ Switch the active UDS conversation to a persisted session. The current session i
 - Missing sessions return `success: false` with `"session not found: <name>"` (`not_found`) — known from the store's existence check **before any effect**, whatever token the request carries: no child is settled, nothing is saved and nothing is claimed for a mistyped key (the loop's own key is excepted: the departing save may be what first writes it, so it is judged under the claim). An exact miss never resolves a prefix or fuzzy neighbour
 - Ephemeral loops (`--no-session`) refuse with `"cannot resume sessions in ephemeral mode"`
 - **Typed answers (#2011, #2045):** every answer to a decoded `resume_session` carries `data.outcome` (a line that does not decode is the uncorrelated `parse_error`, which has no `data`). Restored: `success:true`, `{"outcome":"resumed","session","sessionKey","messageCount"}`. Everything else is `success:false`, `{"outcome":"refused","code":…}` with a stable `code`: `busy`, `ephemeral`, `invalid_name`, `not_found`, `stale_home_version`, `legacy_action_unsupported`, `current_scope_unavailable`, `transition_refused`, `save_failed`, `claim_refused`, `load_failed`, or one of the five folder codes below. There is no `cancelled` and no `decision` outcome any more. A client must treat only `success:true` with `outcome:"resumed"` (or, from a pre-#2011 harness, no outcome) as a restore
-- **A session that belongs elsewhere (#2009, #2011, #2045):** only a session saved in this same execution directory restores. Any other existing target is refused — when this runtime's own execution directory is discoverable; otherwise every target is refused `current_scope_unavailable` — `success:false` with `error` beginning `session resume unavailable:` and `{"outcome":"refused","code","kind","session","sessionKey","executionPath","detail","command","resume"}`. `kind` → `code`: `cross_folder` → `belongs_elsewhere`; `home_missing` → `home_missing` (moved, deleted or permission-inaccessible; `detail` carries the adapter's reason); `home_changed` → `home_changed` (the same directory is now a different workspace group); `home_unknown` → `home_unknown` (home metadata that cannot be interpreted; no `executionPath`); `legacy_unscoped` → `no_home_recorded`. **Nothing is offered**: there is no `actions` field and no follow-up request. `executionPath` and `detail` are display text (bounded; controls, Bidi_Control and invisible format characters replaced; invalid bytes spelled `\xNN`). **`command` and `resume` are sent for `belongs_elsewhere` only** — the one refusal that is fixed by opening quecto in the recorded folder; for every other code both are `null` (a changed home may be this very folder, a missing one cannot be entered, an unknown or unrecorded one names nowhere to go), while `executionPath` and `detail` still say what is wrong. `command` is a POSIX shell command built from the REAL folder — `cd '<folder>' && quecto-tui`, single-quoted so nothing in the name executes — and is **`null`** whenever it would not read the way it runs: a folder that is not valid UTF-8 or holds a control, Bidi_Control or invisible format character. `quecto-tui` takes no session flag, so the second step is its own field: `resume` is what to type once quecto is open there (`/resume <key>`; `null` for a key that would not read as typed). The refusal is decided in an effect-free pre-flight (no child settled, nothing saved, nothing claimed) and re-decided under the target's claim, which is then released (the loop's own key excepted, #1995); the active identity, history, configuration and every transcript and home file are unchanged. The same guard runs at startup: `quecto … -s <key>` from another folder exits non-zero saying why; only for a session that lives in another folder does it also name the folder, with `cd '<folder>'` and "then run the same command again" — every other refusal ends "The saved transcript was not changed."
+- **A session that belongs elsewhere (#2009, #2011, #2045):** only a session saved in this same execution directory restores. Any other existing target is refused — when this runtime's own execution directory is discoverable; otherwise every target is refused `current_scope_unavailable` — `success:false` with `error` beginning `session resume unavailable:` and `{"outcome":"refused","code","kind","session","sessionKey","executionPath","detail","command","resume"}`. `kind` → `code`: `cross_folder` → `belongs_elsewhere`; `home_missing` → `home_missing` (moved, deleted or permission-inaccessible; `detail` carries the adapter's reason); `home_changed` → `home_changed` (the same directory is now a different workspace group); `home_unknown` → `home_unknown` (home metadata that cannot be interpreted; no `executionPath`); `legacy_unscoped` → `no_home_recorded`. **Nothing is offered**: there is no `actions` field and no follow-up request. `executionPath` and `detail` are display text (bounded; controls, Bidi_Control and invisible format characters replaced; invalid bytes spelled `\xNN`). **`command` and `resume` are sent for `belongs_elsewhere` only** — the one refusal that is fixed by opening quecto in the recorded folder; for every other code both are `null` (a changed home may be this very folder, a missing one cannot be entered, an unknown or unrecorded one names nowhere to go), while `executionPath` and `detail` still say what is wrong. `command` is a POSIX shell command built from the REAL folder that opens quecto there resuming the session — `cd '<folder>' && quecto-tui --resume='<key>'`, single-quoted so nothing in the folder's name or the key executes (#2615) — and is **`null`** whenever it would not read the way it runs: a folder that is not valid UTF-8, or a folder or key holding a control, Bidi_Control or invisible format character. `resume` is the same resume typed once quecto is open there (`/resume <key>`; `null` for a key that would not read as typed). The refusal is decided in an effect-free pre-flight (no child settled, nothing saved, nothing claimed) and re-decided under the target's claim, which is then released (the loop's own key excepted, #1995); the active identity, history, configuration and every transcript and home file are unchanged. The same guard runs at startup: `quecto … -s <key>` from another folder exits non-zero saying why; only for a session that lives in another folder does it also name the folder, with `cd '<folder>'` and "then run the same command again" — every other refusal ends "The saved transcript was not changed."
 - Resuming the key the loop already stands for reloads it from disk in place: the key is unchanged (on success no departing key is released), the history and workflow run are restored from the record, and usage statistics restart; a failure on that path keeps the loop's own claim (#1995)
 - **Subagents (#1937):** the transcript, workflow run and past child messages are restored; the operational child roster is reset and **no child row is created from persisted records**. Persisted rows are history only — no socket is probed, no pid compared, no child row re-created or monitored, whatever the row's recorded liveness — because a launcher-created child cannot outlive the harness that launched it. Re-spawn the workers you need; each gets a fresh identity and launch generation
 
@@ -494,7 +494,7 @@ A session saved in another folder (the answer to `rs-2` from the wrong folder):
  "data":{"outcome":"refused","code":"belongs_elsewhere","kind":"cross_folder",
          "session":"chat-1750000000-ab","sessionKey":"chat-1750000000-ab",
          "executionPath":"/home/me/projects/other repo","detail":null,
-         "command":"cd '/home/me/projects/other repo' && quecto-tui",
+         "command":"cd '/home/me/projects/other repo' && quecto-tui --resume='chat-1750000000-ab'",
          "resume":"/resume chat-1750000000-ab"}}
 ```
 
@@ -615,6 +615,7 @@ stays in `thinking` (or whatever phase it is in) and its `progress` becomes
 | `epoch` | integer \| omitted | The authority epoch this process's *current* capability was minted in; a root re-registers into the current epoch after a broker restart or reset, so it moves |
 | `connected` | boolean \| omitted | Whether the link is open *and* holds a live capability (a revoked root reads `false` until it re-registers) |
 | `authorityStatus` | string \| omitted | `connected`; `reconnecting` (the link lost its broker or its capability and this root will re-register on its next attempt); `unavailable` (a child whose parent-minted capability is gone — its parent respawns it — or a root whose bounded reconnection was exhausted, or whose broker came back with a different policy: restart required); presentation only |
+| `restartRequired` | `true` \| omitted | `true` when this root's broker came back publishing a different policy than the one the session composed against (#2615): only a session restart adopts it; absent otherwise |
 
 `directory`, `epoch`, `connected` and `authorityStatus` describe the shared
 authority itself (#2024 S3, one host-wide broker). They are read from the live
@@ -623,7 +624,7 @@ bound to an authority, even with no live attempts, and ride on every pushed
 `admission_state_changed` of a bound process — which is also emitted, with the
 activity unchanged, whenever the link's health changes (loss, revocation,
 reconnection, exhaustion), so a client's badge is live without polling. The
-TUI footer renders `authorityStatus` as `admission ✓` / `⟳` / `✗`.
+TUI footer renders `authorityStatus` as `admission ✓ connected` / `⟳ reconnecting` / `✗ unavailable`, followed by `· N queued here` while the session has attempts waiting.
 
 The `waiting` verdict takes precedence over the tool-window verdicts
 (`advancing`, `active`, `quiet`) while any attempt is queued. A changed
@@ -984,6 +985,7 @@ Return token usage and cost statistics for the current session. `sessionKey` is 
     "total": 0
   },
   "costMicroUsd": 0,
+  "unpricedAttempts": 0,
   "cacheHitRatio": null,
   "contextTokens": 0,
   "maxContextTokens": 0
@@ -999,7 +1001,8 @@ Return token usage and cost statistics for the current session. `sessionKey` is 
 | `toolResults` | integer | Number of tool results received |
 | `totalMessages` | integer | Total messages (including system, tool) |
 | `tokens` | object | Normalized token usage breakdown (`input` full-price input, `output`, `cacheRead`, `cacheWrite`, `total` = input + output) |
-| `costMicroUsd` | integer | Estimated cumulative cost in micro-USD |
+| `costMicroUsd` | integer or null | Cumulative cost of the priced usage in micro-USD, at the active model's catalogue price (#1855); `null` when the session billed usage and none of it was priced, never `0` for unpriced usage |
+| `unpricedAttempts` | integer | Provider attempts that reported usage with no price to cost it at, counted as the cost is summed (every attempt that reported usage, a cut-short one included) |
 | `cacheHitRatio` | number or null | Shared cache-hit ratio (`cacheRead / (input + cacheRead + cacheWrite)`) or null when denominator is zero |
 | `contextTokens` | integer | Provider-reported prompt occupancy when available, else local estimate |
 | `maxContextTokens` | integer | Active model context-window limit (`0` when unknown) |
@@ -1091,7 +1094,7 @@ Like a prompt or `set_model`, `list_models` first polls for a runtime configurat
 | `type` | `"list_models"` | yes | |
 | `id` | string | no | Correlation ID |
 
-**Response data:** `{"generation", "rejected": [{"model", "reason"}], "models": [...]}`. Each model carries `provider`, `id`, `model` (`provider/id`), `name`, `api`, `auth` (`apiKey`/`oauth`), `oauthProvider`, `contextWindow`, `maxTokens`, `input`, `cost`, `reasoning`, `effortLevels`, `configured` (whether it can run now) and `unavailable`: why it cannot, empty when it can — `missing-credential`, `unsupported-transport: <transport>`, `invalid-configuration: …`, `policy-denied: …`, or `refused-for-account: <provider's reason>` for a model the provider refused for this account or auth mode while the refusal is held (#2435; such a model is listed, never switched to). When a catalogue source fails to load, the data is `{"models": [], "error": "<first failure>"}`.
+**Response data:** `{"generation", "rejected": [{"model", "reason"}], "models": [...]}`. Each model carries `provider`, `id`, `model` (`provider/id`), `name`, `api`, `auth` (`apiKey`/`oauth`), `oauthProvider`, `contextWindow`, `maxTokens`, `input`, `cost` (its `input`/`output`/`cacheRead`/`cacheWrite` rates in USD per million tokens, or `null` for a model nobody priced, #1855), `reasoning`, `effortLevels`, `configured` (whether it can run now) and `unavailable`: why it cannot, empty when it can — `missing-credential`, `unsupported-transport: <transport>`, `invalid-configuration: …`, `policy-denied: …`, or `refused-for-account: <provider's reason>` for a model the provider refused for this account or auth mode while the refusal is held (#2435; such a model is listed, never switched to). When a catalogue source fails to load, the data is `{"models": [], "error": "<first failure>"}`.
 
 ---
 
@@ -1225,6 +1228,36 @@ A harness with no sub-agent registry answers with the error `no sub-agent regist
 
 ```json
 {"type":"delete_all_subagents","id":"del-1"}
+```
+
+---
+
+### `restart_admission`
+
+Restart the shared admission broker this root session uses, then rejoin it (#2615; the TUI's `/admission restart`). It is answered while a turn is running as well as when idle. When the installed systemd unit runs the broker for this session's global config and is active and serving, the unit is restarted (`systemctl --user restart`), so it stays always-on. Otherwise whatever serves is asked to stop (outstanding work stays journaled, as on SIGTERM) and, once it is gone, the unit (when installed for this config) or a fresh on-demand broker starts, reading the current policy; a broker that was not running is simply started. Success is reported only once a new broker (another `instance`) answers. The session then rejoins through its link as an attempt would.
+
+A restart fails every live sub-agent sharing the broker (they must be respawned) and other sessions' in-flight requests once. When any scope besides this root is registered, a request whose `confirm` is missing or smaller than that count restarts nothing and answers `{"outcome": "unconfirmed", "sharedWith": <others>}`. A broker that does not answer its owner within 5 s is not taken for "none": only an active unit serving this config is restarted around it; otherwise the restart is refused, naming how to stop it. A broker that answers its status with an error is not restarted at all (`… could not report who shares it (…); nothing was restarted`).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"restart_admission"` | yes | |
+| `id` | string | no | Correlation ID |
+| `confirm` | integer | no | Confirms restarting a broker shared with up to this many other sessions or sub-agents: the `sharedWith` count the user was shown. A restart that finds more registered now is not confirmed. |
+
+**Response data:** `{"outcome": "service_restarted" | "restarted" | "started", "authorityStatus": "connected" | "reconnecting" | "unavailable", "sessionRestartRequired": true}`, or `{"outcome": "unconfirmed", "sharedWith": <count>}` when nothing was restarted for want of confirmation. `sessionRestartRequired` is present (and `true`) only when the broker came back publishing a different policy than the one this session composed against: the broker restart succeeded, and only a session restart adopts the policy.
+
+Errors (the response's `error`):
+
+- `admission is not configured for this session`
+- `a child session cannot restart the shared admission broker; its root session can`
+- `an admission restart is already in progress`
+- `admission broker restart failed: <reason>`
+- `the admission broker is back (<outcome>), but this session could not rejoin it: <reason>`
+
+**Example:**
+
+```json
+{"type":"restart_admission","id":"adm-1"}
 ```
 
 ---
