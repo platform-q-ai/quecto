@@ -1,4 +1,9 @@
-//! The schema validator is genuine test infrastructure, never a runtime dependency.
+//! Check the schema validator's direct dependency declarations and Unicode behavior.
+//! `cargo metadata --no-deps` describes declarations, not resolved package provenance:
+//! a crates.io declaration can still resolve through a local patch. Review the actual
+//! resolved package, source, and lock/archive checksums when dependencies or patches
+//! change, outside nested Cargo tests/build locks. Cargo deny and lock checks remain
+//! gates, but do not prohibit every local patch.
 use serde_json::Value;
 use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
@@ -14,7 +19,7 @@ impl Drop for ReapedChild {
     }
 }
 
-fn dependencies() -> &'static [Value] {
+fn declared_dependencies() -> &'static [Value] {
     static METADATA: OnceLock<Value> = OnceLock::new();
     let metadata = METADATA.get_or_init(|| {
         let output = tempfile::tempdir().expect("metadata output directory");
@@ -59,9 +64,9 @@ fn dependencies() -> &'static [Value] {
 }
 
 #[test]
-fn schema_validator_dependency_is_direct_nonoptional_registry_dev_dependency() {
+fn schema_validator_dependency_declares_direct_nonoptional_registry_dev_dependency() {
     assert!(
-        dependencies().iter().any(|dep| {
+        declared_dependencies().iter().any(|dep| {
             dep["name"] == "jsonschema"
                 && dep["kind"] == "dev"
                 && dep["optional"] == false
@@ -72,14 +77,14 @@ fn schema_validator_dependency_is_direct_nonoptional_registry_dev_dependency() {
                 ]
                 .contains(&dep["source"].as_str())
         }),
-        "harness must directly declare genuine registry jsonschema as a nonoptional dev dependency"
+        "harness must directly declare crates.io jsonschema as a nonoptional dev dependency with default features disabled (declaration only, not resolved provenance)"
     );
 }
 
 #[test]
-fn schema_validator_dependency_is_absent_from_runtime_dependency_kinds() {
+fn schema_validator_dependency_declarations_are_absent_from_runtime_dependency_kinds() {
     assert!(
-        dependencies()
+        declared_dependencies()
             .iter()
             .filter(|dep| dep["name"] == "jsonschema")
             .all(|dep| dep["kind"] == "dev"),
