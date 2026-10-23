@@ -385,3 +385,6 @@ mod session_rejection_cache;
 mod workspace_discovery;
 #[path = "contracts/workspace_origin.rs"]
 mod workspace_origin;
+
+#[path = "contracts/project_board_reader.rs"]
+mod project_board_reader;
