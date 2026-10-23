@@ -581,6 +581,8 @@ fn bench_feed(args: &[String]) -> Result<(), String> {
     let feed_endpoint =
         Endpoint::parse(endpoint.split(',').next().unwrap_or("")).ok_or("an endpoint")?;
     let n = number(args, "--n", 100);
+    // `--break-ms 0`: no break, only the steady delay is measured.
+    let break_ms = number(args, "--break-ms", 300);
     let store = ServiceBoardStore::new(&endpoint, identity("bench"))?;
     let start = store.read().map_err(|error| format!("{error:?}"))?;
     let from: u64 = start
@@ -619,7 +621,8 @@ fn bench_feed(args: &[String]) -> Result<(), String> {
                         last = event.revision;
                         seen_here += 1;
                         // Break the connection once, half way, to resume.
-                        let first_break = *breaks.lock().unwrap_or_else(|e| e.into_inner()) == 0;
+                        let first_break =
+                        break_ms > 0 && *breaks.lock().unwrap_or_else(|e| e.into_inner()) == 0;
                         !(first_break && last >= from + n / 2 && seen_here > 0) && last < target
                     },
                 );
@@ -628,7 +631,7 @@ fn bench_feed(args: &[String]) -> Result<(), String> {
                     *broke = 1;
                     drop(broke);
                     // Writes go on while the subscriber is away.
-                    std::thread::sleep(Duration::from_millis(300));
+                    std::thread::sleep(Duration::from_millis(break_ms));
                 }
             }
         })
