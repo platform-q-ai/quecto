@@ -179,6 +179,7 @@ const USE_CASES: &[&str] = &[
     "TerminateAllDelegatedAgentsPorts",
     "TerminateDelegatedAgent",
     "TrustConfigOverlay",
+    "TurnDeclarationService",
     "UnblockTask",
     "UninstallAuthorityService",
     "UpdateDraftTask",

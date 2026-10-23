@@ -79,28 +79,26 @@ fn latest_valid_waiting_then_done_wins() {
     assert_eq!(service.snapshot().unwrap(), Some(done));
 }
 
-macro_rules! invalid_reason {
-    ($name:ident, $reason:expr) => {
-        #[test]
-        fn $name() {
-            let id = identity();
-            let service = TurnDeclarationService::new(id.clone());
-            let error = service.declare(LaunchAuthority::TopLevelParent, &id, TurnIntent::Done, $reason).unwrap_err();
-            assert_eq!(error.to_string(), "tool error: Choose waiting, blocked, asking, or done and provide a nonempty one-line reason of at most 512 characters.", "missing reason validation");
-            assert_eq!(service.snapshot().unwrap(), None);
-            let prior = accept(&service, &id, TurnIntent::Waiting, "running");
-            assert!(service.declare(LaunchAuthority::TopLevelParent, &id, TurnIntent::Done, $reason).is_err());
-            assert_eq!(service.snapshot().unwrap(), Some(prior), "invalid reason must preserve valid declaration");
-        }
-    };
+// Shared red assertion sequence: reject empty state, accept waiting, reject again,
+// and prove that the complete prior receipt survives each rejected mutation.
+fn preserves_on_rejection(
+    role: LaunchAuthority,
+    id: TurnIdentity,
+    reason: &str,
+    later: &str,
+    wording: &str,
+) {
+    let active = identity();
+    let service = TurnDeclarationService::new(active.clone());
+    let error = service
+        .declare(role, &id, TurnIntent::Done, reason)
+        .unwrap_err();
+    assert_eq!(error.to_string(), format!("tool error: {wording}"));
+    assert_eq!(service.snapshot().unwrap(), None);
+    let prior = accept(&service, &active, TurnIntent::Waiting, "running");
+    assert!(service.declare(role, &id, TurnIntent::Done, later).is_err());
+    assert_eq!(service.snapshot().unwrap(), Some(prior));
 }
-invalid_reason!(empty_reason_rejected, "");
-invalid_reason!(whitespace_reason_rejected, " \t\u{2003} ");
-invalid_reason!(embedded_cr_rejected, "one\rtwo");
-invalid_reason!(embedded_lf_rejected, "one\ntwo");
-invalid_reason!(crlf_rejected, "one\r\ntwo");
-invalid_reason!(ascii_513_rejected, &"x".repeat(513));
-invalid_reason!(multibyte_513_rejected, &"界".repeat(513));
 
 macro_rules! boundary_reason {
     ($name:ident, $reason:expr) => {
@@ -121,67 +119,42 @@ boundary_reason!(
     "\u{2003}ready\t ".to_string()
 );
 
-macro_rules! unauthorized {
-    ($name:ident, $role:ident) => {
-        #[test]
-        fn $name() {
-            let id = identity();
-            let service = TurnDeclarationService::new(id.clone());
-            let error = service.declare(LaunchAuthority::$role, &id, TurnIntent::Done, "complete").unwrap_err();
-            assert_eq!(error.to_string(), "tool error: Turn outcomes may be declared only by the active top-level parent turn.", "missing trusted role enforcement");
-            assert_eq!(service.snapshot().unwrap(), None);
-            let prior = accept(&service, &id, TurnIntent::Waiting, "running");
-            assert!(service.declare(LaunchAuthority::$role, &id, TurnIntent::Done, "complete").is_err());
-            assert_eq!(service.snapshot().unwrap(), Some(prior));
-        }
-    };
-}
-unauthorized!(child_rejected_without_mutation, Child);
-unauthorized!(
-    child_coordinator_rejected_without_mutation,
-    ChildCoordinator
-);
+const VALIDATION: &str = "Choose waiting, blocked, asking, or done and provide a nonempty one-line reason of at most 512 characters.";
+const AUTHORITY: &str = "Turn outcomes may be declared only by the active top-level parent turn.";
+const STALE: &str = "This declaration does not belong to the active turn.";
 
-macro_rules! stale {
-    ($name:ident, $field:ident) => {
+macro_rules! rejections {
+    ($($name:ident, $role:ident, $id:expr, $reason:expr, $later:expr, $wording:ident;)*) => {$(
         #[test]
         fn $name() {
-            let id = identity();
-            let service = TurnDeclarationService::new(id.clone());
-            let mut old = id.clone();
-            old.$field = "stale".into();
-            let error = service
-                .declare(
-                    LaunchAuthority::TopLevelParent,
-                    &old,
-                    TurnIntent::Done,
-                    "complete",
-                )
-                .unwrap_err();
-            assert_eq!(
-                error.to_string(),
-                "tool error: This declaration does not belong to the active turn.",
-                "missing identity rejection"
-            );
-            assert_eq!(service.snapshot().unwrap(), None);
-            let prior = accept(&service, &id, TurnIntent::Waiting, "running");
-            assert!(
-                service
-                    .declare(
-                        LaunchAuthority::TopLevelParent,
-                        &old,
-                        TurnIntent::Done,
-                        "late"
-                    )
-                    .is_err()
-            );
-            assert_eq!(service.snapshot().unwrap(), Some(prior));
+            preserves_on_rejection(LaunchAuthority::$role, $id, $reason, $later, $wording);
         }
-    };
+    )*};
 }
-stale!(stale_session_preserves_state, session_key);
-stale!(stale_epoch_preserves_state, outcome_epoch);
-stale!(stale_turn_preserves_state, turn_id);
+fn stale_identity(field: &str) -> TurnIdentity {
+    let mut id = identity();
+    match field {
+        "session" => id.session_key = "stale".into(),
+        "epoch" => id.outcome_epoch = "stale".into(),
+        "turn" => id.turn_id = "stale".into(),
+        _ => unreachable!("test identity field allowlist"),
+    }
+    id
+}
+rejections! {
+    empty_reason_rejected, TopLevelParent, identity(), "", "", VALIDATION;
+    whitespace_reason_rejected, TopLevelParent, identity(), " \t\u{2003} ", " \t\u{2003} ", VALIDATION;
+    embedded_cr_rejected, TopLevelParent, identity(), "one\rtwo", "one\rtwo", VALIDATION;
+    embedded_lf_rejected, TopLevelParent, identity(), "one\ntwo", "one\ntwo", VALIDATION;
+    crlf_rejected, TopLevelParent, identity(), "one\r\ntwo", "one\r\ntwo", VALIDATION;
+    ascii_513_rejected, TopLevelParent, identity(), &"x".repeat(513), &"x".repeat(513), VALIDATION;
+    multibyte_513_rejected, TopLevelParent, identity(), &"界".repeat(513), &"界".repeat(513), VALIDATION;
+    child_rejected_without_mutation, Child, identity(), "complete", "complete", AUTHORITY;
+    child_coordinator_rejected_without_mutation, ChildCoordinator, identity(), "complete", "complete", AUTHORITY;
+    stale_session_preserves_state, TopLevelParent, stale_identity("session"), "complete", "late", STALE;
+    stale_epoch_preserves_state, TopLevelParent, stale_identity("epoch"), "complete", "late", STALE;
+    stale_turn_preserves_state, TopLevelParent, stale_identity("turn"), "complete", "late", STALE;
+}
 
 #[test]
 fn outer_run_resets_but_retry_and_tool_iteration_retain() {
@@ -261,7 +234,10 @@ fn concurrent_current_and_stale_writes_preserve_current_receipt() {
         .into_iter()
         .map(|handle| handle.join().unwrap())
         .collect();
-    let valid = results.iter().find(|(stale, _)| *stale == false).unwrap();
+    let valid = results
+        .iter()
+        .find(|(stale, _)| [false].contains(stale))
+        .unwrap();
     assert!(
         valid.1.is_ok(),
         "missing acceptance: concurrent current write must succeed: {:?}",

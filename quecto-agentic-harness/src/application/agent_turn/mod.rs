@@ -4,4 +4,4 @@ pub mod dto;
 pub mod ports;
 pub mod use_cases;
 
-pub mod declaration;
+pub use use_cases::declaration;

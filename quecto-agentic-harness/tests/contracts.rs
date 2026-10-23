@@ -365,6 +365,8 @@ mod uds_direct_child_routing;
 #[path = "contracts/workflow_run_source.rs"]
 mod workflow_run_source;
 
+#[path = "contracts/declare_turn_outcome.rs"]
+mod declare_turn_outcome;
 #[path = "contracts/relevance_judge.rs"]
 mod relevance_judge;
 #[path = "contracts/resume_decision_listing.rs"]

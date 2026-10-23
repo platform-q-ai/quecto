@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::agent_turn::declaration::TurnDeclarationService;
 use crate::domain::turn_declaration::{TurnDeclaration, TurnIntent};
 use serde_json::{Value, json};
 
@@ -84,7 +85,7 @@ valid!(asking_receipt, "asking", Asking);
 valid!(done_receipt, "done", Done);
 
 macro_rules! invalid {
-    ($name:ident, $input:expr) => {
+    ($($name:ident, $input:expr;)*) => {$(
         #[tokio::test]
         async fn $name() {
             let (service, tool) = adapter(LaunchAuthority::TopLevelParent);
@@ -100,73 +101,30 @@ macro_rules! invalid {
                 "invalid native call must preserve accepted declaration"
             );
         }
-    };
+    )*};
 }
-invalid!(malformed_json, "{".to_string());
-invalid!(
-    trailing_json,
-    r#"{"outcome":"done","reason":"ready"}{}"#.to_string()
-);
-invalid!(null_document, "null".to_string());
-invalid!(array_document, "[]".to_string());
-invalid!(missing_outcome, r#"{"reason":"ready"}"#.to_string());
-invalid!(missing_reason, r#"{"outcome":"done"}"#.to_string());
-invalid!(
-    null_outcome,
-    r#"{"outcome":null,"reason":"ready"}"#.to_string()
-);
-invalid!(
-    null_reason,
-    r#"{"outcome":"done","reason":null}"#.to_string()
-);
-invalid!(
-    unknown_enum,
-    r#"{"outcome":"finished","reason":"ready"}"#.to_string()
-);
-invalid!(
-    case_sensitive_enum,
-    r#"{"outcome":"Done","reason":"ready"}"#.to_string()
-);
-invalid!(
-    extra_field,
-    r#"{"outcome":"done","reason":"ready","extra":true}"#.to_string()
-);
-invalid!(
-    numeric_outcome,
-    r#"{"outcome":1,"reason":"ready"}"#.to_string()
-);
-invalid!(
-    numeric_reason,
-    r#"{"outcome":"done","reason":1}"#.to_string()
-);
-invalid!(
-    empty_reason,
-    json!({"outcome":"done","reason":""}).to_string()
-);
-invalid!(
-    whitespace_reason,
-    json!({"outcome":"done","reason":" \t\u{2003} "}).to_string()
-);
-invalid!(
-    cr_reason,
-    json!({"outcome":"done","reason":"one\rtwo"}).to_string()
-);
-invalid!(
-    lf_reason,
-    json!({"outcome":"done","reason":"one\ntwo"}).to_string()
-);
-invalid!(
-    crlf_reason,
-    json!({"outcome":"done","reason":"one\r\ntwo"}).to_string()
-);
-invalid!(
-    ascii_513,
-    json!({"outcome":"done","reason":"a".repeat(513)}).to_string()
-);
-invalid!(
-    multibyte_513,
-    json!({"outcome":"done","reason":"界".repeat(513)}).to_string()
-);
+invalid! {
+    malformed_json, "{".to_string();
+    trailing_json, r#"{"outcome":"done","reason":"ready"}{}"#.to_string();
+    null_document, "null".to_string();
+    array_document, "[]".to_string();
+    missing_outcome, r#"{"reason":"ready"}"#.to_string();
+    missing_reason, r#"{"outcome":"done"}"#.to_string();
+    null_outcome, r#"{"outcome":null,"reason":"ready"}"#.to_string();
+    null_reason, r#"{"outcome":"done","reason":null}"#.to_string();
+    unknown_enum, r#"{"outcome":"finished","reason":"ready"}"#.to_string();
+    case_sensitive_enum, r#"{"outcome":"Done","reason":"ready"}"#.to_string();
+    extra_field, r#"{"outcome":"done","reason":"ready","extra":true}"#.to_string();
+    numeric_outcome, r#"{"outcome":1,"reason":"ready"}"#.to_string();
+    numeric_reason, r#"{"outcome":"done","reason":1}"#.to_string();
+    empty_reason, json!({"outcome":"done","reason":""}).to_string();
+    whitespace_reason, json!({"outcome":"done","reason":" \t\u{2003} "}).to_string();
+    cr_reason, json!({"outcome":"done","reason":"one\rtwo"}).to_string();
+    lf_reason, json!({"outcome":"done","reason":"one\ntwo"}).to_string();
+    crlf_reason, json!({"outcome":"done","reason":"one\r\ntwo"}).to_string();
+    ascii_513, json!({"outcome":"done","reason":"a".repeat(513)}).to_string();
+    multibyte_513, json!({"outcome":"done","reason":"界".repeat(513)}).to_string();
+}
 
 macro_rules! bounded {
     ($name:ident, $scalar:literal) => {
