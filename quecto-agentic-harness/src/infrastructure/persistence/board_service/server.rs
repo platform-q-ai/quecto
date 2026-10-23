@@ -470,10 +470,7 @@ pub fn follow(server: Arc<Server>, primary: Endpoint) {
 /// `bench-*` (see `tools`).
 pub fn run(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
-        Some(
-            "import" | "export" | "verify-export" | "bench-feed" | "bench-latency" | "kill-test"
-            | "backup",
-        ) => super::tools::run(args),
+        Some(tool) if !tool.starts_with("--") => super::tools::run(args),
         _ => serve(args),
     }
 }
