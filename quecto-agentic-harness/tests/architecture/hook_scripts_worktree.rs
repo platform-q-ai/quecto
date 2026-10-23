@@ -330,3 +330,163 @@ fn genuinely_new_file_size_boundary_is_preserved_by_actual_pre_commit() {
     assert_ok("genuinely new 750-line file must pass", &boundary);
     assert!(String::from_utf8_lossy(&boundary.stdout).contains("Pre-commit passed."));
 }
+
+/// Each case uses actual objects and the actual hook (including real rustfmt).
+/// TempDir also removes fixtures on assertion unwinding; bash kills descendants
+/// before returning on timeout. BDD paths are not staged: production BDD is intact.
+#[test]
+fn merge_cap_policy_and_unrelated_guards_use_actual_hook() {
+    let cases = [
+        ("no-head", false, "exceeds 750 lines"),
+        ("empty", false, "exceeds 750 lines"),
+        ("blank", false, "exceeds 750 lines"),
+        ("nul", false, "exceeds 750 lines"),
+        ("invalid", false, "exceeds 750 lines"),
+        ("abbreviated", false, "exceeds 750 lines"),
+        ("ref-name", false, "exceeds 750 lines"),
+        ("blob", false, "exceeds 750 lines"),
+        ("tag", false, "exceeds 750 lines"),
+        ("unavailable", false, "exceeds 750 lines"),
+        ("absent", false, "exceeds 750 lines"),
+        ("modified", false, "exceeds 750 lines"),
+        ("new-750", true, "Pre-commit passed."),
+        ("staged-short", false, "exceeds 750 lines"),
+        ("worktree-short", true, "Pre-commit passed."),
+        ("worktree-different", true, "Pre-commit passed."),
+        ("mode", true, "Pre-commit passed."),
+        ("index-executable", true, "Pre-commit passed."),
+        ("symlink-parent", false, "exceeds 750 lines"),
+        ("symlink-index", false, "exceeds 750 lines"),
+        ("gitlink-parent", false, "exceeds 750 lines"),
+        // U paths are outside the existing ACMR loop, not size-exempt.
+        ("unmerged", true, "Pre-commit passed (nothing staged)."),
+        ("multi-match", true, "Pre-commit passed."),
+        ("multi-miss", false, "exceeds 750 lines"),
+        ("match-invalid", false, "exceeds 750 lines"),
+        ("invalid-match", false, "exceeds 750 lines"),
+        ("duplicate", true, "Pre-commit passed."),
+        ("unterminated", true, "Pre-commit passed."),
+        ("literal", true, "Pre-commit passed."),
+        ("existing-M", true, "Pre-commit passed."),
+        ("linked", true, "Pre-commit passed."),
+        ("branch", false, "Direct commits to main"),
+        ("marker", false, "forbidden work marker"),
+        ("unsafe", false, "unsafe block without adjacent SAFETY"),
+        ("fmt", false, "Diff in"),
+    ];
+    let hook = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../scripts/pre-commit.sh")
+        .canonicalize()
+        .expect("actual hook");
+    let quoted_hook = hook.to_str().expect("UTF-8 hook").replace('\'', "'\\''");
+    for (case, success, diagnostic) in cases {
+        let tmp = tempfile::tempdir().expect("policy fixture");
+        let setup = bash(
+            tmp.path(),
+            tmp.path(),
+            &format!(
+                r#"set -euo pipefail
+case='{case}'
+mkdir repo
+cd repo
+git init -q -b fixture .
+empty=$(git mktree </dev/null)
+base=$(printf 'base\n' | git commit-tree "$empty")
+git update-ref refs/heads/fixture "$base"
+if [ "$case" = linked ]; then
+    git worktree add -q ../linked -b linked
+    cd ../linked
+fi
+file='imported file.rs'
+if [ "$case" = literal ]; then file='imported [x]* file.rs'; fi
+printf '[package]\nname="policy-fixture"\nversion="0.1.0"\nedition="2021"\n[lib]\npath="%s"\n' "$file" > Cargo.toml
+for ((i=0;i<751;i++)); do printf '// fixture\n'; done > "$file"
+case "$case" in
+    new-750) head -n 750 "$file" > short; mv short "$file" ;;
+    marker) printf '// FIX%s\n' 'ME' >> "$file" ;;
+    unsafe) printf 'pub fn check() {{\n    unsafe {{}}\n}}\n' >> "$file" ;; # SAFETY: writes adversarial fixture text only; no unsafe code executes.
+    fmt) printf 'pub fn badly_formatted( ){{}}\n' >> "$file" ;;
+esac
+blob=$(git hash-object -w -- "$file")
+other=$(printf '// other\n' | git hash-object -w --stdin)
+mode=100644; kind=blob; incoming=$blob
+case "$case" in
+    mode) mode=100755 ;;
+    symlink-parent) mode=120000 ;;
+    gitlink-parent) mode=160000; kind=commit; incoming=$base ;;
+esac
+tree=$(printf '%s %s %s\t%s\0' "$mode" "$kind" "$incoming" "$file" | git mktree -z)
+parent=$(printf 'incoming\n' | git commit-tree "$tree")
+missing=$(printf 'absent\n' | git commit-tree "$empty")
+merge_head=$(git rev-parse --git-path MERGE_HEAD)
+printf '%s\n' "$parent" > "$merge_head"
+case "$case" in
+    no-head) rm "$merge_head" ;;
+    empty) : > "$merge_head" ;;
+    blank) printf '\n' > "$merge_head" ;;
+    nul) printf '%s\0\n' "$parent" > "$merge_head" ;;
+    invalid) printf 'not-an-object\n' > "$merge_head" ;;
+    abbreviated) printf '%.12s\n' "$parent" > "$merge_head" ;;
+    ref-name) printf 'refs/heads/fixture\n' > "$merge_head" ;;
+    blob) printf '%s\n' "$blob" > "$merge_head" ;;
+    tag) tag=$(printf 'object %s\ntype commit\ntag policy\ntagger t <t@example.com> 1 +0000\n\ntag\n' "$parent" | git mktag); printf '%s\n' "$tag" > "$merge_head" ;;
+    unavailable) printf '%040d\n' 0 > "$merge_head" ;;
+    absent|new-750|worktree-short) printf '%s\n' "$missing" > "$merge_head" ;;
+    multi-match) printf '%s\n%s\n' "$missing" "$parent" > "$merge_head" ;;
+    multi-miss) printf '%s\n%s\n' "$missing" "$missing" > "$merge_head" ;;
+    match-invalid) printf '%s\nbad\n' "$parent" > "$merge_head" ;;
+    invalid-match) printf 'bad\n%s\n' "$parent" > "$merge_head" ;;
+    duplicate) printf '%s\n%s\n' "$parent" "$parent" > "$merge_head" ;;
+    unterminated) printf '%s' "$parent" > "$merge_head" ;;
+esac
+git add -- ":(literal)$file"
+case "$case" in
+    modified|staged-short) git update-index --cacheinfo "100644,$other,$file" ;;
+    worktree-short) printf '// short\n' > "$file" ;;
+    worktree-different) printf '// differing worktree\n' >> "$file" ;;
+    index-executable) git update-index --cacheinfo "100755,$blob,$file" ;;
+    symlink-index) git update-index --cacheinfo "120000,$blob,$file" ;;
+    unmerged) git update-index --force-remove -- "$file"; printf '100644 %s 1\t%s\n100644 %s 2\t%s\n' "$blob" "$file" "$other" "$file" | git update-index --index-info ;;
+    existing-M) oldtree=$(printf '100644 blob %s\t%s\0' "$other" "$file" | git mktree -z); old=$(printf 'old\n' | git commit-tree "$oldtree"); git update-ref HEAD "$old" ;;
+    branch) git symbolic-ref HEAD refs/heads/main; git update-ref HEAD "$base" ;;
+esac
+status=$(git diff --cached --name-status -- ":(literal)$file")
+case "$case" in
+    existing-M) test "$status" = "$(printf 'M\t%s' "$file")" ;;
+    unmerged) test "$(git ls-files -u | wc -l)" -eq 2 ;;
+    *) test "$status" = "$(printf 'A\t%s' "$file")" ;;
+esac
+test "$(git cat-file -t "$parent")" = commit
+if [ "$case" = fmt ]; then :; else cargo fmt --all -- --check; fi
+printf 'fixture verified: %s; real objects and fmt\n' "$case"
+"#
+            ),
+        );
+        assert_ok(&format!("setup {case}"), &setup);
+        let directory = if case == "linked" { "linked" } else { "repo" };
+        let output = bash(
+            &tmp.path().join(directory),
+            tmp.path(),
+            &format!("bash '{quoted_hook}'"),
+        );
+        tmp.close().expect("cleanup after bounded actual hook");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(i32::from(!success)),
+            "{case}: {text}"
+        );
+        assert!(text.contains(diagnostic), "{case}: {text}");
+        if matches!(case, "branch" | "marker" | "unsafe" | "fmt") {
+            assert!(!text.contains("exceeds 750 lines"), "size exempt: {text}");
+        }
+        println!(
+            "actual hook case={case}: exit={}; diagnostic={diagnostic}; fixture cleaned",
+            output.status
+        );
+    }
+}
