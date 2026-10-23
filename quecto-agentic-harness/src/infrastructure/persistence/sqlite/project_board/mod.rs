@@ -348,5 +348,6 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
     }
 }
 
-#[cfg(all(test, feature = "test-support"))]
+#[cfg(test)]
+#[cfg(feature = "test-support")]
 mod project_board_sqlite_tests;
