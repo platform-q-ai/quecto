@@ -3,7 +3,8 @@
 use super::project_board_git_store::Remote;
 use super::project_board_store::task;
 use quecto::application::project_board::ports::{
-    BoardArtifact, BoardHead, BoardStoreError, BoardWrite, ProjectBoardStore, SetAsideClear,
+    BoardArtifact, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite, ProjectBoardStore,
+    SetAsideClear,
 };
 use std::collections::BTreeMap;
 
@@ -25,10 +26,13 @@ struct Raw {
 }
 impl Raw {
     fn file(name: String, size: usize) -> Self {
+        Self::encoded(name, vec![b'x'; size])
+    }
+    fn encoded(name: String, bytes: Vec<u8>) -> Self {
         Self {
             name,
             mode: "100644",
-            bytes: vec![b'x'; size],
+            bytes,
         }
     }
 }
@@ -111,53 +115,108 @@ fn artifact(folder: &str) -> BoardArtifact {
 fn written(result: Result<BoardWrite, BoardStoreError>) {
     assert!(matches!(result, Ok(BoardWrite::Written(_))), "{result:?}");
 }
+fn clear_first(store: &dyn ProjectBoardStore, board: &BoardSnapshot) {
+    let file = &board.quarantined[0];
+    written(store.clear_set_aside(
+        &board.head,
+        &clear(&file.path, &file.object),
+        "board: clear",
+    ));
+}
+fn aside<'a>(board: &'a BoardSnapshot, path: &str) -> &'a QuarantinedFile {
+    board.quarantined.iter().find(|q| q.path == path).unwrap()
+}
 fn unchanged(f: &impl ReaderFixture, before: &str) {
     assert_eq!(f.fingerprint(), before);
 }
 
 /// Reads count every listed entry, even strays, before admitting any bytes.
 fn check_counts<F: ReaderFixture>(make: impl Fn() -> F) {
-    for (folder, cap, _, _) in FOLDERS {
+    let cases = FOLDERS.map(|(folder, cap, _, _)| vec![(folder, cap)]);
+    let aggregate = vec![
+        ("tasks", 4096),
+        ("plans", 4096),
+        ("runs", 4096),
+        ("reviews", 4096),
+        ("changes", 0),
+    ];
+    for case in cases.into_iter().chain([aggregate]) {
         for extra in [0, 1] {
             let f = make();
-            f.batch(&[(
-                folder,
-                (0..cap + extra)
-                    .map(|i| Raw::file(format!("stray{i}.txt"), 0))
-                    .collect(),
-            )]);
+            let mut counts = case.clone();
+            counts.last_mut().unwrap().1 += extra;
+            let folders: Vec<_> = counts
+                .into_iter()
+                .map(|(folder, count)| {
+                    (
+                        folder,
+                        (0..count)
+                            .map(|i| Raw::file(format!("stray{i}.txt"), 0))
+                            .collect(),
+                    )
+                })
+                .collect();
+            f.batch(&folders);
             let store = f.store();
-            assert_eq!(store.read().is_ok(), extra == 0, "{folder} {extra}");
+            assert_eq!(store.read().is_ok(), extra == 0, "{case:?} {extra}");
             if extra == 1 {
                 assert!(matches!(store.read(), Err(BoardStoreError::TooLarge(_))));
+            } else if case.len() > 1 {
+                assert_eq!(store.read().unwrap().quarantined.len(), 16384);
             }
-            assert_eq!(store.read().is_ok(), extra == 0, "repeat {folder}");
+            assert_eq!(store.read().is_ok(), extra == 0, "repeat {case:?}");
         }
     }
-    for extra in [0, 1] {
-        let f = make();
-        let folders: Vec<_> = ["tasks", "plans", "runs", "reviews", "changes"]
-            .into_iter()
-            .enumerate()
-            .map(|(i, folder)| {
-                let count = if i < 4 { 4096 } else { extra };
-                (
-                    folder,
-                    (0..count)
-                        .map(|n| Raw::file(format!("stray{n}.txt"), 0))
-                        .collect(),
-                )
-            })
-            .collect();
-        f.batch(&folders);
-        match extra {
-            0 => assert_eq!(f.store().read().unwrap().quarantined.len(), 16384),
-            1 => assert!(matches!(
-                f.store().read(),
-                Err(BoardStoreError::TooLarge(_))
-            )),
-            _ => unreachable!(),
+}
+
+/// The same read/write/clear boundary contract applies per folder and board-wide.
+/// A folder has an exact quarantine count; the aggregate case checks readable state.
+fn check_byte_boundary(f: &impl ReaderFixture, folder: &str, extra: usize, count: Option<usize>) {
+    let result = f.store().read();
+    let before = f.fingerprint();
+    match extra {
+        0 => {
+            let board = result.unwrap();
+            if let Some(count) = count {
+                assert_eq!(board.quarantined.len(), count);
+            }
+            assert!(matches!(
+                f.store()
+                    .write(&board.head, &[artifact(folder)], "board: over bytes"),
+                Err(BoardStoreError::WriteTooLarge(_))
+            ));
+            unchanged(f, &before);
+            clear_first(f.store().as_ref(), &board);
+            let after = f.store().read().unwrap();
+            if count.is_some() {
+                assert_eq!(after.quarantined.len(), board.quarantined.len() - 1);
+            }
         }
+        1 => {
+            assert!(
+                matches!(result, Err(BoardStoreError::TooLarge(_))),
+                "{folder}: {result:?}"
+            );
+            assert!(matches!(
+                f.store()
+                    .write(&f.head(), &[artifact(folder)], "board: over"),
+                Err(BoardStoreError::TooLarge(_))
+            ));
+            let clear_folder = if count.is_some() { folder } else { "tasks" };
+            assert!(matches!(
+                f.store().clear_set_aside(
+                    &f.head(),
+                    &clear(
+                        &format!("{clear_folder}/{}", name(clear_folder, 0)),
+                        &"0".repeat(40)
+                    ),
+                    "board: clear"
+                ),
+                Err(BoardStoreError::TooLarge(_))
+            ));
+            unchanged(f, &before);
+        }
+        _ => unreachable!(),
     }
 }
 
@@ -167,54 +226,7 @@ fn check_bytes<F: ReaderFixture>(make: impl Fn() -> F) {
         for extra in [0, 1] {
             let f = make();
             f.batch(&[(folder, bytes(folder, budget + extra, cap))]);
-            let result = f.store().read();
-            match extra {
-                0 => {
-                    let board = result.unwrap();
-                    assert_eq!(board.quarantined.len(), budget.div_ceil(cap));
-                    let before = f.fingerprint();
-                    let write =
-                        f.store()
-                            .write(&board.head, &[artifact(folder)], "board: over bytes");
-                    assert!(
-                        matches!(write, Err(BoardStoreError::WriteTooLarge(_))),
-                        "{folder}: {write:?}"
-                    );
-                    unchanged(&f, &before);
-                    let file = &board.quarantined[0];
-                    written(f.store().clear_set_aside(
-                        &board.head,
-                        &clear(&file.path, &file.object),
-                        "board: clear",
-                    ));
-                    assert_eq!(
-                        f.store().read().unwrap().quarantined.len(),
-                        board.quarantined.len() - 1
-                    );
-                }
-                1 => {
-                    assert!(
-                        matches!(result, Err(BoardStoreError::TooLarge(_))),
-                        "{folder}: {result:?}"
-                    );
-                    let before = f.fingerprint();
-                    assert!(matches!(
-                        f.store()
-                            .write(&f.head(), &[artifact(folder)], "board: over"),
-                        Err(BoardStoreError::TooLarge(_))
-                    ));
-                    assert!(matches!(
-                        f.store().clear_set_aside(
-                            &f.head(),
-                            &clear(&format!("{folder}/{}", name(folder, 0)), &"0".repeat(40)),
-                            "board: clear"
-                        ),
-                        Err(BoardStoreError::TooLarge(_))
-                    ));
-                    unchanged(&f, &before);
-                }
-                _ => unreachable!(),
-            }
+            check_byte_boundary(&f, folder, extra, Some(budget.div_ceil(cap)));
         }
         let f = make();
         let mut rows = bytes(folder, budget, cap);
@@ -243,45 +255,7 @@ fn check_bytes<F: ReaderFixture>(make: impl Fn() -> F) {
             ("runs", bytes("runs", 16 * MIB, 768 * 1024)),
             ("reviews", bytes("reviews", 8 * MIB + extra, MIB)),
         ]);
-        let result = f.store().read();
-        match extra {
-            0 => {
-                let board = result.unwrap();
-                let before = f.fingerprint();
-                assert!(matches!(
-                    f.store()
-                        .write(&board.head, &[artifact("reviews")], "board: over"),
-                    Err(BoardStoreError::WriteTooLarge(_))
-                ));
-                unchanged(&f, &before);
-                let file = &board.quarantined[0];
-                written(f.store().clear_set_aside(
-                    &board.head,
-                    &clear(&file.path, &file.object),
-                    "board: clear",
-                ));
-                assert!(f.store().read().is_ok());
-            }
-            1 => {
-                assert!(matches!(result, Err(BoardStoreError::TooLarge(_))));
-                let before = f.fingerprint();
-                assert!(matches!(
-                    f.store()
-                        .write(&f.head(), &[artifact("reviews")], "board: over"),
-                    Err(BoardStoreError::TooLarge(_))
-                ));
-                assert!(matches!(
-                    f.store().clear_set_aside(
-                        &f.head(),
-                        &clear("tasks/a0.md", &"0".repeat(40)),
-                        "board: clear"
-                    ),
-                    Err(BoardStoreError::TooLarge(_))
-                ));
-                unchanged(&f, &before);
-            }
-            _ => unreachable!(),
-        }
+        check_byte_boundary(&f, "reviews", extra, None);
     }
 }
 
@@ -320,12 +294,8 @@ fn check_task_mutations<F: ReaderFixture>(make: impl Fn() -> F) {
         let head = f.head();
         match store.read() {
             Ok(board) => {
-                let file = &board.quarantined[0];
-                written(store.clear_set_aside(
-                    &head,
-                    &clear(&file.path, &file.object),
-                    "board: clear",
-                ));
+                assert_eq!(head, board.head);
+                clear_first(store.as_ref(), &board);
                 assert_eq!(store.read().unwrap().quarantined.len(), count - 1);
             }
             Err(BoardStoreError::TooLarge(_)) => {
@@ -346,14 +316,7 @@ fn check_task_mutations<F: ReaderFixture>(make: impl Fn() -> F) {
 fn check_heads<F: ReaderFixture>(make: impl Fn() -> F) {
     for marker in [b"quecto-board 999\n".as_slice(), b"broken".as_slice()] {
         let f = make();
-        f.batch(&[(
-            "format",
-            vec![Raw {
-                name: "board".into(),
-                mode: "100644",
-                bytes: marker.into(),
-            }],
-        )]);
+        f.batch(&[("format", vec![Raw::encoded("board".into(), marker.into())])]);
         let store = f.store();
         assert_eq!(f.observed_head(), Some(f.head().0));
         assert!(matches!(store.read(), Err(BoardStoreError::Unavailable(_))));
@@ -389,11 +352,7 @@ fn check_quarantine<F: ReaderFixture>(make: impl Fn() -> F) {
         (
             "tasks",
             vec![
-                Raw {
-                    name: "a.md".into(),
-                    mode: "100644",
-                    bytes: canonical,
-                },
+                Raw::encoded("a.md".into(), canonical),
                 Raw::file("a.json".into(), 1),
                 Raw::file("b.md".into(), 1),
                 Raw::file("b.md".into(), 2),
@@ -419,11 +378,7 @@ fn check_quarantine<F: ReaderFixture>(make: impl Fn() -> F) {
         Ok(BoardWrite::Refused(_))
     ));
     unchanged(&f, &before);
-    let a = board
-        .quarantined
-        .iter()
-        .find(|q| q.path == "tasks/a.json")
-        .unwrap();
+    let a = aside(&board, "tasks/a.json");
     let copies: std::collections::BTreeSet<_> = board
         .quarantined
         .iter()
@@ -449,29 +404,9 @@ fn check_quarantine<F: ReaderFixture>(make: impl Fn() -> F) {
     let after = store.read().unwrap();
     assert_eq!(after.tasks, [task("a", "A")]);
     assert_eq!(after.quarantined.len(), 2);
-    assert_eq!(
-        after
-            .quarantined
-            .iter()
-            .find(|q| q.path == "tasks/b.md")
-            .unwrap()
-            .object,
-        keep
-    );
-    let opaque = board
-        .quarantined
-        .iter()
-        .find(|q| q.path == "tasks/opaque.md")
-        .unwrap();
-    assert_eq!(
-        after
-            .quarantined
-            .iter()
-            .find(|q| q.path == opaque.path)
-            .unwrap()
-            .object,
-        opaque.object
-    );
+    assert_eq!(aside(&after, "tasks/b.md").object, keep);
+    let opaque = aside(&board, "tasks/opaque.md");
+    assert_eq!(aside(&after, &opaque.path).object, opaque.object);
     // Root-preserving raw batches and both accepted mutations retain archive.
     let archive = before
         .lines()
@@ -491,11 +426,7 @@ fn project_board_reader_legacy_format_is_read_and_upgraded() {
     let f = fresh();
     f.batch(&[(
         "format",
-        vec![Raw {
-            name: "board".into(),
-            mode: "100644",
-            bytes: b"quecto-board 2\n".to_vec(),
-        }],
+        vec![Raw::encoded("board".into(), b"quecto-board 2\n".to_vec())],
     )]);
     let store = f.store();
     let board = store.read().unwrap();
@@ -549,12 +480,7 @@ fn check_board_mutations<F: ReaderFixture>(make: impl Fn() -> F) {
             _ => unreachable!(),
         }
         let board = f.store().read().unwrap();
-        let file = &board.quarantined[0];
-        written(f.store().clear_set_aside(
-            &board.head,
-            &clear(&file.path, &file.object),
-            "board: clear",
-        ));
+        clear_first(f.store().as_ref(), &board);
         assert_eq!(f.store().read().unwrap().quarantined.len(), 16382 + extra);
     }
 }
