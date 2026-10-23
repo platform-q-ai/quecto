@@ -622,7 +622,7 @@ fn bench_feed(args: &[String]) -> Result<(), String> {
                         seen_here += 1;
                         // Break the connection once, half way, to resume.
                         let first_break =
-                        break_ms > 0 && *breaks.lock().unwrap_or_else(|e| e.into_inner()) == 0;
+                            break_ms > 0 && *breaks.lock().unwrap_or_else(|e| e.into_inner()) == 0;
                         !(first_break && last >= from + n / 2 && seen_here > 0) && last < target
                     },
                 );
