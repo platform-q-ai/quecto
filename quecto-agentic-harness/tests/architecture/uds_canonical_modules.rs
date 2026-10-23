@@ -22,6 +22,34 @@ fn redirects_path(meta: &syn::Meta) -> bool {
     }
 }
 
+// Inspect only explicit syntax: no import alias resolution or macro expansion.
+fn imports_builtin_include(tree: &syn::UseTree, prefix: &[String]) -> bool {
+    match tree {
+        syn::UseTree::Path(path) => {
+            let mut nested = prefix.to_vec();
+            nested.push(path.ident.to_string());
+            imports_builtin_include(&path.tree, &nested)
+        }
+        syn::UseTree::Group(group) => group
+            .items
+            .iter()
+            .any(|tree| imports_builtin_include(tree, prefix)),
+        syn::UseTree::Name(name) => builtin_include_leaf(prefix, &name.ident),
+        syn::UseTree::Rename(rename) => builtin_include_leaf(prefix, &rename.ident),
+        syn::UseTree::Glob(_) => false,
+    }
+}
+
+fn builtin_include_leaf(prefix: &[String], leaf: &syn::Ident) -> bool {
+    match prefix {
+        [root] if matches!(root.as_str(), "std" | "core") => leaf == "include",
+        [root, item] if matches!(root.as_str(), "std" | "core") && item == "include" => {
+            leaf == "self"
+        }
+        _ => false,
+    }
+}
+
 struct Resolver<F> {
     read: F,
     visited: BTreeSet<PathBuf>,
@@ -49,6 +77,14 @@ impl<F: Fn(&Path) -> Result<String, String>> Resolver<F> {
 
     fn items(&mut self, items: &[syn::Item], owner: &Path, directory: &Path) {
         for item in items {
+            if let syn::Item::Use(import) = item {
+                if imports_builtin_include(&import.tree, &[]) {
+                    self.violations.push(format!(
+                        "{}: builtin include import is unsupported in the owned canonical module graph; declare modules explicitly",
+                        owner.display()
+                    ));
+                }
+            }
             if let syn::Item::Macro(item_macro) = item {
                 if item_macro
                     .mac
@@ -569,7 +605,6 @@ fn resolver_requires_materialized_files_even_for_inactive_cfg_modules() {
     );
 }
 
-
 fn builtin_include_imports(root: &str) -> Vec<String> {
     [
         format!("use ::{root}::include as generated; generated!(\"included.rs\");"),
@@ -628,7 +663,12 @@ fn ownership_keeps_builtin_include_imports_in_unowned_modules_out_of_scope() {
 #[test]
 fn ownership_accepts_near_named_and_unrelated_imports() {
     for root in ["std", "core"] {
-        for name in ["include_str", "include_bytes", "include_extra", "not_include"] {
+        for name in [
+            "include_str",
+            "include_bytes",
+            "include_extra",
+            "not_include",
+        ] {
             for import in [
                 format!("use {root}::{name} as generated;"),
                 format!("use ::{{{root}::{{{{{name} as include}}}}}};"),
