@@ -411,7 +411,7 @@ fn check_quarantine<F: ReaderFixture>(make: impl Fn() -> F) {
             .quarantined
             .iter()
             .filter(|q| q.path == "tasks/b.md")
-            .all(|q| q.carried == false)
+            .all(|q| !q.carried)
     );
     let before = f.fingerprint();
     assert!(matches!(

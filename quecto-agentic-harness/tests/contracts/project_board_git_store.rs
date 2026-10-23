@@ -653,6 +653,8 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
     assert_eq!(log, "board: run 1 of board-store folded back, succeeded");
 }
 
+type RawBoardRow<'a> = (&'a str, &'a str, &'a [u8]);
+
 /// Raw batch fixture for bounded-reader parity. Replace named folders only;
 /// retain every other root row, including format, archive and stray files.
 impl Remote {
@@ -668,7 +670,7 @@ impl Remote {
         )
     }
 
-    pub fn raw_batch(&self, folders: Vec<(&str, Vec<(&str, &str, &[u8])>)>) {
+    pub fn raw_batch(&self, folders: Vec<(&str, Vec<RawBoardRow<'_>>)>) {
         let head = self.raw_head();
         let held = sh(&self.bare, &["ls-tree", &head], b"");
         let mut root: Vec<String> = held.lines().map(str::to_owned).collect();
