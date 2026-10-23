@@ -127,23 +127,23 @@ pub type WriteGate = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
 pub struct SqliteBoard {
     path: PathBuf,
-    writer: Mutex<Connection>,
+    pub(super) writer: Mutex<Connection>,
     readers: Mutex<Vec<Connection>>,
-    current: Mutex<Option<Arc<Current>>>,
+    pub(super) current: Mutex<Option<Arc<Current>>>,
     /// A generation counted up on every change, for the feed's waiters.
     pub latest: Arc<(Mutex<u64>, Condvar)>,
     gate: Mutex<Option<WriteGate>>,
 }
 
-fn sql(error: rusqlite::Error) -> BoardStoreError {
+pub(super) fn sql(error: rusqlite::Error) -> BoardStoreError {
     BoardStoreError::Unavailable(format!("the board database: {error}"))
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn now_text() -> String {
+pub(super) fn now_text() -> String {
     humantime::format_rfc3339_millis(std::time::SystemTime::now()).to_string()
 }
 
@@ -203,7 +203,7 @@ impl SqliteBoard {
             .expect("the test hook's row");
     }
 
-    fn with_reader<T>(
+    pub(super) fn with_reader<T>(
         &self,
         body: impl FnOnce(&mut Connection) -> rusqlite::Result<T>,
     ) -> Result<T, BoardStoreError> {
@@ -311,7 +311,7 @@ impl SqliteBoard {
 
     /// The board moved (a revision, or a new epoch): the feed's waiters
     /// wake on the generation.
-    fn committed(&self, _revision: u64) {
+    pub(super) fn committed(&self, _revision: u64) {
         let (generation, waiters) = &*self.latest;
         *lock(generation) += 1;
         waiters.notify_all();
@@ -580,146 +580,10 @@ impl SqliteBoard {
         self.committed(head.revision);
         Ok(head)
     }
-
-    /// Every epoch, oldest first: its number, the revision it began at,
-    /// and why.
-    ///
-    /// # Errors
-    /// SQLite's.
-    pub fn epochs(&self) -> Result<Vec<(u64, u64, String)>, BoardStoreError> {
-        self.with_reader(|connection| epochs_in(connection))
-    }
-
-    /// Records a primary's epoch as it began there (a follower's copy).
-    ///
-    /// # Errors
-    /// SQLite's.
-    pub fn adopt_epoch(&self, epoch: u64, from: u64, reason: &str) -> Result<(), BoardStoreError> {
-        let writer = lock(&self.writer);
-        writer
-            .execute(
-                "INSERT OR IGNORE INTO epochs(epoch, from_revision, reason, at) VALUES (?1, ?2, ?3, ?4)",
-                params![epoch, from, reason, now_text()],
-            )
-            .map_err(sql)?;
-        drop(writer);
-        *lock(&self.current) = None;
-        self.committed(from);
-        Ok(())
-    }
-
-    /// The revisions after `after`, at most `limit`.
-    ///
-    /// # Errors
-    /// SQLite's.
-    pub fn revisions_after(
-        &self,
-        after: u64,
-        limit: u64,
-    ) -> Result<Vec<RevisionRow>, BoardStoreError> {
-        self.with_reader(|connection| {
-            let mut statement = connection.prepare_cached(
-                "SELECT revision, epoch, write_id, writer_name, writer_email, principal, message, kind, \
-                 server_time, git_commit, git_meta FROM revisions WHERE revision > ?1 ORDER BY revision LIMIT ?2",
-            )?;
-            let rows = statement
-                .query_map(params![after, limit], revision_row)?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(rows)
-        })
-    }
-
-    /// Revision `revision` and the files it changed.
-    ///
-    /// # Errors
-    /// SQLite's; an unknown revision.
-    pub fn revision(
-        &self,
-        revision: u64,
-    ) -> Result<(RevisionRow, Vec<FileChange>), BoardStoreError> {
-        self.with_reader(|connection| {
-            let tx = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
-            let row = tx.query_row(
-                "SELECT revision, epoch, write_id, writer_name, writer_email, principal, message, kind, \
-                 server_time, git_commit, git_meta FROM revisions WHERE revision = ?1",
-                [revision],
-                revision_row,
-            )?;
-            let mut changes: BTreeMap<String, FileChange> = BTreeMap::new();
-            {
-                let mut removed = tx.prepare("SELECT path, mode FROM files WHERE removed = ?1")?;
-                for item in removed.query_map([revision], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
-                    let (path, mode) = item?;
-                    changes.insert(path.clone(), FileChange { path, mode, bytes: None });
-                }
-                let mut added = tx.prepare("SELECT path, mode, bytes FROM files WHERE added = ?1")?;
-                for item in added.query_map([revision], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Vec<u8>>(2)?))
-                })? {
-                    let (path, mode, bytes) = item?;
-                    changes.insert(path.clone(), FileChange { path, mode, bytes: Some(bytes) });
-                }
-            }
-            Ok((row, changes.into_values().collect()))
-        })
-    }
-
-    /// Every file of the board at `revision`.
-    ///
-    /// # Errors
-    /// SQLite's.
-    pub fn files_at(&self, revision: u64) -> Result<Vec<BoardFile>, BoardStoreError> {
-        self.with_reader(|connection| {
-            let mut statement = connection.prepare_cached(
-                "SELECT path, mode, bytes FROM files WHERE added <= ?1 AND (removed IS NULL OR removed > ?1) ORDER BY path",
-            )?;
-            let rows = statement
-                .query_map([revision], |row| {
-                    Ok(BoardFile { path: row.get(0)?, mode: row.get(1)?, bytes: row.get(2)? })
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(rows)
-        })
-    }
-
-    /// The writer recorded for `revision`.
-    ///
-    /// # Errors
-    /// SQLite's.
-    pub fn writer_of(&self, revision: u64) -> Result<Option<Identity>, BoardStoreError> {
-        self.with_reader(|connection| {
-            connection
-                .query_row(
-                    "SELECT writer_name, writer_email FROM revisions WHERE revision = ?1",
-                    [revision],
-                    |row| {
-                        Ok(Identity {
-                            name: row.get(0)?,
-                            email: row.get(1)?,
-                        })
-                    },
-                )
-                .optional()
-        })
-    }
-
-    /// An online backup of the database to `to` (SQLite's backup API),
-    /// safe while writes go on.
-    ///
-    /// # Errors
-    /// SQLite's.
-    pub fn backup(&self, to: &Path) -> Result<(), BoardStoreError> {
-        self.with_reader(|connection| {
-            let mut target = Connection::open(to)?;
-            let backup = rusqlite::backup::Backup::new(connection, &mut target)?;
-            backup.run_to_completion(256, std::time::Duration::from_millis(0), None)?;
-            Ok(())
-        })
-    }
 }
 
 /// Every epoch, oldest first: its number, the revision it began at, why.
-fn epochs_in(connection: &Connection) -> rusqlite::Result<Vec<(u64, u64, String)>> {
+pub(super) fn epochs_in(connection: &Connection) -> rusqlite::Result<Vec<(u64, u64, String)>> {
     let mut statement = connection
         .prepare_cached("SELECT epoch, from_revision, reason FROM epochs ORDER BY epoch")?;
     let rows = statement
@@ -728,7 +592,7 @@ fn epochs_in(connection: &Connection) -> rusqlite::Result<Vec<(u64, u64, String)
     Ok(rows)
 }
 
-fn revision_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RevisionRow> {
+pub(super) fn revision_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RevisionRow> {
     Ok(RevisionRow {
         revision: row.get(0)?,
         epoch: row.get(1)?,
@@ -838,3 +702,6 @@ fn commit_in(
     )?;
     Ok(())
 }
+
+#[path = "sqlite_history.rs"]
+mod history;
