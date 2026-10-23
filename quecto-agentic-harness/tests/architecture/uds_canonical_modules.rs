@@ -3,11 +3,20 @@
 //! canonical files; generated/optional absent modules and item include! are unsupported.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use syn::ext::IdentExt;
+
+fn ident(ident: &syn::Ident) -> String {
+    ident.unraw().to_string()
+}
+
+fn path_is(path: &syn::Path, name: &str) -> bool {
+    path.get_ident().is_some_and(|value| ident(value) == name)
+}
 
 fn redirects_path(meta: &syn::Meta) -> bool {
-    if meta.path().is_ident("path") {
+    if path_is(meta.path(), "path") {
         true
-    } else if meta.path().is_ident("cfg_attr") {
+    } else if path_is(meta.path(), "cfg_attr") {
         if let syn::Meta::List(list) = meta {
             use syn::parse::Parser;
             let parser = syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated;
@@ -27,7 +36,7 @@ fn imports_builtin_include(tree: &syn::UseTree, prefix: &[String]) -> bool {
     match tree {
         syn::UseTree::Path(path) => {
             let mut nested = prefix.to_vec();
-            nested.push(path.ident.to_string());
+            nested.push(ident(&path.ident));
             imports_builtin_include(&path.tree, &nested)
         }
         syn::UseTree::Group(group) => group
@@ -42,9 +51,9 @@ fn imports_builtin_include(tree: &syn::UseTree, prefix: &[String]) -> bool {
 
 fn builtin_include_leaf(prefix: &[String], leaf: &syn::Ident) -> bool {
     match prefix {
-        [root] if matches!(root.as_str(), "std" | "core") => leaf == "include",
+        [root] if matches!(root.as_str(), "std" | "core") => ident(leaf) == "include",
         [root, item] if matches!(root.as_str(), "std" | "core") && item == "include" => {
-            leaf == "self"
+            ident(leaf) == "self"
         }
         _ => false,
     }
@@ -85,22 +94,8 @@ impl<F: Fn(&Path) -> Result<String, String>> Resolver<F> {
                     ));
                 }
             }
-            if let syn::Item::Macro(item_macro) = item {
-                if item_macro
-                    .mac
-                    .path
-                    .segments
-                    .last()
-                    .is_some_and(|segment| segment.ident == "include")
-                {
-                    self.violations.push(format!(
-                        "{}: item include! is unsupported in the owned canonical module graph; declare modules explicitly",
-                        owner.display()
-                    ));
-                }
-            }
             if let syn::Item::Mod(module) = item {
-                let name = module.ident.to_string();
+                let name = ident(&module.ident);
                 let canonical = [
                     directory.join(format!("{name}.rs")),
                     directory.join(&name).join("mod.rs"),
@@ -143,7 +138,52 @@ impl<F: Fn(&Path) -> Result<String, String>> Resolver<F> {
                         ));
                     }
                 }
+            } else {
+                syn::visit::visit_item(
+                    &mut LocalItems {
+                        resolver: self,
+                        owner,
+                        directory,
+                    },
+                    item,
+                );
             }
+        }
+    }
+}
+
+// Block-local module directory rules are deliberately unsupported, not guessed.
+// Delegate each nested item once; modules retain their owning file in diagnostics.
+struct LocalItems<'a, F> {
+    resolver: &'a mut Resolver<F>,
+    owner: &'a Path,
+    directory: &'a Path,
+}
+impl<'ast, F: Fn(&Path) -> Result<String, String>> syn::visit::Visit<'ast> for LocalItems<'_, F> {
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        if let syn::Item::Mod(module) = item {
+            self.resolver.violations.push(format!(
+                "{}: local module {} is unsupported in the owned canonical module graph",
+                self.owner.display(),
+                ident(&module.ident)
+            ));
+        } else {
+            self.resolver
+                .items(std::slice::from_ref(item), self.owner, self.directory);
+        }
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        if mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| ident(&segment.ident) == "include")
+        {
+            self.resolver.violations.push(format!(
+                "{}: item include! is unsupported in the owned canonical module graph; declare modules explicitly",
+                self.owner.display()
+            ));
         }
     }
 }
@@ -174,12 +214,12 @@ fn inspect_owned<F: Fn(&Path) -> Result<String, String>>(root: &Path, read: F) -
         Ok(file) => {
             let roles = ["controllers", "framing", "wire"];
             let items: Vec<_> = file.items.into_iter().filter(|item| {
-                matches!(item, syn::Item::Mod(module) if roles.iter().any(|role| module.ident == role))
+                matches!(item, syn::Item::Mod(module) if roles.iter().any(|role| ident(&module.ident) == *role))
             }).collect();
             for role in roles {
                 let count = items
                     .iter()
-                    .filter(|item| matches!(item, syn::Item::Mod(module) if module.ident == role))
+                    .filter(|item| matches!(item, syn::Item::Mod(module) if ident(&module.ident) == role))
                     .count();
                 if count != 1 {
                     resolver.violations.push(format!(
@@ -700,7 +740,11 @@ fn ownership_rejects_raw_include_syntax_and_local_positions() {
         for source in builtin_include_imports(root)
             .into_iter()
             .map(|source| source.replace("include", "r#include"))
-            .chain([format!("{root}::r#include!(\"hidden.rs\");")])
+            .chain(builtin_include_imports(root))
+            .chain([
+                format!("{root}::include!(\"hidden.rs\");"),
+                format!("{root}::r#include!(\"hidden.rs\");"),
+            ])
             .chain(["r#include!(\"hidden.rs\");".into()])
         {
             for wrapped in [source.clone(), format!("fn outer() {{ {source} }}")] {
@@ -739,8 +783,17 @@ fn ownership_rejects_local_modules_and_includes_in_related_positions() {
 
 #[test]
 fn ownership_normalizes_raw_modules_roles_and_attributes() {
-    assert!(owned_fixture("mod r#framing; mod r#wire; mod r#controllers;", "mod r#actual;").is_empty());
-    for attribute in ["r#path = \"alias.rs\"", "r#cfg_attr(unix, r#path = \"alias.rs\")"] {
+    assert!(
+        owned_fixture(
+            "mod r#framing; mod r#wire; mod r#controllers;",
+            "mod r#actual;"
+        )
+        .is_empty()
+    );
+    for attribute in [
+        "r#path = \"alias.rs\"",
+        "r#cfg_attr(unix, r#path = \"alias.rs\")",
+    ] {
         let source = format!("#[{attribute}] mod r#actual;");
         let violations = owned_fixture("mod framing; mod wire; mod controllers;", &source);
         assert_eq!(violations.len(), 1, "{source}: {violations:?}");
@@ -750,8 +803,15 @@ fn ownership_normalizes_raw_modules_roles_and_attributes() {
 
 #[test]
 fn ownership_accepts_legitimate_local_items_and_raw_near_names() {
-    for name in ["include_str", "include_bytes", "include_extra", "not_include"] {
-        let source = format!("fn outer() {{ use r#std::r#{name} as generated; r#{name}!(\"text\"); struct S; impl S {{ fn method() {{ const C: () = {{}}; }} }} }}");
+    for name in [
+        "include_str",
+        "include_bytes",
+        "include_extra",
+        "not_include",
+    ] {
+        let source = format!(
+            "fn outer() {{ use r#std::r#{name} as generated; r#{name}!(\"text\"); struct S; impl S {{ fn method() {{ const C: () = {{}}; }} }} }}"
+        );
         assert!(owned_fixture("mod framing; mod wire; mod controllers;", &source).is_empty());
     }
     let owner = "mod framing; mod wire; mod controllers; mod sessions { fn local() { #[path = \"/tmp/hidden.rs\"] mod actual; r#include!(\"hidden.rs\"); } }";
