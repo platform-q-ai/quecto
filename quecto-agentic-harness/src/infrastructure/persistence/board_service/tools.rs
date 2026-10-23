@@ -40,6 +40,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("bench-feed") => bench_feed(args),
         Some("kill-test") => kill_test(args),
         Some("backup") => backup(args),
+        Some("bench-contention-local") => bench_contention_local(args),
         _ => Err("unknown tool".into()),
     };
     match outcome {
@@ -883,6 +884,83 @@ fn backup(args: &[String]) -> Result<(), String> {
             "head_live": board.head().ok().flatten().map(Head::text),
             "head_copy": copy.head().ok().flatten().map(Head::text),
             "integrity": integrity,
+        })
+    );
+    Ok(())
+}
+
+/// `bench-contention-local --db <file> [--writers 8] [--writes 50]`: the
+/// writers run the create use case in the server's own process, over the
+/// SQLite store (what board operations run server-side would see): no
+/// network and no client decode between a read and its write.
+fn bench_contention_local(args: &[String]) -> Result<(), String> {
+    use crate::application::project_board::dto::{NewBoardTask, NewBoardTaskStatus, ProjectBoardError};
+    use crate::application::project_board::use_cases::CreateBoardTask;
+    use crate::infrastructure::time::board_clock::SystemBoardClock;
+    let db = PathBuf::from(flag(args, "--db").ok_or("--db")?);
+    let writers = number(args, "--writers", 8);
+    let writes = number(args, "--writes", 50);
+    let board = Arc::new(SqliteBoard::open(&db).map_err(|error| format!("{error:?}"))?);
+    let started = Instant::now();
+    let mut threads = vec![];
+    for w in 0..writers {
+        let board = Arc::clone(&board);
+        threads.push(std::thread::spawn(move || {
+            let store: Arc<dyn ProjectBoardStore> = Arc::new(super::store::SqliteBoardStore::new(
+                board,
+                identity(&format!("local{w}")),
+            ));
+            let create = CreateBoardTask::new(store, Arc::new(SystemBoardClock::default())).expect("a use case");
+            let (mut ok, mut contended, mut other, mut lat) = (0u64, 0u64, 0u64, vec![]);
+            for i in 0..writes {
+                let new = NewBoardTask {
+                    id: Slug::parse(&format!("l-{w}-{i}")).expect("a slug"),
+                    title: format!("local {w} {i}"),
+                    kind: TaskKind::Task,
+                    description: String::new(),
+                    status: NewBoardTaskStatus::Ready,
+                    parent: None,
+                    depends_on: vec![],
+                };
+                let at = Instant::now();
+                match create.execute(&new) {
+                    Ok(_) => ok += 1,
+                    Err(ProjectBoardError::Contended { .. }) => contended += 1,
+                    Err(_) => other += 1,
+                }
+                lat.push(at.elapsed().as_secs_f64() * 1000.0);
+            }
+            (ok, contended, other, lat)
+        }));
+    }
+    let (mut ok, mut contended, mut other, mut lat) = (0, 0, 0, vec![]);
+    for thread in threads {
+        let (o, c, x, l) = thread.join().map_err(|_| "a writer panicked")?;
+        ok += o;
+        contended += c;
+        other += x;
+        lat.extend(l);
+    }
+    let wall = started.elapsed().as_secs_f64();
+    let on_board = board
+        .current()
+        .map_err(|error| format!("{error:?}"))?
+        .snapshot
+        .tasks
+        .iter()
+        .filter(|task| task.fields().id.as_str().starts_with("l-"))
+        .count();
+    println!(
+        "{}",
+        serde_json::json!({
+            "attempted": writers * writes,
+            "ok": ok,
+            "contended": contended,
+            "other_errors": other,
+            "lost_race_rate": contended as f64 / (writers * writes) as f64,
+            "on_board": on_board,
+            "throughput_per_s": ok as f64 / wall,
+            "latency": summary(lat),
         })
     );
     Ok(())
