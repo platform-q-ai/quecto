@@ -658,6 +658,33 @@ type RawBoardRow<'a> = (&'a str, &'a str, &'a [u8]);
 /// Raw batch fixture for bounded-reader parity. Replace named folders only;
 /// retain every other root row, including format, archive and stray files.
 impl Remote {
+    /// Query actual Git object storage, not merely the board's current ref.
+    pub fn object_absent(&self, oid: &str) -> bool {
+        let output = Command::new("git")
+            .current_dir(&self.bare)
+            .args(["cat-file", "--batch-check"])
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map(|mut child| {
+                writeln!(child.stdin.take().unwrap(), "{oid}").unwrap();
+                child.wait_with_output().unwrap()
+            })
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+        output.stdout == format!("{oid} missing\n").as_bytes()
+    }
+
+    pub fn raw_object_size(&self, oid: &str) -> usize {
+        sh(&self.bare, &["cat-file", "-s", oid], b"")
+            .parse()
+            .unwrap()
+    }
+
     pub fn raw_head(&self) -> String {
         sh(&self.bare, &["rev-parse", BOARD_REF], b"")
     }
