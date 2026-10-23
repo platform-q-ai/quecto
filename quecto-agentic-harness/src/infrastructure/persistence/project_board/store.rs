@@ -664,6 +664,7 @@ impl ProjectBoardStore for GitBoardStore {
 
 #[path = "store_clear.rs"]
 mod clear;
+pub(crate) use clear::cleared;
 #[path = "store_committer.rs"]
 mod committer;
 #[path = "store_fetch_state.rs"]

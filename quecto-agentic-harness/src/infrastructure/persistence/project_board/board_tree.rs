@@ -652,3 +652,7 @@ use format::{Marker, newer, read_format};
 #[cfg(test)]
 #[path = "board_tree_tests.rs"]
 mod tests;
+
+#[path = "board_rows.rs"]
+mod rows;
+pub(crate) use rows::from_rows;

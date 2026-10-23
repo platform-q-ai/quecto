@@ -367,6 +367,8 @@ mod uds_direct_child_routing;
 #[path = "contracts/workflow_run_source.rs"]
 mod workflow_run_source;
 
+#[path = "contracts/project_board_sqlite_delivery.rs"]
+mod project_board_sqlite_delivery;
 #[path = "contracts/relevance_judge.rs"]
 mod relevance_judge;
 #[path = "contracts/resume_decision_listing.rs"]
