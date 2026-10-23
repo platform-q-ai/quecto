@@ -92,6 +92,7 @@ default = []
 test-support = ["quecto-image/test-support"]
 
 [dev-dependencies]
+jsonschema = { version = "0.33", default-features = false }
 # Real minimal image files for image tests (#2422).
 quecto-image = { version = "0.1.0", path = "../quecto-image", features = ["test-support"] }
 syn = { version = "2", features = ["full", "visit", "visit-mut"] }

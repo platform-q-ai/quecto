@@ -86,3 +86,19 @@ fn schema_validator_dependency_is_absent_from_runtime_dependency_kinds() {
         "jsonschema dependency entries may only have kind dev (not normal or build)"
     );
 }
+
+#[test]
+fn schema_validator_dependency_counts_unicode_scalars_for_max_length() {
+    let schema = serde_json::json!({ "type": "string", "maxLength": 512 });
+    let validator = jsonschema::validator_for(&schema).expect("valid maxLength schema");
+    let accepted = "🦀".repeat(512);
+    let rejected = format!("{accepted}🦀");
+    assert_eq!(accepted.chars().count(), 512);
+    assert_eq!(rejected.chars().count(), 513);
+    assert!(
+        accepted.len() > 512,
+        "fixture must distinguish bytes from scalars"
+    );
+    assert!(validator.validate(&serde_json::json!(accepted)).is_ok());
+    assert!(validator.validate(&serde_json::json!(rejected)).is_err());
+}
