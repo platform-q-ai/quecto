@@ -29,6 +29,8 @@ mod bdd_lanes;
 mod dependency_scan;
 #[path = "architecture/external_child_ownership.rs"]
 mod external_child_ownership;
+#[path = "architecture/l13e_test_ownership.rs"]
+mod l13e_test_ownership;
 #[path = "architecture/layout.rs"]
 mod layout;
 #[path = "architecture/uds_canonical_modules.rs"]
