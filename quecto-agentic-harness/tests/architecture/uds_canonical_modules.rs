@@ -173,6 +173,10 @@ impl<'ast, F: Fn(&Path) -> Result<String, String>> syn::visit::Visit<'ast> for L
         }
     }
 
+    // Accident-catcher, not exhaustive defense against deliberate imported aliases of include!,
+    // raw identifiers, or similar bypasses; existing catches of these spellings remain intentional.
+    // Every syntactic final-name include invocation is reserved, including user-defined and
+    // expression-position macros, regardless of expansion.
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         if mac
             .path
