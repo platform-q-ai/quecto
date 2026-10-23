@@ -104,6 +104,10 @@ impl Server {
             ("GET", "/status") => (200, json(&self.status())),
             ("GET", "/time") => (200, json(&serde_json::json!({ "now": now_text() }))),
             ("GET", "/snapshot") => self.snapshot(),
+            ("GET", "/epochs") => match self.board.epochs() {
+                Ok(epochs) => (200, json(&epochs)),
+                Err(error) => (500, json(&ErrorWire::of(&error))),
+            },
             ("POST", "/write") => self.write(&request.body),
             ("POST", "/clear") => self.clear(&request.body),
             ("POST", "/bootstrap") => self.bootstrap(&request.body),
@@ -386,6 +390,23 @@ fn meta_of(row: &RevisionRow) -> RevisionMeta {
     }
 }
 
+/// Takes the primary's epochs as they began there.
+fn adopt_epochs(board: &SqliteBoard, primary: &Endpoint) -> Result<(), String> {
+    let (status, body) = http::call(primary, "GET", "/epochs", None, Duration::from_secs(10))
+        .map_err(|error| error.why)?;
+    if status != 200 {
+        return Err(format!("epochs: {status}"));
+    }
+    let epochs: Vec<(u64, u64, String)> =
+        serde_json::from_slice(&body).map_err(|error| error.to_string())?;
+    for (epoch, from, reason) in epochs {
+        board
+            .adopt_epoch(epoch, from, &reason)
+            .map_err(|error| format!("{error:?}"))?;
+    }
+    Ok(())
+}
+
 /// Applies revision `n` from `primary` into `board`.
 fn apply(board: &SqliteBoard, primary: &Endpoint, n: u64) -> Result<(), String> {
     let (status, body) = http::call(
@@ -433,6 +454,13 @@ pub fn follow(server: Arc<Server>, primary: Endpoint) {
                 |event, data| {
                     if stop.load(Ordering::SeqCst) {
                         return false;
+                    }
+                    if event == "epoch" {
+                        if let Err(why) = adopt_epochs(&server.board, &primary) {
+                            eprintln!("follow: {why}");
+                            return false;
+                        }
+                        return true;
                     }
                     if event != "revision" {
                         return true;

@@ -167,3 +167,57 @@ pub fn kinds_fixture() -> (Fixture, Arc<SqliteBoard>, Clients) {
     let board = Arc::clone(&fixture.board);
     (fixture, board, clients)
 }
+
+/// SPIKE: a new epoch fences every head of the old one (a write from it
+/// is lost, so its writer reads again), heads the board held in the new
+/// epoch are lost once it moves on, and a head it never held is invalid.
+#[test]
+fn the_sqlite_store_fences_heads_of_an_older_epoch() {
+    use super::project_board_store::task;
+    use quecto::application::project_board::ports::{
+        BoardHead, BoardStoreError, BoardWrite, ProjectBoardStore,
+    };
+    let (fixture, _clients) = fixture();
+    let store = &fixture.alice;
+    store.bootstrap().unwrap();
+    let first = store.read().unwrap().head;
+    let BoardWrite::Written(old) = store
+        .write_tasks(&first, &[task("a", "One")], "board: a")
+        .unwrap()
+    else {
+        panic!("written")
+    };
+    assert_eq!(old.0, "1:2");
+    let promoted = fixture.board.bump_epoch("promoted", 2).unwrap();
+    assert_eq!(promoted.text(), "2:2");
+    let write =
+        |head: &str| store.write_tasks(&BoardHead(head.into()), &[task("a", "Two")], "board: a");
+    assert_eq!(write("1:2"), Ok(BoardWrite::Lost), "the old epoch's head");
+    assert_eq!(
+        write("1:1"),
+        Ok(BoardWrite::Lost),
+        "an older head of the old epoch"
+    );
+    assert_eq!(
+        write("1:7"),
+        Ok(BoardWrite::Lost),
+        "a head only the old primary held"
+    );
+    assert!(
+        matches!(write("3:2"), Err(BoardStoreError::InvalidWrite(_))),
+        "a later epoch"
+    );
+    let BoardWrite::Written(moved) = write("2:2").unwrap() else {
+        panic!("written")
+    };
+    assert_eq!(moved.0, "2:3");
+    assert_eq!(
+        write("2:2"),
+        Ok(BoardWrite::Lost),
+        "a head the new epoch held"
+    );
+    assert!(
+        matches!(write("2:9"), Err(BoardStoreError::InvalidWrite(_))),
+        "a head never held"
+    );
+}

@@ -894,7 +894,9 @@ fn backup(args: &[String]) -> Result<(), String> {
 /// SQLite store (what board operations run server-side would see): no
 /// network and no client decode between a read and its write.
 fn bench_contention_local(args: &[String]) -> Result<(), String> {
-    use crate::application::project_board::dto::{NewBoardTask, NewBoardTaskStatus, ProjectBoardError};
+    use crate::application::project_board::dto::{
+        NewBoardTask, NewBoardTaskStatus, ProjectBoardError,
+    };
     use crate::application::project_board::use_cases::CreateBoardTask;
     use crate::infrastructure::time::board_clock::SystemBoardClock;
     let db = PathBuf::from(flag(args, "--db").ok_or("--db")?);
@@ -910,7 +912,8 @@ fn bench_contention_local(args: &[String]) -> Result<(), String> {
                 board,
                 identity(&format!("local{w}")),
             ));
-            let create = CreateBoardTask::new(store, Arc::new(SystemBoardClock::default())).expect("a use case");
+            let create = CreateBoardTask::new(store, Arc::new(SystemBoardClock::default()))
+                .expect("a use case");
             let (mut ok, mut contended, mut other, mut lat) = (0u64, 0u64, 0u64, vec![]);
             for i in 0..writes {
                 let new = NewBoardTask {

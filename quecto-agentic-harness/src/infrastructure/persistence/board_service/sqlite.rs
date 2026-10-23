@@ -5,9 +5,7 @@
 //! server's clock), its message and the write's id, so a retried write is
 //! answered once. The head is the board's `epoch:revision`: one
 //! compare-and-swap for the whole board, as the git branch gives.
-use super::files::{
-    BoardFile, Head, REGULAR, Read, read_file, root_files, snapshot_from_reads,
-};
+use super::files::{BoardFile, Head, REGULAR, Read, read_file, root_files, snapshot_from_reads};
 use crate::application::project_board::ports::{
     ArtifactKey, BoardBootstrap, BoardSnapshot, BoardStoreError, BoardWrite, SetAsideClear,
 };
@@ -258,8 +256,8 @@ impl SqliteBoard {
                             .and_then(|before| before.reads.get(&file.path))
                             .filter(|(bytes, _)| *bytes == file.bytes)
                             .map(|(_, read)| read.clone());
-                        let read = kept
-                            .unwrap_or_else(|| read_file(&file.path, &file.mode, &file.bytes));
+                        let read =
+                            kept.unwrap_or_else(|| read_file(&file.path, &file.mode, &file.bytes));
                         (file.path.clone(), (file.bytes.clone(), read))
                     })
                     .collect();
@@ -438,23 +436,27 @@ impl SqliteBoard {
                 "{expected:?} is not a board head"
             )));
         };
-        let held: Option<u64> = tx
-            .query_row(
-                "SELECT epoch FROM revisions WHERE revision = ?1",
-                [asked.revision],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(sql)?;
+        // Whether the board ever stood at `asked`: its revision is on the
+        // board, and its epoch was in force at that revision (it began at
+        // or before it, and the next began at or after it).
+        let epochs = epochs_in(&tx).map_err(sql)?;
+        let held = asked.revision <= head.revision
+            && epochs.iter().enumerate().any(|(at, (epoch, from, _))| {
+                *epoch == asked.epoch
+                    && *from <= asked.revision
+                    && epochs
+                        .get(at + 1)
+                        .is_none_or(|(_, next, _)| *next >= asked.revision)
+            });
         match (asked == head, held) {
             (true, _) => {}
-            // A head this board held (of this epoch or one before): the
-            // board moved on (or failed over) since. Read it again.
-            (false, Some(epoch)) if epoch == asked.epoch => return Ok(BoardWrite::Lost),
-            // An older epoch's revision this board never held as such: a
-            // stale primary's head, fenced.
-            (false, _) if asked.epoch < head.epoch => return Ok(BoardWrite::Lost),
-            (false, _) => {
+            // A head this board held: the board moved on (or failed over)
+            // since. Read it again.
+            (false, true) => return Ok(BoardWrite::Lost),
+            // An older epoch's head this board never held: a stale
+            // primary's, fenced. Read it again.
+            (false, false) if asked.epoch < head.epoch => return Ok(BoardWrite::Lost),
+            (false, false) => {
                 return Err(BoardStoreError::InvalidWrite(format!(
                     "{expected:?} is not a head of this board"
                 )));
@@ -579,6 +581,33 @@ impl SqliteBoard {
         Ok(head)
     }
 
+    /// Every epoch, oldest first: its number, the revision it began at,
+    /// and why.
+    ///
+    /// # Errors
+    /// SQLite's.
+    pub fn epochs(&self) -> Result<Vec<(u64, u64, String)>, BoardStoreError> {
+        self.with_reader(|connection| epochs_in(connection))
+    }
+
+    /// Records a primary's epoch as it began there (a follower's copy).
+    ///
+    /// # Errors
+    /// SQLite's.
+    pub fn adopt_epoch(&self, epoch: u64, from: u64, reason: &str) -> Result<(), BoardStoreError> {
+        let writer = lock(&self.writer);
+        writer
+            .execute(
+                "INSERT OR IGNORE INTO epochs(epoch, from_revision, reason, at) VALUES (?1, ?2, ?3, ?4)",
+                params![epoch, from, reason, now_text()],
+            )
+            .map_err(sql)?;
+        drop(writer);
+        *lock(&self.current) = None;
+        self.committed(from);
+        Ok(())
+    }
+
     /// The revisions after `after`, at most `limit`.
     ///
     /// # Errors
@@ -687,6 +716,16 @@ impl SqliteBoard {
             Ok(())
         })
     }
+}
+
+/// Every epoch, oldest first: its number, the revision it began at, why.
+fn epochs_in(connection: &Connection) -> rusqlite::Result<Vec<(u64, u64, String)>> {
+    let mut statement = connection
+        .prepare_cached("SELECT epoch, from_revision, reason FROM epochs ORDER BY epoch")?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
 }
 
 fn revision_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RevisionRow> {
