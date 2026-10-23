@@ -5,12 +5,12 @@
 |---|---|
 | Task | board-2705-b2 |
 | Version | 1 |
-| State | accepted |
+| State | superseded |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted at | 2026-10-23T16:46:31Z |
 | Created | 2026-10-23T16:46:18Z |
-| Updated | 2026-10-23T16:46:31Z |
+| Updated | 2026-10-23T17:03:00Z |
 
 ## Approach
 RED-TEST PHASE ONLY for one complete B2 PR. Fresh swarm member_limit25 with fixed small pool, at most two building members. Scope task/parent descriptions and owner-approved revised B2 requirements: SQLite unchanged ProjectBoardStore, all15 store+9 every-kind reusable contract checks, WAL/FULL, atomic CAS/rollback/writer/quarantine/clear/raw bytes and essential owned-child durability. Baseline refresh origin default and record exact SHA; planning baseline1ad426002e40bec5da0d2d65079cf521cd6b3205. Read current port/contracts and proper infrastructure persistence/sqlite/project_board layers; reuse canonical existing codecs/shared check bodies. Do not integrate spike or implement acceptance behavior. Minimal typed-error trait skeleton/test fixtures allowed solely to compile real tests; red must be intended assertion failure, not compiler/fixture error. No ignored/weakened tests. All-in B2 hard900 lines including tests/version, forecast825 approved above500 target. No private request replay/cache optimization. No server, deployment, live board import/fence, host unit/server start, relay/admission/credential reads, env printing, playbook edits, complicated rm or global git config. Red commit never pushed: create and verify git bundle from exact base to branch; record SHA256, red/base SHAs, selectors/counts/exits/failure excerpts in external handoff. Artifacts must be durable/accessibly exported before cleanup. Finish on verified red handoff; no delivery implementation or waiting to publish.
