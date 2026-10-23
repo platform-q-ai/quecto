@@ -5,7 +5,9 @@
 //! server's clock), its message and the write's id, so a retried write is
 //! answered once. The head is the board's `epoch:revision`: one
 //! compare-and-swap for the whole board, as the git branch gives.
-use super::files::{BoardFile, Head, REGULAR, Read, read_file, root_files, snapshot_of};
+use super::files::{
+    BoardFile, Head, REGULAR, Read, read_file, root_files, snapshot_from_reads,
+};
 use crate::application::project_board::ports::{
     ArtifactKey, BoardBootstrap, BoardSnapshot, BoardStoreError, BoardWrite, SetAsideClear,
 };
@@ -115,6 +117,9 @@ pub mod opt_b64 {
 pub struct Current {
     pub head: Head,
     pub files: Vec<BoardFile>,
+    /// Each file as read, by path: a file whose bytes did not change since
+    /// the head before is not decoded again.
+    pub reads: BTreeMap<String, (Vec<u8>, Read)>,
     pub snapshot: BoardSnapshot,
 }
 
@@ -244,10 +249,28 @@ impl SqliteBoard {
                 .filter(|cached| cached.head == head)
                 .map_or_else(|| self.current(), Ok),
             Some(files) => {
-                let snapshot = snapshot_of(head.board_head(), &files);
+                let before = lock(&self.current).clone();
+                let reads: BTreeMap<String, (Vec<u8>, Read)> = files
+                    .iter()
+                    .map(|file| {
+                        let kept = before
+                            .as_ref()
+                            .and_then(|before| before.reads.get(&file.path))
+                            .filter(|(bytes, _)| *bytes == file.bytes)
+                            .map(|(_, read)| read.clone());
+                        let read = kept
+                            .unwrap_or_else(|| read_file(&file.path, &file.mode, &file.bytes));
+                        (file.path.clone(), (file.bytes.clone(), read))
+                    })
+                    .collect();
+                let snapshot = snapshot_from_reads(
+                    head.board_head(),
+                    reads.values().map(|(_, read)| read.clone()).collect(),
+                );
                 let current = Arc::new(Current {
                     head,
                     files,
+                    reads,
                     snapshot,
                 });
                 *lock(&self.current) = Some(Arc::clone(&current));

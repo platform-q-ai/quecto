@@ -227,7 +227,14 @@ pub(super) fn retried<T>(
     if let Some(facts) = facts.as_deref_mut() {
         facts.lost = Some(0);
     }
-    for number in 1..=MAX_WRITE_ATTEMPTS {
+    // SPIKE (board service): the attempts, from `QUECTO_BOARD_ATTEMPTS`,
+    // to measure the retry policy under contention.
+    let attempts = std::env::var("QUECTO_BOARD_ATTEMPTS")
+        .ok()
+        .and_then(|n| n.parse::<usize>().ok())
+        .filter(|n| (1..=50).contains(n))
+        .unwrap_or(MAX_WRITE_ATTEMPTS);
+    for number in 1..=attempts {
         if number > 1 {
             paused(clock, number, facts.as_deref_mut());
         }
@@ -243,9 +250,7 @@ pub(super) fn retried<T>(
             }
         }
     }
-    Err(ProjectBoardError::Contended {
-        attempts: MAX_WRITE_ATTEMPTS,
-    })
+    Err(ProjectBoardError::Contended { attempts })
 }
 
 /// The pause before attempt `attempt`, timed on the clock's monotonic

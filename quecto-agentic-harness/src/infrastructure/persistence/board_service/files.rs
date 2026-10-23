@@ -99,6 +99,7 @@ pub fn artifact_path(key: &ArtifactKey, bytes: &[u8]) -> Result<String, String> 
 }
 
 /// What a file at `path` is to a read.
+#[derive(Clone)]
 pub enum Read {
     /// The root's own files and the archive: carried, never listed.
     Meta,
@@ -201,6 +202,15 @@ pub fn read_file(path: &str, mode: &str, bytes: &[u8]) -> Read {
 
 /// The board `files` hold, at `head`.
 pub fn snapshot_of(head: BoardHead, files: &[BoardFile]) -> BoardSnapshot {
+    let reads: Vec<Read> = files
+        .iter()
+        .map(|file| read_file(&file.path, &file.mode, &file.bytes))
+        .collect();
+    snapshot_from_reads(head, reads)
+}
+
+/// The board of files already read (each by [`read_file`]), at `head`.
+pub fn snapshot_from_reads(head: BoardHead, reads: Vec<Read>) -> BoardSnapshot {
     let mut snapshot = BoardSnapshot {
         head,
         tasks: vec![],
@@ -211,8 +221,8 @@ pub fn snapshot_of(head: BoardHead, files: &[BoardFile]) -> BoardSnapshot {
         discussions: vec![],
         quarantined: vec![],
     };
-    for file in files {
-        match read_file(&file.path, &file.mode, &file.bytes) {
+    for read in reads {
+        match read {
             Read::Meta => {}
             Read::Aside(set_aside) => snapshot.quarantined.push(set_aside),
             Read::Artifact(BoardArtifact::Task(task)) => snapshot.tasks.push(task),
