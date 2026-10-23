@@ -50,7 +50,13 @@ impl<F: Fn(&Path) -> Result<String, String>> Resolver<F> {
     fn items(&mut self, items: &[syn::Item], owner: &Path, directory: &Path) {
         for item in items {
             if let syn::Item::Macro(item_macro) = item {
-                if item_macro.mac.path.is_ident("include") {
+                if item_macro
+                    .mac
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| segment.ident == "include")
+                {
                     self.violations.push(format!(
                         "{}: item include! is unsupported in the owned canonical module graph; declare modules explicitly",
                         owner.display()
@@ -493,6 +499,43 @@ fn ownership_rejects_item_includes_in_files_and_inline_modules() {
             violations[0],
             "interface/uds/controllers/mod.rs: item include! is unsupported in the owned canonical module graph; declare modules explicitly"
         );
+    }
+}
+
+fn assert_qualified_item_includes_rejected(namespace: &str) {
+    for source in [
+        format!("{namespace}::include!(\"included.rs\");"),
+        format!("::{namespace}::include!(\"included.rs\");"),
+        format!("mod inline {{ {namespace}::include!(\"included.rs\"); }}"),
+        format!("#[cfg(any())] {namespace}::include!(concat!(\"included\", \".rs\"));"),
+    ] {
+        let violations = owned_fixture("mod framing; mod wire; mod controllers;", &source);
+        assert_eq!(violations.len(), 1, "{source}: {violations:?}");
+        assert_eq!(
+            violations[0],
+            "interface/uds/controllers/mod.rs: item include! is unsupported in the owned canonical module graph; declare modules explicitly"
+        );
+    }
+}
+
+#[test]
+fn ownership_rejects_std_qualified_item_includes() {
+    assert_qualified_item_includes_rejected("std");
+}
+
+#[test]
+fn ownership_rejects_core_qualified_item_includes() {
+    assert_qualified_item_includes_rejected("core");
+}
+
+#[test]
+fn ownership_accepts_near_named_item_macros() {
+    for namespace in ["", "std::", "core::", "::std::", "::core::"] {
+        for name in ["include_str", "include_bytes", "include_extra", "not_include"] {
+            let source = format!("{namespace}{name}!(\"included.rs\");");
+            let violations = owned_fixture("mod framing; mod wire; mod controllers;", &source);
+            assert!(violations.is_empty(), "{source}: {violations:?}");
+        }
     }
 }
 
