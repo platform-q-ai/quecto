@@ -27,8 +27,8 @@ use crate::infrastructure::tools::agents::kept_environments::RegistryKeptEnviron
 use crate::infrastructure::tools::agents::subagent_teardown_registry::RegistryDelegatedAgents;
 use crate::infrastructure::tools::swarm::swarm_member_termination::DelegatedSwarmMemberTermination;
 use crate::interface::cli::KillToolWiring;
-use crate::interface::cli::uds_teardown_adapters::RegistryLifecycleRepository;
 use crate::interface::tools::agent_cmd_kill::KillDelegatedAgentTool;
+use crate::interface::uds::controllers::uds_teardown_adapters::RegistryLifecycleRepository;
 
 /// The parent-hand termination owners of one harness over one shared
 /// delegated-agent graph (#1936, #1939): the `agent_cmd kill` tool, the

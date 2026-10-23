@@ -22,9 +22,11 @@ fn finished(id: &str, name: &str, is_error: bool) -> AgentProgressEvent {
 
 #[given("a child agent is processing a turn with tool activity")]
 fn child_processing_tool(world: &mut QuectoWorld) {
-    world.live_execution_state = Some(cli::live_execution_state_for_events(&[started(
-        "call-1", "bash",
-    )]));
+    world.live_execution_state = Some(
+        quecto::interface::uds::test_support::live_execution_state_for_events(&[started(
+            "call-1", "bash",
+        )]),
+    );
 }
 
 #[when("the parent requests the child's state while a tool is running")]
@@ -43,12 +45,14 @@ fn state_identifies_tool(world: &mut QuectoWorld) {
 
 #[given("a child agent has completed tools during the current activity window")]
 fn child_completed_tools(world: &mut QuectoWorld) {
-    world.live_execution_state = Some(cli::live_execution_state_for_events(&[
-        started("call-1", "read"),
-        finished("call-1", "read", false),
-        started("call-2", "bash"),
-        finished("call-2", "bash", true),
-    ]));
+    world.live_execution_state = Some(
+        quecto::interface::uds::test_support::live_execution_state_for_events(&[
+            started("call-1", "read"),
+            finished("call-1", "read", false),
+            started("call-2", "bash"),
+            finished("call-2", "bash", true),
+        ]),
+    );
 }
 
 #[when("the parent requests the child's state")]
@@ -70,9 +74,11 @@ fn state_summarizes_tools(world: &mut QuectoWorld) {
 fn child_appends_messages(world: &mut QuectoWorld) {
     let messages: Arc<[Message]> =
         vec![Message::user("work"), Message::assistant("done", vec![])].into();
-    world.live_execution_state = Some(cli::live_execution_state_for_events(&[
-        AgentProgressEvent::ConversationChanged { messages },
-    ]));
+    world.live_execution_state = Some(
+        quecto::interface::uds::test_support::live_execution_state_for_events(&[
+            AgentProgressEvent::ConversationChanged { messages },
+        ]),
+    );
 }
 
 #[when("the parent requests the child's state before the turn completes")]
@@ -87,10 +93,12 @@ fn state_counts_inflight_messages(world: &mut QuectoWorld) {
 
 #[given("a child agent has completed its active turn")]
 fn child_completed_turn(world: &mut QuectoWorld) {
-    world.live_execution_state = Some(cli::completed_live_execution_state(&[
-        started("call-1", "read"),
-        finished("call-1", "read", false),
-    ]));
+    world.live_execution_state = Some(
+        quecto::interface::uds::test_support::completed_live_execution_state(&[
+            started("call-1", "read"),
+            finished("call-1", "read", false),
+        ]),
+    );
 }
 
 #[then("the state should report idle execution without a current tool")]

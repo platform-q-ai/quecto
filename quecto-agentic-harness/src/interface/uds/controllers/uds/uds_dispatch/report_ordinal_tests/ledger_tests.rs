@@ -13,8 +13,8 @@ use crate::application::tools::ports::Tool;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Role, ToolCall};
 use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
+use crate::interface::uds::controllers::recover_message_controller::GetMessageFields;
 use crate::interface::uds::controllers::uds_cancel::{CancelHandle, fire_cancel};
-use crate::interface::uds::sessions::recover_message_controller::GetMessageFields;
 
 type Reply = Result<LlmResponse, DomainError>;
 

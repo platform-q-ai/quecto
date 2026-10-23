@@ -16,12 +16,14 @@ use quecto::domain::agents::services::subagent_teardown::{
 };
 use quecto::domain::identity::ids::AgentUuid;
 use quecto::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
-use quecto::interface::cli::uds_teardown_handles::TeardownLoopInputs;
+use quecto::interface::uds::controllers::subagent_teardown_controller::{
+    ControllerOutcome, DeliveryState,
+};
 use quecto::interface::uds::controllers::uds_cancel::{CancelSlot, TurnControl};
-use quecto::interface::uds::subagent_teardown::controller::{ControllerOutcome, DeliveryState};
+use quecto::interface::uds::controllers::uds_teardown_handles::TeardownLoopInputs;
 
 struct Graph {
-    graph: quecto::interface::cli::uds_teardown_handles::TeardownHandles,
+    graph: quecto::interface::uds::controllers::uds_teardown_handles::TeardownHandles,
     notify: Arc<tokio::sync::Notify>,
     cancel: Arc<Mutex<CancelSlot>>,
     turn_control: Arc<TurnControl>,

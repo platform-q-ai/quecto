@@ -2,7 +2,7 @@ use super::*;
 use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry,
 };
-use quecto::interface::uds::wire::protocol::build_subagent_info_list;
+use quecto::interface::uds::presenters::subagent_info_list::build_subagent_info_list;
 use std::path::PathBuf;
 
 // ─── Fix 1: Render order (compile-time verified) ─────────────────────────────

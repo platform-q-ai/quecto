@@ -42,7 +42,7 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
             return false;
         }
     };
-    let persist = match crate::interface::uds::catalogue::persist_scope::parse_persist_scope(
+    let persist = match crate::interface::uds::mapping::persist_scope::parse_persist_scope(
         args.persist.as_deref(),
     ) {
         Ok(scope) => scope,
@@ -75,7 +75,7 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
     let ev = AgentEvent::ok(
         args.id.as_deref(),
         &args.type_name,
-        crate::interface::uds::catalogue::model_presenter::render_switch(&switched),
+        crate::interface::uds::presenters::model_presenter::render_switch(&switched),
     );
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
@@ -94,16 +94,16 @@ pub(super) async fn handle_set_effort(
     effort: &str,
     persist: Option<&str>,
 ) -> bool {
-    use crate::interface::uds::catalogue::effort_presenter;
-    let persist =
-        match crate::interface::uds::catalogue::persist_scope::parse_persist_scope(persist) {
-            Ok(scope) => scope,
-            Err(msg) => {
-                let ev = AgentEvent::err(id, type_name, &msg);
-                emit_event_to_broadcast_or_writer(ctx, &ev).await;
-                return false;
-            }
-        };
+    use crate::interface::uds::presenters::effort_presenter;
+    let persist = match crate::interface::uds::mapping::persist_scope::parse_persist_scope(persist)
+    {
+        Ok(scope) => scope,
+        Err(msg) => {
+            let ev = AgentEvent::err(id, type_name, &msg);
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            return false;
+        }
+    };
     let request = crate::application::catalogue::dto::EffortChangeRequest {
         model: ctx.session.model().to_string(),
         level: effort.to_string(),

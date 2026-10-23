@@ -3,7 +3,7 @@ use super::{
     AgentCommand, AgentEvent, DispatchCtx, emit_event_to_broadcast_or_writer,
     emit_response_or_frame_limit_error, emit_response_or_frame_limit_error_with_message,
 };
-use crate::interface::uds::sessions::recover_message_controller::GetMessageFields;
+use crate::interface::uds::controllers::recover_message_controller::GetMessageFields;
 
 /// Presentation of a summary's raw title datum: the "(untitled)"
 /// placeholder and display truncation belong to this edge, not to
@@ -48,7 +48,7 @@ pub(super) async fn dispatch_fieldless_command(
     // `export_raw` and presents the result. The loop serialises requests,
     // so no admission is taken here.
     if let AgentCommand::GetReport { export_raw, .. } = cmd {
-        let event = crate::interface::cli::uds_latest_report::report_event(
+        let event = crate::interface::uds::presenters::uds_latest_report::report_event(
             id,
             ctx.sessions.export_report.report(*export_raw).await,
         );
@@ -108,7 +108,7 @@ pub(super) async fn dispatch_fieldless_command(
         epoch, since_rev, ..
     } = cmd
     {
-        let data = crate::interface::cli::uds_sync::sync_data(
+        let data = crate::interface::uds::presenters::uds_sync::sync_data(
             &ctx.sessions.synchronize_transcript,
             *epoch,
             *since_rev,
@@ -119,7 +119,7 @@ pub(super) async fn dispatch_fieldless_command(
             id,
             tn,
             AgentEvent::ok(id, tn, Some(data)),
-            crate::interface::cli::uds_sync::SYNC_OVERSIZED_ERROR,
+            crate::interface::uds::presenters::uds_sync::SYNC_OVERSIZED_ERROR,
         )
         .await;
         return Some(false);

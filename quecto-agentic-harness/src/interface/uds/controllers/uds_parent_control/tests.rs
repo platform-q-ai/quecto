@@ -18,7 +18,7 @@ use crate::domain::agents::services::subagent_teardown::{
     HarnessLifecycleState, LaunchGeneration, ShutdownReason,
 };
 use crate::infrastructure::processes::parent_control::presentation_json;
-use crate::interface::uds::parent_control::wire::BindParentControlWire;
+use crate::interface::uds::wire::parent_control_wire::BindParentControlWire;
 
 struct Rig {
     teardown: Arc<ConnectionTeardown>,

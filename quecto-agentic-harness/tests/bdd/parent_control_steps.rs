@@ -24,7 +24,7 @@ use quecto::infrastructure::processes::parent_control::{
 use quecto::interface::uds::controllers::uds::{UdsLoopArgs, run_uds_loop};
 use quecto::interface::uds::controllers::uds_parent_control::BindDeadline;
 use quecto::interface::uds::controllers::uds_parent_control::ParentControlLaunch;
-use quecto::interface::uds::parent_control::wire::BindParentControlWire;
+use quecto::interface::uds::wire::parent_control_wire::BindParentControlWire;
 
 use crate::QuectoWorld;
 

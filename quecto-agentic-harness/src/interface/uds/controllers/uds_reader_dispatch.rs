@@ -1,4 +1,4 @@
-use crate::interface::cli::uds_session_handles::SessionReadHandles;
+use crate::interface::uds::controllers::uds_session_handles::SessionReadHandles;
 use crate::interface::uds::framing::uds_multi::{ClientCommand, ClientMessage};
 
 pub(in crate::interface) struct ReaderDispatchCtx<'a> {
@@ -31,7 +31,7 @@ pub(in crate::interface) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
     if intercept_admission_restart(&ctx) {
         return true;
     }
-    if crate::interface::cli::uds_sync::intercept(
+    if crate::interface::uds::presenters::uds_sync::intercept(
         &ctx.line,
         ctx.session,
         ctx.registry,
@@ -41,8 +41,8 @@ pub(in crate::interface) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
     {
         return true;
     }
-    if crate::interface::cli::uds_busy_subagents::intercept(
-        crate::interface::cli::uds_busy_subagents::BusySubagentCtx {
+    if crate::interface::uds::controllers::uds_busy_subagents::intercept(
+        crate::interface::uds::controllers::uds_busy_subagents::BusySubagentCtx {
             line: &ctx.line,
             subagents: ctx.subagent_registry,
             fleet: ctx.fleet,
@@ -54,8 +54,8 @@ pub(in crate::interface) async fn dispatch(ctx: ReaderDispatchCtx<'_>) -> bool {
     {
         return true;
     }
-    if crate::interface::cli::uds_busy_get_message::intercept(
-        crate::interface::cli::uds_busy_get_message::BusyCommandCtx {
+    if crate::interface::uds::controllers::uds_busy_get_message::intercept(
+        crate::interface::uds::controllers::uds_busy_get_message::BusyCommandCtx {
             line: &ctx.line,
             session: ctx.session,
             registry: ctx.registry,
@@ -153,7 +153,7 @@ fn intercept_admission_restart(ctx: &ReaderDispatchCtx<'_>) -> bool {
                 format!("admission restart task failed: {error}"),
             ),
         };
-        crate::interface::cli::uds_busy_subagents::write_event(
+        crate::interface::uds::controllers::uds_busy_subagents::write_event(
             &clients, client_id, id, COMMAND, &event,
         )
         .await;

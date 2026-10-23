@@ -1,4 +1,7 @@
 use super::*;
+use crate::interface::uds::presenters::subagent_info_list::{
+    build_live_subagent_info_list, build_subagent_info_list,
+};
 use serde_json::json;
 
 #[test]

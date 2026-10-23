@@ -4,6 +4,7 @@ use super::uds_cancel::{
     CancelHandle, EventSink, PromptOutcome, PromptRun, TurnControlHandle, disarm_cancel,
     run_agent_message,
 };
+use super::uds_discovery_handles::SessionDiscoveryHandles;
 use super::uds_workflow_nudge::{
     has_active_workflow_descendant, workflow_nudge_message, workflow_progress_fingerprint,
 };
@@ -12,7 +13,6 @@ use crate::application::sessions::dto::SaveTrigger;
 use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::tools::agents::{subagent_identity, subagent_registry};
-use crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles;
 use crate::interface::cli::uds_session::AgentSession;
 #[cfg(test)]
 use crate::interface::cli::uds_session::{
@@ -126,9 +126,10 @@ pub(crate) struct DispatchCtx<'a> {
     pub messages: &'a mut Vec<Message>,
     /// The active session and its read use cases (#1971): the one
     /// conversation read model every transport serves from.
-    pub sessions: crate::interface::cli::uds_session_handles::SessionReadHandles,
+    pub sessions: super::uds_session_handles::SessionReadHandles,
     pub state_snapshot: uds_multi::StateSnapshot, // #837
-    pub execution_state: crate::interface::cli::uds_execution_state::ExecutionStateHandle,
+    pub execution_state:
+        crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle,
     pub session_stats_snapshot: crate::interface::cli::uds_snapshots::SessionStatsSnapshot, // #880
     pub tool_catalogue_snapshot: super::uds_extensions::ToolCatalogueSnapshot,              // #880
     pub busy: uds_multi::BusyFlag,                                                          // #828
@@ -160,10 +161,10 @@ pub(crate) struct DispatchCtx<'a> {
     pub save_session: SaveSessionHandle,
     /// Clear (#1864) and rewind (#1865) the conversation (#1975): the two
     /// history-replacing transactions this loop requests once admitted.
-    pub rewrite: crate::interface::cli::uds_session_handles::ConversationRewriteHandles,
+    pub rewrite: super::uds_session_handles::ConversationRewriteHandles,
     /// Start a fresh conversation (#1862, #1976) or resume a saved one (#1863,
     /// #1977): the two session transitions this loop requests once admitted.
-    pub switch: crate::interface::cli::uds_session_handles::SessionSwitchHandles,
+    pub switch: super::uds_session_handles::SessionSwitchHandles,
     /// The catalogue handles (#1845, #1848): `list_models` and effort changes.
     pub catalogue: crate::interface::cli::controllers::catalogue_handles::CatalogueHandles,
 }

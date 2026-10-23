@@ -19,8 +19,8 @@ use super::{AgentCommand, AgentEvent, DispatchCtx, emit_event_to_broadcast_or_wr
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::sessions::entities::session::SubagentRestoreReason;
 use crate::domain::tool_policy::value_objects::tool;
+use crate::interface::uds::controllers::resume_session_controller::ResumeFields;
 use crate::interface::uds::controllers::uds_ext_protocol;
-use crate::interface::uds::sessions::resume_session_controller::ResumeFields;
 use crate::interface::uds::wire::protocol::{
     ToolPolicyApplyModeCommand, ToolPolicyMutationCommand, ToolPolicyOperationCommand,
 };
@@ -122,7 +122,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         AgentCommand::Reload { .. } => {
             // Reload runtime configuration (#1849), rebuilt off the runtime; presented.
             let outcome = super::super::uds_dispatch_reload::force_reload(ctx).await;
-            let ev = match crate::interface::uds::catalogue::reload_presenter::render(&outcome) {
+            let ev = match crate::interface::uds::presenters::reload_presenter::render(&outcome) {
                 Ok(data) => AgentEvent::ok(id.as_deref(), &type_name, data),
                 Err(error) => AgentEvent::err(id.as_deref(), &type_name, error),
             };

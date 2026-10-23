@@ -238,12 +238,7 @@ fn inspect_owned<F: Fn(&Path) -> Result<String, String>>(root: &Path, read: F) -
             .violations
             .push(format!("{}: {error}", owner.display())),
     }
-    resolver.file(
-        &root
-            .parent()
-            .expect("interface directory")
-            .join("cli/uds_tool_intercept.rs"),
-    );
+    resolver.file(&root.join("mapping/uds_tool_intercept.rs"));
     resolver.violations.sort();
     resolver.violations
 }
@@ -266,7 +261,7 @@ fn owned_fixture(owner: &str, controller: &str) -> Vec<String> {
         ("interface/uds/mod.rs", owner),
         ("interface/uds/framing/mod.rs", ""),
         ("interface/uds/wire/mod.rs", ""),
-        ("interface/cli/uds_tool_intercept.rs", ""),
+        ("interface/uds/mapping/uds_tool_intercept.rs", ""),
         ("interface/uds/controllers/mod.rs", controller),
         ("interface/uds/controllers/actual.rs", ""),
         ("interface/uds/controllers/alias.rs", ""),
@@ -561,8 +556,8 @@ fn canonical_controller_scan_inventory_preserves_every_production_node() {
         "controller AST production nodes: {selected}; teardown false-production removals: {}; shared removals: {shared_removed}; unrelated files unchanged: {unchanged}",
         removed.len()
     );
-    assert_eq!(selected, 34);
-    assert_eq!(removed.len(), 26);
+    assert_eq!(selected, 52);
+    assert_eq!(removed.len(), 40);
 }
 
 #[test]

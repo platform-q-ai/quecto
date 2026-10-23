@@ -25,15 +25,6 @@ pub enum SessionListScopeCommand {
     Global,
 }
 
-impl From<SessionListScopeCommand> for crate::application::sessions::dto::SessionListScope {
-    fn from(scope: SessionListScopeCommand) -> Self {
-        match scope {
-            SessionListScopeCommand::Local => Self::Local,
-            SessionListScopeCommand::Global => Self::Global,
-        }
-    }
-}
-
 // ─── Commands (stdin) ────────────────────────────────────────────────────────
 /// A command received over the UDS socket.
 #[derive(Debug, Clone, Deserialize, Serialize)]

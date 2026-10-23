@@ -28,12 +28,12 @@ fn ledger_hints(lines: &[serde_json::Value]) -> Vec<&serde_json::Value> {
 /// them; the step only holds them), for the busy-reader helpers.
 fn liveness_read_handles(
     world: &mut QuectoWorld,
-) -> quecto::interface::cli::uds_session_handles::SessionReadHandles {
+) -> quecto::interface::uds::controllers::uds_session_handles::SessionReadHandles {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let base = tmp.path().to_path_buf();
     world._extra_temp_dirs.push(tmp);
     quecto::composition::sessions::build_session_handles(
-        quecto::interface::cli::uds_session_handles::SessionLoopInputs {
+        quecto::interface::uds::controllers::uds_session_handles::SessionLoopInputs {
             base_dir: base,
             identity:
                 quecto::domain::sessions::entities::session_identity::SessionIdentity::ephemeral(),
@@ -51,13 +51,16 @@ fn liveness_read_handles(
 fn run_turn_events(world: &mut QuectoWorld, events: &[AgentProgressEvent]) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let session = liveness_read_handles(world).active_session;
-    world.subagent_liveness_lines =
-        Some(rt.block_on(cli::ledger_hint_lines_for_turn_events(events, &session)));
+    world.subagent_liveness_lines = Some(rt.block_on(
+        quecto::interface::uds::test_support::ledger_hint_lines_for_turn_events(events, &session),
+    ));
 }
 
 fn run_busy_intercept(world: &mut QuectoWorld, line: &str) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-    let (handled, response) = rt.block_on(cli::busy_reader_intercept(line));
+    let (handled, response) = rt.block_on(
+        quecto::interface::uds::test_support::busy_reader_intercept(line),
+    );
     world.subagent_liveness_intercept = Some((handled, response));
 }
 
@@ -171,11 +174,13 @@ fn send_delete_all(world: &mut QuectoWorld, id: String) {
         .enable_all()
         .build()
         .expect("tokio runtime");
-    let (handled, response) = rt.block_on(cli::busy_reader_intercept_with_fleet(
-        &format!(r#"{{"type":"delete_all_subagents","id":"{id}"}}"#),
-        registry.clone(),
-        Some(fleet),
-    ));
+    let (handled, response) = rt.block_on(
+        quecto::interface::uds::test_support::busy_reader_intercept_with_fleet(
+            &format!(r#"{{"type":"delete_all_subagents","id":"{id}"}}"#),
+            registry.clone(),
+            Some(fleet),
+        ),
+    );
     let remaining = registry.lock().unwrap().len();
     world.subagent_liveness_intercept = Some((handled, response));
     world.subagent_liveness_registry_remaining = Some(remaining);
@@ -279,10 +284,11 @@ fn child_dispatch_busy(world: &mut QuectoWorld) {
 fn send_direct_feed_sync(world: &mut QuectoWorld) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let session = liveness_read_handles(world);
-    let (served_inline, response) = rt.block_on(cli::busy_reader_dispatch(
-        r#"{"type":"sync","id":"feed-1","epoch":1,"sinceRev":0}"#,
-        &session,
-    ));
+    let (served_inline, response) =
+        rt.block_on(quecto::interface::uds::test_support::busy_reader_dispatch(
+            r#"{"type":"sync","id":"feed-1","epoch":1,"sinceRev":0}"#,
+            &session,
+        ));
     world.subagent_liveness_intercept = Some((served_inline, response));
 }
 

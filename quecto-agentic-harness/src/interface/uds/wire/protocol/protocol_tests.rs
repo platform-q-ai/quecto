@@ -1,4 +1,5 @@
 use super::*;
+use crate::interface::uds::presenters::subagent_info_list::build_subagent_info_list;
 
 // ─── AgentCommand deserialization ──────────────────────────────────────────
 

@@ -33,7 +33,7 @@ async fn the_handles_share_one_state_between_the_handle_and_the_read_use_cases()
     let recovered = handles
         .recover_message
         .recover(
-            crate::interface::uds::sessions::recover_message_controller::GetMessageFields {
+            crate::interface::uds::controllers::recover_message_controller::GetMessageFields {
                 message_id: &message.id().to_string(),
                 tool_call_id: None,
                 offset: None,

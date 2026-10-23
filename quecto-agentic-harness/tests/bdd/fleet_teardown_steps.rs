@@ -270,12 +270,13 @@ fn when_busy_delete(world: &mut QuectoWorld, rows: usize) {
             quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
     });
     let rt = runtime(world);
-    let (handled, response) =
-        rt.block_on(quecto::interface::cli::busy_reader_intercept_with_fleet(
+    let (handled, response) = rt.block_on(
+        quecto::interface::uds::test_support::busy_reader_intercept_with_fleet(
             r#"{"type":"delete_all_subagents","id":"busy-del"}"#,
             registry.clone(),
             Some(fleet),
-        ));
+        ),
+    );
     assert!(handled, "served off the dispatch loop");
     state(world).busy_response = response;
     state(world).busy_registry = Some(registry);

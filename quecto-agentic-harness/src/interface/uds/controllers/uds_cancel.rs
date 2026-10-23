@@ -287,7 +287,8 @@ pub(crate) struct PromptRun<'a, 's> {
     /// The active session's read model, published as the turn appends
     /// (#1971); `None` on rigs without a busy reader.
     pub active_session: Option<crate::application::sessions::active_session::ActiveSessionHandle>,
-    pub execution_state: Option<crate::interface::cli::uds_execution_state::ExecutionStateHandle>,
+    pub execution_state:
+        Option<crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle>,
     pub session: &'a mut AgentSession,
     /// Sink the streamed events are delivered to (writer XOR broadcast).
     pub sink: &'a mut EventSink<'s>,
@@ -669,8 +670,9 @@ pub(in crate::interface::uds::controllers) fn forward_notification_broadcast(
         let _ = broadcast_tx.send(line);
     }
     // Build survivor-only subagent info list for the authoritative live state-changed event.
-    let list =
-        crate::interface::uds::wire::protocol::build_live_subagent_info_list(subagent_registry);
+    let list = crate::interface::uds::presenters::subagent_info_list::build_live_subagent_info_list(
+        subagent_registry,
+    );
     let ev = AgentEvent::SubagentStateChanged { subagents: list };
     let mut line = ev.to_json_line();
     line.push('\n');
@@ -698,7 +700,9 @@ pub async fn forward_progress_event(
 
 fn install_progress_callback(
     agent: &mut AgentLoopImpl,
-    live_execution: Option<crate::interface::cli::uds_execution_state::ExecutionStateHandle>,
+    live_execution: Option<
+        crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle,
+    >,
     progress_tx: tokio::sync::mpsc::Sender<AgentProgressEvent>,
 ) {
     agent.set_progress_callback(Some(Arc::new(move |ev| {
@@ -716,8 +720,8 @@ fn install_progress_callback(
 }
 
 fn update_execution(
-    handle: &Option<crate::interface::cli::uds_execution_state::ExecutionStateHandle>,
-    update: impl FnOnce(&mut crate::interface::cli::uds_execution_state::ExecutionState),
+    handle: &Option<crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle>,
+    update: impl FnOnce(&mut crate::interface::uds::presenters::uds_execution_state::ExecutionState),
 ) {
     if let Some(handle) = handle {
         if let Ok(mut state) = handle.lock() {

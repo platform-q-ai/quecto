@@ -22,11 +22,11 @@ use quecto::domain::agents::services::subagent_teardown::{
     HarnessLifecycleState, LifecycleTransitionError, LineageSnapshot, RoutingDepth, ShutdownReason,
 };
 use quecto::domain::identity::ids::AgentUuid;
-use quecto::interface::uds::subagent_teardown::controller::{
+use quecto::interface::uds::controllers::subagent_teardown_controller::{
     ConnectionAuthority, ControllerOutcome, DeliveryState, SubagentTeardownController,
 };
-use quecto::interface::uds::subagent_teardown::presenter::{AckWriteError, AckWriter};
-use quecto::interface::uds::subagent_teardown::wire::{
+use quecto::interface::uds::presenters::subagent_teardown_presenter::{AckWriteError, AckWriter};
+use quecto::interface::uds::wire::subagent_teardown_wire::{
     TEARDOWN_COMMAND_CAP_BYTES, TeardownResponse,
 };
 

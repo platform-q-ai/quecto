@@ -20,7 +20,7 @@ use crate::infrastructure::providers::catalogue::catalogue_registry::{
     PublishedEffortVocabulary, runtime_store_for, snapshot_store_for,
 };
 use crate::interface::cli::controllers::configuration_handles::ConfigurationEnvironment;
-use crate::interface::uds::catalogue::list_models_controller::ListModelsController;
+use crate::interface::uds::controllers::list_models_controller::ListModelsController;
 
 use crate::interface::cli::controllers::catalogue_handles::{
     CatalogueHandles, RuntimeConfigurationInputs,
@@ -126,7 +126,7 @@ mod resolve_tests;
 /// `list_models_data` (retired, #1845) read through the same builder and presenter.
 #[cfg(any(test, feature = "test-support"))]
 pub fn list_models_wire_for(base_dir: &std::path::Path) -> serde_json::Value {
-    crate::interface::uds::catalogue::list_models_presenter::render(
+    crate::interface::uds::presenters::list_models_presenter::render(
         &build_catalogue_handles(base_dir, None).list_models.list(),
     )
 }

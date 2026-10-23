@@ -7,8 +7,8 @@ use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::interface::cli::uds_lifecycle;
 use crate::interface::cli::uds_session::history_session_stats;
-use crate::interface::cli::uds_session_handles::SessionHandles;
 use crate::interface::uds::controllers::uds::{DispatchCtx, run_command_loop};
+use crate::interface::uds::controllers::uds_session_handles::SessionHandles;
 use crate::interface::uds::controllers::{uds_cancel, uds_ext_protocol, uds_extensions};
 
 pub(in crate::interface) struct SingleClientArgs<'a> {

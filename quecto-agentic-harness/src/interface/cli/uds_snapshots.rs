@@ -11,10 +11,10 @@
 //! (#1974); the rewind's ledger reset and the session switch are the
 //! transactions' own (#1975, #1976).
 use super::uds_session::{HISTORY_PAGE_SIZE, history_page_json, present_session_stats};
-use super::uds_session_handles::SessionReadHandles;
 use crate::application::sessions::dto::HistoryPage;
 use crate::domain::conversation::services::conversation_view::user_visible_messages;
 use crate::interface::uds::controllers::uds::DispatchCtx;
+use crate::interface::uds::controllers::uds_session_handles::SessionReadHandles;
 use crate::interface::uds::wire::protocol::{AgentEvent, SessionState};
 
 pub(crate) type StateSnapshot = std::sync::Arc<tokio::sync::RwLock<SessionState>>;
@@ -166,7 +166,7 @@ pub(crate) struct BusySnapshotSources<'a> {
     pub subagents:
         &'a Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     pub workflow: &'a Option<crate::interface::shared::WorkflowStateHandle>,
-    pub execution: &'a super::uds_execution_state::ExecutionStateHandle,
+    pub execution: &'a crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle,
 }
 
 pub(crate) async fn busy_connect_snapshot_lines(sources: BusySnapshotSources<'_>) -> [String; 5] {
@@ -210,14 +210,14 @@ pub(crate) async fn busy_connect_snapshot_lines(sources: BusySnapshotSources<'_>
 pub(crate) fn build_busy_get_state_line(
     state: &SessionState,
     workflow_state: &Option<crate::interface::shared::WorkflowStateHandle>,
-    execution_state: &super::uds_execution_state::ExecutionStateHandle,
+    execution_state: &crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle,
 ) -> String {
     build_connect_get_state_line(state, workflow_state, execution_state, true)
 }
 pub(crate) fn build_connect_get_state_line(
     state: &SessionState,
     workflow_state: &Option<crate::interface::shared::WorkflowStateHandle>,
-    execution_state: &super::uds_execution_state::ExecutionStateHandle,
+    execution_state: &crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle,
     is_busy: bool,
 ) -> String {
     let mut live = state.clone();

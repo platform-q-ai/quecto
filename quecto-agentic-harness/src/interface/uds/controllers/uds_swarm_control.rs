@@ -71,14 +71,15 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
         let clients = ctx.registry.clone();
         let client_id = ctx.client_id;
         tokio::spawn(async move {
-            let event = crate::interface::cli::uds_busy_subagents::forward_child_command(
-                &subagents,
-                id.as_deref(),
-                &agent_id,
-                command,
-            )
-            .await;
-            crate::interface::cli::uds_busy_subagents::write_event(
+            let event =
+                crate::interface::uds::controllers::uds_busy_subagents::forward_child_command(
+                    &subagents,
+                    id.as_deref(),
+                    &agent_id,
+                    command,
+                )
+                .await;
+            crate::interface::uds::controllers::uds_busy_subagents::write_event(
                 &clients,
                 client_id,
                 id.as_deref(),
@@ -185,7 +186,7 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
                     "swarm_control",
                     "deadline_seconds is required and must be positive",
                 );
-                crate::interface::cli::uds_busy_subagents::write_event(
+                crate::interface::uds::controllers::uds_busy_subagents::write_event(
                     ctx.registry,
                     ctx.client_id,
                     id.as_deref(),

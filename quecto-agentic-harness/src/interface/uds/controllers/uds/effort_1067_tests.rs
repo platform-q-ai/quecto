@@ -53,7 +53,7 @@ struct EffortFx {
     agent: AgentLoopImpl,
     messages: Vec<crate::domain::conversation::value_objects::message::Message>,
     session: AgentSession,
-    execution_state: crate::interface::cli::uds_execution_state::ExecutionStateHandle,
+    execution_state: crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle,
     session_key: String,
     _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,

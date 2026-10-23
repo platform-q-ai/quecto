@@ -1,5 +1,9 @@
 pub mod board;
 pub mod controllers;
+/// Drive an in-process harness through the termination-signal path (#1938)
+/// without signalling the test process.
+#[cfg(any(test, feature = "test-support"))]
+pub use crate::interface::uds::framing::uds_shutdown::test_support::deliver_termination_signal;
 pub use controllers::container::{
     ContainerDoctorBuilder, ContainerInitBuilder, ContainerInventoryBuilder,
     ContainerStatusBuilder, EnvironmentRegistryBuilder,
@@ -9,58 +13,18 @@ use controllers::{
     configuration_handles, container_config_handles, retention_handles, run_end_fleet,
     swarm_board_handles,
 };
-pub(in crate::interface) mod uds_admission_projection;
-#[cfg(test)]
-#[path = "uds_admission_projection_tests.rs"]
-mod uds_admission_projection_tests;
-pub(in crate::interface) mod uds_busy_get_message;
-pub(in crate::interface) mod uds_busy_subagents;
-#[cfg(test)]
-mod uds_busy_subagents_tests;
-pub mod uds_execution_state;
 
-#[cfg(any(test, feature = "test-support"))]
-mod uds_test_support;
-#[cfg(any(test, feature = "test-support"))]
-pub use uds_test_support::{
-    AdmissionStateProbe, admission_broadcast_hook, busy_reader_dispatch,
-    completed_live_execution_state, ledger_hint_lines_for_turn_events,
-    live_execution_state_for_events,
-};
-#[cfg(any(test, feature = "test-support"))]
-mod uds_busy_test_support;
-/// Drive an in-process harness through the termination-signal path (#1938)
-/// without signalling the test process.
-#[cfg(any(test, feature = "test-support"))]
-pub use crate::interface::uds::framing::uds_shutdown::test_support::deliver_termination_signal;
-#[cfg(any(test, feature = "test-support"))]
-pub use uds_busy_test_support::{busy_reader_intercept, busy_reader_intercept_with_fleet};
-
-pub(in crate::interface) mod uds_admission_warnings;
-pub mod uds_discovery_handles;
-#[cfg(test)]
-mod uds_execution_state_tests;
-pub(in crate::interface) mod uds_latest_report;
 pub(in crate::interface) mod uds_lifecycle;
 pub mod uds_session;
 #[cfg(test)]
 mod uds_session_admission_tests;
-pub mod uds_session_handles;
 pub mod uds_session_switch_runtime;
 pub(in crate::interface) mod uds_snapshots;
 pub(in crate::interface) mod uds_state_projection;
 #[cfg(test)]
 mod uds_state_projection_tests;
-pub(in crate::interface) mod uds_swarm_board;
-pub(in crate::interface) mod uds_sync;
-#[cfg(test)]
-mod uds_sync_tests;
-pub(crate) mod uds_teardown_adapters;
-pub mod uds_teardown_handles;
 #[cfg(test)]
 mod uds_thinking_1231_tests;
-pub(in crate::interface) mod uds_tool_intercept;
-pub mod uds_turn_accounting;
 
 use crate::application::configuration::dto::{ConfigSelection, ConfigSelectionRequest};
 use controllers::config_flag::{extract_config_flag, strip_global_config_flag};
@@ -125,14 +89,18 @@ pub type KillToolBuilder = fn(KillToolWiring) -> bool;
 /// context; the loop hands over its runtime inputs and holds only the
 /// use-case and controller handles back, never the graph between them.
 pub type TeardownHandlesBuilder =
-    fn(uds_teardown_handles::TeardownLoopInputs) -> uds_teardown_handles::TeardownHandles;
+    fn(
+        crate::interface::uds::controllers::uds_teardown_handles::TeardownLoopInputs,
+    ) -> crate::interface::uds::controllers::uds_teardown_handles::TeardownHandles;
 
 /// Composition's builder of the handles one loop holds on the sessions
 /// capability (#1970): the session store and the saved-session queries,
 /// composed over the loop's base directory. Injected through the CLI
 /// context; the interface never constructs a store or a use case.
 pub type SessionHandlesBuilder =
-    fn(uds_session_handles::SessionLoopInputs) -> uds_session_handles::SessionHandles;
+    fn(
+        crate::interface::uds::controllers::uds_session_handles::SessionLoopInputs,
+    ) -> crate::interface::uds::controllers::uds_session_handles::SessionHandles;
 
 /// Composition's builder of the handles one run holds on retained context
 /// (D9 #1978): the retention store, the recall use case and the pruning

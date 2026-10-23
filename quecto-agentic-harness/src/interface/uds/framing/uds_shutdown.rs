@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 
-use crate::interface::uds::subagent_teardown::controller::{
+use crate::interface::uds::controllers::subagent_teardown_controller::{
     ControllerOutcome, DeliveryState, SubagentTeardownController,
 };
 

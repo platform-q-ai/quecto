@@ -225,7 +225,7 @@ adapters in `src/infrastructure/persistence/` and
 `filesystem_scope.rs` — the only production spawns of `git`, resolved on PATH
 once and run off the async executor); the graph in
 `src/composition/{sessions,session_home,session_search,active_session,
-session_report,retention,fleet_settlement}.rs`; the wire edge in `src/interface/uds/sessions/`
+session_report,retention,fleet_settlement}.rs`; the wire edge in the sessions controllers of `src/interface/uds/controllers/`
 and the session modules of `src/interface/cli/`.
 
 Sessions capability, final shape (epic #1968, closed by #1979; #2010 added the
@@ -277,7 +277,7 @@ the restore, a typed `ResumeDecision` (pure kinds, their refusal codes and
 actions, their capability set and its composition were removed (#2045). The
 command that opens quecto in the session's folder is the pure
 `src/domain/sessions/value_objects/session_open_command.rs`; the wire edge is
-`interface/uds/sessions/resume_session_controller.rs` and
+`interface/uds/controllers/resume_session_controller.rs` and
 `interface/uds/controllers/uds/uds_dispatch_session/uds_dispatch_resume.rs`.
 
 Session persistence stores conversation messages, tool-call identity, durable
@@ -325,7 +325,7 @@ scheduler-free phases — `rebuild`/`rebuild_if_changed` yielding a
 runs the rebuild under `tokio::task::spawn_blocking` so the current-thread
 UDS runtime keeps serving while it is in flight; composition builds the use
 case into `CatalogueHandles.reload` and the presenter in
-`src/interface/uds/catalogue/reload_presenter.rs` renders the outcome. The
+`src/interface/uds/presenters/reload_presenter.rs` renders the outcome. The
 durable tool-policy persistence hook is its own composition seam
 (`src/composition/tool_policy.rs`, `CliComposition.tool_policy_persistence`),
 installed on the loop by the agent build; it is a caller of the configuration

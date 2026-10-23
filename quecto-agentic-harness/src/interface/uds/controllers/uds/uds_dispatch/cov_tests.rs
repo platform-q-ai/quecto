@@ -701,7 +701,7 @@ async fn dispatch_ext_command_unregister_unknown_noop() {
 /// claiming the target.
 #[tokio::test]
 async fn resume_stale_token_changes_nothing() {
-    use crate::interface::uds::sessions::resume_session_controller::ResumeFields;
+    use crate::interface::uds::controllers::resume_session_controller::ResumeFields;
     let mut fx = Fixture::new();
     let before = fx.current_session_key();
     let fields = ResumeFields {
