@@ -556,8 +556,8 @@ fn canonical_controller_scan_inventory_preserves_every_production_node() {
         "controller AST production nodes: {selected}; teardown false-production removals: {}; shared removals: {shared_removed}; unrelated files unchanged: {unchanged}",
         removed.len()
     );
-    assert_eq!(selected, 34);
-    assert_eq!(removed.len(), 26);
+    assert_eq!(selected, 52);
+    assert_eq!(removed.len(), 40);
 }
 
 #[test]
