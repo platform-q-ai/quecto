@@ -531,7 +531,12 @@ fn ownership_rejects_core_qualified_item_includes() {
 #[test]
 fn ownership_accepts_near_named_item_macros() {
     for namespace in ["", "std::", "core::", "::std::", "::core::"] {
-        for name in ["include_str", "include_bytes", "include_extra", "not_include"] {
+        for name in [
+            "include_str",
+            "include_bytes",
+            "include_extra",
+            "not_include",
+        ] {
             let source = format!("{namespace}{name}!(\"included.rs\");");
             let violations = owned_fixture("mod framing; mod wire; mod controllers;", &source);
             assert!(violations.is_empty(), "{source}: {violations:?}");
