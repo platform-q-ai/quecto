@@ -693,3 +693,67 @@ fn ownership_accepts_near_named_and_unrelated_imports() {
         assert!(violations.is_empty(), "{source}: {violations:?}");
     }
 }
+
+#[test]
+fn ownership_rejects_raw_include_syntax_and_local_positions() {
+    for root in ["std", "core", "r#std", "r#core"] {
+        for source in builtin_include_imports(root)
+            .into_iter()
+            .map(|source| source.replace("include", "r#include"))
+            .chain([format!("{root}::r#include!(\"hidden.rs\");")])
+            .chain(["r#include!(\"hidden.rs\");".into()])
+        {
+            for wrapped in [source.clone(), format!("fn outer() {{ {source} }}")] {
+                let violations = owned_fixture("mod framing; mod wire; mod controllers;", &wrapped);
+                assert_eq!(violations.len(), 1, "{wrapped}: {violations:?}");
+                assert!(violations[0].contains("unsupported"), "{violations:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn ownership_rejects_local_modules_and_includes_in_related_positions() {
+    for body in [
+        "#[path = \"/tmp/hidden.rs\"] mod actual;",
+        "mod actual;",
+        "mod inline { mod actual; }",
+        "use std::include as generated;",
+        "r#include!(\"hidden.rs\");",
+    ] {
+        for source in [
+            format!("fn outer() {{ {body} }}"),
+            format!("fn outer() {{ fn inner() {{ {body} }} }}"),
+            format!("struct S; impl S {{ fn method() {{ {body} }} }}"),
+            format!("trait T {{ fn method() {{ {body} }} }}"),
+            format!("const C: () = {{ {body} }};"),
+            format!("mod inline {{ fn outer() {{ {body} }} }}"),
+        ] {
+            let violations = owned_fixture("mod framing; mod wire; mod controllers;", &source);
+            assert_eq!(violations.len(), 1, "{source}: {violations:?}");
+            assert!(violations[0].contains("unsupported"), "{violations:?}");
+            assert!(violations[0].starts_with("interface/uds/controllers/mod.rs:"));
+        }
+    }
+}
+
+#[test]
+fn ownership_normalizes_raw_modules_roles_and_attributes() {
+    assert!(owned_fixture("mod r#framing; mod r#wire; mod r#controllers;", "mod r#actual;").is_empty());
+    for attribute in ["r#path = \"alias.rs\"", "r#cfg_attr(unix, r#path = \"alias.rs\")"] {
+        let source = format!("#[{attribute}] mod r#actual;");
+        let violations = owned_fixture("mod framing; mod wire; mod controllers;", &source);
+        assert_eq!(violations.len(), 1, "{source}: {violations:?}");
+        assert!(violations[0].contains("redirects canonical resolution"));
+    }
+}
+
+#[test]
+fn ownership_accepts_legitimate_local_items_and_raw_near_names() {
+    for name in ["include_str", "include_bytes", "include_extra", "not_include"] {
+        let source = format!("fn outer() {{ use r#std::r#{name} as generated; r#{name}!(\"text\"); struct S; impl S {{ fn method() {{ const C: () = {{}}; }} }} }}");
+        assert!(owned_fixture("mod framing; mod wire; mod controllers;", &source).is_empty());
+    }
+    let owner = "mod framing; mod wire; mod controllers; mod sessions { fn local() { #[path = \"/tmp/hidden.rs\"] mod actual; r#include!(\"hidden.rs\"); } }";
+    assert!(owned_fixture(owner, "fn local() { let _ = { fn inner() {} }; }").is_empty());
+}
