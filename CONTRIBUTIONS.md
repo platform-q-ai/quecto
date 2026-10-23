@@ -10,6 +10,18 @@ Thank you for your interest in contributing to Quecto. This repository is a Rust
 
 ## Development setup
 
+Focused architecture hook tests require a GNU-compatible executable named `timeout` on `PATH`
+(see the [GNU timeout manual](https://www.gnu.org/software/coreutils/manual/html_node/timeout-invocation.html)).
+On Linux, install GNU coreutils using your distribution's package manager.
+On macOS, install [Homebrew coreutils](https://formulae.brew.sh/formula/coreutils) and expose its unprefixed commands:
+
+```bash
+brew install coreutils
+export PATH="$(brew --prefix coreutils)/libexec/gnubin:$PATH"
+```
+
+`gtimeout` alone does not satisfy the tests' `timeout` invocation. This prerequisite does not imply macOS full-suite support or verification.
+
 Install the local hooks from the repository root:
 
 ```bash
