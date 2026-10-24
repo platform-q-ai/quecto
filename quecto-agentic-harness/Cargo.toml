@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.107.396"
+version = "0.107.441"
 edition = "2024"
 default-run = "quecto"
 description = "Ultra-lightweight personal AI assistant"
@@ -27,7 +27,7 @@ doctest = false
 
 [dependencies]
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "process", "io-std", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "process", "io-std", "io-util", "net", "sync"] }
 
 # Shared bounded protocol reader (#1003)
 quecto-line-io = { version = "0.2.1", path = "../quecto-line-io" }
@@ -37,6 +37,14 @@ quecto-image = { version = "0.1.0", path = "../quecto-image" }
 
 # HTTP-date parsing (already present transitively through hyper).
 httpdate = "1.0.3"
+
+# The board service's HTTP/1.1 server (#2705 B4). hyper and hyper-util are
+# already in the tree through reqwest (its client); the server adds only
+# hyper's `server` feature. hyper-util's `tokio` feature gives the I/O and
+# timer adapters; http-body-util collects a request body under its cap.
+hyper = { version = "1", default-features = false, features = ["server", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+http-body-util = "0.1"
 
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

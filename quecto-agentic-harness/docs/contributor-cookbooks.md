@@ -82,18 +82,18 @@ that owns the command.
 
 **Production files usually involved:**
 
-- `src/interface/cli/protocol.rs` for `AgentCommand` and `AgentEvent` shapes.
-- `src/interface/cli/uds_dispatch.rs` and focused dispatch modules such as
+- `src/interface/uds/wire/protocol.rs` for `AgentCommand` and `AgentEvent` shapes.
+- `src/interface/uds/controllers/uds/uds_dispatch.rs` and focused dispatch modules such as
   `uds_dispatch_query.rs`, `uds_dispatch_session.rs`, `uds_dispatch_runtime.rs`,
   `uds_dispatch_forwarding.rs`, or `uds_dispatch_sync_forward.rs`.
-- `src/interface/cli/protocol.rs`, `uds_session.rs`, and `uds_snapshots.rs`
+- `src/interface/uds/wire/protocol.rs`, `uds_session.rs`, and `uds_snapshots.rs`
   when response or snapshot JSON changes.
 - `src/infrastructure/tools/agents/agent_cmd.rs` when the spawned-agent tool exposes
   the command.
 
 **Tests to add/update:**
 
-- Protocol shape tests in `src/interface/cli/protocol*_tests.rs`.
+- Protocol shape tests in `src/interface/uds/wire/protocol*_tests.rs`.
 - Dispatcher family tests next to the touched module.
 - Regression tests for correlation ids, bounded responses, and child-targeted
   forwarding when relevant.
@@ -163,8 +163,8 @@ serialization for UDS-visible events.
 
 - `src/domain/agents/value_objects/agent.rs` for `AgentProgressEvent` changes.
 - `src/application/agent_turn/agent_loop/agent_loop*.rs` where progress is emitted.
-- `src/interface/cli/uds_cancel.rs`, `uds_snapshots.rs`, or `protocol.rs` for
-  UDS event conversion.
+- `src/interface/uds/controllers/uds_cancel.rs`, `src/interface/cli/uds_snapshots.rs`,
+  or `src/interface/uds/wire/protocol.rs` for UDS event conversion.
 - `src/infrastructure/observability/logging.rs` or audit-specific modules for persistent audit
   behaviour.
 
@@ -209,7 +209,12 @@ paths.
   the only place a sessions use case, controller, store or the
   `ActiveSessionState` is constructed; the interface receives handles through
   `CliComposition` and must not name the composition layer.
-- `src/interface/uds/sessions/*` and `src/interface/cli/uds_dispatch_session.rs`
+- `src/interface/uds/controllers/sessions_controller.rs`,
+  `src/interface/uds/controllers/read_history_controller.rs`,
+  `src/interface/uds/controllers/recover_message_controller.rs`,
+  `src/interface/uds/controllers/resume_session_controller.rs`,
+  `src/interface/uds/controllers/synchronize_transcript_controller.rs` and
+  `src/interface/uds/controllers/uds/uds_dispatch_session.rs`
   for the wire edge: parse the command, map it to the DTO, request the
   injected use case, present the response. Handlers admit and present; they
   never claim, load, save, release or switch anything themselves.
@@ -261,7 +266,7 @@ or `agent_cmd` surface that exposes it.
 - `src/infrastructure/tools/agents/spawn*.rs`, `subagent_registry.rs`,
   `subagent_monitor*.rs` and `subagent_lifecycle.rs` for process/run state.
 - `src/infrastructure/tools/agents/agent_cmd*.rs` for parent-to-child commands.
-- `src/interface/cli/uds_dispatch_forwarding.rs`,
+- `src/interface/uds/controllers/uds/uds_dispatch_forwarding.rs`,
   `uds_dispatch_get_message_forward.rs`, and `uds_control_forward.rs` for UDS
   forwarding behaviour.
 

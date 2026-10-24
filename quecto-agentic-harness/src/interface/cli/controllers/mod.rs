@@ -4,6 +4,8 @@
 pub(in crate::interface::cli) mod admission_broker;
 pub mod admission_handles;
 pub(super) mod agent;
+pub mod auth;
+pub mod board;
 pub mod catalogue_handles;
 pub mod claude_member;
 pub(super) mod commands;
@@ -17,9 +19,14 @@ pub mod container_handles;
 pub(super) mod container_inventory;
 pub(super) mod container_setup;
 pub(super) mod help;
-pub(in crate::interface::cli) mod launch_rollback_wait;
+pub(in crate::interface) mod launch_rollback_wait;
 pub(super) mod models;
 pub mod retention_handles;
 pub mod run_end_fleet;
+pub mod shared;
 pub mod swarm_board_handles;
-pub(in crate::interface::cli) mod swarm_composition;
+pub(in crate::interface) mod swarm_composition;
+pub(crate) mod tool_runtime;
+
+#[cfg(test)]
+mod find_runtime_tests;

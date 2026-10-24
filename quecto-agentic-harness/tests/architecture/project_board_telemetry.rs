@@ -51,8 +51,17 @@ const SNAPSHOTS: &[(&str, &str)] = &[
 
 /// Types a record field may hold as they are: counts, signed spans (T4's
 /// claim seconds), flags (T3's `cancelled`), and the guarded leaves (the
-/// commit id is `code_ref`'s, from `commit_id.rs`).
-const ADMITTED: &[&str] = &["u64", "i64", "bool", "StaticKind", "TaskRef", "CommitId"];
+/// commit id is `code_ref`'s, from `commit_id.rs`; the board id, #2663,
+/// is `leaves.rs`'s).
+const ADMITTED: &[&str] = &[
+    "u64",
+    "i64",
+    "bool",
+    "StaticKind",
+    "TaskRef",
+    "CommitId",
+    "BoardId",
+];
 
 /// The containers a field's types are read through: whatever they hold
 /// (a `BTreeMap`'s keys and values alike) must be admitted in turn.
@@ -540,7 +549,7 @@ const PROJECT_BOARD: &[&str] = &[
     "src/domain/project_board/",
     "src/application/project_board/",
     "src/interface/tools/project_board/",
-    "src/interface/cli/board/",
+    "src/interface/cli/controllers/board/",
     "src/infrastructure/persistence/project_board/",
     "src/composition/bootstrap/project_board.rs",
 ];

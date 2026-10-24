@@ -16,9 +16,11 @@ use quecto::domain::workflow::{
     WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
 };
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-use quecto::interface::cli::uds_execution_state::{ExecutionState, ExecutionStateHandle};
+use quecto::interface::cli::controllers::shared::WorkflowStateHandle;
 use quecto::interface::cli::uds_session::AgentSession;
-use quecto::interface::shared::WorkflowStateHandle;
+use quecto::interface::uds::presenters::uds_execution_state::{
+    ExecutionState, ExecutionStateHandle,
+};
 
 #[derive(Debug)]
 struct SilentProvider;
@@ -140,7 +142,7 @@ pub fn runtime(session_key: &str) -> Runtime {
         quecto::composition::catalogue::build_catalogue_handles(catalogue_dir.path(), None).effort;
     Runtime {
         agent,
-        session: AgentSession::new("stub".into(), quecto::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new()),
+        session: quecto::composition::bootstrap::agent_turn::build_turn_session("stub".into()),
         execution: Arc::new(Mutex::new(ExecutionState::default())),
         workflow: Arc::new(Mutex::new(workflow)),
         tool,

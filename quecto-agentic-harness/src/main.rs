@@ -12,7 +12,7 @@ fn main() {
             teardown_graph: quecto::composition::subagent_teardown::build_teardown_graph,
             kill_tool: quecto::composition::subagent_termination::install_termination_owners,
             sessions: quecto::composition::sessions::build_session_handles,
-            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
+            turn_session: quecto::composition::bootstrap::agent_turn::build_turn_session,
             retention: quecto::composition::sessions::build_retention_handles,
             fresh_session_identity: quecto::composition::sessions::build_fresh_session_identity,
             configuration: quecto::composition::configuration::build_configuration_handles,
@@ -36,12 +36,13 @@ fn main() {
             claude_member: quecto::composition::claude_member::build_claude_member_handles,
             project_board:
                 quecto::composition::bootstrap::project_board::build_project_board_handles,
-            project_board_recording: cli::board::BoardToolRecordingBuilder(
+            project_board_recording: cli::controllers::board::BoardToolRecordingBuilder(
                 quecto::composition::bootstrap::project_board::session_board_recording_decided,
             ),
-            board_cli_recording: cli::board::CliRecordingBuilder(
+            board_cli_recording: cli::controllers::board::CliRecordingBuilder(
                 quecto::composition::bootstrap::project_board::cli_board_recording,
             ),
+            board_server: quecto::composition::bootstrap::board_server::build_board_server,
         },
     ));
 }

@@ -3,9 +3,7 @@
 //! malformed set is dropped whole, with a warning that names a variable,
 //! and a set naming half an identity warns that it does.
 use super::*;
-use crate::infrastructure::persistence::project_board::git::{
-    CommandScopeWarning, MAX_COMMAND_CONFIG,
-};
+use crate::infrastructure::persistence::project_board::git::{CommandScopeWarning, MAX_COUNT};
 use std::collections::BTreeMap;
 
 /// git's command-scope configuration for `settings`, numbered from 0,
@@ -245,21 +243,13 @@ fn a_key_that_is_not_utf8_is_skipped() {
     );
 }
 
-/// A command-scope set read more strictly than git reads it (a count that
-/// is not plain decimal 0 to 16, a setting missing its key or its value) is
-/// dropped whole, named by its variable; a set at the cap passes, and a
-/// count of none passes nothing, as no set at all does.
+/// A command-scope set git would refuse (a count that is not plain
+/// decimal or is above `INT_MAX`, a setting missing its key or its value)
+/// is dropped whole, named by its variable; a count of none passes
+/// nothing, as no set at all does.
 #[test]
 fn a_malformed_set_is_dropped_whole_naming_its_variable() {
     let repos = Repos::new();
-    let at_cap: Vec<(&str, &str)> = [
-        ("user.name", "quecto pocket"),
-        ("user.email", "p@q.invalid"),
-    ]
-    .repeat(MAX_COMMAND_CONFIG / 2);
-    let reached = reaching_git(&repos, &command_config("16", &at_cap));
-    assert_eq!(seen(&reached), identity_scope(&at_cap));
-    assert_eq!(warning(os_vars(command_config("16", &at_cap))), None);
     // A count of none, or an empty one (git reads it so), is no set.
     for count in ["0", ""] {
         let none = command_config(count, &[]);
@@ -272,10 +262,10 @@ fn a_malformed_set_is_dropped_whole_naming_its_variable() {
         );
         assert_eq!(warning(os_vars(ignored)), None, "{count:?}");
     }
-    let past_cap = vec![("user.name", "quecto pocket"); MAX_COMMAND_CONFIG + 1];
     let one = [("user.name", "quecto pocket")];
     let count = CommandScopeWarning::Count;
-    let mut cases = vec![(count.clone(), command_config("17", &past_cap))];
+    let mut cases = Vec::new();
+    let past_int_max = (MAX_COUNT + 1).to_string();
     for text in [
         "x",
         "-1",
@@ -285,6 +275,7 @@ fn a_malformed_set_is_dropped_whole_naming_its_variable() {
         "1k",
         "0x1",
         "١",
+        &past_int_max,
         "99999999999999999999999",
     ] {
         cases.push((count.clone(), command_config(text, &one)));
@@ -301,6 +292,12 @@ fn a_malformed_set_is_dropped_whole_naming_its_variable() {
     let mut skipped_no_value = command_config("2", &[one[0], ("core.pager", "less")]);
     skipped_no_value.retain(|(key, _)| key != "GIT_CONFIG_VALUE_1");
     cases.extend([
+        // The largest count git takes, past the settings present: the walk
+        // stops at the first missing one, bounded by the environment.
+        (
+            missing("GIT_CONFIG_KEY_1"),
+            command_config(&MAX_COUNT.to_string(), &one),
+        ),
         (missing("GIT_CONFIG_VALUE_0"), no_value),
         (missing("GIT_CONFIG_KEY_0"), no_key),
         (missing("GIT_CONFIG_KEY_1"), command_config("2", &one)),
@@ -335,6 +332,79 @@ fn a_malformed_sets_reason_quotes_no_key_or_value() {
     assert_eq!(
         warning(os_vars(vars)).unwrap().to_string(),
         "ignoring git's command-scope configuration (GIT_CONFIG_COUNT): \
-         GIT_CONFIG_COUNT is not plain decimal 0 to 16"
+         GIT_CONFIG_COUNT is not plain decimal 0 to 2147483647"
     );
+}
+
+/// #2703: the pocket relay's scope carries 41 settings (its guarded git
+/// settings beside the bot committer): the identity among them reaches
+/// git, renumbered, however many other settings come with it, and the
+/// set warns of nothing.
+#[test]
+fn an_identity_in_a_large_set_reaches_git() {
+    let repos = Repos::new();
+    let identity = [
+        ("user.name", "quecto pocket"),
+        ("user.email", "pocket@quecto.invalid"),
+    ];
+    let mut settings = vec![("core.pager", "cat"); 39];
+    settings.extend(identity);
+    assert_eq!(settings.len(), 41);
+    let vars = command_config("41", &settings);
+    assert_eq!(warning(os_vars(vars.clone())), None);
+    assert_eq!(
+        seen(&reaching_git(&repos, &vars)),
+        identity_scope(&identity)
+    );
+}
+
+/// However many settings a set carries, its identity is read: here at
+/// indexes 1028 and 1029 of 1030, with no cap and no warning.
+#[test]
+fn an_identity_past_a_thousand_settings_reaches_git() {
+    let repos = Repos::new();
+    let identity = [
+        ("user.name", "quecto pocket"),
+        ("user.email", "pocket@quecto.invalid"),
+    ];
+    let mut settings = vec![("core.pager", "cat"); 1028];
+    settings.extend(identity);
+    let vars = command_config("1030", &settings);
+    assert_eq!(warning(os_vars(vars.clone())), None);
+    assert_eq!(
+        seen(&reaching_git(&repos, &vars)),
+        identity_scope(&identity)
+    );
+}
+
+/// The identity passes in index order, so the last setting of a key wins,
+/// as git reads the scope: git itself resolves the names passed.
+#[test]
+fn the_last_of_a_duplicated_identity_wins() {
+    let repos = Repos::new();
+    let settings = [
+        ("user.name", "first"),
+        ("core.pager", "cat"),
+        ("USER.NAME", "quecto pocket"),
+    ];
+    let reached = reaching_git(&repos, &command_config("3", &settings));
+    assert_eq!(
+        seen(&reached),
+        identity_scope(&[("user.name", "first"), ("user.name", "quecto pocket")])
+    );
+    let resolved = std::process::Command::new("git")
+        .args(["config", "--get", "user.name"])
+        .current_dir(repos.dir.path())
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .envs([
+            ("HOME", repos.dir.path().as_os_str()),
+            ("GIT_CONFIG_GLOBAL", std::ffi::OsStr::new("/dev/null")),
+            ("GIT_CONFIG_NOSYSTEM", std::ffi::OsStr::new("1")),
+        ])
+        .envs(command_scope(&reached))
+        .output()
+        .unwrap();
+    assert!(resolved.status.success(), "{resolved:?}");
+    assert_eq!(String::from_utf8_lossy(&resolved.stdout), "quecto pocket\n");
 }

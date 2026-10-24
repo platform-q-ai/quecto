@@ -139,6 +139,7 @@ fn example() -> PlanFields {
             deadline_seconds: Some(345_600),
             image: Some("ghcr.io/platform-q-ai/quecto_dev:1.2".into()),
         }),
+        handoff: None,
         proposed_by: person("Ada Lovelace", "ada@example.com"),
         edited_by: Some(person("Bo", "bo@example.com")),
         accepted: Some((
@@ -429,6 +430,7 @@ fn widest(approach: String, criterion: impl Fn(usize, usize) -> String) -> PlanF
             deadline_seconds: Some(MAX_DEADLINE_SECONDS),
             image: Some(image),
         }),
+        handoff: None,
         proposed_by: person(&name, &email),
         edited_by: Some(person(&name, &email)),
         accepted: Some((person(&name, &email), at("2026-10-11T12:00:00Z"))),
@@ -484,9 +486,7 @@ fn the_widest_plan_fits_its_limits() {
     }
     let (bytes, lines, longest) = seen;
     // The whole budget spent on cells that write it twice: at least
-    // 1,077,113 bytes (a lower bound; no search proves it the domain's most;
-    // 43 fewer than when a team held a token budget and an absolute
-    // deadline, whose rows a deadline in seconds replaced).
+    // 1,077,113 bytes (a lower bound; no search proves it the most).
     assert!(
         (1_077_113..=PLAN_LIMITS.file_bytes).contains(&bytes),
         "{bytes}"
@@ -668,9 +668,10 @@ fn a_criterion_with_a_chat_space_is_held_once_normalised() {
     );
 }
 
-/// An approach typed on a French keyboard is held once normalised; a chat
-/// space the normaliser leaves (beside a list marker) is refused by the
-/// domain with the approach's field, never by the file at write time.
+/// An approach typed on a French keyboard is held once normalised, and so
+/// is a chat space beside a list marker (entry makes it plain: it is never
+/// meaningful there); an em space is refused by the domain with the
+/// approach's field, never by the file at write time.
 #[test]
 fn an_approach_with_chat_spaces_is_held_once_normalised() {
     let with_approach = |approach: &str| {
@@ -685,11 +686,65 @@ fn an_approach_with_chat_spaces_is_held_once_normalised() {
     let file = encode::<PlanCodec>(&held).unwrap();
     assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(held));
     read_by_the_oracle(&file);
+    let listed = board_text::text("-\u{a0}first");
+    assert_eq!(listed, "- first");
+    assert!(with_approach(&listed).is_ok(), "{listed:?}");
     assert_eq!(
-        with_approach(&board_text::text("-\u{a0}first")),
+        with_approach(&board_text::text("an em\u{2003}space")).map(|_| ()),
         Err(SchemaError::new(
             "approach",
             format!("line 1: {PLAIN_SPACES_ONLY}")
         ))
     );
+}
+
+/// #2668: a task item's title and criteria, and the approach (a line
+/// opening with them, and a list item), of awkward characters (a
+/// backslash before punctuation or at the end, an escaped pipe, a code
+/// span holding either) are written, read back as themselves, and shown by
+/// both readers of the oracle as written: the codec escapes, never
+/// refuses, a backslash.
+#[test]
+fn awkward_titles_and_criteria_round_trip() {
+    let pieces = [
+        "x", "\\", "\\\\", "|", "\\|", "\\*", "*", "C:\\temp", "`a\\|b`", "\\`c`", "!", "\\.",
+    ];
+    let mut checked = 0;
+    for first in pieces {
+        for second in pieces {
+            for third in pieces {
+                let text = format!("x {first}{second} {third}");
+                let fields = PlanFields {
+                    approach: format!("{first}{second} {third} x\n\n- {text}"),
+                    items: vec![item("store", &text, &[&text, "plain"], &[])],
+                    team: None,
+                    ..example()
+                };
+                let plan = Plan::new(fields).unwrap_or_else(|error| panic!("{text:?}: {error:?}"));
+                let file =
+                    encode::<PlanCodec>(&plan).unwrap_or_else(|error| panic!("{text:?}: {error}"));
+                assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(plan), "{text:?}");
+                read_by_the_oracle(&file);
+                checked += 1;
+            }
+        }
+    }
+    assert_eq!(checked, pieces.len().pow(3));
+}
+
+/// #2668's report: `x \\ y` (two backslashes) as a criterion.
+#[test]
+fn a_criterion_of_two_backslashes_is_written_escaped() {
+    let fields = PlanFields {
+        items: vec![item("store", "Store", &["x \\\\ y", "a \\| b"], &[])],
+        team: None,
+        ..example()
+    };
+    let plan = Plan::new(fields).unwrap();
+    let file = encode::<PlanCodec>(&plan).unwrap();
+    // Only a backslash a reader would take for an escape is doubled: the
+    // first, before a backslash; the second, before a space, is kept.
+    assert!(file.contains("| store | x \\\\\\ y |"), "{file}");
+    assert!(file.contains("| store | a \\\\\\| b |"), "{file}");
+    assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(plan));
 }

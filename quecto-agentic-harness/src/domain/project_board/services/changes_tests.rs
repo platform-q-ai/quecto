@@ -16,7 +16,7 @@ pub(super) fn of(status: TaskStatus) -> Task {
 
 /// Everything linked on the board: `changes`, and no pull request linked
 /// the old way.
-fn on(changes: &[Change]) -> Linked<'_> {
+pub(super) fn on(changes: &[Change]) -> Linked<'_> {
     Linked {
         changes,
         tasks: &[],
@@ -31,7 +31,7 @@ pub(super) fn now() -> Moment {
 }
 
 /// The board's repository and `name`, with pull request `pr`.
-fn head(name: &str, pr: Option<u64>) -> Head {
+pub(super) fn head(name: &str, pr: Option<u64>) -> Head {
     Head {
         repo: repo(OURS),
         branch: branch(name),

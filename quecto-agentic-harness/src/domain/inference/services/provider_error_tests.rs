@@ -262,8 +262,18 @@ fn classify_extract_http_status_edge_cases() {
 fn classify_status_separators_between_marker_and_code() {
     // separators (space, colon, equals, dash, slash) are skipped before the digits
     assert_eq!(
-        classify_provider_error(&provider("HTTP://503")),
+        classify_provider_error(&provider("HTTP/503")),
         ProviderErrorClass::Server
+    );
+    assert_eq!(
+        classify_provider_error(&provider("HTTP: 503")),
+        ProviderErrorClass::Server
+    );
+    // #2653: `http://` starts a URL, never a status position.
+    assert_eq!(
+        provider_http_status(&provider("HTTP://503")),
+        None,
+        "a URL's host is not a status"
     );
     assert_eq!(
         classify_provider_error(&provider("status = 401")),

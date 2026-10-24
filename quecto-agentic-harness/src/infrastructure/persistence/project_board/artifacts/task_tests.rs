@@ -92,6 +92,7 @@ fn example() -> TaskFields {
         id: slug("board-cli"),
         title: "The board CLI answers in `JSON`".into(),
         kind: TaskKind::Task,
+        description_form: Default::default(),
         description:
             "Build the CLI on the store.\n# not a heading\n\n- read first\n- then write\n\n\
                       ```sh\nquecto board list\n\nquecto board show board-cli\n```"
@@ -316,10 +317,10 @@ fn a_claim_needs_all_three_rows() {
 
 #[test]
 fn a_newer_task_schema_asks_for_an_upgrade() {
-    let newer = edited("quecto-task schema=1", "quecto-task schema=2");
+    let newer = edited("quecto-task schema=1", "quecto-task schema=3");
     assert_eq!(
         decode::<TaskCodec>(newer.as_bytes()),
-        Err(CodecError::NewerSchema { found: 2, known: 1 })
+        Err(CodecError::NewerSchema { found: 3, known: 2 })
     );
     let other = edited("quecto-task schema=1", "quecto-plan schema=1");
     assert_eq!(
@@ -358,6 +359,7 @@ fn widest(title: String, description: String) -> TaskFields {
         id: long_slug(999),
         title,
         kind: TaskKind::Chore,
+        description_form: Default::default(),
         description,
         status: TaskStatus::InProgress,
         parent: Some(long_slug(998)),
@@ -600,17 +602,56 @@ fn a_title_spaced_with_another_space_is_refused_by_the_domain() {
     }
 }
 
-/// A description typed on a French keyboard, its chat spaces before `!`
-/// and `?`, is held once normalised; a chat space beside a block marker,
-/// which the normaliser leaves, and an em space are refused by the domain
-/// with the description's field, never by the file at write time.
+/// Rich-text paste (mail, documents, chat) writes empty paragraphs and
+/// indents as no-break or ideographic spaces: a chat space at a line's
+/// edge is removed, a line of nothing else becomes empty, so the
+/// description is held through the codec, fences included.
 #[test]
-fn a_description_with_chat_spaces_is_held_once_normalised() {
-    let described = |description: &str| {
-        Task::entered(TaskFields {
-            description: description.into(),
+fn a_pasted_description_with_chat_spaces_at_line_edges_is_held() {
+    for (raw, kept) in [
+        ("Notes\n\u{a0}\nMore", "Notes\n\nMore"),
+        ("\u{a0}Indented", "Indented"),
+        ("Hello\n\u{a0}world", "Hello\nworld"),
+        ("Steps:\n\u{a0}\u{a0}1. do", "Steps:\n1. do"),
+        // A gap between list items goes: the list stays one.
+        ("- a\n\u{a0}\n- b", "- a\n- b"),
+        ("\u{3000}\u{3000}本文です。", "本文です。"),
+        ("`x` end\u{a0}", "`x` end"),
+        ("a\u{a0}\u{a0}\nb", "a\nb"),
+        ("```\nx\u{a0}\n```", "```\nx\n```"),
+    ] {
+        let normal = board_text::text(raw);
+        assert_eq!(normal, kept, "{raw:?}");
+        // Free text no longer enters (#2705 T2), but a legacy one like it
+        // still reads, and is held through the codec.
+        assert_eq!(board_text::entered_text("description", &normal), Ok(()));
+        let held = Task::new(TaskFields {
+            description: normal,
             ..example()
         })
+        .unwrap_or_else(|error| panic!("{raw:?}: {error:?}"));
+        let file = encode::<TaskCodec>(&held).unwrap_or_else(|error| panic!("{raw:?}: {error:?}"));
+        assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(held), "{raw:?}");
+    }
+}
+
+/// A description typed on a French keyboard, its chat spaces before `!`
+/// and `?`, is held once normalised, and so is a chat space beside a block
+/// marker or in a code span (entry makes every one between words plain:
+/// one there is never meaningful, and refusing it blocks pasted text); an em space, which no keyboard puts between words, is
+/// refused by the domain with the description's field, never by the file
+/// at write time.
+#[test]
+fn a_description_with_chat_spaces_is_held_once_normalised() {
+    // Free text no longer enters (#2705 T2): as a goal it does.
+    let described = |description: &str| {
+        Task::entered(
+            TaskFields {
+                description: format!("## Goal\n{description}\n\n## Done when\n- [ ] Held"),
+                ..example()
+            },
+            crate::domain::project_board::entities::task_parts::Entry::Sectioned,
+        )
     };
     let probe = "Bonjour\u{202f}! On commence\u{a0}?";
     let normal = board_text::text(probe);
@@ -618,15 +659,45 @@ fn a_description_with_chat_spaces_is_held_once_normalised() {
     let held = described(&normal).unwrap();
     let file = encode::<TaskCodec>(&held).unwrap();
     assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(held));
-    for left in ["-\u{a0}x", "\u{a0}leading", "an em\u{2003}space"] {
-        let kept = board_text::text(left);
-        assert_eq!(
-            described(&kept).map(|_| ()),
-            Err(SchemaError::new(
-                "description",
-                format!("line 1: {PLAIN_SPACES_ONLY}")
-            )),
-            "{left:?}"
-        );
+    for (raw, kept) in [("-\u{a0}x", "- x"), ("x\u{a0}`a\u{a0}b`", "x `a b`")] {
+        let normal = board_text::text(raw);
+        assert_eq!(normal, kept, "{raw:?}");
+        let held = described(&normal).unwrap();
+        let file = encode::<TaskCodec>(&held).unwrap();
+        assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(held), "{raw:?}");
+    }
+    assert_eq!(
+        described(&board_text::text("an em\u{2003}space")).map(|_| ()),
+        Err(SchemaError::new(
+            "description",
+            format!("line 2: {PLAIN_SPACES_ONLY}")
+        ))
+    );
+}
+
+/// #2668 review round 1: a task's title and description (a paragraph's
+/// line opening with them, and a list item) of awkward characters (a
+/// backslash before punctuation or at the end, an escaped pipe, a code
+/// span holding one) are written, read back as themselves, and shown by
+/// both readers of the oracle as written.
+#[test]
+fn awkward_titles_and_descriptions_round_trip() {
+    let pieces = [
+        "x", "\\", "\\\\", "\\|", "\\*", "\\#", "C:\\temp", "`a\\\\b`", "\\`c`", "1\\.", "\\-",
+    ];
+    for first in pieces {
+        for second in pieces {
+            let text = format!("x {first}{second}");
+            let fields = TaskFields {
+                title: text.clone(),
+                description: format!("{first}{second} x\n{text}\n\n- {first}{second}"),
+                ..example()
+            };
+            let task = Task::new(fields).unwrap_or_else(|error| panic!("{text:?}: {error:?}"));
+            let file =
+                encode::<TaskCodec>(&task).unwrap_or_else(|error| panic!("{text:?}: {error}"));
+            assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(task), "{text:?}");
+            read_by_the_oracle(&file);
+        }
     }
 }

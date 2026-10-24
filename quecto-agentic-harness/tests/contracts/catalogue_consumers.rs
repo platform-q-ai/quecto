@@ -182,7 +182,10 @@ fn refresh_surfaces_share_one_operation_and_one_published_generation() {
         let base_dir = tmp.path().to_path_buf();
         let refresh = tokio::task::spawn_blocking(move || {
             let handles = quecto::composition::catalogue::build_catalogue_handles(&base_dir, None);
-            quecto::interface::cli::uds_models::refresh_models_data(&handles.refresh, None)
+            quecto::interface::uds::controllers::uds_models::refresh_models_data(
+                &handles.refresh,
+                None,
+            )
         })
         .await
         .unwrap();
@@ -269,12 +272,13 @@ fn listing_and_session_state_surfaces_report_the_snapshot_effort_vocabulary() {
     // the same published snapshot (#1848).
     let handles = quecto::composition::catalogue::build_catalogue_handles(tmp.path(), None);
     for qualified in ["anthropic-api/claude-opus-5", "openai-api/gpt-5.6-sol"] {
-        let view = quecto::interface::uds::catalogue::effort_presenter::EffortStateView::new(
+        let view = quecto::interface::uds::presenters::effort_presenter::EffortStateView::new(
             None,
             &handles.effort.choices(qualified),
         );
-        let state = quecto::interface::cli::uds_session::AgentSession::new(qualified.to_string(), quecto::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new())
-            .state_snapshot("conformance", 0, None, 0, view);
+        let state =
+            quecto::composition::bootstrap::agent_turn::build_turn_session(qualified.to_string())
+                .state_snapshot("conformance", 0, None, 0, view);
         assert_eq!(
             state.effort_levels.join(", "),
             vocab(qualified),

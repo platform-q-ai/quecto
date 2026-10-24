@@ -271,7 +271,7 @@ fn aside(
 /// Objects this clone does not hold; git fails, or the folder is past its
 /// bounds.
 pub(super) fn scan_folder(
-    git: &super::Git,
+    git: &impl super::Reader,
     tree: &str,
     folder: &'static Folder,
     limits: Limits,
@@ -382,7 +382,10 @@ pub(super) fn scan_folder(
 ///
 /// # Errors
 /// git fails to give the files' bytes.
-pub(super) fn load_folder(git: &super::Git, scan: FolderScan) -> Result<FolderRead, Unread> {
+pub(super) fn load_folder(
+    git: &impl super::Reader,
+    scan: FolderScan,
+) -> Result<FolderRead, Unread> {
     let FolderScan {
         folder,
         tree,
@@ -394,6 +397,18 @@ pub(super) fn load_folder(git: &super::Git, scan: FolderScan) -> Result<FolderRe
         .iter()
         .map(|(_, entry, size)| (entry.oid.as_str(), *size))
         .collect();
+    #[cfg(feature = "test-support")]
+    git.witness_artifacts(
+        &to_read
+            .iter()
+            .map(|(_, entry, _)| {
+                (
+                    format!("{}/{}", folder.naming.folder, entry.name),
+                    entry.oid.clone(),
+                )
+            })
+            .collect::<Vec<_>>(),
+    );
     let contents = contents(git, &wanted)?;
     let mut artifacts = vec![];
     for (key, entry, _) in to_read {

@@ -56,12 +56,17 @@ pub const BOARD_TOOL_NAME: &str = "board";
 /// M4a) are owner-approved (2026-10-13). The Plans line (#2481 M4b), the
 /// Start and Runs lines (S4c) await the owner's approval. The Plan line's
 /// archive sentence (a review task nobody holds now) is owner-approved
-/// (2026-10-15).
+/// (2026-10-15). #2705 T2's Plan line fields and description sentence,
+/// and the Start line's end deferring to the Runs line (which says the
+/// same, to keep the budget), await the owner's approval. #2705 T3's
+/// handoff (the Read line's paging, and the Plans line's propose_plan,
+/// read-it-all and edit_plan sentences, shortened to keep the budget)
+/// is listed in its pull request.
 pub const BOARD_TOOL_DESCRIPTION: &str = r#"Project board for this repo: the shared list of tasks people and agents plan, claim and finish. Tasks live on the repo's quecto/board branch and are written only through this tool, never by editing the branch. Each op is one call, {"op":"<name>", ...named fields}, answering JSON: {"ok":true,...} or {"ok":false,"error":{"code","field","message"}}. Ids are slugs (a-z, 0-9, -). Statuses: draft, ready, claimed, in_progress, review, blocked, done, archived.
-Read: list(status|parent|dependents_of, at most one filter), show(task), list_ready (ready tasks whose dependencies are done or archived), list_takeable (held tasks whose claim expired). Listings show a summary per task; show(task) gives the whole task, its accepted plan, each plan version in brief and its runs (the latest readable one in full); "may_be_incomplete" means a file that may hold one of its plans or runs is set aside. What does not fit in 64 KiB beside the task (which is never cut, and may take more alone) is cut, with counts of what was left out and approach_next/items_next to read on with show(task, approach_from, items_from). Listings are advice; every change is checked against the board when it is written.
-Plan: create(task,title,kind,description,status draft|ready,parent,depends_on); update_draft(task, any of title,description,parent,depends_on, expected_updated) edits a draft only; pass the updated you read as expected_updated so a newer edit is never overwritten. Anyone may create, edit a draft, move it to ready, or archive a draft, ready or done task, or a review task nobody holds now, with move(task,to archived). Anyone may move a ready task back to draft.
-Plans: show(task, version) gives that version of the task's plan whole, a draft included, in place of the accepted one, and pages it with approach_from/items_from as it pages the accepted plan. propose_plan(task, approach, items, team) adds a draft version of a task's plan; items are [{"id","title","criteria":[lines],"depends_on":[item ids]}] and team is null or {"roles":[{"name","model","effort","members","turns"}],"deadline_seconds","image"}, as show gives them. Every page names the plan's version and updated: if either differs from your first read, read again from 0. To propose from a plan you read, read all of its approach and items first (show again with approach_from at approach_next and items_from at items_next until none is given): never propose an approach or items show cut. edit_plan(task, version, any of approach,items,team, expected_updated) edits a draft: a field you leave out stays as it is and one you give replaces it whole (team null removes the team), so items change without resending the approach. Anyone may propose a plan or edit a draft of a task that is not done or archived; pass the draft's updated as expected_updated so a newer edit is never overwritten, and on "plan_changed" re-read it with show(task, version) and redo your edit. accept_plan(task, version, expected_updated, expected_accepted) makes a draft the task's plan and supersedes the plan accepted before (accepting an older draft over it is a rollback; a superseded plan is never accepted again: propose it anew); both pins are required: expected_updated is the updated show(task, version) gave you, and expected_accepted the task's accepted_plan as you read it (null for none), so what you accept is what you read and you never supersede an acceptance you did not see (on "accepted_plan_changed" re-read with show(task, version) and decide again). discard_plan(task, version, expected_updated optional) discards a draft (it is kept, as discarded). On a held task only the claim holder accepts or discards, on an unclaimed one anyone; nothing is accepted while a run of the task is going ("run_open"), only a draft is accepted or discarded ("plan_not_draft"), and on "plans_inconsistent" stop and report: the task's plans contradict each other.
-Start: start(task, plan_version) hands a ready task, or one you hold, to a swarm: it claims the task if it is ready, moves it to in_progress, begins its next run on the accepted plan and launches the run's coordinator in a new container with the plan's brief. plan_version is the accepted plan you confirmed from show(task); a task that accepts another by then is refused ("accepted_plan_changed"), so only the plan you confirmed runs. It needs a session that may spawn ("no_launcher"); a plan a swarm cannot take is refused ("brief"). If the coordinator does not launch ("launch_failed"), the start is undone as far as it can be: the run is folded back as failed and a claim the start took is released (with run_state "open" the fold-back failed: end the run with end_run). If launch_failed names still_running, nothing is undone: kill that coordinator, then end_run failed. The answer names the run, the coordinator (agent, environment_ref), the worker roles whose models were not applied (not_applied) and whether the claim was taken (claim: fresh) or yours already (held). The task stays yours while the swarm runs. To end it: when the run is paused holding an outcome, close it (agent_cmd swarm_control close on the coordinator; a cancelled run needs no close); stop the coordinator with agent_cmd kill (end_run answers "run_live" until it has stopped); then end_run with succeeded, stopped or failed. Renew the claim before it lapses (2 hours, not renewed while the swarm runs); if it has expired, renew it if it is yours, or take_over if it is another's, then end_run.
+Read: list(status|parent|dependents_of, at most one filter), show(task), list_ready (ready tasks whose dependencies are done or archived), list_takeable (held tasks whose claim expired). Listings show a summary per task; show(task) gives the whole task, its accepted plan, each plan version in brief and its runs (the latest readable one in full); "may_be_incomplete" means a file that may hold one of its plans or runs is set aside. What does not fit in 64 KiB beside the task (which is never cut, and may take more alone) is cut, with counts of what was left out and approach_next/handoff_next/items_next to read on with show(task, approach_from, handoff_from, items_from). Listings are advice; every change is checked against the board when it is written.
+Plan: create(task,title,kind,goal,why,done_when,links,status draft|ready,parent,depends_on); update_draft(task, any of title,goal,why,done_when,links,parent,depends_on, expected_updated) edits a draft only; pass the updated you read as expected_updated so a newer edit is never overwritten. A title is the outcome in at most 70 characters; goal is 1 to 3 sentences, why optional, done_when 1 to 8 outcomes you would check (not steps), links optional, each [text](https://…) or an https:// address; together at most 1,200 characters (move details into the plan or a handoff); update_draft replaces all four together. Anyone may create, edit a draft, move it to ready, or archive a draft, ready or done task, or a review task nobody holds now, with move(task,to archived) (not while a child is held: "children_active"); a task is claimed only once its dependencies are done ("dependency_not_done"). Anyone may move a ready task back to draft. Task and plan text is shared and lasting: describe the work and how it is checked, never an instruction for this session alone (such as not to start yet).
+Plans: show(task, version) gives that version of the task's plan whole, a draft included, in place of the accepted one, and pages it as it pages the accepted plan. propose_plan(task, approach, handoff, items, team) adds a draft version of a task's plan: approach is its outline, at most 600 characters, and handoff (optional) the detail its coordinator is briefed with; items are [{"id","title","criteria":[lines],"depends_on":[item ids]}] and team is null or {"roles":[{"name","model","effort","members","turns"}],"deadline_seconds","image"}, as show gives them. Every page names the plan's version and updated: if either differs from your first read, read again from 0. To propose from a plan you read, read all of it first (show again with each _from at its _next until none is given): never propose text show cut. edit_plan(task, version, any of approach,handoff,items,team, expected_updated) edits a draft: a field you leave out stays as it is and one you give replaces it whole (team null removes the team, handoff "" the handoff), so items change without resending the approach. Anyone may propose a plan or edit a draft of a task that is not done or archived; pass the draft's updated as expected_updated so a newer edit is never overwritten, and on "plan_changed" re-read it with show(task, version) and redo your edit. accept_plan(task, version, expected_updated, expected_accepted) makes a draft the task's plan and supersedes the plan accepted before (accepting an older draft over it is a rollback; a superseded plan is never accepted again: propose it anew); both pins are required: expected_updated is the updated show(task, version) gave you, and expected_accepted the task's accepted_plan as you read it (null for none), so what you accept is what you read and you never supersede an acceptance you did not see (on "accepted_plan_changed" re-read with show(task, version) and decide again). discard_plan(task, version, expected_updated optional) discards a draft (it is kept, as discarded). On a held task only the claim holder accepts or discards, on an unclaimed one anyone; nothing is accepted while a run of the task is going ("run_open"), only a draft is accepted or discarded ("plan_not_draft"), and on "plans_inconsistent" stop and report: the task's plans contradict each other.
+Start: start(task, plan_version) hands a ready task, or one you hold, to a swarm: it claims the task if it is ready, moves it to in_progress, begins its next run on the accepted plan and launches the run's coordinator in a new container with the plan's brief. plan_version is the accepted plan you confirmed from show(task); a task that accepts another by then is refused ("accepted_plan_changed"), so only the plan you confirmed runs. It needs a session that may spawn ("no_launcher"); a plan a swarm cannot take is refused ("brief"). If the coordinator does not launch ("launch_failed"), the start is undone as far as it can be: the run is folded back as failed and a claim the start took is released (with run_state "open" the fold-back failed: end the run with end_run). If launch_failed names still_running, nothing is undone: kill that coordinator, then end_run failed. The answer names the run, the coordinator (agent, environment_ref), the worker roles whose models were not applied (not_applied) and whether the claim was taken (claim: fresh) or yours already (held). The task stays yours while the swarm runs; end it as Runs says.
 Work: move(task,to claimed) takes a ready task for 2 hours; renew(task) before it lapses while you work; take_over(task) only once a claim has expired; move(task,to ready) hands it back to ready. Only the claim holder moves a held task: claimed to in_progress|blocked|ready, in_progress to review|blocked|ready, review to in_progress|ready (or done when no pull request is linked), blocked to in_progress|ready. Once its claim has expired, or a task has none, anyone may move a review or blocked task to ready. link_pr(task,pr) and unlink_pr(task,pr) are the holder's. A task with linked pull requests is done only when all of them have merged: link_pr and moving to review check this automatically, and complete(task) asks again (anyone may call it). Never move a task to done by hand while a pull request is linked.
 Runs: end_run(task, run, outcome, expected_updated optional) records how a started run ended, in this order: when the run is paused holding an outcome, close it (agent_cmd swarm_control close on the coordinator; a cancelled run needs no close); stop the coordinator with agent_cmd kill (end_run answers "run_live", naming the agent, until it has stopped; it sees only this session's subagents with the run's label); then end_run with "succeeded", "stopped" or "failed". It records the run's task items, owners, evidence and cost from its swarm's board as the coordinator stopped; "succeeded" is refused ("items_not_done") while a task item is not done there. Renew the claim before it lapses (2 hours, not renewed while the swarm runs); if it has expired, renew it if it is yours, or take_over if it is another's, then end_run. A start that answered "launch_failed" with run_state "open" leaves a run to end the same way. When nobody can account for a run, end it as "lost" (the holder, or anyone when the task has no claim). The task stays held: move it on afterwards.
 Repair: clear_set_aside(path, object, repeated) removes a file the board could not read (listed under quarantined, with its object); repeated, for a file that appears twice, maps its path to {"keep":object,"seen":[objects]} or {"drop":[objects]}, the objects its copies list. Use it only when told to.
@@ -128,6 +133,56 @@ impl BoardTool {
     }
 }
 
+impl BoardTool {
+    /// Ends the runs this session's starts left open, as its session ends
+    /// (#2655): each through the path a model's `end_run` takes, recorded
+    /// as the session's end (`client: session_end`); one line each, saying
+    /// how it went. Blocking: the board's git holds the calling thread.
+    pub fn end_left_runs(&self) -> Vec<String> {
+        let ends = match site::left_runs(&self.site) {
+            Ok(ends) => ends,
+            Err(why) => {
+                return vec![format!(
+                    "board: the runs this session started could not be read as it ended \
+                     ({why}): end any still open with end_run"
+                )];
+            }
+        };
+        ends.iter().map(|end| self.end_left(end)).collect()
+    }
+
+    /// Ends `end`'s run as it says, recorded as the session's end.
+    fn end_left(&self, end: &crate::application::project_board::dto::RunEnd) -> String {
+        let (task, run, outcome) = (end.task.as_str(), end.run, end.outcome.as_str());
+        let request = json!({"op": "end_run", "task": task, "run": run, "outcome": outcome});
+        let arrival = self
+            .recordings
+            .current()
+            .map(|recording| (recording, Instant::now()));
+        let mut call = BoardCall::arrived(arrival, FrontEnd::Tool, Client::SessionEnd);
+        let answer = site::answer(&self.site, &request.to_string(), None, &mut call);
+        call.finish(&answer, false);
+        let opened =
+            format!("board: run {run} of task {task} was still open as this session ended");
+        match answer.get("ok") == Some(&Value::Bool(true)) {
+            true => {
+                format!("{opened}: ended it as {outcome}")
+            }
+            false => {
+                // A rule's own code when the board's rules refused it.
+                let error = &answer["error"];
+                let code = error["rule"]["code"]
+                    .as_str()
+                    .or_else(|| error["code"].as_str())
+                    .unwrap_or("refused");
+                format!(
+                    "{opened}, and ending it as {outcome} was refused ({code}): end it with end_run"
+                )
+            }
+        }
+    }
+}
+
 /// The JSON type, and words, a field of `kind` takes.
 fn field_schema(kind: Kind) -> Value {
     let statuses: Vec<&str> = TaskStatus::ALL
@@ -144,7 +199,7 @@ fn field_schema(kind: Kind) -> Value {
         Kind::Status | Kind::NewStatus => json!({"type": "string", "enum": statuses}),
         Kind::TaskKind => json!({"type": "string", "enum": kinds}),
         Kind::OptionalSlug => json!({"type": ["string", "null"]}),
-        Kind::Slugs => json!({"type": "array", "items": {"type": "string"}}),
+        Kind::Slugs | Kind::Lines => json!({"type": "array", "items": {"type": "string"}}),
         Kind::Pr => json!({"type": "integer", "minimum": 1}),
         Kind::Offset => json!({"type": ["integer", "null"], "minimum": 0}),
         Kind::Version => json!({"type": "integer", "minimum": 1, "maximum": MAX_PLAN_VERSION}),
@@ -467,5 +522,13 @@ mod start_tests;
 mod end_run_tests;
 
 #[cfg(test)]
+#[path = "tool_left_runs_tests.rs"]
+mod left_runs_tests;
+
+#[cfg(test)]
 #[path = "tool_list_summary_tests.rs"]
 mod list_summary_tests;
+
+#[cfg(test)]
+#[path = "tool_moved_tests.rs"]
+mod moved_tests;

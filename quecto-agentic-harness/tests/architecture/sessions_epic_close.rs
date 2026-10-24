@@ -180,7 +180,7 @@ pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
         "TurnAccountingReset",
         &[
             "src/interface/cli/uds_session_switch_runtime.rs",
-            "src/interface/cli/uds_turn_accounting.rs",
+            "src/interface/uds/controllers/uds_turn_accounting.rs",
         ],
     ),
     (
@@ -235,7 +235,7 @@ const SESSION_STORE_HOLDERS: &[&str] = &[
     "src/infrastructure/persistence/file/ended_child_records.rs",
     // #2192 the bounded read of a session its owner no longer holds.
     "src/infrastructure/persistence/file/sessions/session_store_bounded.rs",
-    "src/interface/cli/uds_session_handles.rs",
+    "src/interface/uds/controllers/uds_session_handles.rs",
 ];
 
 /// Vocabulary no domain or application file of the capability may spell:
@@ -453,7 +453,7 @@ fn each_lifecycle_transaction_has_exactly_one_owner() {
     }
     // The handlers admit, request and present; the sequencing verbs of the
     // transactions never appear in them.
-    let handlers = "src/interface/cli/uds_dispatch_session.rs";
+    let handlers = "src/interface/uds/controllers/uds/uds_dispatch_session.rs";
     for needle in HANDLER_FORBIDDEN {
         let hits: Vec<String> = production_code(handlers)
             .into_iter()
@@ -489,9 +489,9 @@ fn each_lifecycle_transaction_has_exactly_one_owner() {
     assert_eq!(
         handler_fns,
         set(&[
-            "src/interface/cli/uds_dispatch_session.rs::handle_list_sessions",
-            "src/interface/cli/uds_dispatch_session.rs::handle_new_session",
-            "src/interface/cli/uds_dispatch_session.rs::handle_resume_session",
+            "src/interface/uds/controllers/uds/uds_dispatch_session.rs::handle_list_sessions",
+            "src/interface/uds/controllers/uds/uds_dispatch_session.rs::handle_new_session",
+            "src/interface/uds/controllers/uds/uds_dispatch_session.rs::handle_resume_session",
         ]),
         "the session handlers are exactly the discovery and two transition edges"
     );

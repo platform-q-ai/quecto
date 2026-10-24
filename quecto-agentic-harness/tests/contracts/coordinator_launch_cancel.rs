@@ -21,7 +21,7 @@ use quecto::application::project_board::use_cases::{
 };
 use quecto::application::tools::ports::Tool;
 use quecto::domain::project_board::entities::claim::Identity;
-use quecto::domain::project_board::entities::plan::PlanItem;
+use quecto::domain::project_board::entities::plan::{PlanEntry, PlanItem};
 use quecto::domain::project_board::entities::team::{Role, RoleLimits, Team};
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::vocabulary::{
@@ -154,18 +154,25 @@ fn ready_board(store: &MemoryBoardStore) {
     let ada: Arc<dyn ProjectBoardStore> = Arc::new(store.client());
     store.bootstrap().unwrap();
     let id = Slug::parse("a").unwrap();
-    CreateBoardTask::new(Arc::clone(&ada), clock.clone())
-        .unwrap()
-        .execute(&NewBoardTask {
-            id: id.clone(),
-            title: "A".into(),
-            kind: TaskKind::Task,
-            description: String::new(),
-            status: NewBoardTaskStatus::Ready,
-            parent: None,
-            depends_on: vec![],
-        })
-        .unwrap();
+    CreateBoardTask::new(
+        Arc::clone(&ada),
+        clock.clone(),
+        std::sync::Arc::new(
+            quecto::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+        ),
+    )
+    .unwrap()
+    .execute(&NewBoardTask {
+        id: id.clone(),
+        title: "A".into(),
+        kind: TaskKind::Task,
+        description: String::new(),
+        status: NewBoardTaskStatus::Ready,
+        parent: None,
+        depends_on: vec![],
+        entry: quecto::domain::project_board::entities::task_parts::Entry::Sectioned,
+    })
+    .unwrap();
     let role = |name: &str, model: &str| Role {
         name: Slug::parse(name).unwrap(),
         model: model.into(),
@@ -178,6 +185,8 @@ fn ready_board(store: &MemoryBoardStore) {
     let plan = ProposePlan::new(Arc::clone(&ada), clock.clone())
         .unwrap()
         .execute(&PlanProposal {
+            handoff: None,
+            entry: PlanEntry::Legacy,
             task: id.clone(),
             approach: "Build it.".into(),
             items: vec![PlanItem {

@@ -1,25 +1,19 @@
-//! Resume work after a terminal provider failure (#1909): a session's
-//! automatic turns stop when a turn fails, and are re-armed only by an
-//! explicit instruction or by a swarm resume after the failure.
+//! Resume work after a provider failure (#1909, #2531): a session's
+//! automatic turns stop when a turn fails, and are re-armed by an explicit
+//! instruction, by a swarm resume after the failure, or, for a failure the
+//! provider may recover from, by the next swarm wake (bounded).
 //!
 //! The rule is the domain's (`turn_suspension`); this use case holds the
 //! session's state and runs it. The swarm's run control is the one effect
 //! it needs, to date a suspension and to see a resume: the delivery
 //! adapter owns that port for the process and passes it in.
 use crate::application::swarm::ports::lifecycle::SwarmRunControl;
-use crate::domain::inference::services::turn_suspension::{AutomaticTurns, SuspensionCause, Work};
+use crate::domain::inference::services::turn_suspension::{
+    AutomaticTurns, OwedTurn, SuspendedProbe, SuspensionCause, Work,
+};
 use crate::domain::shared::error::DomainError;
+use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 use crate::domain::swarm::value_objects::run_control::RunControlAction;
-
-/// What a suspended session saw when it asked its run for its status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SuspendedProbe {
-    /// A resume after the failure re-armed automatic turns; the session
-    /// owes the run a turn ([`ResumeAfterProviderFailure::take_owed_turn`]).
-    Rearmed { generation: u64 },
-    /// No resume since the failure: automatic turns stay suspended.
-    StillSuspended { generation: u64 },
-}
 
 /// One session's automatic turns: whether they run, why not, and what
 /// re-arms them.
@@ -44,10 +38,17 @@ impl ResumeAfterProviderFailure {
         self.turns.observe_control_generation(generation);
     }
 
-    /// A turn ended in a terminal provider failure: suspend, dated later
-    /// ([`Self::date_suspension`]) at the generation known after it.
-    pub fn suspend_after_failure(&mut self) {
-        self.suspend(SuspensionCause::ProviderFailure, None);
+    /// A turn ended in `err`: suspend, recoverable or terminal by its class
+    /// (#2531), dated later ([`Self::date_suspension`]) at the generation
+    /// known after it.
+    pub fn suspend_after_failure(&mut self, err: &DomainError) {
+        self.turns.suspend_after_failure(err, None);
+        debug_assert!(!self.turns.allowed());
+    }
+
+    /// A turn succeeded: the recoverable re-arm bound is whole again.
+    pub fn turn_succeeded(&mut self) {
+        self.turns.turn_succeeded();
     }
 
     /// The coordination store durably rejected a wake: suspend until an
@@ -64,7 +65,8 @@ impl ResumeAfterProviderFailure {
     }
 
     /// Whether `work` may start a turn now (the domain decides: an
-    /// instruction always, automatic work only while automatic turns run).
+    /// instruction always, automatic work while automatic turns run or to
+    /// re-arm a recoverable failure).
     pub fn admits(&self, work: Work) -> bool {
         self.turns.admits(work)
     }
@@ -77,9 +79,28 @@ impl ResumeAfterProviderFailure {
         self.observe_control_generation(generation);
     }
 
-    /// Consume the turn a resume owed the run (true once per re-arm).
-    pub fn take_owed_turn(&mut self) -> bool {
-        self.turns.take_pending_resume_turn()
+    /// Consume the turn a wake's re-arm owed the run (once per re-arm),
+    /// and why it is owed.
+    pub fn take_owed_turn(&mut self) -> Option<OwedTurn> {
+        self.turns.take_owed_turn()
+    }
+
+    /// Whether the session should wake itself after
+    /// [`crate::domain::inference::services::turn_suspension::RECOVERABLE_SELF_WAKE_DELAY`]
+    /// (#2531): a recoverable failure suspended it, and no one else may
+    /// wake it.
+    pub fn needs_self_wake(&self) -> bool {
+        self.turns.needs_self_wake()
+    }
+
+    /// Which suspension this is (a self-wake for an older one is stale).
+    pub fn suspension_epoch(&self) -> u64 {
+        self.turns.suspension_epoch()
+    }
+
+    /// Whether a wake's re-arm owes the run a turn not yet taken.
+    pub fn owes_turn(&self) -> bool {
+        self.turns.owes_turn()
     }
 
     /// Date a provider-failure suspension at the control generation current
@@ -91,14 +112,15 @@ impl ResumeAfterProviderFailure {
     pub async fn date_suspension(&mut self, control: Option<&dyn SwarmRunControl>) -> Option<u64> {
         let control = control.filter(|_| self.turns.needs_provider_dating())?;
         let receipt = control.apply(RunControlAction::Status).await.ok()?;
-        self.suspend(SuspensionCause::ProviderFailure, Some(receipt.generation));
+        self.turns.date_suspension(receipt.generation);
         debug_assert!(!self.turns.needs_provider_dating());
         Some(receipt.generation)
     }
 
     /// A suspended session got a wake: learn the run's control generation
     /// without claiming the wake. A resume since the provider failure
-    /// re-arms automatic turns; a wake alone never does.
+    /// re-arms automatic turns and owes the run a turn; so does a wake after
+    /// a recoverable failure (#2531); otherwise a wake alone never re-arms.
     pub async fn probe_while_suspended(
         &mut self,
         control: &dyn SwarmRunControl,
@@ -106,9 +128,10 @@ impl ResumeAfterProviderFailure {
         debug_assert!(!self.turns.allowed(), "only a suspended session probes");
         let receipt = control.apply(RunControlAction::Status).await?;
         let generation = receipt.generation;
-        Ok(match self.turns.resume_after_control_change(generation) {
-            true => SuspendedProbe::Rearmed { generation },
-            false => SuspendedProbe::StillSuspended { generation },
+        let run_takes_turns = matches!(receipt.status, RunStatus::Setup | RunStatus::Running);
+        Ok(SuspendedProbe {
+            outcome: self.turns.wake(generation, run_takes_turns),
+            generation,
         })
     }
 }

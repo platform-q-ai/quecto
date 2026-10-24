@@ -10,7 +10,6 @@ use serde_json::{Value, json};
 
 use super::super::site::{BuildError, ProjectBoardEnvironment, ProjectBoardHandles};
 use super::BoardSite;
-use super::tests::tool;
 use crate::application::environments::dto::{
     EnvironmentLiveness, HostedBoardRevision, SwarmBoardSnapshot,
 };
@@ -20,13 +19,13 @@ use crate::application::environments::ports::{
 };
 use crate::application::environments::use_cases::FinalizeEnvironmentMember;
 use crate::application::project_board::operations::NoPullRequestHost;
-use crate::application::project_board::operations::query_listings::{
-    QueryListings, Swarms, assembled_reporting,
-};
 use crate::application::project_board::ports::{BoardArtifact, BoardClock, ProjectBoardStore};
 use crate::application::project_board::swarm_brief::brief_of;
 use crate::application::project_board::use_cases::QueryBoard;
 use crate::application::tools::ports::Tool;
+use crate::composition::bootstrap::project_board_operations::fixtures::{
+    QueryListings, Swarms, assembled_reporting,
+};
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
@@ -53,7 +52,7 @@ fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
 }
 
-fn ada() -> Identity {
+pub(super) fn ada() -> Identity {
     Identity {
         name: "Ada".into(),
         email: "ada@example.com".into(),
@@ -62,7 +61,7 @@ fn ada() -> Identity {
 
 /// Task `a`, ready, with version 1 of its plan accepted: items `schema`
 /// and `api`.
-fn ready_with_plan() -> (Task, Plan) {
+pub(super) fn ready_with_plan() -> (Task, Plan) {
     let at = Timestamp::parse("2026-10-10T09:00:00Z").unwrap();
     let item = |id: &str, title: &str| PlanItem {
         id: slug(id),
@@ -80,6 +79,7 @@ fn ready_with_plan() -> (Task, Plan) {
             item("api", "Serve the api"),
         ],
         team: None,
+        handoff: None,
         proposed_by: ada(),
         edited_by: None,
         accepted: Some((ada(), at.clone())),
@@ -104,6 +104,7 @@ fn ready_with_plan() -> (Task, Plan) {
         references: vec![],
         created: at.clone(),
         updated: at,
+        description_form: Default::default(),
     })
     .unwrap();
     (task, plan)
@@ -113,7 +114,7 @@ fn ready_with_plan() -> (Task, Plan) {
 fn started_now() -> Started {
     let (task, plan) = ready_with_plan();
     let now = SystemBoardClock::default().now().unwrap();
-    start(&task, &[], Some(&plan), &ada(), &now).unwrap()
+    start(&task, &[], &[], Some(&plan), &ada(), &now).unwrap()
 }
 
 /// The boards this test's teardown keeps, as composition keeps one store
@@ -149,12 +150,16 @@ fn started_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHa
         Err(NoPullRequestHost::NotAPullRequestHost),
         Swarms {
             launcher: launcher.clone().map(|swarms| swarms as _),
+            started: launcher.clone().map(|swarms| swarms as _),
             liveness: launcher.map(|swarms| swarms as _),
             reports,
         },
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
-    Ok(ProjectBoardHandles { operations })
+    Ok(ProjectBoardHandles {
+        operations: Box::new(operations),
+        board: None,
+    })
 }
 
 /// The coordinator's box: it hosts a run closed as succeeded, whose board
@@ -292,19 +297,20 @@ impl Tool for Unused {
 /// The agent tool over the started board, as the tool runtime builds it
 /// for a session spawning into `environments`: its launcher built afresh
 /// (as after a restart: it never launched run 1).
-fn agent_tool(environments: &EnvironmentRegistry) -> super::BoardTool {
+fn agent_tool(
+    environments: &EnvironmentRegistry,
+    records: &Arc<super::super::recording::tests::Records>,
+) -> super::BoardTool {
     let launcher = SpawnCoordinatorLauncher::new(
         Arc::new(Unused),
         Arc::new(Unused),
         SpawnPermit::default(),
         crate::infrastructure::tools::agents::subagent_registry::new_registry(),
     );
-    tool(BoardSite::agent(
-        ".".into(),
-        started_board,
-        Arc::new(launcher),
-        environments,
-    ))
+    super::tests::recorded_tool(
+        BoardSite::agent(".".into(), started_board, Arc::new(launcher), environments),
+        records,
+    )
 }
 
 /// `end_run(a, 1, succeeded)` through `tool`: its answer, and whether it
@@ -341,7 +347,8 @@ async fn a_swarm_that_did_its_items_is_recorded_on_the_board_through_the_real_te
     let registry = EnvironmentRegistry::new();
     let session = registry.session().to_owned();
     let kept = kept();
-    let tool = agent_tool(&registry);
+    let records = Arc::new(super::super::recording::tests::Records::default());
+    let tool = agent_tool(&registry, &records);
 
     // Before the teardown, nothing of the swarm reached the board: a
     // success is refused, and nothing is written.
@@ -400,6 +407,25 @@ async fn a_swarm_that_did_its_items_is_recorded_on_the_board_through_the_real_te
         );
     }
     assert_eq!(answer.get("items_recorded"), None, "no todo line: {answer}");
+    // #2663, #2667: the end says it folded the kept board, and that
+    // fold-back writes its own record, with the run's items by state.
+    let ops = records.taken();
+    assert_eq!(
+        ops.last()
+            .and_then(|op| op.swarm_report)
+            .map(|kind| kind.as_str()),
+        Some("kept")
+    );
+    let folded = records.fold_backs();
+    assert_eq!(folded.len(), 1, "one fold-back record: {folded:?}");
+    let line = serde_json::to_value(&folded[0]).unwrap();
+    assert_eq!(
+        (&line["run"], &line["outcome"], &line["run_outcome"]),
+        (&json!(1), &json!("ok"), &json!("succeeded")),
+        "{line}"
+    );
+    assert_eq!(line["items"]["done"], json!(2), "{line}");
+    assert_eq!(line["cost_tokens"], json!(52_000), "{line}");
     assert_eq!(answer["liveness"], json!("checked"));
     assert_eq!(
         kept.view(&session, "board-a-run-1"),

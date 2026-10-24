@@ -56,9 +56,10 @@ fn set_model_derives_limits_from_the_published_snapshot_only() {
     // `contracts::catalogue_consumers::set_model_limits_and_selection_come_from_the_published_snapshot`
     // and the dispatch-level re-clamp test
     // (`uds_dispatch_935_clamp_tests::dispatch_set_model_re_clamps_effective_max_tokens`).
-    let dispatch =
-        std::fs::read_to_string(harness_root().join("src/interface/cli/uds_dispatch_runtime.rs"))
-            .unwrap();
+    let dispatch = std::fs::read_to_string(
+        harness_root().join("src/interface/uds/controllers/uds/uds_dispatch_runtime.rs"),
+    )
+    .unwrap();
     assert!(
         !dispatch.contains("model_limits_from_base_dir")
             && !dispatch.contains("published_model_limits"),
@@ -101,4 +102,60 @@ fn effort_capability_is_not_inferred_from_model_names_outside_the_domain() {
 #[test]
 fn contributor_docs_map_layer_ownership_and_forbid_new_authorities() {
     conformance::assert_contributor_docs_structure(&conformance::contributor_docs());
+}
+
+fn legacy_registry_ownership_fixture(owner: &str, child: &str) -> (Vec<String>, String) {
+    let dir = tempfile::tempdir().expect("temporary source tree");
+    let legacy = "use crate::infrastructure::providers::catalogue::model_registry;";
+    for (name, source) in [("mod.rs", owner), (child, legacy)] {
+        let path = dir.path().join(name);
+        std::fs::write(&path, source).expect("write fixture module");
+        let written = std::fs::read_to_string(&path).expect("read fixture module");
+        syn::parse_file(&written).expect("fixture must be valid Rust syntax");
+    }
+    let readers = conformance::model_registry_readers(&production_sources(dir.path()));
+    (readers, dir.path().join(child).display().to_string())
+}
+
+#[test]
+fn legacy_registry_ownership_canonical_test_module_is_excluded() {
+    let (readers, _) = legacy_registry_ownership_fixture("#[cfg(test)] mod tests;", "tests.rs");
+    assert!(
+        readers.is_empty(),
+        "test-owned external tests.rs must not be a production reader: {readers:?}"
+    );
+}
+
+#[test]
+fn legacy_registry_ownership_ordinary_test_child_is_excluded() {
+    let (readers, _) = legacy_registry_ownership_fixture("#[cfg(test)] mod support;", "support.rs");
+    assert!(
+        readers.is_empty(),
+        "test-owned external support.rs must not be a production reader: {readers:?}"
+    );
+}
+
+#[test]
+fn legacy_registry_ownership_production_tests_module_is_rejected() {
+    // The name tests.rs is not an exemption: actual production ownership counts.
+    let (readers, child) = legacy_registry_ownership_fixture("mod tests;", "tests.rs");
+    assert_eq!(
+        readers,
+        vec![child],
+        "production-owned legacy reader must be rejected"
+    );
+}
+
+#[test]
+fn legacy_registry_ownership_dual_owned_child_is_rejected() {
+    let (readers, child) = legacy_registry_ownership_fixture(
+        "#[path = \"shared.rs\"] mod production;\n\
+         #[cfg(test)] #[path = \"shared.rs\"] mod tests;",
+        "shared.rs",
+    );
+    assert_eq!(
+        readers,
+        vec![child],
+        "production ownership must survive a test-only alias"
+    );
 }

@@ -23,7 +23,6 @@ use crate::infrastructure::auth::provider_slots::{
     ANTHROPIC_API, ANTHROPIC_OAUTH, OPENAI_API, OPENAI_OAUTH, api_slot_key, oauth_slot_token,
 };
 use crate::infrastructure::config::Config;
-use crate::infrastructure::providers;
 use crate::infrastructure::providers::routing::model_refusal::RefusalRecordingProvider;
 use crate::infrastructure::providers::routing::refreshable::{
     RefreshableConfig, RefreshableProvider,
@@ -32,8 +31,10 @@ use crate::infrastructure::providers::routing::retry::{RetryConfig, RetryingProv
 use crate::infrastructure::providers::routing::router::ProviderRouter;
 
 use super::provider_runtime_admission::AdmissionRuntimeContext;
+use crate::infrastructure::providers::routing::provider_factory::{
+    self, AttemptTransportBinding, ProviderBinding,
+};
 use crate::infrastructure::providers::transport::stream_idle::StreamIdle;
-use crate::infrastructure::providers::{AttemptTransportBinding, ProviderBinding};
 
 const MAX_OPENAI_COMPATIBLE_ENDPOINTS: usize = 32;
 
@@ -139,11 +140,11 @@ pub(crate) fn compose_agent_provider_inner_outcome(
         store.get("openai").ok().flatten(),
     ) {
         provider_list.push(
-            providers::create_named_openai_provider_with_client_and_admission(
+            provider_factory::create_named_openai_provider_with_client_and_admission(
                 OPENAI_API,
                 openai_api_key,
                 openai_base.clone(),
-                providers::ProviderTransportContext {
+                provider_factory::ProviderTransportContext {
                     client: http_client.clone(),
                     binding: bound(admission, OPENAI_API, openai_idle)?,
                 },
@@ -204,7 +205,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
         store.get("anthropic").ok().flatten(),
     ) {
         provider_list.push(
-            providers::create_anthropic_compatible_provider_and_admission(
+            provider_factory::create_anthropic_compatible_provider_and_admission(
                 ANTHROPIC_API,
                 anthropic_api_key,
                 anthropic_base.clone(),
@@ -217,7 +218,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
         #[cfg(feature = "test-support")]
         if mock_llm_bare_anthropic_alias_enabled(&anthropic_base) {
             provider_list.push(
-                providers::create_provider_with_client_and_admission(
+                provider_factory::create_provider_with_client_and_admission(
                     "anthropic",
                     config.providers.anthropic.api_key.clone(),
                     anthropic_base.clone(),
@@ -229,7 +230,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
         }
     }
     if let Some(anthropic_oauth_key) = oauth_slot_token(store.get("anthropic").ok().flatten()) {
-        let inner = providers::create_anthropic_compatible_provider_and_admission(
+        let inner = provider_factory::create_anthropic_compatible_provider_and_admission(
             ANTHROPIC_OAUTH,
             anthropic_oauth_key,
             anthropic_base.clone(),
@@ -310,7 +311,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
         }
         let setting = format!("openai_compatible endpoint '{prefix}'");
         let idle = endpoint.stream_limits.bounds(&setting)?;
-        let provider = providers::create_openai_compatible_provider_and_admission(
+        let provider = provider_factory::create_openai_compatible_provider_and_admission(
             &endpoint.prefix,
             endpoint.api_key.clone(),
             endpoint.api_base.clone(),
@@ -402,7 +403,7 @@ fn registry_provider_factory_with_admission(
                 let base = base
                     .clone()
                     .expect("OpenAI-compatible registry provider base should be validated");
-                providers::create_openai_compatible_provider_and_admission(
+                provider_factory::create_openai_compatible_provider_and_admission(
                     &provider_prefix,
                     new_token.to_string(),
                     base,
@@ -413,7 +414,7 @@ fn registry_provider_factory_with_admission(
                 .expect("refreshed OpenAI-compatible registry provider should rebuild")
             }
             ProviderApi::AnthropicMessages => {
-                providers::create_anthropic_compatible_provider_and_admission(
+                provider_factory::create_anthropic_compatible_provider_and_admission(
                     &provider_prefix,
                     new_token.to_string(),
                     base.clone(),
@@ -557,7 +558,7 @@ fn build_registry_provider_with_admission(
             let Some(base) = api_base.clone().filter(|b| !b.trim().is_empty()) else {
                 return Ok(None);
             };
-            providers::create_openai_compatible_provider_and_admission(
+            provider_factory::create_openai_compatible_provider_and_admission(
                 &model.provider,
                 auth_key.clone(),
                 base,
@@ -568,7 +569,7 @@ fn build_registry_provider_with_admission(
             .map_err(|e| format!("models.json provider configuration error: {}", e))?
         }
         ProviderApi::AnthropicMessages => {
-            providers::create_anthropic_compatible_provider_and_admission(
+            provider_factory::create_anthropic_compatible_provider_and_admission(
                 &model.provider,
                 auth_key.clone(),
                 api_base.clone(),
@@ -677,7 +678,7 @@ fn build_single_provider_with_admission(
     if name == "openai" && !disable_codex_routing {
         let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(api_key);
         if let Some(acct) = account_id {
-            return providers::create_codex_provider_with_client_and_admission(
+            return provider_factory::create_codex_provider_with_client_and_admission(
                 api_key.to_string(),
                 acct,
                 api_base.clone(),
@@ -689,7 +690,7 @@ fn build_single_provider_with_admission(
     }
     let base = api_base.clone();
     if name == "openai" && disable_codex_routing {
-        return providers::create_openai_provider_with_client_and_admission(
+        return provider_factory::create_openai_provider_with_client_and_admission(
             api_key.to_string(),
             base,
             http_client.clone(),
@@ -698,7 +699,7 @@ fn build_single_provider_with_admission(
         )
         .map_err(|e| format!("{} provider configuration error: {}", name, e));
     }
-    providers::create_provider_with_client_and_admission(
+    provider_factory::create_provider_with_client_and_admission(
         name,
         api_key.to_string(),
         base,

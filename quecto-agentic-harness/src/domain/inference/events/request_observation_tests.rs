@@ -364,3 +364,37 @@ mod input_baseline_tests {
         assert!(trace.input_baseline().expect("attached").is(&baseline));
     }
 }
+
+/// #1855: usage an attempt reported before it was cut short is costed at
+/// the request's catalogue price; a request with no price leaves it
+/// uncosted, whatever figure came with it.
+#[test]
+fn unfinished_usage_is_costed_at_the_request_price() {
+    use crate::domain::conversation::value_objects::message::UsageInfo;
+    use crate::domain::inference::value_objects::model_price::ModelPrice;
+    let usage = || UsageInfo {
+        prompt_tokens: 1_000,
+        completion_tokens: 100,
+        cache_read_tokens: None,
+        cache_write_tokens: None,
+        context_tokens: None,
+        cost: None,
+    };
+    let priced = super::RequestTrace::default();
+    priced.set_price(ModelPrice {
+        input: 2_000_000,
+        output: 10_000_000,
+        cache_read: 0,
+        cache_write: 0,
+    });
+    priced.record_unfinished_usage(usage());
+    let costs: Vec<_> = priced
+        .unfinished_usage()
+        .iter()
+        .map(|u| u.cost.as_ref().map(|c| c.total_cost_micro_usd))
+        .collect();
+    assert_eq!(costs, [Some(2_000 + 1_000)]);
+    let unpriced = super::RequestTrace::default();
+    unpriced.record_unfinished_usage(usage());
+    assert!(unpriced.unfinished_usage()[0].cost.is_none());
+}

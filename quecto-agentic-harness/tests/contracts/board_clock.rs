@@ -155,7 +155,14 @@ fn create_against(
     store.bootstrap().unwrap();
     let source = HttpDate::without_proxy(serves_date(offset_seconds));
     let clock = ReferencedBoardClock::new(Ok(Arc::new(source)), REFRESH_EVERY, |_| {});
-    let create = CreateBoardTask::new(Arc::new(store), Arc::new(clock)).unwrap();
+    let create = CreateBoardTask::new(
+        Arc::new(store),
+        Arc::new(clock),
+        std::sync::Arc::new(
+            quecto::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+        ),
+    )
+    .unwrap();
     create.execute(&NewBoardTask {
         id: Slug::parse("a").unwrap(),
         title: "A".into(),
@@ -164,6 +171,7 @@ fn create_against(
         status: NewBoardTaskStatus::Ready,
         parent: None,
         depends_on: vec![],
+        entry: quecto::domain::project_board::entities::task_parts::Entry::Sectioned,
     })
 }
 

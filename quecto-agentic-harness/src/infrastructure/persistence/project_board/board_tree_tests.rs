@@ -94,7 +94,7 @@ fn a_folder_name_spells_a_key_only_as_written() {
     }
 }
 
-fn a_task() -> Task {
+pub(super) fn a_task() -> Task {
     use crate::domain::project_board::entities::task::TaskFields;
     use crate::domain::project_board::value_objects::timestamp::Timestamp;
     use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
@@ -116,6 +116,7 @@ fn a_task() -> Task {
         references: vec![],
         created: at.clone(),
         updated: at,
+        description_form: Default::default(),
     })
     .unwrap()
 }

@@ -15,6 +15,7 @@ fn record(access: Access) -> BoardOpRecord {
         front_end: FrontEnd::Tool,
         client: Client::Agent,
         access,
+        board: None,
         outcome: OpOutcome::Refused {
             code: StaticKind::new("rule"),
             rule: Some(StaticKind::new("not_holder")),
@@ -37,7 +38,9 @@ fn record(access: Access) -> BoardOpRecord {
         status_to: None,
         claim: None,
         attempts: None,
-        lost: None,
+        races_lost: None,
+        lock_races: None,
+        swarm_report: None,
         pause_ms: None,
         completion: None,
         normalised: None,
@@ -92,6 +95,7 @@ fn a_fold_back_is_traced_at_info_then_written_as_its_own_event() {
     let record = FoldBackRecord {
         task: TaskRef::of(&Slug::parse("board-store").unwrap()),
         run: 2,
+        board: None,
         outcome: OpOutcome::Ok,
         run_outcome: Some(RunOutcomeKind::Succeeded),
         items: None,
@@ -101,8 +105,10 @@ fn a_fold_back_is_traced_at_info_then_written_as_its_own_event() {
         evidence_dropped: Some(1),
         cost_tokens: Some(1234),
         attempts: Some(1),
-        lost: Some(0),
+        races_lost: Some(0),
+        lock_races: None,
         bytes: Some(40),
+        head: None,
         duration_us: 9,
     };
     let traced = traced(tracing::Level::INFO, || {
@@ -137,6 +143,7 @@ fn a_start_is_traced_at_info_then_written_as_its_own_event() {
     let record = BoardStartRecord {
         task: TaskRef::of(&Slug::parse("board-store").unwrap()),
         client: Client::Agent,
+        board: None,
         outcome: OpOutcome::Ok,
         run: Some(1),
         plan_version: Some(2),

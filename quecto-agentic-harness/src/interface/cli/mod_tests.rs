@@ -39,7 +39,7 @@ fn test_composition() -> CliComposition {
         teardown_graph: crate::composition::subagent_teardown::build_teardown_graph,
         kill_tool: crate::composition::subagent_termination::install_termination_owners,
         sessions: crate::composition::sessions::build_session_handles,
-        automatic_turns: crate::composition::bootstrap::agent_turn::build_automatic_turns,
+        turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
         retention: crate::composition::sessions::build_retention_handles,
         fresh_session_identity: crate::composition::sessions::build_fresh_session_identity,
         configuration: crate::composition::configuration::build_configuration_handles,
@@ -66,6 +66,7 @@ fn test_composition() -> CliComposition {
         board_cli_recording: super::board::CliRecordingBuilder(
             crate::composition::bootstrap::project_board::cli_board_recording,
         ),
+        board_server: crate::composition::bootstrap::board_server::build_board_server,
         claude_member: crate::composition::claude_member::build_claude_member_handles,
     }
 }
@@ -122,6 +123,7 @@ fn a_real_runs_context_carries_every_composed_builder() {
             ctx.project_board_recording.is_some(),
         ),
         ("board_cli_recording", ctx.board_cli_recording.is_some()),
+        ("board_server", ctx.board_server.is_some()),
     ];
     let present: Vec<_> = composed
         .iter()
@@ -182,15 +184,17 @@ async fn test_support_probes_report_live_and_completed_execution_state() {
         name: "bash".into(),
         arguments: "{}".into(),
     };
-    let live = super::live_execution_state_for_events(std::slice::from_ref(&started));
+    let live = crate::interface::uds::test_support::live_execution_state_for_events(
+        std::slice::from_ref(&started),
+    );
     assert_eq!(live["execution"]["phase"], "runningTool");
     assert_eq!(live["execution"]["tools"]["started"], 1);
-    let done = super::completed_live_execution_state(&[started]);
+    let done = crate::interface::uds::test_support::completed_live_execution_state(&[started]);
     assert_eq!(done["execution"]["phase"], "idle");
     assert_eq!(done["messageCount"], 0);
-    let hints = super::ledger_hint_lines_for_turn_events(
+    let hints = crate::interface::uds::test_support::ledger_hint_lines_for_turn_events(
         &[AgentProgressEvent::Done],
-        &crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
+        &crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[])
             .active_session,
     )
     .await;
@@ -411,4 +415,28 @@ fn a_linked_worktree_reports_and_applies_the_main_worktrees_overlay() {
         set.stderr
     );
     assert!(!layout.linked.join(".quecto").exists(), "nothing is copied");
+}
+
+/// #2660: `quecto help` lists every op `quecto board` takes, in its
+/// command-line spelling.
+#[test]
+fn help_lists_every_board_op_the_command_line_takes() {
+    let help = run_with_output(args("help"), &CliContext::default());
+    for op in [
+        "bootstrap",
+        "list-ready",
+        "list-takeable",
+        "update-draft",
+        "take-over",
+        "link-pr",
+        "unlink-pr",
+        "clear-set-aside",
+        "propose-plan",
+        "edit-plan",
+        "accept-plan",
+        "discard-plan",
+        "end-run",
+    ] {
+        assert!(help.stdout.contains(op), "{op} missing:\n{}", help.stdout);
+    }
 }

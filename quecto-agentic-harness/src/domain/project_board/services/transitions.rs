@@ -4,10 +4,11 @@ use super::super::entities::claim::Identity;
 use super::super::entities::run::Run;
 use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
+use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::Resolution;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
-use super::claims::{held_by, held_live_by, is_live, new_claim, settle, stamp};
+use super::claims::{held_by, held_live_by, held_or_lapsed_by, is_live, new_claim, settle, stamp};
 use super::runs::{holds_moves_to, lost_at, may_move_with, open_of};
 use std::collections::BTreeSet;
 
@@ -110,16 +111,17 @@ pub fn move_reads(
     })
 }
 
-/// `task` moved to `to` by `actor` at `now`, if the table allows it and
-/// its `runs` and `changes` (all of them, as the board holds them) let it
-/// leave. Only those [`move_reads`] names count: a caller may leave the
-/// rest empty.
+/// `task` moved to `to` by `actor` at `now`, if the table allows it, its
+/// `runs` and `changes` (all of them, as the board holds them) let it
+/// leave, and the `tasks` it relates to (every task the board holds) let
+/// it move ([`relations_allow`], #2661). Only the runs and changes
+/// [`move_reads`] names count: a caller may leave the rest empty.
 pub fn move_task(
     task: &Task,
     to: TaskStatus,
     actor: &Identity,
-    runs: &[Run],
-    changes: &[Change],
+    (runs, changes): (&[Run], &[Change]),
+    tasks: &[Task],
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
     let effect = allowed(task, to, actor, now)?;
@@ -131,6 +133,7 @@ pub fn move_task(
         return Err(BoardRuleError::ChangesLinked(linked));
     }
     may_move_with(task, runs, to)?;
+    relations_allow(task, to, tasks)?;
     let at = stamp(task, now)?;
     let mut next = task.fields().clone();
     next.status = to;
@@ -145,6 +148,62 @@ pub fn move_task(
         "{from:?} -> {to:?}: a task leaves its claim behind for a status that holds none"
     );
     settle(next, &at)
+}
+
+/// Whether the tasks `task` relates to on the board (`tasks`: every task
+/// the board holds) let it move to `to` (#2661), an allowlist of the moves
+/// they hold back:
+/// - a claim waits for every task it depends on to release its
+///   dependents ([`TaskStatus::releases_dependents`]: done or archived,
+///   as `list_ready` lists it); one not on the board holds it too;
+/// - an archive waits for every child task to be free of work: none
+///   claimed, in progress, in review or blocked.
+///
+/// A start claims a ready task as a move to claimed does, so it asks the
+/// same ([`super::starts::start`]).
+///
+/// # Errors
+/// The tasks that hold it back, by id.
+pub fn relations_allow(task: &Task, to: TaskStatus, tasks: &[Task]) -> Result<(), BoardRuleError> {
+    let fields = task.fields();
+    let status_of = |id: &Slug| {
+        tasks
+            .iter()
+            .find(|other| other.fields().id == *id)
+            .map(|other| other.fields().status)
+    };
+    match to {
+        Claimed => {
+            let (mut undone, mut missing) = (vec![], vec![]);
+            for id in &fields.depends_on {
+                match status_of(id) {
+                    Some(status) if status.releases_dependents() => {}
+                    Some(_) => undone.push(id.clone()),
+                    None => missing.push(id.clone()),
+                }
+            }
+            match (undone.as_slice(), missing.as_slice()) {
+                ([], []) => Ok(()),
+                (_, _) => Err(BoardRuleError::DependencyNotDone { undone, missing }),
+            }
+        }
+        Archived => {
+            let active: Vec<Slug> = tasks
+                .iter()
+                .filter(|other| other.fields().parent.as_ref() == Some(&fields.id))
+                .filter(|child| match child.fields().status {
+                    Claimed | InProgress | Review | Blocked => true,
+                    Draft | Ready | Done | Archived => false,
+                })
+                .map(|child| child.fields().id.clone())
+                .collect();
+            match active.as_slice() {
+                [] => Ok(()),
+                [_, ..] => Err(BoardRuleError::ChildrenActive(active)),
+            }
+        }
+        Draft | Ready | InProgress | Review | Blocked | Done => Ok(()),
+    }
 }
 
 /// What a move does to the claim, when the table and its actor allow it,
@@ -167,7 +226,7 @@ fn allowed(
             held_live_by(task, actor, now)?;
         }
         Actor::Releaser => {
-            held_by(task, actor)?;
+            held_or_lapsed_by(task, actor, now)?;
         }
         Actor::HolderWhileLive => {
             if task
@@ -346,3 +405,11 @@ mod tests;
 #[cfg(test)]
 #[path = "transitions_archive_tests.rs"]
 mod archive_tests;
+
+#[cfg(test)]
+#[path = "transitions_relations_tests.rs"]
+mod relations_tests;
+
+#[cfg(test)]
+#[path = "transitions_holder_tests.rs"]
+mod holder_tests;

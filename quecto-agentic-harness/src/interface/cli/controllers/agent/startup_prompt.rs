@@ -61,11 +61,11 @@ pub(super) fn load_parent_playbook(
 pub(super) fn compose(
     agents_instructions: Option<&str>,
     explicit_system_prompt: Option<&str>,
-    role: crate::interface::shared::PromptRole,
+    role: crate::interface::cli::controllers::shared::PromptRole,
     extension_prompt_snippets: &str,
     parent_playbook: &str,
 ) -> String {
-    crate::interface::shared::build_agent_system_prompt_with_playbook(
+    crate::interface::cli::controllers::shared::build_agent_system_prompt_with_playbook(
         agents_instructions,
         explicit_system_prompt,
         role,
@@ -75,8 +75,10 @@ pub(super) fn compose(
 }
 
 /// The prompt role the parsed launch flags name (#2461).
-pub(super) fn role(flags: &super::flag_parse::AgentFlags) -> crate::interface::shared::PromptRole {
-    crate::interface::shared::PromptRole::of(flags.spawned, flags.coordinator)
+pub(super) fn role(
+    flags: &super::flag_parse::AgentFlags,
+) -> crate::interface::cli::controllers::shared::PromptRole {
+    crate::interface::cli::controllers::shared::PromptRole::of(flags.spawned, flags.coordinator)
 }
 
 /// The startup prompt for an agent started with `flags` (#2461): the role

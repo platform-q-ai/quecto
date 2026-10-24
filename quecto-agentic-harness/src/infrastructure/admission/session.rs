@@ -18,11 +18,15 @@ pub(super) async fn serve(
 ) {
     let (read, mut write) = stream.into_split();
     let (notices, mut outbound) = mpsc::unbounded_channel::<Reply>();
+    // The actor ends this connection by sending on (or dropping) `close`:
+    // a superseded binding must look closed to its old client (#2664).
+    let (close, mut closed) = oneshot::channel::<()>();
     if commands
         .send(Command::Open {
             session,
             role,
             notices: notices.clone(),
+            close,
         })
         .is_err()
     {
@@ -45,6 +49,7 @@ pub(super) async fn serve(
         // that follows it would), so clients observe the loss at once.
         tokio::select! {
             _ = shutdown.changed() => break,
+            _ = &mut closed => break,
             filled = reader.fill_buf() => match filled {
                 Ok([]) => break,
                 Ok(_) => {}

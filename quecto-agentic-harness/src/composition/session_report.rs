@@ -10,7 +10,7 @@ use crate::application::sessions::ports::export::SessionExportPort;
 use crate::application::sessions::services::active_session::ActiveSessionHandle;
 use crate::application::sessions::use_cases::ExportSessionReport;
 use crate::infrastructure::persistence::file::session_export::FileSessionExport;
-use crate::interface::uds::sessions::export_report_controller::ExportSessionReportController;
+use crate::interface::uds::controllers::export_report_controller::ExportSessionReportController;
 
 /// Where the loop of `base_dir` writes raw session exports.
 pub fn build_session_export(base_dir: &Path) -> Arc<dyn SessionExportPort> {

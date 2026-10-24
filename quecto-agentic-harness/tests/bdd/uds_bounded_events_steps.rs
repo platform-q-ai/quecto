@@ -6,7 +6,7 @@
 //! re-stamped sub-agent path.
 
 use super::*;
-use quecto::interface::cli::protocol::EVENT_LINE_CAP_BYTES;
+use quecto::interface::uds::wire::protocol::EVENT_LINE_CAP_BYTES;
 use quecto_line_io::PROTOCOL_FRAME_CAP_BYTES;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -757,7 +757,7 @@ fn when_subagent_completes_turn_on_parent(world: &mut QuectoWorld) {
             quecto::domain::conversation::value_objects::message::Message::assistant(&body, vec![]),
         ];
         let mut child_bytes = Vec::new();
-        quecto::interface::cli::uds_cancel::forward_progress_event(
+        quecto::interface::uds::controllers::uds_cancel::forward_progress_event(
             quecto::domain::agents::value_objects::agent::AgentProgressEvent::TurnCompleted {
                 messages: child_messages.into(),
             },
@@ -1515,7 +1515,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
     use quecto::infrastructure::config::Config;
     use quecto::infrastructure::security::sandbox::Sandbox;
     use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-    use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
+    use quecto::interface::uds::controllers::uds::{UdsLoopArgs, run_uds_loop};
 
     let env_overrides: HashMap<String, String> = std::env::vars()
         .filter(|(k, _)| k.starts_with("QUECTO_"))
@@ -1566,7 +1566,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
         },
     );
     let ext_registry = quecto::infrastructure::extensions::registry::ExtensionRegistry::new();
-    quecto::interface::shared::register_bundled_native_extension_tools(
+    quecto::interface::cli::controllers::shared::register_bundled_native_extension_tools(
         &mut registry,
         &ext_registry,
     );
@@ -1638,7 +1638,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             broadcast_tx: None,
             parent_control: None,
             teardown_graph: None,
-            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
+            turn_session: quecto::composition::bootstrap::agent_turn::build_turn_session,
             environment_control: None,
         })
     });

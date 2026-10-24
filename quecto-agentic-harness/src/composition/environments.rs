@@ -32,7 +32,9 @@ use crate::infrastructure::processes::containers::environment_process::ScriptEnv
 use crate::infrastructure::processes::containers::preflight::ScriptPreflight;
 use crate::infrastructure::processes::containers::script_inventory::ScriptInventory;
 pub use crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControl;
-use crate::infrastructure::tools::agents::coordinator_launch::KeptSwarmBoards;
+use crate::infrastructure::tools::agents::coordinator_launch::{
+    KeptSwarmBoards, RemoteCompletionDelivery,
+};
 use crate::infrastructure::tools::agents::environment_commands::{
     HostedStoreObservation, ScriptEnvironmentCommands,
 };
@@ -93,6 +95,21 @@ pub fn build_member_finalizer(environments: EnvironmentRegistry) -> FinalizeEnvi
         Arc::new(hosted_store_observation()),
     )
     .keeping_ended_boards(Arc::new(hosted_store_observation()), kept_swarm_boards())
+    // A succeeded board run its owner kills keeps its box while its
+    // completion commit is not on the board's remote (#2666): the board
+    // repository the session's board tool registered, opened lazily.
+    .checking_delivery(completion_delivery())
+}
+
+/// The one completion check of the process: each board repository's
+/// remote opened once, when a teardown first judges one of its runs.
+fn completion_delivery() -> Arc<RemoteCompletionDelivery> {
+    static DELIVERY: OnceLock<Arc<RemoteCompletionDelivery>> = OnceLock::new();
+    Arc::clone(DELIVERY.get_or_init(|| {
+        Arc::new(RemoteCompletionDelivery::new(
+            super::bootstrap::project_board::board_remote_revisions,
+        ))
+    }))
 }
 
 /// The one store of ended runs' boards composition hands both the
@@ -119,12 +136,15 @@ pub fn build_environment_control(
             environments.clone(),
             Arc::new(HostedStoreObservation::new(supervisor_board())),
         )),
-        kill: Arc::new(KillEnvironment::new(
-            environments,
-            member_shutdown,
-            Arc::new(ScriptEnvironmentCommands::default()),
-            Arc::new(hosted_store_observation()),
-        )),
+        kill: Arc::new(
+            KillEnvironment::new(
+                environments,
+                member_shutdown,
+                Arc::new(ScriptEnvironmentCommands::default()),
+                Arc::new(hosted_store_observation()),
+            )
+            .judging_leftovers(build_environment_process()),
+        ),
     }
 }
 
@@ -297,12 +317,15 @@ pub fn build_container_inventory(
         build_restore_registry(base_dir).restore("cli", mode, OvertakenAudience::Fleet);
     ContainerInventoryHandles {
         list: Arc::new(ListEnvironmentsQuery::new(registry.clone())),
-        kill: Arc::new(KillEnvironment::new(
-            registry.clone(),
-            Arc::new(NoReachableMembers),
-            Arc::new(ScriptEnvironmentCommands::default()),
-            Arc::new(hosted_store_observation()),
-        )),
+        kill: Arc::new(
+            KillEnvironment::new(
+                registry.clone(),
+                Arc::new(NoReachableMembers),
+                Arc::new(ScriptEnvironmentCommands::default()),
+                Arc::new(hosted_store_observation()),
+            )
+            .judging_leftovers(build_environment_process()),
+        ),
         gc: Arc::new(GcOrphanedEnvironments::new(
             registry,
             build_container_config_lookup(base_dir, Some(selection.clone())),

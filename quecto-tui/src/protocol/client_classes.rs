@@ -55,6 +55,7 @@ impl Command {
             Self::RewindTo { .. } => "rewind_to",
             Self::GetSubagents { .. } => "get_subagents",
             Self::DeleteAllSubagents { .. } => "delete_all_subagents",
+            Self::RestartAdmission { .. } => "restart_admission",
             Self::Sync { .. } => "sync",
         }
     }

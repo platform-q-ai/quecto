@@ -51,7 +51,10 @@ pub use super::board_tree::MAX_TASK_ENTRIES as MAX_ENTRIES;
 pub const BOARD_REF: &str = "refs/heads/quecto/board";
 /// The most a listing of a repository's branches takes.
 const MAX_REF_LISTING: usize = 16 * 1024 * 1024;
-const README: &[u8] = b"# quecto board\n\nThis branch holds the project's board: one `tasks/<id>.md` per task. It is\nwritten only by quecto's board operations; do not edit, merge or rebase it by hand.\nIf a hand edit breaks it, move `quecto/board` back to the commit before that edit.\n";
+/// The README every write leaves at the board's root (#2660): each write
+/// writes it again, so a board written before this text has it once it is
+/// next written.
+pub(crate) const README: &[u8] = b"# quecto board\n\nThis branch holds the project's board: one markdown file per artifact, each in\nits kind's folder: `tasks/<id>.md`, `plans/<task>.<n>.md`, `runs/<task>.<n>.md`,\n`changes/<task>.<n>.md`, `reviews/<task>.<change>.md` and `discussions/<id>.md`,\nwith `format/board` naming the format and `archive/` kept for archived work. It is\nwritten only by quecto's board operations; do not edit, merge or rebase it by hand.\nIf a hand edit breaks it, move `quecto/board` back to the commit before that edit.\n";
 
 pub struct GitBoardStore {
     git: Git,
@@ -66,6 +69,9 @@ pub struct GitBoardStore {
     /// Whether the remote is this clone's promisor (a partial clone), and
     /// the fetch filter the clone keeps for it, once asked.
     partial: std::sync::OnceLock<fetching::Partial>,
+    /// How many times a fetch found the tracking ref locked by another
+    /// writer in this clone and fetched again (#2654, #2663).
+    pub(super) lock_races: std::sync::atomic::AtomicU64,
 }
 
 /// What became of a push.
@@ -76,39 +82,106 @@ enum Pushed {
     Refused(String),
 }
 
+/// Why a store could not be opened on a remote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoreOpenError {
+    /// The name is no remote the repository configures: the caller's
+    /// mistake, never a store out of reach (#2659).
+    NoSuchRemote(String),
+    /// git could not say (it did not run, or timed out).
+    Unavailable(BoardStoreError),
+}
+
+/// Whether `remote` is spelt as a remote's name quecto accepts: letters,
+/// digits, '.', '_' and '-', starting with a letter or a digit (an
+/// allowlist), so it is never read as an option, a path or a URL.
+///
+/// # Errors
+/// Any other spelling.
+fn remote_name(remote: &str) -> Result<(), StoreOpenError> {
+    let named = remote
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        && remote
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric);
+    match named {
+        true => Ok(()),
+        false => Err(StoreOpenError::NoSuchRemote(format!(
+            "{remote:?} is not a remote name quecto accepts: letters, digits, '.', '_' and '-', starting with a letter or a digit"
+        ))),
+    }
+}
+
+/// Whether `remote` is a remote the repository `git` runs in configures:
+/// a name quecto accepts ([`remote_name`]) that git resolves to a URL
+/// that is not empty and is not the name itself (an allowlist: git
+/// prints the name back for a remote whose `url` was emptied, and would
+/// then read a folder of that name, #2705 B1).
+///
+/// # Errors
+/// A name that is not a configured remote's; git that cannot say.
+pub(super) fn configured_remote(git: &Git, remote: &str) -> Result<(), StoreOpenError> {
+    remote_name(remote)?;
+    // The name was checked first, so it is never read as an option.
+    match git.text(&["remote", "get-url", remote], None) {
+        Ok(url) if !url.is_empty() && url != remote => Ok(()),
+        Ok(url) => Err(StoreOpenError::NoSuchRemote(format!(
+            "{remote:?} names no repository of its own: git resolves it to {url:?}; give it a URL with git remote set-url {remote:?} <url>"
+        ))),
+        // git ran and failed: only a name its own list of remotes lacks
+        // is no such remote (an allowlist); anything else (no
+        // repository, a corrupt config, an unsafe directory) is a
+        // store git cannot reach.
+        Err(error @ GitError::Failed { .. }) => match git.text(&["remote"], None) {
+            Ok(listed) if !listed.lines().any(|name| name == remote) => {
+                Err(StoreOpenError::NoSuchRemote(format!(
+                    "{remote:?} is not a remote of this repository: {error}"
+                )))
+            }
+            Ok(_) | Err(_) => Err(StoreOpenError::Unavailable(BoardStoreError::Unavailable(
+                format!("git could not say whether {remote:?} is a remote: {error}"),
+            ))),
+        },
+        Err(
+            error @ (GitError::NotFound
+            | GitError::Spawn(_)
+            | GitError::TimedOut { .. }
+            | GitError::TooMuchOutput { .. }
+            | GitError::Identity(_)),
+        ) => Err(StoreOpenError::Unavailable(BoardStoreError::Unavailable(
+            format!("git could not say whether {remote:?} is a remote: {error}"),
+        ))),
+    }
+}
+
 impl GitBoardStore {
     /// `remote` is the name of a remote the repository configures, so a
     /// path or URL spelled like a name is never taken for one.
     ///
     /// # Errors
-    /// A name that is not a configured remote's.
-    pub fn new(git: Git, remote: &str) -> Result<Self, BoardStoreError> {
-        let named = remote
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-            && remote
-                .as_bytes()
-                .first()
-                .is_some_and(u8::is_ascii_alphanumeric);
-        if !named {
-            return Err(BoardStoreError::Unavailable(format!(
-                "{remote:?} is not a remote name"
-            )));
+    /// A name that is not a configured remote's; git that cannot say.
+    pub fn new(git: Git, remote: &str) -> Result<Self, StoreOpenError> {
+        configured_remote(&git, remote)?;
+        Ok(Self::opened(git, remote))
+    }
+
+    fn opened(git: Git, remote: &str) -> Self {
+        Self {
+            git,
+            remote: remote.to_string(),
+            last: Mutex::new(None),
+            limits: LIMITS,
+            cancelled: None,
+            partial: std::sync::OnceLock::new(),
+            lock_races: std::sync::atomic::AtomicU64::new(0),
         }
-        // The name was checked first, so it is never read as an option.
-        match git.ok(&["remote", "get-url", remote], None) {
-            Ok(_) => Ok(Self {
-                git,
-                remote: remote.to_string(),
-                last: Mutex::new(None),
-                limits: LIMITS,
-                cancelled: None,
-                partial: std::sync::OnceLock::new(),
-            }),
-            Err(error) => Err(BoardStoreError::Unavailable(format!(
-                "{remote:?} is not a remote of this repository: {error}"
-            ))),
-        }
+    }
+
+    /// The git this store runs.
+    pub(super) fn git(&self) -> &Git {
+        &self.git
     }
 
     fn tracking(&self) -> String {
@@ -201,6 +274,7 @@ impl GitBoardStore {
             cancelled: None,
             // What this store found of its remote holds for the same board.
             partial: self.partial.clone(),
+            lock_races: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -326,7 +400,7 @@ impl GitBoardStore {
         let base = object_id(&expected.0).map_err(|_| invalid())?;
         if let Some(tip) = self.local_tip()? {
             if self.on_board(&base, &tip)? {
-                return Ok(base);
+                return self.unmoved(base, &tip);
             }
         }
         if self.remote_head(BOARD_REF)?.is_none() {
@@ -334,9 +408,21 @@ impl GitBoardStore {
         }
         let tip = self.fetch()?;
         match self.on_board(&base, &tip)? {
-            true => Ok(base),
+            true => self.unmoved(base, &tip),
             false => Err(invalid()),
         }
+    }
+
+    /// `base`, when a write may go on from it: the board's `tip` past it,
+    /// if any, is judged by its format marker alone (#2705 B13). Only this
+    /// quecto's marker, or none, goes on; a fence (a write from a head
+    /// before it) and every other marker are refused as a read refuses
+    /// them, before any commit is made.
+    fn unmoved(&self, base: String, tip: &str) -> Result<String, BoardStoreError> {
+        if base != tip {
+            self.marker_fetching(tip)?;
+        }
+        Ok(base)
     }
 
     /// Whether `commit` is a commit here and `tip` or one of its ancestors.
@@ -618,12 +704,20 @@ impl ProjectBoardStore for GitBoardStore {
     fn writer(&self) -> Identity {
         self.git.identity().clone()
     }
+
+    fn lock_races(&self) -> u64 {
+        self.lock_races.load(std::sync::atomic::Ordering::Acquire)
+    }
 }
 
 #[path = "store_clear.rs"]
 mod clear;
+pub(crate) use clear::cleared;
 #[path = "store_committer.rs"]
 mod committer;
+#[path = "store_fence.rs"]
+mod fence;
+pub use fence::Fence;
 #[path = "store_fetch_state.rs"]
 mod fetch_state;
 #[path = "store_fetch.rs"]
@@ -634,3 +728,17 @@ mod writing;
 #[cfg(test)]
 #[path = "store_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "store_readme_tests.rs"]
+mod readme_tests;
+
+#[cfg(test)]
+#[path = "store_open_tests.rs"]
+mod open_tests;
+
+#[cfg(test)]
+#[path = "store_board_id_tests.rs"]
+mod board_id_tests;
+
+pub(crate) use writing::encoded;

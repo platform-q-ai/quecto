@@ -100,19 +100,19 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/resume_refusal_code.rs",
     "src/application/sessions/dto/resume_target.rs",
     "src/domain/sessions/services/stable_digest.rs",
-    "src/interface/cli/uds_safe_display.rs",
+    "src/interface/uds/wire/uds_freshness_json/uds_safe_display.rs",
     "src/application/sessions/use_cases/resume_saved_session_decision.rs",
-    "src/interface/uds/sessions/resume_session_controller.rs",
-    "src/interface/cli/uds_dispatch_resume.rs",
+    "src/interface/uds/controllers/resume_session_controller.rs",
+    "src/interface/uds/controllers/uds/uds_dispatch_session/uds_dispatch_resume.rs",
     // #2010 global metadata search: one new query owner and its edges.
     "src/domain/sessions/services/session_metadata_search.rs",
     "src/application/sessions/dto/search_session_metadata.rs",
     "src/application/sessions/use_cases/search_session_metadata.rs",
     "src/infrastructure/persistence/file/sessions/session_home_catalogue_metadata.rs",
     "src/composition/session_search.rs",
-    "src/interface/uds/sessions/search_session_metadata_controller.rs",
-    "src/interface/cli/uds_discovery_handles.rs",
-    "src/interface/cli/uds_dispatch_search.rs",
+    "src/interface/uds/controllers/search_session_metadata_controller.rs",
+    "src/interface/uds/controllers/uds_discovery_handles.rs",
+    "src/interface/uds/controllers/uds/uds_dispatch/uds_dispatch_search.rs",
     // #2010 review round 1: the text fold, the request's numbers (typed and
     // on the wire), the rejection cache and the walk's seeding.
     "src/domain/sessions/value_objects/session_metadata_text.rs",
@@ -120,7 +120,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/domain/sessions/value_objects/session_title_subsequence.rs",
     "src/domain/sessions/value_objects/session_home_text.rs",
     "src/application/sessions/dto/search_limits.rs",
-    "src/interface/cli/uds_search_numbers.rs",
+    "src/interface/uds/controllers/uds/uds_dispatch/uds_dispatch_search/uds_search_numbers.rs",
     "src/infrastructure/persistence/file/sessions/session_home_catalogue_rejections.rs",
     // Round 3 (R3-H1): naming the walk's skips, linear in the bad records.
     "src/infrastructure/persistence/file/sessions/session_home_catalogue_skipped.rs",
@@ -132,8 +132,8 @@ const CANONICAL_FILES: &[&str] = &[
     // #2045: the shell command that opens quecto in a session's folder.
     "src/domain/sessions/value_objects/session_open_command.rs",
     "src/domain/sessions/value_objects/session_query_refusal.rs",
-    "src/interface/cli/protocol_search_rescue.rs",
-    "src/interface/cli/uds_freshness_json.rs",
+    "src/interface/uds/wire/protocol/protocol_search_rescue.rs",
+    "src/interface/uds/wire/uds_freshness_json.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/recover_message.rs",
     "src/application/sessions/use_cases/export_session_report.rs",
@@ -171,20 +171,20 @@ const CANONICAL_FILES: &[&str] = &[
     "src/composition/session_report.rs",
     "src/composition/fleet_settlement.rs",
     "src/composition/retention.rs",
-    "src/interface/cli/uds_session_handles.rs",
+    "src/interface/uds/controllers/uds_session_handles.rs",
     "src/interface/cli/controllers/retention_handles.rs",
     "src/infrastructure/persistence/file/context_spill.rs",
     "src/infrastructure/tools/native/recall.rs",
-    "src/interface/cli/uds_sync.rs",
-    "src/interface/cli/uds_turn_accounting.rs",
+    "src/interface/uds/presenters/uds_sync.rs",
+    "src/interface/uds/controllers/uds_turn_accounting.rs",
     "src/interface/cli/uds_session_switch_runtime.rs",
-    "src/interface/uds/sessions/controller.rs",
-    "src/interface/uds/sessions/read_history_controller.rs",
-    "src/interface/uds/sessions/recover_message_controller.rs",
-    "src/interface/uds/sessions/export_report_controller.rs",
+    "src/interface/uds/controllers/sessions_controller.rs",
+    "src/interface/uds/controllers/read_history_controller.rs",
+    "src/interface/uds/controllers/recover_message_controller.rs",
+    "src/interface/uds/controllers/export_report_controller.rs",
     "src/infrastructure/persistence/file/session_export.rs",
-    "src/interface/uds/sessions/synchronize_transcript_controller.rs",
-    "src/interface/uds/sessions/rewind_conversation_controller.rs",
+    "src/interface/uds/controllers/synchronize_transcript_controller.rs",
+    "src/interface/uds/controllers/rewind_conversation_controller.rs",
     "src/domain/conversation/services/conversation_view.rs",
     "src/domain/conversation/services/conversation_edit.rs",
     "src/infrastructure/persistence/file/sessions/session_layout.rs",
@@ -536,27 +536,33 @@ const RAW_KEY_CONVERSION_SITES: &[&str] = &[];
 /// #1977 moved the resume's transition save into the application).
 const SAVE_REQUESTERS: &[&str] = &[
     "src/interface/cli/controllers/agent/run_session_save.rs",
-    "src/interface/cli/uds.rs",
-    "src/interface/cli/uds_dispatch.rs",
-    "src/interface/cli/uds_multi.rs",
-    "src/interface/cli/uds_single_client.rs",
+    "src/interface/uds/controllers/uds.rs",
+    "src/interface/uds/controllers/uds/uds_dispatch.rs",
+    "src/interface/uds/framing/uds_multi.rs",
+    "src/interface/uds/framing/uds_single_client.rs",
 ];
 
 /// The trigger each persistence site requests: explicit, post-turn and
 /// transition saves, the pre-turn prompt save, and the ordinary exits.
 const SAVE_TRIGGER_SITES: &[(&str, &str)] = &[
     (
-        "src/interface/cli/uds_dispatch.rs",
+        "src/interface/uds/controllers/uds/uds_dispatch.rs",
         "SaveTrigger::Explicit {",
     ),
-    ("src/interface/cli/uds.rs", "SaveTrigger::Routine"),
-    ("src/interface/cli/uds.rs", ".save_with_pending_prompt("),
     (
-        "src/interface/cli/uds_single_client.rs",
+        "src/interface/uds/controllers/uds.rs",
+        "SaveTrigger::Routine",
+    ),
+    (
+        "src/interface/uds/controllers/uds.rs",
+        ".save_with_pending_prompt(",
+    ),
+    (
+        "src/interface/uds/framing/uds_single_client.rs",
         "SaveTrigger::OrdinaryExit",
     ),
     (
-        "src/interface/cli/uds_multi.rs",
+        "src/interface/uds/framing/uds_multi.rs",
         "SaveTrigger::OrdinaryExit",
     ),
     (
@@ -739,10 +745,13 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/domain/sessions/services/resume_decision.rs", 163),
     ("src/domain/sessions/services/stable_digest.rs", 30),
     (
-        "src/interface/uds/sessions/resume_session_controller.rs",
+        "src/interface/uds/controllers/resume_session_controller.rs",
         55,
     ),
-    ("src/interface/cli/uds_dispatch_resume.rs", 68),
+    (
+        "src/interface/uds/controllers/uds/uds_dispatch_session/uds_dispatch_resume.rs",
+        68,
+    ),
     ("src/application/sessions/dto/resume_disposition.rs", 30),
     ("src/application/sessions/dto/startup_refusal.rs", 31),
     // D9 #1978: retained context.
@@ -940,15 +949,21 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         81,
     ),
     ("src/interface/cli/controllers/agent/run_session.rs", 123),
-    ("src/interface/cli/uds_dispatch.rs", 500),
+    ("src/interface/uds/controllers/uds/uds_dispatch.rs", 500),
     // D10 #1979 hands the presenters the active session's key (was 190).
     // #2009: the discovery presenter is its own owner; the query extraction
     // shrinks below master (was 187).
     // #2011: one re-export line for the shared safe-display helper (174 → 173).
-    ("src/interface/cli/uds_dispatch_query.rs", 173),
+    (
+        "src/interface/uds/controllers/uds/uds_dispatch_query.rs",
+        173,
+    ),
     // #2011 review: the safe rendering is its own module (50 → 46). #2010:
     // the row is one shared function (46 → 45).
-    ("src/interface/cli/uds_dispatch_discovery.rs", 42),
+    (
+        "src/interface/uds/controllers/uds/uds_dispatch_query/uds_dispatch_discovery.rs",
+        42,
+    ),
     // #2010 metadata search: every new owner pinned at its delivered size.
     // Review round 1 only lowered them; what it added lives in new owners
     // (`search_limits`, `session_metadata_text`, `uds_search_numbers`).
@@ -965,7 +980,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/domain/sessions/value_objects/session_metadata_text.rs",
         51,
     ),
-    ("src/interface/cli/uds_search_numbers.rs", 62),
+    (
+        "src/interface/uds/controllers/uds/uds_dispatch/uds_dispatch_search/uds_search_numbers.rs",
+        62,
+    ),
     (
         "src/domain/sessions/services/session_metadata_search.rs",
         161,
@@ -991,20 +1009,32 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/domain/sessions/value_objects/session_query_refusal.rs",
         31,
     ),
-    ("src/interface/cli/protocol_search_rescue.rs", 51),
-    ("src/interface/cli/uds_freshness_json.rs", 33),
-    ("src/composition/session_search.rs", 23),
-    ("src/interface/cli/uds_dispatch_search.rs", 80),
-    ("src/interface/cli/uds_discovery_handles.rs", 44),
     (
-        "src/interface/uds/sessions/search_session_metadata_controller.rs",
+        "src/interface/uds/wire/protocol/protocol_search_rescue.rs",
+        51,
+    ),
+    ("src/interface/uds/wire/uds_freshness_json.rs", 33),
+    ("src/composition/session_search.rs", 23),
+    (
+        "src/interface/uds/controllers/uds/uds_dispatch/uds_dispatch_search.rs",
+        80,
+    ),
+    ("src/interface/uds/controllers/uds_discovery_handles.rs", 44),
+    (
+        "src/interface/uds/controllers/search_session_metadata_controller.rs",
         39,
     ),
-    ("src/interface/cli/uds_safe_display.rs", 24),
+    (
+        "src/interface/uds/wire/uds_freshness_json/uds_safe_display.rs",
+        24,
+    ),
     // #1848 reasoning-effort injection plus #2009 scoped session dispatch.
     // #2011: the resume answers are the resume presenter's (259 → 246).
-    ("src/interface/cli/uds_dispatch_session.rs", 243),
-    ("src/interface/cli/uds_latest_report.rs", 85),
+    (
+        "src/interface/uds/controllers/uds/uds_dispatch_session.rs",
+        243,
+    ),
+    ("src/interface/uds/presenters/uds_latest_report.rs", 85),
     // D9 #1978 hands the loop its retained-context handles as an input
     // (was 305 before D9).
     // #1845 split the single-client loop out of uds_lifecycle (311 → 203);
@@ -1012,26 +1042,26 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #1909 hands both loops composition's automatic-turns builder (the
     // resume-after-a-provider-failure use case; was 193 and 127).
     ("src/interface/cli/uds_lifecycle.rs", 197),
-    ("src/interface/cli/uds_single_client.rs", 129),
+    ("src/interface/uds/framing/uds_single_client.rs", 129),
     // #2446 moved the client-disconnect bookkeeping to `uds_multi/clients.rs`.
-    ("src/interface/cli/uds_multi.rs", 599),
+    ("src/interface/uds/framing/uds_multi.rs", 599),
     // Same merge of D3/D4/D5/D6/D7 handles (was 111 before D7); D10 #1979
     // types the loop's identity and reads the key from the active session
     // (was 125).
-    ("src/interface/cli/uds_session_handles.rs", 121),
+    ("src/interface/uds/controllers/uds_session_handles.rs", 121),
     // D10 #1979: the tracker keeps no session key; the presenters, the
     // workflow-nudge descendant check and the agent loop's key accessor are
     // pinned at their D10 size.
     // #1909: the suspension rule moved to the domain and the agent-turn
     // use case; the tracker holds the use case (628 → 610).
     ("src/interface/cli/uds_session.rs", 610),
-    ("src/interface/cli/uds_query.rs", 232),
-    ("src/interface/cli/uds_workflow_nudge.rs", 109),
+    ("src/interface/uds/controllers/uds_query.rs", 232),
+    ("src/interface/uds/controllers/uds_workflow_nudge.rs", 109),
     (
         "src/application/agent_turn/agent_loop/agent_loop_session.rs",
         22,
     ),
-    ("src/interface/cli/uds_turn_accounting.rs", 40),
+    ("src/interface/uds/controllers/uds_turn_accounting.rs", 40),
     // D8 #1977 adds the workflow restore (was 93 before D8).
     // #1848: the adapter holds the change-reasoning-effort use case and
     // restores the startup effort through it (was 97).
@@ -1042,25 +1072,31 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // before `agent_end` (711 → 698).
     // #1909: a prompt or steer re-arms through the automatic-turns use case
     // (695 → 690; the steer is now read from the turn's work).
-    ("src/interface/cli/uds.rs", 690),
+    ("src/interface/uds/controllers/uds.rs", 690),
     ("src/interface/cli/uds_session_history.rs", 205),
     // #2404: the ranged builder's unused thinking switch went (290 → 283).
     ("src/interface/cli/uds_session_message_range.rs", 283),
     ("src/interface/cli/uds_snapshots.rs", 256),
-    ("src/interface/cli/uds_sync.rs", 135),
-    ("src/interface/uds/sessions/controller.rs", 42),
-    ("src/interface/uds/sessions/export_report_controller.rs", 45),
-    ("src/interface/uds/sessions/read_history_controller.rs", 90),
+    ("src/interface/uds/presenters/uds_sync.rs", 135),
+    ("src/interface/uds/controllers/sessions_controller.rs", 42),
     (
-        "src/interface/uds/sessions/recover_message_controller.rs",
+        "src/interface/uds/controllers/export_report_controller.rs",
+        45,
+    ),
+    (
+        "src/interface/uds/controllers/read_history_controller.rs",
+        90,
+    ),
+    (
+        "src/interface/uds/controllers/recover_message_controller.rs",
         80,
     ),
     (
-        "src/interface/uds/sessions/synchronize_transcript_controller.rs",
+        "src/interface/uds/controllers/synchronize_transcript_controller.rs",
         85,
     ),
     (
-        "src/interface/uds/sessions/rewind_conversation_controller.rs",
+        "src/interface/uds/controllers/rewind_conversation_controller.rs",
         40,
     ),
     ("src/domain/conversation/services/conversation_edit.rs", 100),
@@ -1300,6 +1336,8 @@ fn sessions_graph_nodes_are_constructed_only_in_composition() {
 const OWN_FILE_STORES: &[&str] = &[
     "src/infrastructure/persistence/file/environment_registry_store.rs",
     "src/infrastructure/persistence/file/session_export.rs",
+    // The board server's device tokens (epic #2705 B5).
+    "src/infrastructure/persistence/file/board_tokens.rs",
 ];
 
 #[test]
@@ -1500,7 +1538,7 @@ fn interface_never_saves_the_store_directly() {
 /// target resolution itself (the forbidden-needle check above).
 #[test]
 fn clear_and_rewind_are_requested_only_by_the_dispatch_handlers() {
-    let handlers = "src/interface/cli/uds_dispatch_session.rs";
+    let handlers = "src/interface/uds/controllers/uds/uds_dispatch_session.rs";
     for needle in [
         ".rewrite.clear.clone()",
         ".rewrite.rewind.clone()",
@@ -1527,7 +1565,7 @@ fn clear_and_rewind_are_requested_only_by_the_dispatch_handlers() {
     assert_eq!(
         adapters,
         set(&[
-            "src/interface/cli/uds_turn_accounting.rs",
+            "src/interface/uds/controllers/uds_turn_accounting.rs",
             "src/interface/cli/uds_session_switch_runtime.rs",
         ]),
         "the production adapters of the accounting-reset port are exact"
@@ -1545,7 +1583,7 @@ fn clear_and_rewind_are_requested_only_by_the_dispatch_handlers() {
 /// retired helpers are gone without a facade.
 #[test]
 fn fresh_session_is_requested_only_by_the_dispatch_handler() {
-    let handlers = "src/interface/cli/uds_dispatch_session.rs";
+    let handlers = "src/interface/uds/controllers/uds/uds_dispatch_session.rs";
     let adapter = "src/interface/cli/uds_session_switch_runtime.rs";
     for needle in [
         ".switch.fresh.clone()",
@@ -1573,15 +1611,22 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
         ]),
         "the startup open is requested by exactly the two startup paths"
     );
-    for needle in [".claim(&", ".release(&", "store.load(&"] {
+    // The whole interface is scanned, wherever a layout slice moved a file;
+    // the one `.release(&` is the subagent teardown edge releasing its own
+    // shutdown-preparation token, not a session store.
+    for (needle, expected) in [
+        (".claim(&", set(&[])),
+        (
+            ".release(&",
+            set(&["src/interface/uds/controllers/subagent_teardown_controller.rs"]),
+        ),
+        ("store.load(&", set(&[])),
+    ] {
         let sites: BTreeSet<String> = production_files_calling(needle)
             .into_iter()
-            .filter(|path| path.starts_with("src/interface/cli/"))
+            .filter(|path| path.starts_with("src/interface/"))
             .collect();
-        assert!(
-            sites.is_empty(),
-            "{needle} survives in the interface's cli tree: {sites:?}"
-        );
+        assert_eq!(sites, expected, "{needle} survives in the interface");
     }
     assert!(
         production_files_calling(".reset_roster(")
@@ -1634,6 +1679,7 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
     // Retired without a facade.
     assert!(!Path::new("src/interface/cli/agent_session_identity.rs").exists());
     assert!(!Path::new("src/interface/cli/uds/uds_session_load.rs").exists());
+    assert!(!Path::new("src/interface/uds/controllers/uds/uds_session_load.rs").exists());
     for retired in [
         "generate_chat_key",
         "generate_chat_identity",
@@ -1678,10 +1724,11 @@ fn interface_never_lists_the_store_directly() {
         direct.is_empty(),
         "interface lists the store directly in {direct:#?}"
     );
-    let query = std::fs::read_to_string("src/interface/cli/uds_dispatch_query.rs").unwrap();
+    let query =
+        std::fs::read_to_string("src/interface/uds/controllers/uds/uds_dispatch_query.rs").unwrap();
     assert!(
         query.contains("handle_list_sessions(ctx, id, tn, *scope)")
-            && std::fs::read_to_string("src/interface/cli/uds_dispatch_session.rs")
+            && std::fs::read_to_string("src/interface/uds/controllers/uds/uds_dispatch_session.rs")
                 .unwrap()
                 .contains("ctx.discovery.list(requested).await"),
         "the list_sessions command is answered through the composed controller"
@@ -1738,17 +1785,19 @@ fn interface_owns_no_conversation_state_or_history_policy() {
 /// spelled by exactly one interface production file.
 #[test]
 fn sync_is_answered_through_the_composed_controller_on_both_transports() {
-    let idle = std::fs::read_to_string("src/interface/cli/uds_dispatch_query.rs").unwrap();
+    let idle =
+        std::fs::read_to_string("src/interface/uds/controllers/uds/uds_dispatch_query.rs").unwrap();
     assert!(
         idle.contains("uds_sync::sync_data("),
         "the idle loop presents sync through the shared presenter"
     );
-    let reader = std::fs::read_to_string("src/interface/cli/uds_reader_dispatch.rs").unwrap();
+    let reader =
+        std::fs::read_to_string("src/interface/uds/controllers/uds_reader_dispatch.rs").unwrap();
     assert!(
         reader.contains("uds_sync::intercept("),
         "the reader fast path is the sync wire module's"
     );
-    let wire = std::fs::read_to_string("src/interface/cli/uds_sync.rs").unwrap();
+    let wire = std::fs::read_to_string("src/interface/uds/presenters/uds_sync.rs").unwrap();
     assert!(
         wire.contains(".sync(epoch, since_rev, HISTORY_PAGE_SIZE, carry)"),
         "the presenter invokes the composed controller with the protocol page size"
@@ -1760,7 +1809,7 @@ fn sync_is_answered_through_the_composed_controller_on_both_transports() {
             .collect();
         assert_eq!(
             presenters,
-            set(&["src/interface/cli/uds_sync.rs"]),
+            set(&["src/interface/uds/presenters/uds_sync.rs"]),
             "{field} is presented by the sync wire module alone"
         );
     }
@@ -1850,7 +1899,7 @@ const RETENTION_PORT_HOLDERS: &[&str] = &[
     "src/composition/sessions.rs",
     "src/infrastructure/persistence/file/context_spill.rs",
     "src/interface/cli/controllers/retention_handles.rs",
-    "src/interface/cli/uds_session_handles.rs",
+    "src/interface/uds/controllers/uds_session_handles.rs",
 ];
 
 /// The pruning-policy files (D9 #1978): they decide when and what to
@@ -2031,10 +2080,10 @@ fn retained_context_has_exactly_one_owner_per_role() {
         ])
     );
     assert!(
-        !production_code("src/interface/shared.rs")
+        !production_code("src/interface/cli/controllers/shared.rs")
             .iter()
             .any(|(_, line)| line.contains("spill")),
-        "interface/shared.rs no longer scrubs or names the spill file"
+        "interface/cli/controllers/shared.rs no longer scrubs or names the spill file"
     );
     // Composition alone builds the graph and hands the builder to `main`.
     let main = std::fs::read_to_string("src/main.rs").unwrap();

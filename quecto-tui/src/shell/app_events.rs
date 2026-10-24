@@ -581,6 +581,8 @@ pub(super) fn suppress_tool_box(tool_name: &str, _args: &serde_json::Value) -> b
 
 #[path = "app_admission.rs"]
 mod app_admission;
+#[path = "app_admission_restart.rs"]
+mod app_admission_restart;
 #[cfg(test)]
 #[path = "app_events_test_support.rs"]
 pub(super) mod app_events_test_support;

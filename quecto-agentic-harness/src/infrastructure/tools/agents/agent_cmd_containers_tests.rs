@@ -195,6 +195,7 @@ fn kill_container_json_caps_long_member_lists() {
             record: record.clone(),
             members: MemberShutdownReport::default(),
             removed_stopped: false,
+            nothing_left: false,
         },
     );
     assert_eq!(parsed["killed"], "C1");
@@ -204,12 +205,25 @@ fn kill_container_json_caps_long_member_lists() {
     // #2206: the removal of a stopped environment says so.
     let removed = kill_container_result_json(
         &crate::application::environments::use_cases::KilledEnvironment {
-            record,
+            record: record.clone(),
             members: MemberShutdownReport::default(),
             removed_stopped: true,
+            nothing_left: false,
         },
     );
     assert_eq!(removed["removed_stopped"], true);
+    assert!(removed.get("nothing_left").is_none());
+    // #2684: and one that had left nothing says that.
+    let forgotten = kill_container_result_json(
+        &crate::application::environments::use_cases::KilledEnvironment {
+            record,
+            members: MemberShutdownReport::default(),
+            removed_stopped: true,
+            nothing_left: true,
+        },
+    );
+    assert_eq!(forgotten["removed_stopped"], true);
+    assert_eq!(forgotten["nothing_left"], true);
 }
 
 #[test]

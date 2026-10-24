@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use super::tests::{environment, repository};
+use super::tests::{environment, repository, sh};
 use super::*;
 use crate::application::environments::dto::SwarmBoardSnapshot;
 use crate::application::environments::ports::hosted_swarm::EndedSwarmBoards;
@@ -49,7 +49,7 @@ fn started(work: &std::path::Path, session: Option<&str>) -> ProjectBoardHandles
     writing.launcher = Some(Arc::new(Launches));
     writing.swarm_session = session.map(str::to_owned);
     let handles = build_project_board_handles(&writing).unwrap();
-    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    let ops = |request: Value| run(&*handles.operations, &request.to_string());
     assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
     let created = ops(json!({"op": "create", "task": "a", "title": "A", "status": "ready"}));
     assert_eq!(created["ok"], json!(true), "{created}");
@@ -67,12 +67,12 @@ fn started(work: &std::path::Path, session: Option<&str>) -> ProjectBoardHandles
 }
 
 /// The teardown's keep of run 1 of `a`'s ended board under `session`: its
-/// item `schema` completed by `worker-1`.
-fn kept_for(session: &str) {
+/// item `schema` completed by `worker-1`, its evidence at `revision`.
+fn kept_at(session: &str, revision: &str) {
     let board = json!({
         "run": {"status": "succeeded", "budget": {"observed_tokens": 52_000}},
         "items": [{"title": "schema: Schema", "state": "completed", "owner": "worker-1",
-                   "evidence": [{"artifact": "docs/schema.md", "revision": "abc123"}]}],
+                   "evidence": [{"artifact": "docs/schema.md", "revision": revision}]}],
         "totals": {"items": 1},
     });
     crate::composition::environments::kept_swarm_boards().keep(
@@ -82,9 +82,13 @@ fn kept_for(session: &str) {
     );
 }
 
+fn kept_for(session: &str) {
+    kept_at(session, "abc123");
+}
+
 fn succeeded(handles: &ProjectBoardHandles) -> Value {
     let request = json!({"op": "end_run", "task": "a", "run": 1, "outcome": "succeeded"});
-    run(&handles.operations, &request.to_string())
+    run(&*handles.operations, &request.to_string())
 }
 
 #[test]
@@ -92,7 +96,23 @@ fn a_composed_end_run_records_the_board_kept_under_its_front_ends_session() {
     let (_dir, work) = repository();
     let session = "wiring-composed-session";
     let handles = started(&work, Some(session));
-    kept_for(session);
+    // #2666: the swarm committed its work in the clone and never pushed it.
+    sh(
+        &work,
+        &["commit", "-q", "--allow-empty", "-m", "the run's work"],
+    );
+    let head = sh(&work, &["rev-parse", "HEAD"]);
+    kept_at(session, &head);
+    let refused = succeeded(&handles);
+    assert_eq!(
+        (
+            &refused["error"]["rule"]["code"],
+            &refused["error"]["rule"]["revisions"]
+        ),
+        (&json!("not_pushed"), &json!(1)),
+        "{refused}"
+    );
+    sh(&work, &["push", "-q", "origin", "HEAD:refs/heads/run-a-1"]);
     let ended = succeeded(&handles);
     assert_eq!(ended["ok"], json!(true), "{ended}");
     let item = &ended["run"]["items"][0];
@@ -119,4 +139,10 @@ fn a_front_end_naming_no_session_reads_no_kept_board() {
         (&json!("items_not_done"), &json!("none_kept")),
         "{refused}"
     );
+}
+
+impl crate::application::project_board::ports::StartedRuns for Launches {
+    fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
+        vec![]
+    }
 }

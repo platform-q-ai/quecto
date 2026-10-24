@@ -10,7 +10,7 @@ fn one_shot_startup_stops_on_invalid_agents_md_utf8() {
         base_dir: Some(initialization_dir.path().join("config")),
         cwd: Some(initialization_dir.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
@@ -40,14 +40,14 @@ fn one_shot_and_uds_share_the_same_startup_prompt_composer() {
     let one_shot = startup_prompt::compose(
         instructions.as_deref(),
         explicit.as_deref(),
-        crate::interface::shared::PromptRole::Parent,
+        crate::interface::cli::controllers::shared::PromptRole::Parent,
         "Extension marker",
         "Parent playbook marker",
     );
     let uds = startup_prompt::compose(
         instructions.as_deref(),
         explicit.as_deref(),
-        crate::interface::shared::PromptRole::Parent,
+        crate::interface::cli::controllers::shared::PromptRole::Parent,
         "Extension marker",
         "Parent playbook marker",
     );
@@ -67,7 +67,7 @@ fn uds_startup_stops_on_invalid_agents_md_utf8_before_socket_loop() {
         base_dir: Some(initialization_dir.path().join("config")),
         cwd: Some(initialization_dir.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
@@ -106,7 +106,7 @@ fn uds_startup_stops_on_agents_md_read_error_before_socket_loop() {
         base_dir: Some(initialization_dir.path().join("config")),
         cwd: Some(initialization_dir.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
@@ -144,7 +144,7 @@ fn one_shot_startup_stops_on_agents_md_read_error() {
         base_dir: Some(initialization_dir.path().join("config")),
         cwd: Some(initialization_dir.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
@@ -183,7 +183,7 @@ fn override_is_composed_only_for_parent_and_keeps_other_prompt_sources() {
     let parent = startup_prompt::compose(
         Some("Project AGENTS"),
         Some("Explicit instructions"),
-        crate::interface::shared::PromptRole::Parent,
+        crate::interface::cli::controllers::shared::PromptRole::Parent,
         "Extension instructions",
         &playbook,
     );
@@ -200,7 +200,7 @@ fn override_is_composed_only_for_parent_and_keeps_other_prompt_sources() {
     let child = startup_prompt::compose(
         None,
         Some("Explicit child instructions"),
-        crate::interface::shared::PromptRole::Subagent,
+        crate::interface::cli::controllers::shared::PromptRole::Subagent,
         "",
         &child_playbook,
     );

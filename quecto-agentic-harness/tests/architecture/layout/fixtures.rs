@@ -169,6 +169,46 @@ fn migrated_shape_allowlists_sparse_roots_and_stray_files() {
     );
 }
 #[test]
+fn checked_in_rows_refuse_a_role_whose_directory_is_gone() {
+    let root = fixture(&[], &["domain/sessions/entities/one.rs"]);
+    root.write("domain/sessions/events");
+    let rows = [Capability(SESSIONS, &["entities", "events", "errors"])];
+    assert_eq!(
+        stale_roles(root.path(), &rows),
+        vec![
+            Violation::StaleRole("domain/sessions/events".into()),
+            Violation::StaleRole("domain/sessions/errors".into()),
+        ]
+    );
+    assert!(stale_roles(root.path(), &[Capability(SESSIONS, &["entities"])]).is_empty());
+    // The checked-in policy check carries the refusal alongside the shape
+    // checks: on a well-shaped tree, a missing role is its only violation.
+    let root = fixture(&[], &["domain/sessions/entities/one.rs"]);
+    assert_eq!(
+        checked_in_violations(
+            root.path(),
+            &[],
+            &[Capability(SESSIONS, &["entities", "errors"])],
+            None
+        ),
+        vec![Violation::StaleRole("domain/sessions/errors".into())]
+    );
+    assert!(
+        checked_in_violations(
+            root.path(),
+            &[],
+            &[Capability(SESSIONS, &["entities"])],
+            None
+        )
+        .is_empty()
+    );
+    let message = Violation::StaleRole("domain/sessions/errors".into()).to_string();
+    assert!(
+        message.contains("remove errors from domain/sessions"),
+        "{message}"
+    );
+}
+#[test]
 fn all_role_occupancy_cases_include_nested_and_test_only_rust() {
     for (file, populated) in [
         (None, false),

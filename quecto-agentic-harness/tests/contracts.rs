@@ -1,6 +1,11 @@
 //! Contract test binary: aggregates every `tests/contracts/{port}.rs` so
 //! `cargo test --test contracts` runs the full port-contract suite.
 
+/// Serialises every contract that sets git's variables (`GIT_DIR`,
+/// `GIT_WORK_TREE`, ...) in this process's environment, which every test
+/// in this binary shares (#2691 review L2).
+pub(crate) static GIT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[path = "contracts/admission_client.rs"]
 mod admission_client;
 #[path = "contracts/admission_dispatcher.rs"]
@@ -33,8 +38,12 @@ mod audit_sink;
 mod auth_clock;
 #[path = "contracts/authority_admin.rs"]
 mod authority_admin;
+#[path = "contracts/authority_launcher.rs"]
+mod authority_launcher;
 #[path = "contracts/authority_service_manager.rs"]
 mod authority_service_manager;
+#[path = "contracts/authority_session.rs"]
+mod authority_session;
 #[path = "contracts/authorization_callback.rs"]
 mod authorization_callback;
 #[path = "contracts/board_call_meter.rs"]
@@ -59,6 +68,8 @@ mod board_members;
 mod board_messages;
 #[path = "contracts/board_op_log.rs"]
 mod board_op_log;
+#[path = "contracts/board_operations.rs"]
+mod board_operations;
 #[path = "contracts/board_projection_reads.rs"]
 mod board_projection_reads;
 #[path = "contracts/board_reads.rs"]
@@ -77,6 +88,8 @@ mod board_runs;
 mod board_tasks;
 #[path = "contracts/board_text_cells.rs"]
 mod board_text_cells;
+#[path = "contracts/board_tokens.rs"]
+mod board_tokens;
 #[path = "contracts/board_transaction.rs"]
 mod board_transaction;
 #[path = "contracts/board_usage.rs"]
@@ -93,8 +106,12 @@ mod catalogue_consumers;
 mod catalogue_inputs_loader;
 #[path = "contracts/catalogue_source.rs"]
 mod catalogue_source;
+#[path = "contracts/checkout_history.rs"]
+mod checkout_history;
 #[path = "contracts/checkout_paths.rs"]
 mod checkout_paths;
+#[path = "contracts/completion_delivery_check.rs"]
+mod completion_delivery_check;
 #[path = "contracts/config_document_store.rs"]
 mod config_document_store;
 #[path = "contracts/config_document_writer.rs"]
@@ -175,6 +192,10 @@ mod hosted_swarm_run_inspection;
 mod hosted_swarm_run_observation;
 #[path = "contracts/id_source.rs"]
 mod id_source;
+#[path = "contracts/kept_environments.rs"]
+mod kept_environments;
+#[path = "contracts/launched_authority.rs"]
+mod launched_authority;
 #[path = "contracts/llm_provider.rs"]
 mod llm_provider;
 #[path = "contracts/loaded_catalogue_inputs.rs"]
@@ -197,8 +218,14 @@ mod project_board_git_store;
 mod project_board_kinds;
 #[path = "contracts/project_board_op_log.rs"]
 mod project_board_op_log;
+#[path = "contracts/project_board_remote_revisions.rs"]
+mod project_board_remote_revisions;
+#[path = "contracts/project_board_sqlite.rs"]
+mod project_board_sqlite;
 #[path = "contracts/project_board_store.rs"]
 mod project_board_store;
+#[path = "contracts/remote_revisions.rs"]
+mod remote_revisions;
 
 #[path = "contracts/provider_runtime_factory.rs"]
 mod provider_runtime_factory;
@@ -327,6 +354,8 @@ mod shutdown_clock;
 mod shutdown_run_spawner;
 #[path = "contracts/shutdown_session_persistence.rs"]
 mod shutdown_session_persistence;
+#[path = "contracts/started_runs.rs"]
+mod started_runs;
 #[path = "contracts/subagent_lifecycle_repository.rs"]
 mod subagent_lifecycle_repository;
 #[path = "contracts/teardown_compensation.rs"]
@@ -344,6 +373,8 @@ mod uds_direct_child_routing;
 #[path = "contracts/workflow_run_source.rs"]
 mod workflow_run_source;
 
+#[path = "contracts/project_board_sqlite_delivery.rs"]
+mod project_board_sqlite_delivery;
 #[path = "contracts/relevance_judge.rs"]
 mod relevance_judge;
 #[path = "contracts/resume_decision_listing.rs"]
@@ -364,3 +395,12 @@ mod session_rejection_cache;
 mod workspace_discovery;
 #[path = "contracts/workspace_origin.rs"]
 mod workspace_origin;
+
+#[path = "contracts/project_board_reader.rs"]
+mod project_board_reader;
+
+#[path = "contracts/declare_turn_outcome.rs"]
+mod declare_turn_outcome;
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_sqlite_regression_red.rs"]
+mod project_board_sqlite_regression_red;

@@ -13,16 +13,16 @@
 //! a lost write pauses the calling thread before it is tried again.
 use std::sync::Arc;
 
-use super::board_change::{checked_writer, commit, task_on, written_plan};
+use super::board_change::{checked_writer, commit, owned, task_on, written_plan};
 use super::{board_view, plan_text};
 use crate::application::project_board::dto::{PlanEdit, ProjectBoardError};
 use crate::application::project_board::ports::{BoardArtifact, BoardClock, ProjectBoardStore};
 use crate::application::project_board::swarm_brief::coordinator_model_named;
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
-use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
+use crate::domain::project_board::entities::plan::{Plan, PlanEntry, PlanFields, PlanItem};
 use crate::domain::project_board::entities::team::Team;
-use crate::domain::project_board::services::plans::{Moment, PlanContent, edit_draft};
+use crate::domain::project_board::services::plans::{DraftOf, Moment, PlanContent, edit_draft};
 use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 
@@ -83,8 +83,10 @@ impl EditPlan {
         }
         let given = PlanPatch {
             approach: edit.approach.as_deref().map(board_text::text),
+            handoff: edit.handoff.as_deref().map(plan_text::handoff),
             items: edit.items.as_deref().map(plan_text::entered_items),
             team: edit.team.clone(),
+            entry: edit.entry,
         };
         let id = &edit.task;
         let message = format!("board: edit plan {} of {}", edit.version, id.as_str());
@@ -96,13 +98,24 @@ impl EditPlan {
             facts.as_deref_mut(),
             |board, when| {
                 let task = task_on(board, id)?;
-                let plan = board_view::plans_of(board, id)?
-                    .into_iter()
+                let versions = owned(board_view::plans_of(board, id)?);
+                let plan = versions
+                    .iter()
                     .find(|plan| plan.fields().version == edit.version)
                     .ok_or(BoardRuleError::UnknownPlanVersion(edit.version))?;
                 let expected = edit.expected_updated.as_ref();
                 let content = given.applied_to(plan.fields());
-                let edited = edit_draft(task, plan, content, expected, actor, &Moment::from(when))?;
+                let edited = edit_draft(
+                    DraftOf {
+                        task,
+                        versions: &versions,
+                        plan,
+                    },
+                    content,
+                    expected,
+                    actor,
+                    &Moment::from(when),
+                )?;
                 given.kept_in(plan.fields(), edited.fields());
                 // Judged on the draft written, its team given or kept.
                 coordinator_model_named(edited.fields().team.as_ref())?;
@@ -121,8 +134,11 @@ impl EditPlan {
 /// draft's.
 struct PlanPatch {
     approach: Option<String>,
+    /// `Some(None)` takes the handoff away.
+    handoff: Option<Option<String>>,
     items: Option<Vec<PlanItem>>,
     team: Option<Option<Team>>,
+    entry: PlanEntry,
 }
 
 impl PlanPatch {
@@ -133,8 +149,10 @@ impl PlanPatch {
                 .approach
                 .clone()
                 .unwrap_or_else(|| held.approach.clone()),
+            handoff: self.handoff.clone().unwrap_or_else(|| held.handoff.clone()),
             items: self.items.clone().unwrap_or_else(|| held.items.clone()),
             team: self.team.clone().unwrap_or_else(|| held.team.clone()),
+            entry: self.entry,
         }
     }
 
@@ -144,6 +162,10 @@ impl PlanPatch {
         assert!(
             self.approach.is_some() || edited.approach == held.approach,
             "an edit keeps the approach it does not give"
+        );
+        assert!(
+            self.handoff.is_some() || edited.handoff == held.handoff,
+            "an edit keeps the handoff it does not give"
         );
         assert!(
             self.items.is_some() || edited.items == held.items,

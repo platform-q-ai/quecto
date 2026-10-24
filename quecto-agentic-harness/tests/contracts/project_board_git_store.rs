@@ -2,9 +2,9 @@
 //! clones of one bare remote, each its own client.
 use super::project_board_store::{
     Clients, check_bootstrap, check_bootstrap_race, check_carried_set_aside, check_clear_set_aside,
-    check_committed_as_writer, check_compare_and_swap, check_invalid_writes, check_quarantine,
-    check_refused, check_unchanged_write, check_write_after_lost_and_refused, check_write_and_read,
-    check_write_before_bootstrap, check_writer,
+    check_committed_as_writer, check_compare_and_swap, check_invalid_writes, check_lock_races,
+    check_quarantine, check_refused, check_unchanged_write, check_write_after_lost_and_refused,
+    check_write_and_read, check_write_before_bootstrap, check_writer,
 };
 use quecto::domain::project_board::entities::claim::Identity;
 use quecto::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// Test-side git: only PATH and HOME, no global or system config.
-fn sh(dir: &Path, args: &[&str], input: &[u8]) -> String {
+pub fn sh(dir: &Path, args: &[&str], input: &[u8]) -> String {
     let mut child = Command::new("git")
         .current_dir(dir)
         .args(args)
@@ -78,6 +78,12 @@ impl Remote {
     }
 
     pub fn client(&self, clone: usize, name: &str) -> Box<GitBoardStore> {
+        Box::new(GitBoardStore::new(self.git(clone, name), "origin").unwrap())
+    }
+
+    /// git for clone `clone`, writing as `name`, with only `PATH`, `HOME`
+    /// and no global or system configuration.
+    pub fn git(&self, clone: usize, name: &str) -> Git {
         let repo = &self.clones[clone];
         let vars: [(OsString, OsString); 4] = [
             ("PATH".into(), std::env::var_os("PATH").unwrap()),
@@ -89,8 +95,12 @@ impl Remote {
             name: name.into(),
             email: format!("{}@example.com", name.to_lowercase()),
         };
-        let git = Git::new(repo, GitEnvironment::allowlisted(vars), writer).unwrap();
-        Box::new(GitBoardStore::new(git, "origin").unwrap())
+        Git::new(repo, GitEnvironment::allowlisted(vars), writer).unwrap()
+    }
+
+    /// Clone `clone`'s working directory.
+    pub fn clone_dir(&self, clone: usize) -> &Path {
+        &self.clones[clone]
     }
 
     pub fn clients(&self) -> Clients {
@@ -226,6 +236,11 @@ fn the_git_store_bootstraps_once() {
 }
 
 #[test]
+fn the_git_store_counts_lock_races_only_when_it_meets_one() {
+    check_lock_races(Remote::new().clients());
+}
+
+#[test]
 fn the_git_store_writes_and_reads_back() {
     check_write_and_read(Remote::new().clients());
 }
@@ -319,7 +334,7 @@ fn the_git_store_takes_a_plan_proposed_then_patched() {
     use quecto::application::project_board::use_cases::{
         BootstrapProjectBoard, CreateBoardTask, EditPlan, ProposePlan,
     };
-    use quecto::domain::project_board::entities::plan::PlanItem;
+    use quecto::domain::project_board::entities::plan::{PlanEntry, PlanItem};
     use quecto::domain::project_board::value_objects::slug::Slug;
     use quecto::domain::project_board::value_objects::vocabulary::{PlanState, TaskKind};
     use quecto::infrastructure::time::board_clock::SystemBoardClock;
@@ -333,18 +348,25 @@ fn the_git_store_takes_a_plan_proposed_then_patched() {
     BootstrapProjectBoard::new(Arc::clone(&store))
         .execute()
         .unwrap();
-    CreateBoardTask::new(Arc::clone(&store), clock.clone())
-        .unwrap()
-        .execute(&NewBoardTask {
-            id: id.clone(),
-            title: "Board store".into(),
-            kind: TaskKind::Task,
-            description: String::new(),
-            status: NewBoardTaskStatus::Ready,
-            parent: None,
-            depends_on: vec![],
-        })
-        .unwrap();
+    CreateBoardTask::new(
+        Arc::clone(&store),
+        clock.clone(),
+        std::sync::Arc::new(
+            quecto::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+        ),
+    )
+    .unwrap()
+    .execute(&NewBoardTask {
+        id: id.clone(),
+        title: "Board store".into(),
+        kind: TaskKind::Task,
+        description: String::new(),
+        status: NewBoardTaskStatus::Ready,
+        parent: None,
+        depends_on: vec![],
+        entry: quecto::domain::project_board::entities::task_parts::Entry::Sectioned,
+    })
+    .unwrap();
     let task_file = remote.object("tasks/board-store.md");
     let item = |name: &str| PlanItem {
         id: Slug::parse(name).unwrap(),
@@ -355,6 +377,8 @@ fn the_git_store_takes_a_plan_proposed_then_patched() {
     let proposed = ProposePlan::new(Arc::clone(&store), clock.clone())
         .unwrap()
         .execute(&PlanProposal {
+            handoff: None,
+            entry: PlanEntry::Legacy,
             task: id.clone(),
             approach: "Spike the store.\r\n\n```\n  keep  spaced\n```\n".into(),
             items: vec![item("schema")],
@@ -370,6 +394,8 @@ fn the_git_store_takes_a_plan_proposed_then_patched() {
     let edited = EditPlan::new(Arc::clone(&store), clock)
         .unwrap()
         .execute(&PlanEdit {
+            handoff: None,
+            entry: PlanEntry::Legacy,
             task: id.clone(),
             version: 1,
             approach: None,
@@ -415,21 +441,31 @@ fn the_git_store_takes_an_acceptance_of_three_files_in_one_commit() {
     BootstrapProjectBoard::new(Arc::clone(&store))
         .execute()
         .unwrap();
-    CreateBoardTask::new(Arc::clone(&store), clock.clone())
-        .unwrap()
-        .execute(&NewBoardTask {
-            id: id.clone(),
-            title: "Board store".into(),
-            kind: TaskKind::Task,
-            description: String::new(),
-            status: NewBoardTaskStatus::Ready,
-            parent: None,
-            depends_on: vec![],
-        })
-        .unwrap();
+    CreateBoardTask::new(
+        Arc::clone(&store),
+        clock.clone(),
+        std::sync::Arc::new(
+            quecto::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+        ),
+    )
+    .unwrap()
+    .execute(&NewBoardTask {
+        id: id.clone(),
+        title: "Board store".into(),
+        kind: TaskKind::Task,
+        description: String::new(),
+        status: NewBoardTaskStatus::Ready,
+        parent: None,
+        depends_on: vec![],
+        entry: quecto::domain::project_board::entities::task_parts::Entry::Sectioned,
+    })
+    .unwrap();
     let propose = ProposePlan::new(Arc::clone(&store), clock.clone()).unwrap();
     let accept = AcceptPlan::new(Arc::clone(&store), clock).unwrap();
+    use quecto::domain::project_board::entities::plan::PlanEntry;
     let proposal = |approach: &str| PlanProposal {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         task: id.clone(),
         approach: approach.into(),
         items: vec![],
@@ -536,6 +572,7 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
         references: vec![],
         created: at.clone(),
         updated: at.clone(),
+        description_form: Default::default(),
     })
     .unwrap();
     let plan = Plan::new(PlanFields {
@@ -552,6 +589,7 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
             })
             .to_vec(),
         team: None,
+        handoff: None,
         proposed_by: ada.clone(),
         edited_by: None,
         accepted: Some((ada.clone(), at.clone())),
@@ -560,7 +598,7 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
     })
     .unwrap();
     let started = Timestamp::parse("2026-10-10T09:00:00Z").unwrap();
-    let (task, run) = start(&ready, &[], Some(&plan), &ada, &started)
+    let (task, run) = start(&ready, &[], &[], Some(&plan), &ada, &started)
         .unwrap()
         .into_writes();
     let head = alice.read().unwrap().head;
@@ -597,6 +635,7 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
                 revision: revision.into(),
             })
             .to_vec(),
+            stood_before_death: None,
         }],
         observed_tokens: 52_000,
     };
@@ -640,4 +679,95 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
     assert!(file.contains("[REDACTED] at 4f2a9c1"), "{file}");
     let log = sh(&remote.bare, &["log", "-1", "--format=%s", BOARD_REF], b"");
     assert_eq!(log, "board: run 1 of board-store folded back, succeeded");
+}
+
+type RawBoardRow<'a> = (&'a str, &'a str, &'a [u8]);
+
+/// Raw batch fixture for bounded-reader parity. Replace named folders only;
+/// retain every other root row, including format, archive and stray files.
+impl Remote {
+    /// Query actual Git object storage, not merely the board's current ref.
+    pub fn object_absent(&self, oid: &str) -> bool {
+        let output = Command::new("git")
+            .current_dir(&self.bare)
+            .args(["cat-file", "--batch-check"])
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map(|mut child| {
+                writeln!(child.stdin.take().unwrap(), "{oid}").unwrap();
+                child.wait_with_output().unwrap()
+            })
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+        output.stdout == format!("{oid} missing\n").as_bytes()
+    }
+
+    pub fn raw_object_size(&self, oid: &str) -> usize {
+        sh(&self.bare, &["cat-file", "-s", oid], b"")
+            .parse()
+            .unwrap()
+    }
+
+    pub fn raw_head(&self) -> String {
+        sh(&self.bare, &["rev-parse", BOARD_REF], b"")
+    }
+
+    pub fn raw_fingerprint(&self) -> String {
+        format!(
+            "{}\n{}",
+            self.raw_head(),
+            sh(&self.bare, &["ls-tree", "-r", "-t", BOARD_REF], b"")
+        )
+    }
+
+    pub fn raw_batch(&self, folders: Vec<(&str, Vec<RawBoardRow<'_>>)>) {
+        let head = self.raw_head();
+        let held = sh(&self.bare, &["ls-tree", &head], b"");
+        let mut root: Vec<String> = held.lines().map(str::to_owned).collect();
+        let mut blobs = std::collections::BTreeMap::new();
+        for (folder, rows) in folders {
+            assert!(
+                [
+                    "tasks",
+                    "plans",
+                    "runs",
+                    "changes",
+                    "reviews",
+                    "discussions",
+                    "format",
+                    "archive"
+                ]
+                .contains(&folder)
+            );
+            let listing: String = rows
+                .into_iter()
+                .map(|(name, mode, bytes)| {
+                    assert!(["100644", "100755", "120000"].contains(&mode));
+                    assert!(
+                        name.bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+                    );
+                    let oid = blobs.entry(bytes).or_insert_with(|| {
+                        sh(&self.bare, &["hash-object", "-w", "--stdin"], bytes)
+                    });
+                    format!("{mode} blob {oid}\t{name}\n")
+                })
+                .collect();
+            let tree = sh(&self.bare, &["mktree"], listing.as_bytes());
+            root.retain(|row| row.split_once('\t').is_some_and(|(_, name)| name != folder));
+            root.push(format!("040000 tree {tree}\t{folder}"));
+        }
+        let tree = sh(&self.bare, &["mktree"], (root.join("\n") + "\n").as_bytes());
+        let commit = sh(
+            &self.bare,
+            &["commit-tree", &tree, "-p", &head, "-m", "raw batch"],
+            b"",
+        );
+        sh(&self.bare, &["update-ref", BOARD_REF, &commit], b"");
+    }
 }

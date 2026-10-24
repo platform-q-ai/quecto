@@ -119,6 +119,7 @@ fn plan(version: u32, state: PlanState) -> Plan {
             deadline_seconds: None,
             image: None,
         }),
+        handoff: None,
         proposed_by: person("Ada"),
         edited_by: None,
         accepted,
@@ -384,6 +385,7 @@ fn a_start_that_cannot_launch_writes_nothing() {
         let (_, run) = crate::domain::project_board::services::starts::start(
             &task,
             &[],
+            &[],
             Some(&plan(1, PlanState::Accepted)),
             &person("Ada"),
             &at("09:30:00"),
@@ -550,3 +552,6 @@ mod stuck;
 
 #[path = "start_board_task_undo_tests.rs"]
 mod undo;
+
+#[path = "start_board_task_dependency_tests.rs"]
+mod dependency;

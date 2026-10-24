@@ -29,6 +29,8 @@ struct BoardPort {
     port: Arc<HostedRunPort>,
     kills_at_read: Mutex<Vec<usize>>,
     kept: Mutex<Vec<(String, String, serde_json::Value)>>,
+    /// The boards kept as left (#2674).
+    left: Mutex<Vec<(String, String, serde_json::Value)>>,
 }
 
 impl BoardPort {
@@ -41,6 +43,7 @@ impl BoardPort {
             port: Arc::clone(port),
             kills_at_read: Mutex::new(Vec::new()),
             kept: Mutex::new(Vec::new()),
+            left: Mutex::new(Vec::new()),
         })
     }
 }
@@ -70,6 +73,13 @@ impl HostedSwarmBoard for BoardPort {
 impl EndedSwarmBoards for BoardPort {
     fn keep(&self, session: &str, label: &str, board: SwarmBoardSnapshot) {
         self.kept
+            .lock()
+            .unwrap()
+            .push((session.to_owned(), label.to_owned(), board.into_value()));
+    }
+
+    fn keep_left(&self, session: &str, label: &str, board: SwarmBoardSnapshot) {
+        self.left
             .lock()
             .unwrap()
             .push((session.to_owned(), label.to_owned(), board.into_value()));
@@ -166,6 +176,11 @@ fn no_board_is_kept_unless_an_ended_run_is_seen_and_read() {
         (run(running_swarm()), MemberFinalizeMode::Exit, Some(LABEL)),
         (
             run(with_status(RunStatus::Paused, Some(RunStatus::Succeeded))),
+            MemberFinalizeMode::ParentKill,
+            Some(LABEL),
+        ),
+        (
+            run(with_status(RunStatus::Setup, None)),
             MemberFinalizeMode::OwnerEnd,
             Some(LABEL),
         ),
@@ -204,6 +219,7 @@ fn no_board_is_kept_unless_an_ended_run_is_seen_and_read() {
             "never read: {observed:?}, {mode:?}, {label:?}"
         );
         assert!(boards.kept.lock().unwrap().is_empty());
+        assert!(boards.left.lock().unwrap().is_empty());
     }
     for board in [Err("the board is locked".to_owned()), Ok(None)] {
         let port = Arc::new(HostedRunPort::hosting(Some(with_status(
@@ -219,5 +235,35 @@ fn no_board_is_kept_unless_an_ended_run_is_seen_and_read() {
         );
         assert!(boards.kept.lock().unwrap().is_empty(), "{board:?}");
         assert_eq!(port.kills.lock().unwrap().len(), 1, "torn down: {board:?}");
+    }
+}
+
+/// #2674: a run still running or paused when its owner ends its
+/// coordinator on purpose (a one-shot parent's end, an `agent_cmd kill`)
+/// has its board kept as left, before any teardown, so a stop of the run
+/// records the items it had finished; on any other end it is not read.
+#[test]
+fn a_running_or_paused_runs_board_is_kept_as_left_on_its_owners_word() {
+    let board = serde_json::json!({"revision": 3, "run": {"status": "running"}});
+    for hosted in [
+        running_swarm(),
+        with_status(RunStatus::Paused, None),
+        with_status(RunStatus::Paused, Some(RunStatus::Succeeded)),
+    ] {
+        let port = Arc::new(HostedRunPort::hosting(Some(hosted.clone())));
+        let boards = BoardPort::reading(Ok(Some(board.clone())), &port);
+        let (registry, _) =
+            finalize_keeping(port, &boards, Some(LABEL), MemberFinalizeMode::OwnerEnd);
+        assert_eq!(
+            boards.left.lock().unwrap().as_slice(),
+            &[(
+                registry.session().to_owned(),
+                LABEL.to_owned(),
+                board.clone()
+            )],
+            "{hosted:?}"
+        );
+        assert!(boards.kept.lock().unwrap().is_empty(), "{hosted:?}");
+        assert_eq!(boards.kills_at_read.lock().unwrap().as_slice(), &[0]);
     }
 }

@@ -11,6 +11,7 @@ use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::review::Review;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::entities::task_parts::Entry;
 use crate::domain::project_board::services::artifacts_of;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
@@ -32,6 +33,9 @@ pub struct NewBoardTask {
     pub status: NewBoardTaskStatus,
     pub parent: Option<Slug>,
     pub depends_on: Vec<Slug>,
+    /// How its title and description enter (#2705 T2), as its front end's
+    /// policy resolved it.
+    pub entry: Entry,
 }
 
 /// An edit of a draft in place: the fields it sets (`None` keeps one as
@@ -48,6 +52,9 @@ pub struct DraftUpdate {
     pub parent: Option<Option<Slug>>,
     pub depends_on: Option<Vec<Slug>>,
     pub expected_updated: Option<Timestamp>,
+    /// How a new title or description enters (#2705 T2), as its front
+    /// end's policy resolved it.
+    pub entry: Entry,
 }
 
 /// The statuses a task is created in.
@@ -419,6 +426,7 @@ impl ShownTask {
             return Err(ProjectBoardError::Quarantined {
                 key,
                 path: file.path.clone(),
+                object: file.object.clone(),
             });
         }
         if let Some(plan) = self
@@ -561,6 +569,8 @@ pub enum ProjectBoardError {
     Quarantined {
         key: ArtifactKey,
         path: String,
+        /// The file's object, as `clear_set_aside` names it (#2659).
+        object: String,
     },
     /// The board holds the artifact `key` more than once: its store broke
     /// the contract of one artifact per key, so what it holds is unknown.
@@ -699,6 +709,13 @@ mod plans;
 mod start;
 pub use plans::{PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal};
 pub use start::{EndedRun, LivenessCheck, RunEnd, RunEndOutcome, RunReport, TaskStart};
+
+#[path = "dto_requests.rs"]
+mod requests;
+pub use requests::{
+    BoardAnswered, BoardExecution, BoardOutcome, BoardRequest, Completion, ListFilter,
+    ListSummaries, OpNoting, PlanPage, PlanView, SUMMARIES_LISTINGS_ONLY,
+};
 
 #[cfg(test)]
 #[path = "dto_tests.rs"]

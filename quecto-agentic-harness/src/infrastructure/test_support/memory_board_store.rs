@@ -33,11 +33,29 @@ struct Board {
     after_read: Vec<Interleaved>,
     refusal: Option<String>,
     failure: Option<BoardStoreError>,
+    /// Every call fails with it, as a git store fails every call on a
+    /// board moved to a board server (#2705 B13).
+    always: Option<BoardStoreError>,
     writes: usize,
     /// Who made the board at each revision a write made.
     committers: BTreeMap<u64, Identity>,
     /// The message of each revision a write made.
     messages: BTreeMap<u64, String>,
+    /// Every path an artifact's file was set aside at, so a file set
+    /// aside there again gets another object.
+    set_aside_at: std::collections::BTreeSet<String>,
+}
+
+impl Board {
+    /// The object a file set aside at `path` at `revision` gets: the
+    /// first time, [`memory_object`] of its path, which a test can name;
+    /// any later time, one of its revision, as other contents would have.
+    fn object_at(&mut self, path: &str, revision: u64) -> String {
+        match self.set_aside_at.insert(path.to_string()) {
+            true => memory_object(path),
+            false => format!("{revision:040x}"),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -98,6 +116,16 @@ impl MemoryBoardStore {
         self.lock().failure = Some(error);
     }
 
+    /// Every call from now on fails with `error`; nothing is written.
+    pub fn fail_every_call(&self, error: BoardStoreError) {
+        self.lock().always = Some(error);
+    }
+
+    /// The error every call fails with, if any.
+    fn always(&self) -> Result<(), BoardStoreError> {
+        self.lock().always.clone().map_or(Ok(()), Err)
+    }
+
     /// Sets the file `tasks/<id>.md` aside, as a store that found it
     /// unreadable does: its task is no longer read. Spoiling the file is a
     /// change to the board, so the head moves, as a commit moves the git
@@ -117,11 +145,12 @@ impl MemoryBoardStore {
         if let Some(key) = &key {
             board.artifacts.remove(key);
         }
+        let object = board.object_at(&path, revision + 1);
         board.quarantined.push(QuarantinedFile {
             path,
             key,
             reason: reason.into(),
-            object: format!("{:040x}", revision + 1),
+            object,
             carried: true,
         });
     }
@@ -137,11 +166,12 @@ impl MemoryBoardStore {
         let revision = board.head.expect("a bootstrapped board");
         board.head = Some(revision + 1);
         board.artifacts.remove(&key);
+        let object = board.object_at(path, revision + 1);
         board.quarantined.push(QuarantinedFile {
             path: path.into(),
             key: Some(key),
             reason: reason.into(),
-            object: format!("{:040x}", revision + 1),
+            object,
             carried: true,
         });
     }
@@ -278,6 +308,7 @@ fn of_kind<'a, T: Clone + 'a>(
 
 impl ProjectBoardStore for MemoryBoardStore {
     fn read(&self) -> Result<BoardSnapshot, BoardStoreError> {
+        self.always()?;
         let (snapshot, after) = {
             let mut board = self.lock();
             let revision = board.head.ok_or(BoardStoreError::NoBoard)?;
@@ -321,6 +352,7 @@ impl ProjectBoardStore for MemoryBoardStore {
         artifacts: &[BoardArtifact],
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
+        self.always()?;
         checked(artifacts, message)?;
         let interleaved = std::mem::take(&mut self.lock().interleaved);
         interleaved.into_iter().for_each(|change| change(self));
@@ -376,6 +408,7 @@ impl ProjectBoardStore for MemoryBoardStore {
         clear: &SetAsideClear,
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
+        self.always()?;
         let path = clear.path.as_str();
         line("message", message, 200)
             .map_err(|error| BoardStoreError::InvalidWrite(error.to_string()))?;
@@ -432,6 +465,7 @@ impl ProjectBoardStore for MemoryBoardStore {
     }
 
     fn bootstrap(&self) -> Result<BoardBootstrap, BoardStoreError> {
+        self.always()?;
         let mut board = self.lock();
         match board.head {
             Some(revision) => Ok(BoardBootstrap::Existing(head(revision))),
@@ -445,4 +479,14 @@ impl ProjectBoardStore for MemoryBoardStore {
     fn writer(&self) -> Identity {
         self.writer.clone()
     }
+}
+
+/// The object the in-memory store gives a file it first sets aside at
+/// `path`: the same for one path every time, so a test can name it
+/// (#2659).
+pub fn memory_object(path: &str) -> String {
+    let hash = path.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{hash:040x}")
 }

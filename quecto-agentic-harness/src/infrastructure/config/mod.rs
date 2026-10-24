@@ -31,6 +31,9 @@ pub struct Config {
     /// The UDS extensions every agent launches (#2446); global-only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extensions: Vec<extensions::ExtensionConfig>,
+    /// The board server's TCP addresses (epic #2705 B5); global-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board_server: Option<board_server::BoardServerConfig>,
     /// Not serialized: base directory for the default authority directory.
     #[serde(skip)]
     pub(super) admission_base_dir: PathBuf,
@@ -525,6 +528,7 @@ use workflow_steps::{resolve_workflow_step_entries, resolve_workflow_step_entry}
 #[path = "config_error.rs"]
 mod error;
 pub use error::ConfigError;
+pub mod board_server;
 pub mod container_config_lookup;
 pub mod container_config_roster;
 pub mod container_configs;

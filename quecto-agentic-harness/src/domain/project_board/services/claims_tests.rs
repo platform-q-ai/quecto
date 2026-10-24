@@ -140,8 +140,14 @@ fn a_task_at_the_last_spellable_second_takes_no_further_stamp() {
     let mut fields = task(Draft).into_fields();
     fields.updated = last.clone();
     let at_the_end = Task::new(fields).unwrap();
-    let moved =
-        super::super::transitions::move_task(&at_the_end, Ready, &person("Ada"), &[], &[], &last);
+    let moved = super::super::transitions::move_task(
+        &at_the_end,
+        Ready,
+        &person("Ada"),
+        (&[], &[]),
+        &[],
+        &last,
+    );
     assert!(
         matches!(moved, Err(BoardRuleError::Invalid(_))),
         "{moved:?}"
@@ -190,9 +196,11 @@ fn claim_facts_count_from_its_start_to_its_expiry() {
         "expires now"
     );
     assert_eq!(facts("Bob", "11:00:01"), fact(7201, -1, false), "lapsed");
+    // #2662: a stamp may run up to a second ahead of the wall clock, so a
+    // clock behind the claim's start finds it held for no time, never less.
     assert_eq!(
         facts("Bob", "08:59:00"),
-        fact(-60, 7260, false),
+        fact(0, 7260, false),
         "a clock behind"
     );
     let shouting = Identity {
@@ -208,4 +216,51 @@ fn claim_facts_count_from_its_start_to_its_expiry() {
         claim_facts(&task(Ready), &person("Ada"), &at("10:00:00")),
         None
     );
+}
+
+/// #2659: another's claim that has expired is refused with the way on:
+/// take it over first.
+#[test]
+fn another_on_an_expired_claim_is_told_to_take_it_over() {
+    let held = task(InProgress);
+    let lapsed = held_live_by(&held, &person("Bob"), &at("14:00:00"));
+    assert_eq!(lapsed.map(|_| ()), Err(BoardRuleError::NotHolderExpired));
+    // While it is live, there is no way on for anyone else.
+    let live = held_live_by(&held, &person("Bob"), &at("10:00:00"));
+    assert_eq!(live.map(|_| ()), Err(BoardRuleError::NotHolder));
+}
+
+/// #2656 review round 1: halfway is the claim's own lease's, and a
+/// renewal is due from then, an expired claim's too; another's is the
+/// renewal's own rule to refuse.
+#[test]
+fn a_renewal_is_due_from_halfway_through_the_claims_own_lease() {
+    let mut fields = task(InProgress).into_fields();
+    let claim = fields.claim.as_mut().unwrap();
+    claim.expires = at("10:00:00");
+    let short = Task::new(fields).unwrap();
+    assert_eq!(renew_after(&short), Some(at("09:30:00")));
+    assert_eq!(renew_after(&task(Ready)), None, "no claim, no renewal");
+    let ada = person("Ada");
+    assert!(!renewal_due(&short, &ada, &at("09:29:59")));
+    assert!(renewal_due(&short, &ada, &at("09:30:00")));
+    assert!(renewal_due(&short, &ada, &at("12:00:00")), "expired");
+    assert!(renewal_due(&short, &person("Bob"), &at("09:00:00")));
+}
+
+/// #2683: renewing another's expired claim is refused with the same way
+/// on as every other holder-only action: take the task over first. A live
+/// one is still plainly not the renewer's.
+#[test]
+fn another_renewing_an_expired_claim_is_told_to_take_it_over() {
+    assert_eq!(
+        renew(&task(InProgress), &person("Bob"), &at("14:00:00")),
+        Err(BoardRuleError::NotHolderExpired)
+    );
+    assert_eq!(
+        renew(&task(InProgress), &person("Bob"), &at("10:30:00")),
+        Err(BoardRuleError::NotHolder)
+    );
+    // The holder still renews its own expired claim.
+    assert!(renew(&task(InProgress), &person("Ada"), &at("14:00:00")).is_ok());
 }

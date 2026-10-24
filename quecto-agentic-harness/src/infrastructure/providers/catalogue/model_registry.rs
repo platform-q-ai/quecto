@@ -1,22 +1,19 @@
 use std::path::Path;
 
+use crate::domain::catalogue::services::published_prices::{cost_of_id, declared_cost};
 use crate::domain::catalogue::value_objects::model_facts::PromptLimit;
-use crate::domain::conversation::value_objects::message::{ModelPricing, model_pricing};
 use crate::infrastructure::persistence::file::json_failure;
 use crate::infrastructure::providers::transport::stream_idle::{StreamIdle, StreamLimits};
 
-/// The price of a Claude 5 built-in, `None` for any other id.
-fn claude_5_pricing(id: &str) -> Option<ModelPricing> {
-    const CLAUDE_5: [&str; 6] = [
-        "claude-fable-5-1",
-        "claude-fable-5",
-        "claude-opus-5",
-        "claude-sonnet-5",
-        "claude-opus-5-5",
-        "claude-sonnet-5-5",
-    ];
-    CLAUDE_5.contains(&id).then(|| model_pricing(id)).flatten()
-}
+/// The Claude 5 built-ins, which publish a 1M window and a 128K output cap.
+const CLAUDE_5: [&str; 6] = [
+    "claude-fable-5-1",
+    "claude-fable-5",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelRegistry {
@@ -83,6 +80,22 @@ pub struct ModelCost {
     pub output: f64,
     pub cache_read: f64,
     pub cache_write: f64,
+    /// Whether the rates were stated (published or declared), not defaulted.
+    pub declared: bool,
+}
+
+impl From<crate::domain::catalogue::value_objects::model_facts::ModelCost> for ModelCost {
+    /// A cost the domain's published table (or a declaration it filled)
+    /// states, as the registry records it (#1855).
+    fn from(cost: crate::domain::catalogue::value_objects::model_facts::ModelCost) -> Self {
+        Self {
+            input: cost.input,
+            output: cost.output,
+            cache_read: cost.cache_read,
+            cache_write: cost.cache_write,
+            declared: cost.declared,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,21 +161,15 @@ impl ModelRegistry {
             let mut record = ModelRecord::with_defaults(provider, id, Some(&spec.name), spec.api);
             record.auth = spec.auth;
             record.oauth_provider = spec.oauth.map(str::to_string);
-            if let Some(pricing) = claude_5_pricing(id) {
+            if CLAUDE_5.contains(&id) {
                 // The Claude 5 built-ins publish a 1M window and a 128K
                 // output cap (Anthropic's model overview; #2435 review
-                // round 2), priced from `model_pricing`.
+                // round 2).
                 record.context_window = 1_000_000;
                 record.context_window_explicit = true;
                 record.max_tokens = 128_000;
                 record.max_tokens_explicit = true;
-                record.cost = ModelCost {
-                    input: pricing.input_micro_usd_per_million as f64 / 1_000_000.0,
-                    output: pricing.output_micro_usd_per_million as f64 / 1_000_000.0,
-                    cache_read: pricing.cache_read_micro_usd_per_million as f64 / 1_000_000.0,
-                    cache_write: pricing.cache_write_micro_usd_per_million as f64 / 1_000_000.0,
-                };
-            } else if let Some(cost) = gpt_5_6_cost(id) {
+            } else if gpt_5_6_tier(id) {
                 // OpenAI reasoning tiers share these published limits;
                 // sources: developers.openai.com/api/docs/models/gpt-5.6-{sol,terra,luna},
                 // developers.openai.com/api/docs/models/gpt-6-astra, and
@@ -173,44 +180,12 @@ impl ModelRegistry {
                 record.max_tokens = 128_000;
                 record.max_tokens_explicit = true;
                 record.reasoning = true;
-                record.cost = cost;
-            } else if id == "grok-4.7" {
-                // xAI published specs: 500K context, image input, configurable
-                // reasoning, $2/M input and $6/M output
-                // (docs.x.ai/developers/grok-4-7).
+            } else if matches!(id, "grok-4.7" | "grok-4.6" | "grok-4.5") {
+                // xAI published specs: 500K context, configurable reasoning
+                // (docs.x.ai/developers/grok-4-7, models/grok-4.6, grok-4-5).
                 record.context_window = 500_000;
                 record.context_window_explicit = true;
                 record.reasoning = true;
-                record.cost = ModelCost {
-                    input: 2.0,
-                    output: 6.0,
-                    cache_read: 0.0,
-                    cache_write: 0.0,
-                };
-            } else if id == "grok-4.6" {
-                // xAI published specs: 500K context, $2/M in, $6/M out,
-                // $0.50/M cached input (docs.x.ai/developers/models/grok-4.6).
-                record.context_window = 500_000;
-                record.context_window_explicit = true;
-                record.reasoning = true;
-                record.cost = ModelCost {
-                    input: 2.0,
-                    output: 6.0,
-                    cache_read: 0.5,
-                    cache_write: 0.0,
-                };
-            } else if id == "grok-4.5" {
-                // xAI published specs: 500K context, $2/M in, $6/M out
-                // (docs.x.ai/developers/grok-4-5).
-                record.context_window = 500_000;
-                record.context_window_explicit = true;
-                record.reasoning = true;
-                record.cost = ModelCost {
-                    input: 2.0,
-                    output: 6.0,
-                    cache_read: 0.0,
-                    cache_write: 0.0,
-                };
             }
             // #2405: OpenAI fixes the input limit at the window less the
             // output cap; every other built-in shares it with the request.
@@ -373,13 +348,33 @@ impl ModelRegistry {
                 if let Some(v) = model.reasoning {
                     record.reasoning = v;
                 }
+                // #1855: a declared cost drives billing; a rate it leaves
+                // out is the published one for the id, never a free one.
+                // A rate out of range (negative or not finite) is reported
+                // and the declaration ignored, like any invalid value: the
+                // published rate for the id applies, else the model is
+                // unpriced (#2630 review round 4).
                 if let Some(cost) = model.cost {
-                    record.cost = ModelCost {
-                        input: cost.input.unwrap_or(0.0),
-                        output: cost.output.unwrap_or(0.0),
-                        cache_read: cost.cache_read.or(cost.cache_read_camel).unwrap_or(0.0),
-                        cache_write: cost.cache_write.or(cost.cache_write_camel).unwrap_or(0.0),
-                    };
+                    let rates = [
+                        cost.input,
+                        cost.output,
+                        cost.cache_read.or(cost.cache_read_camel),
+                        cost.cache_write.or(cost.cache_write_camel),
+                    ];
+                    let in_range = rates.into_iter().flatten().all(
+                        crate::domain::catalogue::value_objects::model_facts::ModelCost::rate_in_range,
+                    );
+                    match in_range {
+                        true => {
+                            let [input, output, cache_read, cache_write] = rates;
+                            record.cost =
+                                declared_cost(&record.id, input, output, cache_read, cache_write)
+                                    .into();
+                        }
+                        false => {
+                            skipped.push(file_format::cost_out_of_range(&provider_key, &record.id))
+                        }
+                    }
                 }
                 records.push(record);
             }
@@ -479,7 +474,9 @@ impl ModelRecord {
             max_tokens_explicit: false,
             context_window_explicit: false,
             prompt_limit: PromptLimit::SharedWithRequest,
-            cost: ModelCost::default(),
+            // #1855: a model the one published table knows is priced
+            // from it; a `models.json` declaration may override it.
+            cost: cost_of_id(id).into(),
             reasoning: false,
             auth: AuthMode::ApiKey,
             oauth_provider: None,
@@ -635,7 +632,7 @@ use file_format::RegistryFile;
 #[path = "model_registry_builtin_tables.rs"]
 mod builtin_tables;
 pub(crate) use builtin_tables::builtin_input;
-use builtin_tables::{BuiltinSpec, gpt_5_6_cost, gpt_5_6_window};
+use builtin_tables::{BuiltinSpec, gpt_5_6_tier, gpt_5_6_window};
 
 #[cfg(test)]
 #[path = "model_registry_catalogue_2435_tests.rs"]
@@ -652,3 +649,7 @@ mod openai_limits_tests;
 #[cfg(test)]
 #[path = "model_registry_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "model_registry_prices_tests.rs"]
+mod prices_tests;

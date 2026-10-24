@@ -47,5 +47,5 @@ exclude_globs = [
     "**/main.rs",
 ]
 # Inline test-support modules that are not `#[cfg(test)]`
-# (e.g. interface/cli/uds_shutdown.rs `pub mod test_support`).
+# (e.g. interface/uds/framing/uds_shutdown.rs `pub mod test_support`).
 exclude_re = ["test_support::"]

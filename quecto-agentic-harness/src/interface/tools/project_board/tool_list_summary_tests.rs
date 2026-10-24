@@ -9,12 +9,12 @@ use std::sync::Arc;
 use super::tests::{site, tool};
 use crate::application::project_board::operations::ListSummaries;
 use crate::application::project_board::operations::NoPullRequestHost;
-use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
 use crate::application::project_board::ports::{
     ArtifactKey, BoardArtifact, BoardWrite, ProjectBoardStore,
 };
 use crate::application::project_board::use_cases::QueryBoard;
 use crate::application::tools::ports::Tool;
+use crate::composition::bootstrap::project_board_operations::fixtures::{QueryListings, assembled};
 use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
 use crate::domain::project_board::entities::run::{Run, RunFields, RunItem};
 use crate::domain::project_board::entities::team::{Role, RoleLimits, Team};
@@ -134,13 +134,17 @@ fn summarised_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, 
     let written = store.write(&head, &artifacts, "board: seed");
     assert!(matches!(written, Ok(BoardWrite::Written(_))), "{written:?}");
     store.quarantine_key(ArtifactKey::Run(slug("c"), 1), "runs/c.1.md", "malformed");
-    Ok(ProjectBoardHandles { operations })
+    Ok(ProjectBoardHandles {
+        operations: Box::new(operations),
+        board: None,
+    })
 }
 
 fn environment() -> ProjectBoardEnvironment {
     ProjectBoardEnvironment {
         repo: std::path::PathBuf::from("."),
         remote: "origin".into(),
+        known: Default::default(),
         access: crate::interface::tools::project_board::site::Access::Read,
         vars: vec![],
         cancelled: None,
@@ -155,7 +159,7 @@ fn shared_with(request: Value, summaries: ListSummaries) -> Value {
     let handles = summarised_board(&environment()).unwrap();
     let mut call = BoardCall::unrecorded();
     run_recorded_with(
-        &handles.operations,
+        &*handles.operations,
         &request.to_string(),
         summaries,
         &mut call,
@@ -197,6 +201,7 @@ fn a_listing_carries_each_tasks_summary() {
             (
                 "a".to_string(),
                 json!({
+                    "subtitle": null,
                     "plan": {"version": 1, "state": "accepted"},
                     "run": {
                         "number": 2,
@@ -213,6 +218,7 @@ fn a_listing_carries_each_tasks_summary() {
             (
                 "b".to_string(),
                 json!({
+                    "subtitle": null,
                     "plan": {"version": 2, "state": "draft"},
                     "run": {
                         "number": 1,
@@ -228,7 +234,7 @@ fn a_listing_carries_each_tasks_summary() {
             ),
             (
                 "c".to_string(),
-                json!({"plan": null, "run": null, "may_be_incomplete": true})
+                json!({"subtitle": null, "plan": null, "run": null, "may_be_incomplete": true})
             ),
         ]
     );
@@ -318,7 +324,7 @@ fn a_listing_without_summaries_is_as_before() {
         let text = request.to_string();
         let mut call = BoardCall::unrecorded();
         let listed = run_recorded_with(
-            &handles.operations,
+            &*handles.operations,
             &text,
             ListSummaries::Omitted,
             &mut call,
@@ -342,7 +348,7 @@ fn a_listing_without_summaries_is_as_before() {
             assert_eq!(task.get("summary"), None, "{task}");
         }
         // `run` (every front end's way in before) is the same answer.
-        let ran = crate::interface::tools::project_board::run(&handles.operations, &text);
+        let ran = crate::interface::tools::project_board::run(&*handles.operations, &text);
         assert_eq!(ran, listed, "{request}");
     }
 }
@@ -421,6 +427,7 @@ fn a_duplicate_artifact_skips_its_own_rows_summary() {
             key: ArtifactKey::Plan(slug("a"), 1),
         })),
         RowSummary::Summary(TaskSummary {
+            subtitle: None,
             plan: None,
             run: None,
             may_be_incomplete: false,
@@ -435,7 +442,7 @@ fn a_duplicate_artifact_skips_its_own_rows_summary() {
     assert_eq!(tasks[1]["id"], json!("b"));
     assert_eq!(
         tasks[1]["summary"],
-        json!({"plan": null, "run": null, "may_be_incomplete": false})
+        json!({"subtitle": null, "plan": null, "run": null, "may_be_incomplete": false})
     );
     assert_eq!(tasks[1].get("summary_skipped"), None, "{answer}");
 }
@@ -464,6 +471,7 @@ fn seeded_store() -> MemoryBoardStore {
             references: vec![],
             created: at("09:00:00"),
             updated: at("09:00:00"),
+            description_form: Default::default(),
         });
         BoardArtifact::Task(task.unwrap())
     };

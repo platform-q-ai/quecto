@@ -9,7 +9,7 @@
 //! to the child's own children (they get their own credentials from their
 //! own launcher). The parent presents the credential once, as the first
 //! frame on the connection it wants bound (the monitor connection); the
-//! child-side schema lives in `interface::uds::parent_control::wire`.
+//! child-side schema lives in `interface::uds::wire::parent_control_wire`.
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -99,7 +99,7 @@ fn read_sidecar(path: &Path) -> Result<ParentControlCredential, String> {
 
 /// The presentation the parent writes first on the connection it binds,
 /// as one JSON line (no trailing newline; the caller frames it). The child
-/// decodes it with `interface::uds::parent_control::wire`; the two sides are
+/// decodes it with `interface::uds::wire::parent_control_wire`; the two sides are
 /// pinned to one schema by that module's tests.
 pub fn presentation_json(credential: &ParentControlCredential) -> String {
     serde_json::json!({

@@ -2,7 +2,10 @@
 //! (the S1d git store implements [`ProjectBoardStore`] over the
 //! repository's `quecto/board` branch), its listings from a local view of
 //! it (the S1e index implements [`BoardListings`]) and what time it is.
-use super::dto::{BoardListing, FoldBackFacts, FoldedBack, ProjectBoardError, SwarmRunView};
+use super::dto::{
+    BoardExecution, BoardListing, BoardRequest, FoldBackFacts, FoldedBack, ListSummaries, OpNoting,
+    ProjectBoardError, RunEnd, SwarmRunView,
+};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::discussion::Discussion;
@@ -10,12 +13,20 @@ use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::review::Review;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::value_objects::board_moved::BoardMoved;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{
     BoardOpRecord, BoardStartRecord, FoldBackRecord,
 };
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{Effort, TaskStatus};
+
+mod served;
+pub use served::{ServeError, ServedStatus, ServerRole};
+mod listen_address;
+pub use listen_address::ListenAddress;
+mod tokens;
+pub use tokens::{BoardTokens, IssuedToken, MAX_TOKENS, TokenError, TokenRecord};
 
 /// The board's head: the store's revision a write must start from (the
 /// git store's commit id).
@@ -274,7 +285,19 @@ pub enum BoardStoreError {
     /// A file set aside outside `tasks/` holds the board where an index
     /// cannot yet judge it: no listing is given while one names an artifact
     /// other than a task (an index that does not yet hold that kind).
-    FolderSetAside(String),
+    FolderSetAside {
+        why: String,
+        /// The file set aside, by its path and object, as `clear_set_aside`
+        /// names it (#2659).
+        path: String,
+        object: String,
+    },
+    /// The board moved to a board server (format 4, #2705 B13): this store
+    /// neither reads nor writes it; the server's URLs serve it.
+    Moved(BoardMoved),
+    /// A board fenced at format 4 whose `MOVED` file is not one quecto
+    /// writes: why. Neither read nor written.
+    MovedMalformed(String),
 }
 
 /// Where a project's board lives. Blocking: callers run it off the async
@@ -314,6 +337,14 @@ pub trait ProjectBoardStore: Send + Sync {
         let artifacts: Vec<BoardArtifact> =
             tasks.iter().cloned().map(BoardArtifact::Task).collect();
         self.write(expected, &artifacts, message)
+    }
+
+    /// How many times this store found its board's tracking ref locked by
+    /// another writer in the same clone and fetched again (#2654): a count
+    /// that only grows, for a write's record (#2663). A store that shares
+    /// no ref with other writers counts none.
+    fn lock_races(&self) -> u64 {
+        0
     }
 
     /// Removes the file set aside that `clear` names (a
@@ -488,6 +519,10 @@ pub trait PullRequestStates: Send + Sync {
 pub trait BoardTextCells: Send + Sync {
     /// Whether a text cell holds `line` as it is.
     fn holds(&self, line: &str) -> bool;
+
+    /// Whether a prose section holds `text` (a description's goal or why,
+    /// #2705 T2) as it is: written and read back to the same text.
+    fn holds_prose(&self, text: &str) -> bool;
 }
 
 /// What one fold-back came to, as its recorder is given it.
@@ -607,9 +642,45 @@ pub trait SwarmRunReports: Send + Sync {
     /// The board of run `run` of `task`'s swarm as it ended, if kept here.
     fn ended_run(&self, task: &Slug, run: u32) -> Option<SwarmRunView>;
 
+    /// The board run `run` of `task`'s swarm had reached as its owner
+    /// ended its coordinator while it still ran or was paused (#2674), if
+    /// kept here: what a stop, a failure or a loss of the run records,
+    /// never a success.
+    fn left_run(&self, task: &Slug, run: u32) -> Option<SwarmRunView>;
+
     /// The board of run `run` of `task`'s swarm has been recorded on the
     /// project board: it need not be kept any longer.
     fn recorded(&self, task: &Slug, run: u32);
+}
+
+/// Port: which revisions a run's swarm named in its evidence the board's
+/// remote holds (#2666): a revision is on the remote when it names a
+/// commit (by its full id, or a prefix of at least 12 hex digits) that one
+/// of the remote's branches or tags reaches. A revision a swarm committed
+/// in its container and never pushed is not, nor is any text that names
+/// no commit. Blocking: it reads the remote.
+pub trait RemoteRevisions: Send + Sync {
+    /// Those of `revisions` the remote does not hold so, each as given.
+    ///
+    /// # Errors
+    /// The remote could not be reached or read: nothing is judged.
+    fn not_on_remote(&self, revisions: &[String]) -> Result<Vec<String>, BoardStoreError>;
+
+    /// How many hex digits a full commit id of this repository has: 40
+    /// (SHA-1) or 64 (SHA-256). Read locally.
+    ///
+    /// # Errors
+    /// The repository's object format cannot be read, or is neither.
+    fn commit_id_hex_len(&self) -> Result<usize, BoardStoreError>;
+}
+
+/// Port: the runs this front end's own starts launched (#2655), oldest
+/// first: each run of a task whose coordinator a start of this session
+/// launched, as `(task, run)`, whether or not it has ended since. A front
+/// end that launches none (the CLI) has none. Kept in memory: a process
+/// that restarted has forgotten them.
+pub trait StartedRuns: Send + Sync {
+    fn started(&self) -> Vec<(Slug, u32)>;
 }
 
 /// Port: launches a started task's swarm coordinator in a new container
@@ -635,4 +706,36 @@ pub trait CoordinatorLaunch: Send + Sync {
         request: &CoordinatorRequest,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Result<LaunchedCoordinator, LaunchRefused>;
+}
+
+/// Port: the board's operations as a front end reaches them (epic #2705
+/// B6). The `quecto board` CLI and the agent `board` tool hand each read
+/// and checked request to it and answer what it gives back. Requests and
+/// answers are owned values and refusals the board's own typed errors: no
+/// store handle crosses. The local adapter runs every request on this
+/// machine's board; a board server's (B7) will send the board's reads and
+/// writes there, while a start (its coordinator's launch) and
+/// [`Self::left_runs`] read this session's swarms, so they stay local
+/// until B8. Blocking: the board's store, clock and host all block, so
+/// callers run it off the async workers.
+pub trait BoardOperations: Send + Sync {
+    /// What `request` comes to, a listing summarising its tasks as
+    /// `summaries` asks, noted as `noting` asks: a noted request gives
+    /// back what its use cases saw, answered or refused. A listing is
+    /// never refused for its summaries; summaries asked of a request that
+    /// is no listing ([`BoardRequest::is_listing`]) are refused as invalid.
+    fn execute(
+        &self,
+        request: &BoardRequest,
+        summaries: ListSummaries,
+        noting: OpNoting,
+    ) -> BoardExecution;
+
+    /// The ends this front end owes as its session ends (#2655): each run
+    /// its starts launched that the board still shows open; none for a
+    /// front end that launches none.
+    ///
+    /// # Errors
+    /// The board could not be read.
+    fn left_runs(&self) -> Result<Vec<RunEnd>, ProjectBoardError>;
 }

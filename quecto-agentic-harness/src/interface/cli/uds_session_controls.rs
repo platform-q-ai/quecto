@@ -8,7 +8,7 @@ impl AgentSession {
         &mut self,
         id: Option<&str>,
         command: &str,
-        status: crate::interface::cli::protocol::ControlStatus,
+        status: crate::interface::uds::wire::protocol::ControlStatus,
     ) {
         let Some(id) = id else {
             return;
@@ -24,7 +24,7 @@ impl AgentSession {
                 self.control_receipts.remove(0);
             }
             self.control_receipts
-                .push(crate::interface::cli::protocol::ControlReceipt {
+                .push(crate::interface::uds::wire::protocol::ControlReceipt {
                     id: id.into(),
                     command: command.into(),
                     status,
@@ -38,7 +38,7 @@ impl AgentSession {
     pub(crate) fn control_receipt_status(
         &self,
         id: &str,
-    ) -> Option<super::super::protocol::ControlStatus> {
+    ) -> Option<crate::interface::uds::wire::protocol::ControlStatus> {
         self.control_receipts
             .iter()
             .rev()

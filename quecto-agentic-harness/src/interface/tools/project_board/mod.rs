@@ -2,7 +2,7 @@
 //! shared by the `quecto board` CLI and the agent `board` tool (S2b): a
 //! request is one JSON object read by [`request`] (the command line builds
 //! the same object, [`command_line`]), run by the application's
-//! [`RunBoardOperation`], and answered in one stable JSON shape by
+//! [`BoardOperations`] port, and answered in one stable JSON shape by
 //! [`answer`]. One path, so the front ends cannot drift apart: [`run`]
 //! takes the request's text, so every front end's request is bounded and
 //! read strictly (a key named twice is refused) before anything else.
@@ -19,7 +19,7 @@ pub mod tool;
 use serde_json::Value;
 
 use crate::application::project_board::operations::{BoardRequest, ListSummaries};
-use crate::application::project_board::use_cases::RunBoardOperation;
+use crate::application::project_board::ports::BoardOperations;
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
 use recording::BoardCall;
 use request::RequestError;
@@ -48,12 +48,12 @@ pub fn read(text: &str) -> Result<Value, RequestError> {
 
 /// The answer to the request `text`, recorded nowhere: the tests' way in.
 #[cfg(test)]
-pub fn run(operations: &RunBoardOperation, text: &str) -> Value {
+pub fn run(operations: &dyn BoardOperations, text: &str) -> Value {
     run_recorded(operations, text, &mut BoardCall::unrecorded())
 }
 
 /// The answer to the request `text`, noted on `call` (epic #2481 T3).
-pub fn run_recorded(operations: &RunBoardOperation, text: &str, call: &mut BoardCall) -> Value {
+pub fn run_recorded(operations: &dyn BoardOperations, text: &str, call: &mut BoardCall) -> Value {
     run_recorded_with(operations, text, ListSummaries::Omitted, call)
 }
 
@@ -62,7 +62,7 @@ pub fn run_recorded(operations: &RunBoardOperation, text: &str, call: &mut Board
 /// agent tool never asks). Summaries asked of a request that lists
 /// nothing are refused as the request's.
 pub fn run_recorded_with(
-    operations: &RunBoardOperation,
+    operations: &dyn BoardOperations,
     text: &str,
     summaries: ListSummaries,
     call: &mut BoardCall,
@@ -77,7 +77,7 @@ pub fn run_recorded_with(
     };
     let op = request::op_of(&value);
     call.named(op.as_deref());
-    let request = match request::parse(&value) {
+    let request = match request::parse(&value, request::entry_policy(call.front_end())) {
         Ok(request) => request,
         Err(error) => return call.refuse_request(op.as_deref(), &error),
     };
@@ -87,7 +87,7 @@ pub fn run_recorded_with(
     }
     let op = op.expect("a parsed request names an op");
     match call.executed(operations, &request, summaries) {
-        Ok(outcome) => call.answer(&op, &outcome, operations.clock_note(&request)),
+        Ok(answered) => call.answer(&op, &answered.outcome, answered.clock_note),
         Err(error) => {
             let steps = answer::start_steps::refused(&request, &error);
             call.refuse_as_board(&op, &error, steps)
@@ -102,14 +102,11 @@ pub fn summaries_refusal(request: &BoardRequest, summaries: ListSummaries) -> Op
         (ListSummaries::Omitted, _) | (ListSummaries::Wanted, true) => None,
         (ListSummaries::Wanted, false) => Some(RequestError::of(
             "summary",
-            SUMMARY_LISTINGS_ONLY,
+            crate::application::project_board::dto::SUMMARIES_LISTINGS_ONLY,
             FaultKind::InvalidValue,
         )),
     }
 }
-
-/// Why a summary is refused of a request that lists nothing.
-pub const SUMMARY_LISTINGS_ONLY: &str = "is taken only by list, list_ready and list_takeable";
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]

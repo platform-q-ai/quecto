@@ -133,6 +133,21 @@ pub fn own_session_dying_with_us(command: &mut std::process::Command) {
     }
 }
 
+/// Makes `command`'s child lead a session of its own (`setsid`: nothing it
+/// starts reaches this process's terminal, and its group can be ended as
+/// one) and arms **no** death signal: it outlives this process. Only a
+/// process meant to outlive quecto starts this way (#2615: the admission
+/// broker started on demand, which every session on the host shares).
+pub fn own_session(command: &mut std::process::Command) {
+    // SAFETY: the closure only calls setsid (async-signal-safe).
+    unsafe {
+        std::os::unix::process::CommandExt::pre_exec(command, || match libc::setsid() {
+            session if session > 0 => Ok(()),
+            _ => Err(std::io::Error::last_os_error()),
+        });
+    }
+}
+
 #[cfg(test)]
 #[path = "parent_death_signal_tests.rs"]
 pub(crate) mod tests;

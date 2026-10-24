@@ -1,13 +1,13 @@
 // Built-in tables, split out of `model_registry.rs` to respect the
 // per-file line cap: the built-in models and the auth modes each is offered
-// under (#2435), GPT-5.6 tier pricing and windows (#2405), and which
+// under (#2435), GPT-5.6 tier windows (#2405), and which
 // built-in models take images (#2421). Models older than GPT-5.6 and
 // Claude 5 are retired from the tables (#2435); `models.json` can still
 // declare one.
 // They return infra types, so they live in the infrastructure layer next
 // to the registry rather than in the domain.
 
-use super::{AuthMode, ModelCost, ProviderApi};
+use super::{AuthMode, ProviderApi};
 
 /// One built-in model row: the provider that lists it, its id and display
 /// name, and how that provider reaches it.
@@ -172,33 +172,19 @@ pub(super) fn builtin_specs() -> Vec<BuiltinSpec> {
     rows
 }
 
-/// USD-per-1M-token cost for built-in OpenAI reasoning tiers enriched with
-/// published GPT-5.6+/GPT-6 limits, or `None` otherwise.
-/// Cache read 0.10x input (90% discount), cache write 1.25x input (OpenAI
-/// GPT-5.6+ caching). See `builtin` for source URLs.
-pub(super) fn gpt_5_6_cost(id: &str) -> Option<ModelCost> {
-    let (input, output) = match id {
-        "gpt-6-astra" => (10.0, 50.0),
-        "gpt-6-sol" => (2.0, 10.0),
-        "gpt-6.1-sol" => (2.0, 10.0),
-        "gpt-6-luna" => (0.1, 0.5),
-        "gpt-5.6-sol" => (5.0, 30.0),
-        "gpt-5.6-terra" => (2.5, 15.0),
-        "gpt-5.6-luna" => (1.0, 6.0),
-        _ => return None,
-    };
-    Some(ModelCost {
-        input,
-        output,
-        // GPT-6.1 Sol publishes $0.10/1M cached input (5% of $2.00);
-        // older tiers retain the existing 10% cache-read policy.
-        cache_read: if id == "gpt-6.1-sol" {
-            0.10
-        } else {
-            input * 0.10
-        },
-        cache_write: input * 1.25,
-    })
+/// The built-in OpenAI reasoning tiers enriched with published GPT-5.6+/GPT-6
+/// limits (their prices are the one table's, the domain's `published_prices`).
+pub(super) fn gpt_5_6_tier(id: &str) -> bool {
+    matches!(
+        id,
+        "gpt-6-astra"
+            | "gpt-6-sol"
+            | "gpt-6.1-sol"
+            | "gpt-6-luna"
+            | "gpt-5.6-sol"
+            | "gpt-5.6-terra"
+            | "gpt-5.6-luna"
+    )
 }
 
 /// The GPT-5.6/GPT-6 tiers' window on `provider` (#2405 review M3). Codex

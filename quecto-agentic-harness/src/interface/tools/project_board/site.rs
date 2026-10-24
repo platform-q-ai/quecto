@@ -10,12 +10,13 @@ use serde_json::Value;
 
 use super::answer::FrontEndRefusal;
 use super::recording::BoardCall;
-use super::request::{op_of, parse};
+use super::request::{RequestError, entry_policy, op_of, parse};
 use super::{read, run_recorded_with, summaries_refusal};
 use crate::application::project_board::operations::ListSummaries;
-use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness};
-use crate::application::project_board::use_cases::RunBoardOperation;
-
+use crate::application::project_board::ports::{
+    BoardOperations, CoordinatorLaunch, RunLiveness, StartedRuns,
+};
+use crate::domain::project_board::value_objects::telemetry::{BoardId, FaultKind, FrontEnd};
 /// What a request does with the board.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Access {
@@ -25,10 +26,23 @@ pub enum Access {
     Write,
 }
 
+/// What a front end already knows of where its board is (#2705 B1), so
+/// composition need not ask git for it: the id the board's records name
+/// it by, and its remote's fetch URL. Each part left `None` is asked of
+/// git, as before; the caller that names one vouches for it. Only a read
+/// takes it: a write asks git for the whole location.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KnownLocation {
+    pub board_id: Option<BoardId>,
+    pub remote_url: Option<String>,
+}
+
 /// What composition is given to build the board's operations.
 pub struct ProjectBoardEnvironment {
     pub repo: PathBuf,
     pub remote: String,
+    /// Where the board is, as far as the front end knows it.
+    pub known: KnownLocation,
     pub access: Access,
     /// The process environment, which composition allowlists for git.
     pub vars: Vec<(std::ffi::OsString, std::ffi::OsString)>,
@@ -49,17 +63,22 @@ pub struct ProjectBoardEnvironment {
 }
 
 /// A session's swarms as a front end reaches them (S4c): it launches a
-/// started task's coordinator, and sees whether a run's still runs.
-pub trait SessionSwarms: CoordinatorLaunch + RunLiveness {}
+/// started task's coordinator, sees whether a run's still runs, and names
+/// the runs it started (#2655).
+pub trait SessionSwarms: CoordinatorLaunch + RunLiveness + StartedRuns {}
 
-impl<T: CoordinatorLaunch + RunLiveness> SessionSwarms for T {}
+impl<T: CoordinatorLaunch + RunLiveness + StartedRuns> SessionSwarms for T {}
 
 /// A front end's coordinator launcher (S4c).
 pub type Launcher = std::sync::Arc<dyn SessionSwarms>;
 
-/// The board's operations, built by composition.
+/// The board's operations, built by composition: the port the front ends
+/// hand each request to (#2705 B6).
 pub struct ProjectBoardHandles {
-    pub operations: RunBoardOperation,
+    pub operations: Box<dyn BoardOperations>,
+    /// The board's id for its records (#2663): `None` where its remote
+    /// gives none.
+    pub board: Option<BoardId>,
 }
 
 /// Why composition could not build the board's operations.
@@ -67,6 +86,8 @@ pub struct ProjectBoardHandles {
 pub enum BuildError {
     /// A write, with no committer configured.
     NoCommitter(String),
+    /// The remote named is none the repository configures (#2659).
+    NoSuchRemote(String),
     Unavailable(String),
 }
 
@@ -80,6 +101,9 @@ pub type ProjectBoardHandlesBuilder =
 pub struct BoardSite {
     pub repo: PathBuf,
     pub remote: String,
+    /// Where the board is, as far as the front end knows it (the CLI's
+    /// `--board-id` and `--remote-url`; the agent tool knows nothing).
+    pub known: KnownLocation,
     pub build: Option<ProjectBoardHandlesBuilder>,
     pub launcher: Option<Launcher>,
     /// The session whose ended swarms' boards a run's end reads (`None`:
@@ -99,9 +123,16 @@ impl BoardSite {
         launcher: Launcher,
         spawned_in: &crate::domain::environments::entities::environment_registry::EnvironmentRegistry,
     ) -> Self {
+        // The one authority on the session's board repository, which its
+        // teardown judges a succeeded board run's completion against (#2666).
+        crate::infrastructure::tools::agents::coordinator_launch::register_board_repository(
+            spawned_in.session(),
+            &repo,
+        );
         Self {
             repo,
             remote: "origin".into(),
+            known: KnownLocation::default(),
             build: Some(build),
             launcher: Some(launcher),
             swarm_session: Some(spawned_in.session().to_owned()),
@@ -114,6 +145,7 @@ impl std::fmt::Debug for BoardSite {
         f.debug_struct("BoardSite")
             .field("repo", &self.repo)
             .field("remote", &self.remote)
+            .field("known", &self.known)
             .field("build", &self.build.is_some())
             .field("launcher", &self.launcher.is_some())
             .field("swarm_session", &self.swarm_session)
@@ -154,7 +186,7 @@ pub fn answer_with(
     // Read first: a request refused here builds nothing.
     let op = op_of(&value);
     call.named(op.as_deref());
-    let parsed = match parse(&value) {
+    let parsed = match parse(&value, entry_policy(call.front_end())) {
         Ok(parsed) => parsed,
         Err(error) => return call.refuse_request(op.as_deref(), &error),
     };
@@ -169,26 +201,81 @@ pub fn answer_with(
             "the project board capability is not composed",
         );
     };
-    let environment = ProjectBoardEnvironment {
+    let access = match parsed.writes() {
+        true => Access::Write,
+        false => Access::Read,
+    };
+    let environment = environment_of(site, access, cancelled);
+    match call.built(|| build(&environment)) {
+        // The one entry point every front end's request goes through.
+        Ok(handles) => {
+            call.on_board(handles.board.as_ref());
+            run_recorded_with(&*handles.operations, text, summaries, call)
+        }
+        Err(BuildError::NoCommitter(why)) => {
+            call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::NoCommitter, &why)
+        }
+        // A remote the clone lacks: on the command line, which names it
+        // (`--remote`), the request's mistake; the agent tool names none
+        // (its board is `origin`), so there the store is out of reach.
+        Err(BuildError::NoSuchRemote(why)) => match call.front_end() {
+            FrontEnd::Cli => {
+                let error = RequestError::of("remote", why, FaultKind::InvalidValue);
+                call.refuse_request(op.as_deref(), &error)
+            }
+            FrontEnd::Tool => {
+                call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::StoreUnavailable, &why)
+            }
+        },
+        Err(BuildError::Unavailable(why)) => {
+            call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::StoreUnavailable, &why)
+        }
+    }
+}
+
+/// What composition is given to build `site`'s board for `access`.
+fn environment_of(
+    site: &BoardSite,
+    access: Access,
+    cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> ProjectBoardEnvironment {
+    ProjectBoardEnvironment {
         repo: site.repo.clone(),
         remote: site.remote.clone(),
-        access: match parsed.writes() {
-            true => Access::Write,
-            false => Access::Read,
-        },
+        known: site.known.clone(),
+        access,
         vars: std::env::vars_os().collect(),
         cancelled,
         launcher: site.launcher.clone(),
         swarm_session: site.swarm_session.clone(),
+    }
+}
+
+/// The ends `site`'s session owes as it ends (#2655): each run its starts
+/// launched that the board still shows open. None when the board is not
+/// composed; why, when it cannot be read.
+///
+/// # Errors
+/// The board could not be built or read: what it said.
+pub fn left_runs(
+    site: &BoardSite,
+) -> Result<Vec<crate::application::project_board::dto::RunEnd>, String> {
+    match site.launcher.as_ref() {
+        Some(launcher) if !launcher.started().is_empty() => {}
+        _ => return Ok(vec![]),
+    }
+    let Some(build) = site.build else {
+        return Ok(vec![]);
     };
-    match call.built(|| build(&environment)) {
-        // The one entry point every front end's request goes through.
-        Ok(handles) => run_recorded_with(&handles.operations, text, summaries, call),
-        Err(BuildError::NoCommitter(why)) => {
-            call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::NoCommitter, &why)
-        }
-        Err(BuildError::Unavailable(why)) => {
-            call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::StoreUnavailable, &why)
-        }
+    match build(&environment_of(site, Access::Read, None)) {
+        Ok(handles) => handles
+            .operations
+            .left_runs()
+            .map_err(|error| error.to_string()),
+        Err(
+            BuildError::NoCommitter(why)
+            | BuildError::NoSuchRemote(why)
+            | BuildError::Unavailable(why),
+        ) => Err(why),
     }
 }

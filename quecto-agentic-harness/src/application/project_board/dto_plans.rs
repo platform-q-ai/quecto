@@ -1,6 +1,6 @@
 //! What a plan's use cases take (#2481 M4b, M4c): a new version
 //! proposed, an edit of a draft, and a draft accepted or discarded.
-use crate::domain::project_board::entities::plan::PlanItem;
+use crate::domain::project_board::entities::plan::{PlanEntry, PlanItem};
 use crate::domain::project_board::entities::team::Team;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -14,8 +14,12 @@ pub struct PlanProposal {
     pub task: Slug,
     /// Markdown.
     pub approach: String,
+    /// Markdown (#2705 T3); `None`, or empty once normalised, for none.
+    pub handoff: Option<String>,
     pub items: Vec<PlanItem>,
     pub team: Option<Team>,
+    /// How its approach enters, as its front end's policy resolved it.
+    pub entry: PlanEntry,
 }
 
 /// An edit of draft `version` of `task`'s plan, as a patch: a field left
@@ -31,16 +35,24 @@ pub struct PlanEdit {
     pub version: u32,
     /// Markdown.
     pub approach: Option<String>,
+    /// Markdown (#2705 T3): the whole handoff, or, empty once normalised,
+    /// none (the plan's file goes back to schema 1).
+    pub handoff: Option<String>,
     pub items: Option<Vec<PlanItem>>,
     pub team: Option<Option<Team>>,
     pub expected_updated: Option<Timestamp>,
+    /// How a new approach enters, as its front end's policy resolved it.
+    pub entry: PlanEntry,
 }
 
 impl PlanEdit {
     /// Whether the edit gives a field to change (an allowlist of its
     /// content fields).
     pub fn sets_something(&self) -> bool {
-        self.approach.is_some() || self.items.is_some() || self.team.is_some()
+        self.approach.is_some()
+            || self.handoff.is_some()
+            || self.items.is_some()
+            || self.team.is_some()
     }
 }
 

@@ -24,7 +24,7 @@ use crate::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentRegistry, SubagentStatus,
 };
 use crate::infrastructure::tools::agents::subagent_teardown_registry::RegistryDelegatedAgents;
-use crate::interface::cli::uds_teardown_adapters::RegistryLifecycleRepository;
+use crate::interface::uds::controllers::uds_teardown_adapters::RegistryLifecycleRepository;
 
 /// A fake harness endpoint that acknowledges every command and records it.
 fn acking_endpoint(dir: &std::path::Path) -> (std::path::PathBuf, Arc<Mutex<Vec<String>>>) {

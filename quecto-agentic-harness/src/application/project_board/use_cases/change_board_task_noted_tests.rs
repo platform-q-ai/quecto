@@ -42,6 +42,10 @@ fn a_change_that_lost_once_tells_two_attempts_and_the_task_it_built_on() {
         attempts: Some(2),
         lost: Some(1),
         pause_ms: Some(40),
+        // The commit the write made (#2663).
+        head: Some(crate::application::project_board::ports::BoardHead(
+            "r4".into(),
+        )),
         ..OpFacts::default()
     };
     assert_eq!(facts, want);
@@ -85,7 +89,8 @@ fn each_pause_is_added_and_a_contended_change_tells_every_attempt_lost() {
         (Some(3), Some(2), Some(80))
     );
     lose(&store, 3);
-    let (contended, facts) = renew_noted(&store, SetClock::at("10:30:00"));
+    // Past halfway again, so the renewal is due (#2656).
+    let (contended, facts) = renew_noted(&store, SetClock::at("11:30:00"));
     assert_eq!(contended, Err(ProjectBoardError::Contended { attempts: 3 }));
     assert_eq!(
         (facts.attempts, facts.lost, facts.pause_ms),
@@ -185,9 +190,16 @@ mod a_task_gone_on_retry {
             parent: None,
             depends_on: None,
             expected_updated: None,
+            entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
         };
-        let edit =
-            UpdateDraftTask::new(Arc::new(store.client()), SetClock::at("10:20:00")).unwrap();
+        let edit = UpdateDraftTask::new(
+            Arc::new(store.client()),
+            SetClock::at("10:20:00"),
+            std::sync::Arc::new(
+                crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+            ),
+        )
+        .unwrap();
         let mut facts = OpFacts::default();
         assert_eq!(
             edit.execute_noted(&update, Some(&mut facts)),
@@ -209,10 +221,10 @@ mod a_task_gone_on_retry {
         let host = MemoryPullRequests::default();
         host.set(7, PullRequestState::Merged);
         spoiled_before_the_first_write(&store);
-        let complete = CompleteMergedTask::new(
+        let complete = CompleteMergedTask::reading(
             Arc::new(store.client()),
             SetClock::at("10:20:00"),
-            Arc::new(host),
+            Ok(Arc::new(host)),
         )
         .unwrap();
         let mut facts = OpFacts::default();

@@ -210,3 +210,15 @@ fn stub_without_recall_strips_only_the_trailing_clause() {
 fn stub_without_recall_is_identity_without_a_clause() {
     assert_eq!(message_stub_without_recall("plain text"), "plain text");
 }
+
+// #996 item 2: a bounded truncation never splits a UTF-8 character.
+#[test]
+fn truncate_utf8_safe_bounds_and_multibyte() {
+    assert_eq!(truncate_utf8_safe("hi", 10).as_ref(), "hi");
+    let mb = "汉".repeat(200); // 3 bytes each
+    let out = truncate_utf8_safe(&mb, 60);
+    assert_eq!(out.chars().count(), 60);
+    // Whole-codepoint proof: 57 intact 3-byte chars plus the ellipsis. A
+    // mid-codepoint cut could not reconstruct this exact string.
+    assert_eq!(out.as_ref(), format!("{}...", "汉".repeat(57)));
+}

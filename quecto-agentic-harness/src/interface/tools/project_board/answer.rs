@@ -37,6 +37,8 @@
 //! present (`null` or `[]` when unset), in a fixed order.
 use serde_json::{Map, Value, json};
 
+use crate::domain::project_board::services::claims::renew_after;
+
 use super::request::RequestError;
 use crate::application::project_board::dto::{LivenessCheck, ProjectBoardError, RunReport};
 use crate::application::project_board::operations::{BoardOutcome, Completion};
@@ -47,17 +49,17 @@ use crate::application::project_board::ports::{
 use crate::application::project_board::start::StartedTask;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
-use crate::domain::project_board::value_objects::shown_text::{
-    shown_artifact_path, shown_board_path,
-};
+use crate::domain::project_board::value_objects::shown_text::shown_board_path;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::RunOutcome;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 
 #[path = "answer_artifacts.rs"]
 mod artifacts;
+#[path = "answer_set_aside.rs"]
+mod set_aside;
 use artifacts::{
-    artifact_folder, listing_fields, page_fields, planned_json, quarantined_json, run_json,
+    description_fields, listing_fields, page_fields, planned_json, quarantined_json, run_json,
     shown_fields,
 };
 
@@ -83,6 +85,11 @@ pub enum ErrorCode {
     /// `reason`: the board is held outside `tasks/`: no listing while a
     /// file set aside there names another kind's key.
     FolderSetAside,
+    /// `board` (its id) and `urls`: the board moved to a board server
+    /// (#2705 B13), which serves it now.
+    BoardMoved,
+    /// `reason`: the board moved, but its `MOVED` file is malformed.
+    BoardMovedMalformed,
     /// `rule`: `{"code", …}`.
     Rule,
     /// `field`, `problem`.
@@ -165,6 +172,8 @@ impl ErrorCode {
             Self::StoreUnavailable => "store_unavailable",
             Self::BoardTooLarge => "board_too_large",
             Self::FolderSetAside => "folder_set_aside",
+            Self::BoardMoved => "board_moved",
+            Self::BoardMovedMalformed => "board_moved_malformed",
             Self::Rule => "rule",
             Self::InvalidTask => "invalid_task",
             Self::InvalidWriter => "invalid_writer",
@@ -242,6 +251,10 @@ pub fn outcome(
         },
         BoardOutcome::Changed { task, completion } => {
             fields.insert("task".into(), task_json(task));
+            // A renewal says when the next one is due (#2656).
+            if op == "renew" {
+                fields.insert("renew_after".into(), renew_after_json(task));
+            }
             if let Some(completion) = completion {
                 let completion = match completion {
                     Completion::Done(task) => json!({"done": true, "task": task_json(task)}),
@@ -265,6 +278,10 @@ pub fn outcome(
             // Whether this front end could see the run's swarm still
             // running; one that could not says what that leaves its caller.
             fields.insert("liveness".into(), json!(ended.liveness.as_str()));
+            // A success's evidence revisions the push rule did not check.
+            if let Some(unchecked) = ended.unchecked {
+                fields.insert("unchecked".into(), json!(unchecked));
+            }
             match ended.liveness {
                 LivenessCheck::Checked => {}
                 LivenessCheck::NotChecked => {
@@ -275,10 +292,15 @@ pub fn outcome(
             // from its swarm's kept board shows them in the run itself.
             let report = match (run.fields().outcome, ended.report) {
                 (
-                    Some(RunOutcome::Succeeded | RunOutcome::Stopped | RunOutcome::Failed),
+                    Some(
+                        RunOutcome::Succeeded
+                        | RunOutcome::Stopped
+                        | RunOutcome::Failed
+                        | RunOutcome::Lost,
+                    ),
                     RunReport::Unreported,
                 ) => Some(NO_SWARM_REPORT),
-                (Some(RunOutcome::Lost) | None, _) | (_, RunReport::Kept) => None,
+                (None, _) | (_, RunReport::Kept) => None,
             };
             if let Some(report) = report {
                 fields.insert("items_recorded".into(), json!(report));
@@ -341,7 +363,16 @@ fn started_fields(started: &StartedTask) -> Map<String, Value> {
         ),
         ("not_applied", Value::Array(not_applied)),
         ("claim", json!(started.claim.as_str())),
+        // When to renew the claim: halfway through it (#2656). A started
+        // task is held by its starter.
+        ("renew_after", renew_after_json(&started.task)),
     ])
+}
+
+/// When the claim `task` holds is next renewed (#2656): halfway through
+/// it; `null` for a task that holds none.
+fn renew_after_json(task: &Task) -> Value {
+    renew_after(task).map_or(Value::Null, |at| json!(at.as_str()))
 }
 
 /// The files set aside, each with its `object` and the `copies` (every
@@ -371,32 +402,6 @@ fn head_json(head: &BoardHead) -> Value {
 
 fn slug_json(slug: &Slug) -> Value {
     Value::String(slug.as_str().into())
-}
-
-/// The artifact a refusal names: a task as `set_aside` by its id, as
-/// ever; any other kind as `artifact_set_aside` by [`key_fields`] and its
-/// file's raw path, so a clear can name it exactly.
-fn set_aside_fields(key: &ArtifactKey, path: &str) -> (ErrorCode, Map<String, Value>) {
-    let folder = match key {
-        ArtifactKey::Task(id) => {
-            return (ErrorCode::SetAside, fields([("task", slug_json(id))]));
-        }
-        ArtifactKey::Plan(..)
-        | ArtifactKey::Run(..)
-        | ArtifactKey::Change(..)
-        | ArtifactKey::Review(..)
-        | ArtifactKey::Discussion(_) => {
-            artifact_folder(key).expect("every kind but a task has a folder")
-        }
-    };
-    // Its own kind's folder, one name in it.
-    assert!(
-        shown_artifact_path(folder, path),
-        "a store shows every path it sets aside sanitised: {path:?}"
-    );
-    let mut named = key_fields(key);
-    named.insert("path".into(), json!(path));
-    (ErrorCode::ArtifactSetAside, named)
 }
 
 /// An artifact by its key: `kind` and `task` for a task; `kind`, `task`
@@ -434,10 +439,12 @@ fn identity_json(identity: &Identity) -> Value {
 /// A task in the board's own field names, every field present but where
 /// it came from and how it ended (`github_issue`, `resolution`,
 /// `superseded_by`, `references`): those are held back on purpose, as
-/// showing them to agents is the owner's call (M4).
+/// showing them to agents is the owner's call (M4). Beside its
+/// description, its sections ([`description_fields`], #2705 T2).
 pub fn task_json(task: &Task) -> Value {
+    let described = description_fields(&task.fields().description);
     let task = task.fields();
-    json!({
+    let mut answer = json!({
         "id": slug_json(&task.id),
         "title": task.title,
         "kind": task.kind.as_str(),
@@ -454,7 +461,10 @@ pub fn task_json(task: &Task) -> Value {
         "prs": task.prs,
         "created": task.created.as_str(),
         "updated": task.updated.as_str(),
-    })
+    });
+    let fields = answer.as_object_mut().expect("a task answers an object");
+    fields.extend(described);
+    answer
 }
 
 /// A refused answer to `op` (`None` when the request named no op it
@@ -570,9 +580,23 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::Store(BoardStoreError::TooLarge(why)) => {
             (C::BoardTooLarge, fields([("reason", shown_json(why))]))
         }
-        E::Store(BoardStoreError::FolderSetAside(why)) => {
-            (C::FolderSetAside, fields([("reason", shown_json(why))]))
+        E::Store(BoardStoreError::FolderSetAside { why, path, object }) => {
+            let mut named = set_aside::file_fields(path, object);
+            named.insert("reason".into(), shown_json(why));
+            (C::FolderSetAside, named)
         }
+        E::Store(BoardStoreError::Moved(moved)) => {
+            let urls = moved.urls().iter().map(|url| shown_json(url)).collect();
+            let board = json!(moved.board().as_str());
+            (
+                C::BoardMoved,
+                fields([("board", board), ("urls", Value::Array(urls))]),
+            )
+        }
+        E::Store(BoardStoreError::MovedMalformed(why)) => (
+            C::BoardMovedMalformed,
+            fields([("reason", shown_json(why))]),
+        ),
         E::Rule(rule) => (C::Rule, fields([("rule", rule_json(rule))])),
         E::Invalid(schema) => (
             C::InvalidTask,
@@ -600,7 +624,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::Clock(BoardClockError::OutOfRange(read)) => {
             (C::ClockUnreadable, fields([("read", shown_json(read))]))
         }
-        E::Quarantined { key, path } => set_aside_fields(key, path),
+        E::Quarantined { key, path, object } => set_aside::fields_of(key, path, object),
         E::Duplicate { key } => (C::DuplicateArtifact, key_fields(key)),
         E::SetAsideFile { path, object } => {
             assert!(
@@ -715,3 +739,7 @@ mod tests;
 #[cfg(test)]
 #[path = "answer_show_tests.rs"]
 mod show_tests;
+
+#[cfg(test)]
+#[path = "answer_moved_tests.rs"]
+mod moved_tests;

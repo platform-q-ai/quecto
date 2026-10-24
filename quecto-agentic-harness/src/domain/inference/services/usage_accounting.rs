@@ -1,4 +1,5 @@
-use crate::domain::conversation::value_objects::message::{LlmResponse, model_pricing};
+use crate::domain::conversation::value_objects::message::UsageInfo;
+use crate::domain::inference::value_objects::model_price::ModelPrice;
 
 /// Shared normalized cache-hit ratio for cumulative usage stats.
 ///
@@ -15,12 +16,12 @@ pub fn cache_hit_ratio(
     (denominator != 0).then_some(cache_read_tokens as f64 / denominator as f64)
 }
 
-/// Attach shared model-pricing cost to normalized usage, when pricing exists.
+/// Cost normalized `usage` at the model's catalogue price (#1855): the one
+/// price authority. A model with no price leaves the usage uncosted.
 ///
-/// Provider adapters own wire parsing; cost math stays in the domain pricing
-/// model and is applied after provider usage has been normalized.
-pub fn attach_cost(response: &mut LlmResponse, model: &str) {
-    if let (Some(usage), Some(pricing)) = (&mut response.usage, model_pricing(model)) {
-        usage.cost = Some(pricing.cost_for(usage));
-    }
+/// Provider adapters own wire parsing and never price; the agent turn
+/// prices usage once it is normalized, from the active model's catalogue
+/// entry.
+pub fn price(usage: &mut UsageInfo, price: Option<ModelPrice>) {
+    usage.cost = price.map(|price| price.cost_of(usage));
 }

@@ -26,7 +26,7 @@ use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentStatus, WorkflowSnapshot, new_registry,
 };
 use quecto::infrastructure::tools::native::workflow_tool::{broadcast_emitter, snapshot_to_event};
-use quecto::interface::cli::protocol::build_subagent_info_list;
+use quecto::interface::uds::presenters::subagent_info_list::build_subagent_info_list;
 use std::path::PathBuf;
 
 // ─── Stage B / R-B1: identity on workflow_state events ──────────────────────
@@ -208,7 +208,7 @@ fn given_identity_tagged_stream(
 
 #[when("a consumer reconstructs the unit tree from the stream")]
 fn when_reconstruct_unit_tree(world: &mut QuectoWorld) {
-    use quecto::interface::cli::protocol::UnitTree;
+    use quecto::interface::uds::wire::protocol::UnitTree;
     let tree = UnitTree::from_events(&world.event_identity_stream);
     // Project the parentage into a JSON map so the assertion needn't import the type.
     let mut map = serde_json::Map::new();

@@ -13,21 +13,33 @@ use super::sessions_epic_close::{
 };
 use super::teardown_authority::{production_code, production_files};
 
+/// The sessions capability's UDS edge (#1968): its controllers, which share
+/// the adapter's `controllers` role folder since #2370.
+const SESSIONS_EDGE_FILES: &[&str] = &[
+    "src/interface/uds/controllers/sessions_controller.rs",
+    "src/interface/uds/controllers/export_report_controller.rs",
+    "src/interface/uds/controllers/read_history_controller.rs",
+    "src/interface/uds/controllers/recover_message_controller.rs",
+    "src/interface/uds/controllers/resume_session_controller.rs",
+    "src/interface/uds/controllers/rewind_conversation_controller.rs",
+    "src/interface/uds/controllers/search_session_metadata_controller.rs",
+    "src/interface/uds/controllers/synchronize_transcript_controller.rs",
+];
 const INTERFACE_SESSION_MODULES: &[&str] = &[
-    "src/interface/uds/sessions/controller.rs",
-    "src/interface/uds/sessions/read_history_controller.rs",
-    "src/interface/uds/sessions/recover_message_controller.rs",
-    "src/interface/uds/sessions/export_report_controller.rs",
-    "src/interface/uds/sessions/synchronize_transcript_controller.rs",
-    "src/interface/uds/sessions/rewind_conversation_controller.rs",
-    "src/interface/cli/uds_dispatch_session.rs",
+    "src/interface/uds/controllers/sessions_controller.rs",
+    "src/interface/uds/controllers/read_history_controller.rs",
+    "src/interface/uds/controllers/recover_message_controller.rs",
+    "src/interface/uds/controllers/export_report_controller.rs",
+    "src/interface/uds/controllers/synchronize_transcript_controller.rs",
+    "src/interface/uds/controllers/rewind_conversation_controller.rs",
+    "src/interface/uds/controllers/uds/uds_dispatch_session.rs",
     "src/interface/cli/uds_session_history.rs",
     "src/interface/cli/uds_session_message_range.rs",
-    "src/interface/cli/uds_latest_report.rs",
-    "src/interface/cli/uds_sync.rs",
+    "src/interface/uds/presenters/uds_latest_report.rs",
+    "src/interface/uds/presenters/uds_sync.rs",
     "src/interface/cli/uds_snapshots.rs",
-    "src/interface/cli/uds_session_handles.rs",
-    "src/interface/cli/uds_turn_accounting.rs",
+    "src/interface/uds/controllers/uds_session_handles.rs",
+    "src/interface/uds/controllers/uds_turn_accounting.rs",
     "src/interface/cli/uds_session_switch_runtime.rs",
     "src/interface/cli/controllers/retention_handles.rs",
     "src/interface/cli/uds_lifecycle.rs",
@@ -73,16 +85,24 @@ const STARTUP_KEY_SITES: &[&str] = &["src/interface/cli/controllers/agent/agent_
 /// Disposition inventory (D10): the interface modules that stayed, each in
 /// its allowlisted owner role, with no sessions persistence call.
 const DISPOSITION: &[(&str, &str)] = &[
-    ("src/interface/cli/uds_cancel_history.rs", "cancellation"),
+    (
+        "src/interface/uds/controllers/uds_cancel_history.rs",
+        "cancellation",
+    ),
     ("src/interface/cli/uds_session_controls.rs", "control"),
     ("src/interface/cli/uds_session_notify.rs", "notification"),
     ("src/interface/cli/uds_session_usage.rs", "stats"),
 ];
 
+/// The subagent teardown edge's controller, whose shutdown-preparation token
+/// release is the interface's one keyed `.release(&` (not a session store).
+const TEARDOWN_CONTROLLER: &str = "src/interface/uds/controllers/subagent_teardown_controller.rs";
+
 /// Files retired by the epic; none may reappear.
 const RETIRED_PATHS: &[&str] = &[
     "src/interface/cli/agent_session_identity.rs",
     "src/interface/cli/uds/uds_session_load.rs",
+    "src/interface/uds/controllers/uds/uds_session_load.rs",
     "src/interface/cli/uds_busy_sync.rs",
     "src/interface/cli/uds_snapshot_export.rs",
 ];
@@ -368,19 +388,28 @@ fn interface_session_modules_parse_map_and_present_only() {
     }
     let interface: Vec<String> = production_files()
         .into_iter()
-        .filter(|p| {
-            p.starts_with("src/interface/cli/") || p.starts_with("src/interface/uds/sessions/")
-        })
+        .filter(|p| p.starts_with("src/interface/"))
         .collect();
-    let reaches: Vec<String> = interface
+    // The whole interface is scanned, wherever a layout slice moved a file.
+    // The one keyed `.release(&` it holds is the subagent teardown edge
+    // releasing its own shutdown-preparation token, not a session store:
+    // pinned exactly, so it can neither move nor multiply unseen.
+    let (teardown, reaches): (Vec<_>, Vec<_>) = interface
         .iter()
         .flat_map(|path| {
             production_code(path)
                 .into_iter()
                 .filter(|(_, line)| reaches_a_persistence_method(line))
-                .map(move |(n, line)| format!("{path}:{n}: {}", line.trim()))
+                .map(move |(n, line)| (path.clone(), format!("{path}:{n}: {}", line.trim())))
         })
-        .collect();
+        .partition(|(path, line)| {
+            path == TEARDOWN_CONTROLLER && line.ends_with(": self.prepare.release(&token)")
+        });
+    assert_eq!(
+        teardown.len(),
+        1,
+        "the teardown edge's one token release: {teardown:#?}"
+    );
     assert!(
         reaches.is_empty(),
         "interface reaches a persistence method directly: {reaches:#?}"
@@ -421,10 +450,7 @@ fn interface_session_modules_parse_map_and_present_only() {
         );
     }
     // The sessions edge names only the capability's DTOs and use cases.
-    for path in files_under("src/interface/uds/sessions")
-        .into_iter()
-        .filter(|p| !p.ends_with("_tests.rs"))
-    {
+    for path in super::dependency_scan::production_closure(SESSIONS_EDGE_FILES) {
         for (n, line) in production_code(&path) {
             if line.contains("crate::application::sessions::") {
                 assert!(
@@ -469,7 +495,7 @@ fn raw_key_conversion_and_startup_key_sites_are_exact() {
     );
     // The loop's runtime inputs are typed: no interface handle struct
     // carries a raw session key.
-    let handles = production_code("src/interface/cli/uds_session_handles.rs");
+    let handles = production_code("src/interface/uds/controllers/uds_session_handles.rs");
     assert!(
         handles
             .iter()

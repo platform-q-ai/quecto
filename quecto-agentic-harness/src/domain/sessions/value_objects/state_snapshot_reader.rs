@@ -57,6 +57,7 @@ pub(super) const ADMISSION: Shape = Shape {
         "epoch",
         "connected",
         "authorityStatus",
+        "restartRequired",
     ],
     objects: &[("counters", &COUNTERS)],
     arrays: &[("groups", &GROUP)],

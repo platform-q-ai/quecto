@@ -16,7 +16,9 @@
 //!
 //! Blocking: the store, the listings, the clock and the host all block, so
 //! callers run operations off the async workers.
-use crate::application::project_board::dto::{BoardListing, BoardOp, ProjectBoardError};
+use crate::application::project_board::dto::{
+    BoardListing, BoardOp, ProjectBoardError, SUMMARIES_LISTINGS_ONLY,
+};
 use crate::application::project_board::operations::{
     BoardOperationParts, BoardOutcome, BoardRequest, Completion, ListFilter, ListSummaries,
 };
@@ -25,6 +27,7 @@ use crate::application::project_board::task_summary::{Listed, SkipReason, Summar
 use crate::application::project_board::telemetry::{OpFacts, completion_facts_of};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
+use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::CompletionFacts;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -44,6 +47,22 @@ impl RunBoardOperation {
         Self { parts }
     }
 
+    /// The ends this front end owes as its session ends (#2655): each run
+    /// its starts launched that the board still shows open, to be ended as
+    /// [`ListLeftRuns`](super::ListLeftRuns) says; none for a front end
+    /// that launches none.
+    ///
+    /// # Errors
+    /// The store's.
+    pub fn left_runs(
+        &self,
+    ) -> Result<Vec<crate::application::project_board::dto::RunEnd>, ProjectBoardError> {
+        match &self.parts.left_runs {
+            Some(left) => left.execute(),
+            None => Ok(vec![]),
+        }
+    }
+
     /// What `request` comes to.
     ///
     /// # Errors
@@ -56,22 +75,25 @@ impl RunBoardOperation {
     /// `summaries` asks.
     ///
     /// # Errors
-    /// As [`Self::execute`]: never for a listing's summaries.
-    ///
-    /// # Panics
-    /// Summaries asked of a request that is no listing
-    /// ([`BoardRequest::is_listing`]): a front end refuses that first.
+    /// As [`Self::execute`], never for a listing's summaries; summaries
+    /// asked of a request that is no listing ([`BoardRequest::is_listing`])
+    /// are refused as invalid, before anything is read (a front end
+    /// refuses that first, as the request's).
     pub fn execute_noted_with(
         &self,
         request: &BoardRequest,
         facts: Option<&mut OpFacts>,
         summaries: ListSummaries,
     ) -> Result<BoardOutcome, ProjectBoardError> {
-        assert!(
-            summaries == ListSummaries::Omitted || request.is_listing(),
-            "summaries are asked only of a listing: {request:?}"
-        );
-        self.run(request, facts, summaries)
+        match (summaries, request.is_listing()) {
+            (ListSummaries::Omitted, _) | (ListSummaries::Wanted, true) => {
+                self.run(request, facts, summaries)
+            }
+            (ListSummaries::Wanted, false) => Err(ProjectBoardError::Invalid(SchemaError::new(
+                "summary",
+                SUMMARIES_LISTINGS_ONLY,
+            ))),
+        }
     }
 
     /// [`Self::execute`], noting in `facts` (epic #2481 T4), when given,
@@ -157,7 +179,7 @@ impl RunBoardOperation {
                     let own = own.unwrap_or_default();
                     facts.completion = Some(CompletionFacts {
                         completion_attempts: own.attempts,
-                        completion_lost: own.lost,
+                        completion_races_lost: own.lost,
                         completion_pause_ms: own.pause_ms,
                         ..completion_facts_of(completion, task.fields().prs.len())
                     });
@@ -254,16 +276,11 @@ impl RunBoardOperation {
         Ok(BoardOutcome::Listing(Listed::skipped(listing, skipped)))
     }
 
-    /// Task `id` completed, noted in `facts` when given; with no pull
-    /// request host, a task not on the board is answered as such first.
+    /// Task `id` completed, noted in `facts` when given: with no pull
+    /// request host, a task not on the board, or one linking none, is
+    /// answered as such first (#2658).
     fn complete(&self, id: &Slug, facts: Option<&mut OpFacts>) -> Result<Task, ProjectBoardError> {
-        match &self.parts.complete {
-            Ok(complete) => complete.execute_noted(id, facts),
-            Err(why) => {
-                self.parts.query.task(id)?;
-                Err(ProjectBoardError::NoPullRequestHost(why.clone()))
-            }
-        }
+        self.parts.complete.execute_noted(id, facts)
     }
 }
 

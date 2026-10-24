@@ -219,6 +219,7 @@ impl App {
             "get_session_stats" if success => {
                 self.handle_session_stats_response(id.as_deref(), data)
             }
+            "restart_admission" => self.handle_admission_restart(success, data, error),
             "refresh_models" if success => self.handle_refresh_models(data),
             "refresh_models" => self.notify_response_error("Model catalogue refresh failed", error),
             "list_models" if success => self.handle_list_models(data),

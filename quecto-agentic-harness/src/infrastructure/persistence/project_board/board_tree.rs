@@ -41,7 +41,8 @@
 //! it never reads, and never writes over, a board whose tasks it would not
 //! see. Every write adds the marker; a root without one is a board written
 //! before it, read as it is; a marker of a newer format asks for an
-//! upgrade.
+//! upgrade; the fence's (format 4, `format/MOVED` beside it, #2705 B13)
+//! answers that the board moved to a board server, and is never written.
 //!
 //! An object a partial clone does not hold yet is not fetched here (every
 //! local call runs with `GIT_NO_LAZY_FETCH`): the read answers
@@ -56,13 +57,14 @@
 //! file at the root is fetched by its id, so a damaged root is judged by
 //! its real objects, as in a full clone.
 use super::artifacts::task::TASK_LIMITS;
-pub use super::cat_file::contents;
-use super::cat_file::{Found, Object, objects};
+pub(crate) use super::cat_file::{Found, Object};
 use super::git::{Git, GitError, capped, quoted, sanitised, shown_name};
 use crate::application::project_board::ports::{BoardArtifact, BoardStoreError, QuarantinedFile};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::shown_text::shown_board_path;
 use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
+pub(crate) use reader::Reader;
+use reader::{contents, objects};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The punctuation a name kept in `tasks/` may hold besides letters and
@@ -97,15 +99,17 @@ const SYMLINK: &str = "120000";
 const GITLINK: &str = "160000";
 
 /// What a store error says, as text to quote in another.
-pub fn told(error: &BoardStoreError) -> &str {
+pub fn told(error: &BoardStoreError) -> std::borrow::Cow<'_, str> {
     match error {
-        BoardStoreError::NoBoard => "there is no board",
+        BoardStoreError::NoBoard => "there is no board".into(),
         BoardStoreError::Clash(why)
         | BoardStoreError::InvalidWrite(why)
         | BoardStoreError::WriteTooLarge(why)
         | BoardStoreError::Unavailable(why)
         | BoardStoreError::TooLarge(why)
-        | BoardStoreError::FolderSetAside(why) => why,
+        | BoardStoreError::FolderSetAside { why, .. }
+        | BoardStoreError::MovedMalformed(why) => why.into(),
+        BoardStoreError::Moved(moved) => moved.to_string().into(),
     }
 }
 
@@ -256,13 +260,13 @@ pub(super) fn named_twice(path: &str, head: &str, copies: &[TreeCopy], writes: &
 
 /// One entry of a listed tree.
 #[derive(Debug, Clone)]
-struct Entry {
-    mode: String,
-    oid: String,
+pub(crate) struct Entry {
+    pub(crate) mode: String,
+    pub(crate) oid: String,
     /// As shown: invalid UTF-8 replaced.
-    name: String,
+    pub(crate) name: String,
     /// As the tree holds it.
-    raw: Vec<u8>,
+    pub(crate) raw: Vec<u8>,
 }
 
 impl Entry {
@@ -314,7 +318,19 @@ pub fn read_board(
     limits: Limits,
     left: &LeftOnRemote,
 ) -> Result<Board, Unread> {
-    let root = listed(git, &tree_of(git, commit)?, limits.tree_bytes)?;
+    read_root(git, &tree_of(git, commit)?, limits, left)
+}
+
+#[cfg(test)]
+use read_root as read;
+
+pub(crate) fn read_root(
+    git: &impl Reader,
+    root: &str,
+    limits: Limits,
+    left: &LeftOnRemote,
+) -> Result<Board, Unread> {
+    let root = listed(git, root, limits.tree_bytes)?;
     let kinds = objects(git, looked_up(&root))?;
     let named = |name: &'static str| root.iter().filter(move |entry| entry.name == name);
     // A tree named once: a folder to read, or the archive to carry.
@@ -322,38 +338,10 @@ pub fn read_board(
         [entry] if is_tree(entry, &kinds) => Some(*entry),
         _ => None,
     };
-    // The format marker, at the same depth as the folders. A file of its
-    // name is a stray, as on a board before the marker; none is a board
-    // before it.
-    let marker = match named(FORMAT_TREE).collect::<Vec<_>>().as_slice() {
-        [] => None,
-        [entry] if is_tree(entry, &kinds) => Some(read_format(git, &entry.oid, limits, left)),
-        [entry] if is_file(entry, &kinds) => None,
-        [entry] => Some(Ok(Marker::Damaged(format!(
-            "format at the root is mode {} over a {}",
-            entry.mode,
-            match kinds.get(&entry.oid) {
-                Some(Found::Present(object)) => object.kind.as_str(),
-                Some(Found::Missing) | None => "missing object",
-            }
-        )))),
-        [_, _, ..] => Some(Ok(Marker::Damaged(
-            "format is named more than once at the root".into(),
-        ))),
-    };
-    // A newer format first: whatever else this quecto would make of the
-    // board, it asks for an upgrade, before any folder is scanned.
-    match &marker {
-        Some(Ok(Marker::Newer(version))) => return Err(Unread::Failed(newer(version))),
-        Some(Ok(Marker::Oversized(size))) => {
-            return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
-                "its format marker (format/board) is {size}, more than this quecto reads: \
-                 if a newer quecto wrote the board, upgrade quecto; if a hand edit did, mend the \
-                 board: {RECOVERY}"
-            ))));
-        }
-        Some(Ok(Marker::Current | Marker::Damaged(_)) | Err(_)) | None => {}
-    }
+    // The format marker, at the same depth as the folders; a fence's or a
+    // newer format's is refused before any folder is scanned.
+    let marker = root_marker(git, &root, &kinds, limits, left);
+    refuse_first(&marker)?;
     // Every folder that really is a tree is scanned in the same round as
     // the root, so a partial clone fetches what they all miss at once.
     let tasks = named("tasks")
@@ -411,7 +399,14 @@ pub fn read_board(
         Some(Marker::Damaged(why)) => {
             return Err(damage(&format!("its format marker is damaged ({why})")));
         }
-        Some(Marker::Current | Marker::Newer(_) | Marker::Oversized(_)) | None => {}
+        Some(
+            Marker::Current
+            | Marker::Newer(_)
+            | Marker::Oversized(_)
+            | Marker::Moved(_)
+            | Marker::MovedMalformed(_),
+        )
+        | None => {}
     }
     let tasks = tasks.transpose()?;
     let folders = folders
@@ -563,7 +558,7 @@ fn tree_of(git: &Git, commit: &str) -> Result<String, Unread> {
 
 /// The entries of `tree`, whose real type and size are checked before it
 /// is listed.
-fn listed(git: &Git, tree: &str, max_bytes: usize) -> Result<Vec<Entry>, Unread> {
+fn listed(git: &impl Reader, tree: &str, max_bytes: usize) -> Result<Vec<Entry>, Unread> {
     let not_read = |why: String| Unread::Failed(BoardStoreError::Unavailable(why));
     match objects(git, std::iter::once(tree))?.remove(tree) {
         Some(Found::Present(object)) if object.kind == "tree" && object.size <= max_bytes => {}
@@ -580,14 +575,7 @@ fn listed(git: &Git, tree: &str, max_bytes: usize) -> Result<Vec<Entry>, Unread>
         Some(Found::Missing) => return Err(Unread::Missing(vec![Wanted::Alone(tree.to_string())])),
         None => return Err(not_read(format!("cat-file did not report {tree}"))),
     }
-    let listing = git
-        .ok_up_to(&["ls-tree", "-z", tree], None, MAX_LISTING_BYTES)
-        .map_err(unavailable)?;
-    Ok(listing
-        .split(|byte| *byte == 0)
-        .filter(|row| !row.is_empty())
-        .map(entry)
-        .collect::<Result<Vec<Entry>, BoardStoreError>>()?)
+    git.listing(tree, MAX_LISTING_BYTES)
 }
 
 fn entry(row: &[u8]) -> Result<Entry, BoardStoreError> {
@@ -624,6 +612,7 @@ pub fn object_id(text: &str) -> Result<String, BoardStoreError> {
 
 #[path = "board_bounds.rs"]
 mod bounds;
+pub(crate) use bounds::raw_entry_bytes;
 use bounds::within_read;
 pub use bounds::{ClearKeeps, within};
 #[path = "board_entries.rs"]
@@ -646,8 +635,14 @@ use tasks::{TasksScan, load_tasks, scan_tasks};
 pub use writes::{FolderAfter, FolderFile, folder_file};
 #[path = "board_format.rs"]
 mod format;
-pub use format::{FORMAT, FORMAT_FILE, FORMAT_TREE};
-use format::{Marker, newer, read_format};
+pub use format::read_marker;
+pub use format::{FORMAT, FORMAT_FILE, FORMAT_TREE, MOVED_FILE, MOVED_FORMAT};
+use format::{Marker, refuse_first, root_marker};
+#[path = "board_fence.rs"]
+pub mod fence;
+
+#[path = "board_reader.rs"]
+mod reader;
 
 #[cfg(test)]
 #[path = "board_tree_tests.rs"]

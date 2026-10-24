@@ -4,14 +4,14 @@
 //! the effort/workflow reset or restore, each bumping the tracker's visible generation only when
 //! something changed. The transactions order these; this adapter decides nothing.
 use super::controllers::agent::event_log;
-use super::uds_execution_state::ExecutionStateHandle;
 use super::uds_session::AgentSession;
-use super::uds_turn_accounting::LoopTurnAccounting;
 use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
 use crate::application::sessions::ports::{SessionKeyPropagation, SessionSwitchRuntime};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::interface::shared::WorkflowStateHandle;
+use crate::interface::cli::controllers::shared::WorkflowStateHandle;
+use crate::interface::uds::controllers::uds_turn_accounting::LoopTurnAccounting;
+use crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle;
 
 pub struct LoopSessionSwitchRuntime<'a> {
     agent: &'a mut AgentLoopImpl,

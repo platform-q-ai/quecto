@@ -10,10 +10,10 @@ use crate::infrastructure::persistence::file::sessions::session_images::FileImag
 use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
 use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use crate::interface::cli::controllers::retention_handles::RetentionHandles;
-use crate::interface::uds::sessions::controller::ListSessionsController;
+use crate::interface::uds::controllers::sessions_controller::ListSessionsController;
+use crate::interface::uds::controllers::uds_session_handles;
 use std::sync::Arc;
-
-pub use crate::interface::cli::uds_session_handles::{SessionHandles, SessionLoopInputs};
+pub use uds_session_handles::{SessionHandles, SessionLoopInputs};
 
 /// The generator of fresh user-chat identities (D7 #1976): the process clock and counter adapter,
 /// shared by the startup key of a chat run and by every fresh-session transaction of the process.

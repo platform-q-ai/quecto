@@ -26,6 +26,9 @@ pub fn set_aside_task(id: &str) -> crate::application::project_board::dto::Proje
     crate::application::project_board::dto::ProjectBoardError::Quarantined {
         key: crate::application::project_board::ports::ArtifactKey::Task(slug(id)),
         path: format!("tasks/{id}.md"),
+        object: crate::infrastructure::test_support::memory_board_store::memory_object(&format!(
+            "tasks/{id}.md"
+        )),
     }
 }
 
@@ -113,6 +116,7 @@ pub fn new_task(id: &str) -> NewBoardTask {
         status: NewBoardTaskStatus::Ready,
         parent: None,
         depends_on: vec![],
+        entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
     }
 }
 
@@ -122,6 +126,7 @@ pub fn fields(id: &str) -> TaskFields {
         id: slug(id),
         title: format!("Task {id}"),
         kind: TaskKind::Task,
+        description_form: Default::default(),
         description: String::new(),
         status: TaskStatus::Ready,
         parent: None,
@@ -231,6 +236,7 @@ pub fn plan_of(
         approach: "Spike, then build.".into(),
         items: vec![plan_item("schema", &[]), plan_item("api", &["schema"])],
         team: Some(plan_team()),
+        handoff: None,
         proposed_by: person("Bob"),
         edited_by: None,
         accepted,
@@ -262,4 +268,73 @@ pub fn holding_plans(
         .collect();
     store.write(&head, &artifacts, "seed").unwrap();
     store
+}
+
+/// The board's remote as told (#2666): it holds every revision but those
+/// it is `missing`, or cannot be read at all; it notes every ask.
+#[derive(Default)]
+pub struct Remote {
+    pub missing: Vec<String>,
+    pub down: bool,
+    pub asked: Mutex<Vec<Vec<String>>>,
+    /// Its full commit ids' hex digits: 40 unless set (64: SHA-256).
+    pub id_len: Option<usize>,
+}
+
+impl Remote {
+    /// A remote holding every revision.
+    pub fn holding_all() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// A remote holding every revision but `missing`.
+    pub fn missing(missing: &[&str]) -> Arc<Self> {
+        Arc::new(Self {
+            missing: missing
+                .iter()
+                .map(|revision| (*revision).to_string())
+                .collect(),
+            ..Self::default()
+        })
+    }
+
+    /// A remote that cannot be reached.
+    pub fn down() -> Arc<Self> {
+        Arc::new(Self {
+            down: true,
+            ..Self::default()
+        })
+    }
+
+    /// Every ask, in order.
+    pub fn asks(&self) -> Vec<Vec<String>> {
+        self.asked.lock().unwrap().clone()
+    }
+}
+
+impl crate::application::project_board::ports::RemoteRevisions for Remote {
+    fn not_on_remote(
+        &self,
+        revisions: &[String],
+    ) -> Result<Vec<String>, crate::application::project_board::ports::BoardStoreError> {
+        self.asked.lock().unwrap().push(revisions.to_vec());
+        match self.down {
+            true => Err(
+                crate::application::project_board::ports::BoardStoreError::Unavailable(
+                    "the remote is down".into(),
+                ),
+            ),
+            false => Ok(revisions
+                .iter()
+                .filter(|revision| self.missing.contains(revision))
+                .cloned()
+                .collect()),
+        }
+    }
+
+    fn commit_id_hex_len(
+        &self,
+    ) -> Result<usize, crate::application::project_board::ports::BoardStoreError> {
+        Ok(self.id_len.unwrap_or(40))
+    }
 }

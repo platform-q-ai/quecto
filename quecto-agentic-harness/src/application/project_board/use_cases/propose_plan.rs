@@ -20,7 +20,7 @@ use crate::application::project_board::swarm_brief::coordinator_model_named;
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::Plan;
-use crate::domain::project_board::services::plans::{PlanContent, propose};
+use crate::domain::project_board::services::plans::{Moment, PlanContent, propose_at};
 use crate::domain::project_board::value_objects::board_text;
 
 pub struct ProposePlan {
@@ -75,8 +75,10 @@ impl ProposePlan {
         }
         let content = PlanContent {
             approach: board_text::text(&proposal.approach),
+            handoff: proposal.handoff.as_deref().and_then(plan_text::handoff),
             items: plan_text::entered_items(&proposal.items),
             team: proposal.team.clone(),
+            entry: proposal.entry,
         };
         let id = &proposal.task;
         let message = format!("board: propose a plan for {}", id.as_str());
@@ -89,7 +91,8 @@ impl ProposePlan {
             |board, when| {
                 let task = task_on(board, id)?;
                 let versions = owned(board_view::plans_of(board, id)?);
-                let plan = propose(task, &versions, content.clone(), actor, &when.now)?;
+                let plan =
+                    propose_at(task, &versions, content.clone(), actor, &Moment::from(when))?;
                 coordinator_model_named(plan.fields().team.as_ref())?;
                 Ok(vec![BoardArtifact::Plan(plan)])
             },

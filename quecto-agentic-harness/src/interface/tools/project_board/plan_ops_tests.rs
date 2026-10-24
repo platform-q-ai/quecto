@@ -6,16 +6,17 @@ use serde_json::{Value, json};
 
 use super::run;
 use crate::application::project_board::operations::NoPullRequestHost;
-use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
 use crate::application::project_board::ports::{ArtifactKey, ProjectBoardStore};
-use crate::application::project_board::use_cases::{QueryBoard, RunBoardOperation};
+use crate::application::project_board::use_cases::QueryBoard;
+use crate::composition::bootstrap::project_board_operations::LocalBoardOperations;
+use crate::composition::bootstrap::project_board_operations::fixtures::{QueryListings, assembled};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
 
 /// The board's operations as `name` writes them.
-fn as_writer(store: &MemoryBoardStore, name: &str) -> RunBoardOperation {
+fn as_writer(store: &MemoryBoardStore, name: &str) -> LocalBoardOperations {
     let client = store.client_as(Identity {
         name: name.into(),
         email: format!("{}@example.com", name.to_lowercase()),
@@ -29,11 +30,11 @@ fn as_writer(store: &MemoryBoardStore, name: &str) -> RunBoardOperation {
     .unwrap()
 }
 
-fn call(operations: &RunBoardOperation, request: Value) -> Value {
+fn call(operations: &LocalBoardOperations, request: Value) -> Value {
     run(operations, &request.to_string())
 }
 
-fn ok(operations: &RunBoardOperation, request: Value) -> Value {
+fn ok(operations: &LocalBoardOperations, request: Value) -> Value {
     let answer = call(operations, request);
     assert_eq!(answer["ok"], json!(true), "{answer}");
     answer
@@ -45,7 +46,7 @@ fn item(id: &str) -> Value {
 
 /// A board with task `a` and two drafts of its plan by Ada, the second
 /// with two task items.
-fn drafted() -> (MemoryBoardStore, RunBoardOperation, RunBoardOperation) {
+fn drafted() -> (MemoryBoardStore, LocalBoardOperations, LocalBoardOperations) {
     let store = MemoryBoardStore::default();
     store.bootstrap().unwrap();
     let (ada, bob) = (as_writer(&store, "Ada"), as_writer(&store, "Bob"));
@@ -150,8 +151,8 @@ fn plan_text_past_the_most_reaches_the_agent_as_invalid_plan_text() {
         .collect();
     let refused = call(
         &ada,
-        json!({"op": "propose_plan", "task": "a", "approach": "\u{1f600}".repeat(65_536),
-               "items": items}),
+        json!({"op": "propose_plan", "task": "a", "approach": "",
+               "handoff": "\u{1f600}".repeat(65_536), "items": items}),
     );
     let rule = &refused["error"]["rule"];
     assert_eq!(
@@ -237,11 +238,13 @@ fn an_items_only_edit_past_the_most_beside_a_kept_approach_is_refused() {
     use crate::domain::audit::AuditEvent;
     use crate::domain::project_board::value_objects::telemetry::{Client, FrontEnd};
     let (store, ada, _bob) = drafted();
-    ok(
-        &ada,
-        json!({"op": "propose_plan", "task": "a", "approach": "\u{1f600}".repeat(65_536),
-               "items": []}),
-    );
+    // An approach this long enters only as before #2705 T3: from the CLI,
+    // with no handoff.
+    let long = json!({"op": "propose_plan", "task": "a", "approach": "\u{1f600}".repeat(65_536),
+                      "items": []});
+    let mut cli = BoardCall::arrived(None, FrontEnd::Cli, Client::Agent);
+    let proposed = run_recorded(&ada, &long.to_string(), &mut cli);
+    assert_eq!(proposed["ok"], json!(true), "{proposed}");
     let writes = store.writes();
     let criteria: Vec<String> = (b'a'..b'q')
         .map(|letter| char::from(letter).to_string().repeat(500))

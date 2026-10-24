@@ -285,5 +285,4 @@ impl RecoveryResolution {
 }
 
 #[cfg(test)]
-#[path = "active_session_tests.rs"]
 mod tests;

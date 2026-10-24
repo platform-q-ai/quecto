@@ -8,7 +8,7 @@ use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, coordinated_team, holding_plans, person, plan_item, plan_of, slug,
     unqualified_coordinator,
 };
-use crate::domain::project_board::entities::plan::{Plan, PlanFields};
+use crate::domain::project_board::entities::plan::{Plan, PlanEntry, PlanFields};
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::telemetry::{Normalised, TextChange};
 use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskStatus};
@@ -23,6 +23,8 @@ fn edit_as(store: &MemoryBoardStore, writer: &str) -> EditPlan {
 /// An edit of draft 1 of task `a` setting nothing yet.
 fn of(version: u32) -> PlanEdit {
     PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         task: slug("a"),
         version,
         approach: None,
@@ -48,6 +50,8 @@ fn long_draft() -> Plan {
 fn an_edit_of_the_items_alone_keeps_the_approach_byte_for_byte() {
     let store = holding_plans("a", TaskStatus::Ready, vec![long_draft()]);
     let edit = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         items: Some(vec![plan_item("only", &[])]),
         expected_updated: Some(at("09:00:00")),
         ..of(1)
@@ -79,6 +83,8 @@ fn a_field_given_replaces_the_drafts_whole() {
         vec![plan_of("a", 1, PlanState::Draft)],
     );
     let edit = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         approach: Some("New.\r\n".into()),
         team: Some(None),
         ..of(1)
@@ -102,6 +108,10 @@ fn a_field_given_replaces_the_drafts_whole() {
         plan_version: Some(1),
         items: Some(2),
         roles: Some(0),
+        // The commit the write made (#2663).
+        head: Some(crate::application::project_board::ports::BoardHead(
+            "r3".into(),
+        )),
         ..OpFacts::default()
     };
     assert_eq!(facts, want);
@@ -116,6 +126,8 @@ fn a_stale_expected_updated_is_refused_as_plan_changed() {
     );
     let writes = store.writes();
     let edit = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         items: Some(vec![plan_item("only", &[])]),
         expected_updated: Some(at("08:00:00")),
         ..of(1)
@@ -144,12 +156,16 @@ fn a_lost_race_patches_the_fresh_draft() {
     let other = store.client();
     store.after_next_read(move |_| {
         let theirs = PlanEdit {
+            handoff: None,
+            entry: PlanEntry::Legacy,
             approach: Some("Theirs.".into()),
             ..of(1)
         };
         edit_as(&other, "Bob").execute(&theirs).unwrap();
     });
     let mine = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         items: Some(vec![plan_item("mine", &[])]),
         ..of(1)
     };
@@ -178,6 +194,8 @@ fn only_a_known_draft_of_an_open_task_is_edited_and_only_by_a_change() {
     let refused = |edit: PlanEdit| editor.execute(&edit).map(|_| ());
     let rule = |rule| Err(ProjectBoardError::Rule(rule));
     let unknown = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         items: items.clone(),
         ..of(9)
     };
@@ -186,12 +204,16 @@ fn only_a_known_draft_of_an_open_task_is_edited_and_only_by_a_change() {
         rule(BoardRuleError::UnknownPlanVersion(9))
     );
     let settled = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         items: items.clone(),
         ..of(1)
     };
     let not_draft = BoardRuleError::PlanNotDraft(PlanState::Superseded);
     assert_eq!(refused(settled), rule(not_draft));
     let same = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         items: Some(plan_of("a", 2, PlanState::Draft).into_fields().items),
         ..of(2)
     };
@@ -199,6 +221,8 @@ fn only_a_known_draft_of_an_open_task_is_edited_and_only_by_a_change() {
     for status in [TaskStatus::Done, TaskStatus::Archived] {
         let store = holding_plans("a", status, vec![plan_of("a", 1, PlanState::Draft)]);
         let edit = PlanEdit {
+            handoff: None,
+            entry: PlanEntry::Legacy,
             items: items.clone(),
             ..of(1)
         };
@@ -223,12 +247,16 @@ fn a_pinned_edit_that_loses_the_race_is_refused_as_plan_changed() {
     let other = store.client();
     store.after_next_read(move |_| {
         let theirs = PlanEdit {
+            handoff: None,
+            entry: PlanEntry::Legacy,
             approach: Some("Theirs.".into()),
             ..of(1)
         };
         edit_as(&other, "Bob").execute(&theirs).unwrap();
     });
     let mine = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         items: Some(vec![plan_item("mine", &[])]),
         expected_updated: Some(at("09:00:00")),
         ..of(1)
@@ -255,6 +283,8 @@ fn a_task_set_aside_holds_edits() {
     );
     store.quarantine("a", "unreadable");
     let edit = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         approach: Some("New.".into()),
         ..of(1)
     };
@@ -276,6 +306,8 @@ fn a_coordinator_model_without_its_provider_is_refused_at_edit() {
     );
     let writes = store.writes();
     let bare = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         team: Some(Some(coordinated_team("claude-opus"))),
         ..of(1)
     };
@@ -286,12 +318,16 @@ fn a_coordinator_model_without_its_provider_is_refused_at_edit() {
     assert_eq!(store.writes(), writes, "nothing written");
     let named = coordinated_team("anthropic/claude-opus");
     let qualified = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         team: Some(Some(named.clone())),
         ..of(1)
     };
     let edited = edit_as(&store, "Ada").execute(&qualified).unwrap();
     assert_eq!(edited.fields().team, Some(named));
     let none = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         team: Some(None),
         ..of(1)
     };
@@ -304,6 +340,8 @@ fn a_coordinator_model_without_its_provider_is_refused_at_edit() {
     .unwrap();
     let store = holding_plans("a", TaskStatus::Ready, vec![held]);
     let approach = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         approach: Some("New.".into()),
         ..of(1)
     };
@@ -326,6 +364,8 @@ fn a_bare_coordinator_model_is_refused_at_edit_whatever_its_members() {
     let mut team = coordinated_team("claude-opus");
     team.roles[0].limits.members = 2;
     let pair = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         team: Some(Some(team)),
         ..of(1)
     };

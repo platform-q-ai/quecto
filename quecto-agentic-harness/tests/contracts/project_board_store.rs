@@ -38,6 +38,7 @@ pub fn task(id: &str, title: &str) -> Task {
         references: vec![],
         created: at.clone(),
         updated: at,
+        description_form: Default::default(),
     })
     .unwrap()
 }
@@ -104,6 +105,19 @@ pub fn check_write_and_read((alice, bob): Clients) {
         tasks(&*alice),
         set(&[task("a", "Renamed"), task("a-b", "Second")])
     );
+}
+
+/// A store's lock races (#2663) only ever grow, and two stores in clones
+/// of their own, writing in turn, meet none: no other writer shares
+/// either's tracking ref.
+pub fn check_lock_races((alice, bob): Clients) {
+    assert_eq!((alice.lock_races(), bob.lock_races()), (0, 0));
+    alice.bootstrap().unwrap();
+    let head = alice.read().unwrap().head;
+    let moved = written(alice.write_tasks(&head, &[task("a", "One")], "board: add a"));
+    written(bob.write_tasks(&moved, &[task("b", "Two")], "board: add b"));
+    tasks(&*alice);
+    assert_eq!((alice.lock_races(), bob.lock_races()), (0, 0));
 }
 
 /// A write of tasks identical to the board's is still a change: it
@@ -399,11 +413,32 @@ pub fn check_carried_set_aside(
     let alice: Arc<dyn ProjectBoardStore> = Arc::from(alice);
     let change =
         ChangeBoardTask::new(alice.clone(), Arc::new(SystemBoardClock::default())).unwrap();
+    // A link is judged on its task first (#2686): Alice holds `a`, so only
+    // the carried file can refuse it. The claim's write drops the stray;
+    // it is added again, so the link names the carried file, never the
+    // stray beside it.
+    change
+        .execute(
+            &Slug::parse("a").unwrap(),
+            &BoardOp::Move(TaskStatus::Claimed),
+        )
+        .unwrap();
+    add_stray();
+    assert_eq!(carried(&*alice), both);
+    let b_object = alice
+        .read()
+        .unwrap()
+        .quarantined
+        .into_iter()
+        .find(|file| file.path == "tasks/b.md")
+        .unwrap()
+        .object;
     assert_eq!(
         change.execute(&Slug::parse("a").unwrap(), &BoardOp::AddPr(7)),
         Err(ProjectBoardError::Quarantined {
             key: ArtifactKey::Task(Slug::parse("b").unwrap()),
             path: "tasks/b.md".into(),
+            object: b_object,
         })
     );
     let head = alice.read().unwrap().head;
@@ -436,6 +471,11 @@ fn memory() -> (MemoryBoardStore, Clients) {
 #[test]
 fn the_memory_store_bootstraps_once() {
     check_bootstrap(memory().1);
+}
+
+#[test]
+fn the_memory_store_counts_no_lock_race() {
+    check_lock_races(memory().1);
 }
 
 #[test]

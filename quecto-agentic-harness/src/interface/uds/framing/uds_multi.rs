@@ -1,0 +1,581 @@
+//! Multi-client UDS event bus (#318).
+//!
+//! Accept loop + broadcast: multiple clients connect to the same socket.
+//! Events are serialized once and delivered to all clients via
+//! `tokio::sync::broadcast`.  Commands from all clients merge into a
+//! shared `mpsc` channel → single dispatch loop (no concurrent session
+//! mutation).  Agent shuts down when all clients disconnect.
+
+use crate::application::{agent_turn::agent_loop::AgentLoopImpl, sessions::dto::SaveTrigger};
+use crate::domain::conversation::value_objects::message::Message;
+use crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot;
+use crate::infrastructure::tools::agents::owner_exit::OwnerExitFlag;
+
+use super::super::presenters::subagent_info_list::build_live_subagent_info_list;
+use super::super::{controllers::uds_swarm_board::SwarmBoards, wire::protocol::AgentEvent};
+pub(in crate::interface) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
+use crate::interface::cli;
+pub(crate) use crate::interface::cli::uds_snapshots::StateSnapshot;
+#[cfg(test)]
+pub(crate) use crate::interface::cli::uds_snapshots::{
+    build_get_messages_line, build_get_state_line, build_get_subagents_line,
+};
+use crate::interface::cli::uds_snapshots::{
+    refresh_conversation_snapshot, refresh_session_stats_snapshot, refresh_state_snapshot,
+    refresh_tool_catalogue_snapshot,
+};
+use crate::interface::uds::controllers::uds::{
+    DispatchCtx, LineResult, emit_event_to_broadcast_or_writer, inject_system_prompt, parse_line,
+};
+use crate::interface::uds::controllers::{self, uds_cancel::CancelHandle, uds_cancel::CancelSlot};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/// Maximum number of concurrent client connections.
+pub(super) const MAX_CLIENTS: u32 = 64;
+
+/// Broadcast channel capacity for UDS event delivery.
+/// Shared between the early-creation path (workflow) and the default path.
+pub(in crate::interface) const BROADCAST_CHANNEL_CAPACITY: usize = 256;
+
+/// Atomic counter for assigning unique client IDs (#352).
+pub(super) static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
+mod busy;
+pub(crate) use busy::{BusyFlag, BusyGuard};
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+pub(in crate::interface) struct MultiClientArgs<'a> {
+    pub agent: AgentLoopImpl,
+    pub workspace: &'a std::path::Path,
+    pub messages: Vec<Message>,
+    pub model: String,
+    pub admission_slots: Vec<String>,
+    pub session_key: String,
+    pub system_prompt: String,
+    /// Shared tool catalogue snapshot for get_tool_catalogue.
+    pub ext_registry: Option<
+        std::sync::Arc<
+            std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
+        >,
+    >,
+    /// How long this harness lives (#1937): the top-level default exits
+    /// when the last client disconnects; `--persist` (#348) and a
+    /// launch-bound child ignore client churn.
+    pub lifetime: crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime,
+    /// Receiver for subagent notifications (#523).
+    pub notification_rx:
+        Option<crate::infrastructure::tools::agents::subagent_registry::NotificationRx>,
+    /// Shared subagent registry for get_subagents / state_changed (#524).
+    pub subagent_registry:
+        Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
+    /// The lifecycle cell the spawn tool admits against (#1938).
+    pub harness_lifecycle:
+        Option<crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle>,
+    /// Shared workflow state for auto-nudge injection (#562).
+    pub workflow_state: Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
+    /// Workflow config (auto_continue, completion_nudge flags).
+    pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,
+    /// Pre-created broadcast channel for workflow event emission (#598).
+    pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    /// The launch-bound parent control binding this harness was started
+    /// with (#1935); `None` for a top-level harness that can never be bound.
+    pub parent_control: Option<controllers::uds_parent_control::ParentControlLaunch>,
+    /// Composition's teardown handles builder; without it the loop runs with
+    /// no teardown edge (unit rigs only).
+    pub teardown_graph: Option<cli::TeardownHandlesBuilder>,
+    pub turn_session: cli::TurnSessionBuilder,
+    /// The environment control slot (#2070): an owner exit ends retained boxes through it.
+    pub environment_control: Option<EnvironmentControlSlot>,
+    pub extensions: controllers::uds_extensions::Extensions, // #2446: see `clients`
+}
+
+/// A command line from a client.
+pub(crate) struct ClientCommand {
+    pub(in crate::interface) line: String,
+    /// Unique client identifier for per-client tool routing (#352).
+    pub(in crate::interface) client_id: u64,
+    /// Images the reader admitted for this message command (#2422).
+    pub(in crate::interface) admitted: Option<controllers::uds::AdmittedImages>,
+}
+
+/// Sentinel: a client disconnected.
+pub(crate) struct ClientDisconnected {
+    /// Which client disconnected (#352).
+    pub(super) client_id: u64,
+}
+
+/// Messages from client reader tasks to the dispatch loop.
+pub(crate) enum ClientMessage {
+    SwarmWake {
+        generation: u64,
+    },
+    Command(ClientCommand),
+    Disconnected(ClientDisconnected),
+    /// A control the reader refused itself (#2422): dispatch records its
+    /// `Rejected` receipt, as it does for one it refuses.
+    RejectedControl(controllers::uds_control_forward::RefusedControl),
+}
+
+/// RAII guard that decrements `live_clients` on drop (normal exit or panic).
+pub(crate) struct ClientGuard {
+    pub(super) live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    /// #1720: sentinels ride their own unbounded channel so a busy
+    /// dispatcher's short-lived poll connections never fill the bounded
+    /// command channel and reject steer/follow_up as "queue full". Growth is
+    /// bounded by poll rate × turn length (tens of bytes per sentinel) and
+    /// drained whenever the command channel is idle, so a client's own
+    /// queued commands are handled before its disconnect.
+    pub(super) disconnect_tx: tokio::sync::mpsc::UnboundedSender<ClientDisconnected>,
+    /// Unique client identifier for per-client tool tracking (#352).
+    pub(super) client_id: u64,
+}
+
+impl Drop for ClientGuard {
+    fn drop(&mut self) {
+        self.live_clients
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        // Best-effort sentinel — if channel is closed the dispatch loop already
+        // exited, so the message is not needed.
+        if let Err(e) = self.disconnect_tx.send(ClientDisconnected {
+            client_id: self.client_id,
+        }) {
+            tracing::debug!("disconnect sentinel not delivered: {e}");
+        }
+    }
+}
+
+// ─── Accept loop + dispatch ───────────────────────────────────────────────────
+
+pub(in crate::interface) async fn multi_client_loop(
+    args: MultiClientArgs<'_>,
+    listener: tokio::net::UnixListener,
+    sessions: &controllers::uds_session_handles::SessionHandles,
+    catalogue: &cli::controllers::catalogue_handles::CatalogueHandles,
+) -> i32 {
+    let MultiClientArgs {
+        mut agent,
+        workspace,
+        mut messages,
+        model,
+        session_key,
+        system_prompt,
+        admission_slots,
+        ext_registry,
+        lifetime,
+        notification_rx,
+        subagent_registry,
+        harness_lifecycle,
+        workflow_state: wf_state,
+        workflow_config: wf_config,
+        broadcast_tx: pre_broadcast_tx,
+        parent_control,
+        teardown_graph,
+        turn_session,
+        environment_control,
+        extensions,
+    } = args;
+
+    inject_system_prompt(&mut messages, &system_prompt);
+
+    // The active session's read model (#828, #1971): published with the
+    // starting messages (same shape as a normal get_messages response, i.e.
+    // including the injected system prompt), refreshed by the dispatch loop
+    // at each turn boundary, and read by the accept loop to serve newly
+    // connected clients immediately — even while the dispatch loop is busy.
+    let session_reads = sessions.read_handles();
+    let _ = session_reads
+        .active_session
+        .write()
+        .await
+        .publish(&messages);
+
+    let mut agent_session = turn_session(model);
+    agent_session.set_admission_warnings(&admission_slots);
+    agent_session.set_startup_warnings(&catalogue.startup_warnings);
+    agent_session.observe_runtime(catalogue.runtime_store.clone());
+    let initial_state = agent_session.state_snapshot(
+        &session_key,
+        messages.len(),
+        None,
+        agent.max_context_tokens(),
+        catalogue.effort_view(agent.effort(), agent_session.model()),
+    );
+    let state_snapshot: StateSnapshot =
+        std::sync::Arc::new(tokio::sync::RwLock::new(initial_state));
+    let execution_state: super::super::presenters::uds_execution_state::ExecutionStateHandle =
+        std::sync::Arc::new(std::sync::Mutex::new(Default::default()));
+    let session_stats_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
+        cli::uds_session::present_session_stats(agent_session.usage_report(
+            &session_key,
+            &messages,
+            agent.max_context_tokens(),
+        )),
+    ));
+    let tool_entries = agent.tool_catalogue_entries().into_iter();
+    let tool_catalogue_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
+        tool_entries
+            .map(|entry| serde_json::to_value(entry).unwrap_or_default())
+            .collect(),
+    ));
+
+    // Shared mid-turn flag (#828): gates the connect-time snapshot push so it
+    // only fires while the agent is busy (see `BusyFlag`).
+    let busy: BusyFlag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    // Use the pre-created broadcast channel when available (workflow emitter
+    // is already wired to it), otherwise create a fresh one (#598).
+    let broadcast_tx = pre_broadcast_tx
+        .unwrap_or_else(|| tokio::sync::broadcast::channel::<String>(BROADCAST_CHANNEL_CAPACITY).0);
+    // #1679 P4: admission activity rides on `get_state` (revision folded into
+    // the public cursor) and is pushed as `admission_state_changed`.
+    if let Some(process) = crate::infrastructure::admission::process::current() {
+        super::super::presenters::uds_admission_projection::attach_process_admission(
+            &execution_state,
+            &process,
+            &broadcast_tx,
+        );
+    }
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(256);
+    let (disconnect_tx, disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
+    let cancel_handle: CancelHandle = std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle));
+    cli::controllers::swarm_composition::bind_suspension(
+        &cancel_handle,
+        crate::interface::cli::controllers::tool_runtime::swarm_context(),
+    );
+    // One loop-exit notification for every shutdown trigger (#1935, #1938):
+    // the teardown graph's exit-readiness adapter fires it once the fleet
+    // has settled and the session is ready to persist.
+    let exit_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    let coordinator = parent_control
+        .as_ref()
+        .is_some_and(|launch| launch.coordinator);
+    let turn_control = controllers::uds_swarm_control::process_turn_control(coordinator);
+    let live_clients = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+
+    let client_tool_registry = controllers::uds_ext_protocol::new_client_tool_registry();
+
+    // Subagent teardown handles (#1935, #1938): composition's builder wires
+    // the application use cases to this loop's cancel slot, exit
+    // notification, registry and lifecycle cell, plus the parent control
+    // binding every connection is checked against, and hands the handles
+    // back. A launched child also arms its bind deadline: a launcher that
+    // never presents is presumed gone.
+    let bind_deadline = parent_control
+        .as_ref()
+        .map(|launch| launch.bind_deadline.clone());
+    clients::end_with_the_fleet(&extensions, harness_lifecycle.clone());
+    // The board view's own handle (#2478): the boards the environment
+    // control carries, once composition has installed it.
+    let swarm_boards = environment_control
+        .clone()
+        .map(|slot| SwarmBoards::new(move || slot.get().map(|control| control.boards)));
+    let teardown = teardown_graph.map(|build| {
+        build(controllers::uds_teardown_handles::TeardownLoopInputs {
+            owner: crate::domain::identity::ids::AgentUuid::new(if session_key.is_empty() {
+                "harness".to_string()
+            } else {
+                session_key.clone()
+            }),
+            registry: subagent_registry.clone(),
+            harness_lifecycle,
+            broadcast_tx: Some(broadcast_tx.clone()),
+            notify_tx: None,
+            cancel_handle: cancel_handle.clone(),
+            turn_control: turn_control.clone(),
+            busy: busy.clone(),
+            exit_notify: exit_notify.clone(),
+            binding: parent_control.map(|launch| launch.binding).unwrap_or_else(
+                crate::domain::agents::entities::parent_control::ParentControlBinding::unlaunched,
+            ),
+            owner_exit: OwnerExitFlag::new(),
+            environment_control,
+        })
+    });
+    // SIGTERM/SIGINT and the last client's disconnect are delivered to the
+    // same controller as every other trigger; the watcher only delivers.
+    let shutdown = super::uds_shutdown::ShutdownRequest::install(
+        exit_notify,
+        teardown.as_ref().map(|graph| graph.controller.clone()),
+        busy.clone(),
+        cancel_handle.clone(),
+    );
+    let fleet_teardown = teardown.as_ref().map(|graph| graph.fleet.clone());
+    let connections = teardown.as_ref().map(|graph| graph.connections.clone());
+    if let (Some(connections), Some(deadline)) = (connections.clone(), bind_deadline) {
+        controllers::uds_parent_control::arm_bind_deadline(connections, deadline);
+    }
+
+    let accept_task = spawn_accept_loop(AcceptLoopArgs {
+        listener,
+        broadcast_tx: broadcast_tx.clone(),
+        cmd_tx: cmd_tx.clone(),
+        disconnect_tx,
+        cancel_handle: cancel_handle.clone(),
+        turn_control: turn_control.clone(),
+        live_clients: live_clients.clone(),
+        client_tool_registry: client_tool_registry.clone(),
+        session: session_reads.clone(),
+        state_snapshot: state_snapshot.clone(),
+        runtime_store: catalogue.runtime_store.clone(),
+        execution_state: execution_state.clone(),
+        session_stats_snapshot: session_stats_snapshot.clone(),
+        tool_catalogue_snapshot: tool_catalogue_snapshot.clone(),
+        busy: busy.clone(),
+        subagent_registry: subagent_registry.clone(),
+        workflow_state: wf_state.clone(),
+        workspace_path: workspace.to_path_buf(),
+        teardown: connections,
+        extensions: extensions.clone(),
+        swarm_boards,
+    });
+
+    // Drop our clone so cmd_rx closes when all client senders (accept loop)
+    // are gone.  The accept loop's clone keeps the channel open while
+    // it runs — the lifetime guard in `run_dispatch_loop` controls shutdown.
+    drop(cmd_tx);
+
+    let mut ctx = DispatchCtx {
+        // Multi-client replies stream via broadcast; each client's writer
+        // task re-frames per its own negotiated connection mode (#1059).
+        wire_mode: super::uds_wire::ConnectionWireMode::legacy(),
+        agent: &mut agent,
+        messages: &mut messages,
+        sessions: session_reads.clone(),
+        state_snapshot: state_snapshot.clone(),
+        execution_state: execution_state.clone(),
+        session_stats_snapshot: session_stats_snapshot.clone(),
+        tool_catalogue_snapshot: tool_catalogue_snapshot.clone(),
+        busy: busy.clone(),
+        session: &mut agent_session,
+        stdout: None,
+        system_prompt: &system_prompt,
+        cancel_handle,
+        turn_control,
+        broadcast_tx: Some(broadcast_tx),
+        _ext_registry: ext_registry,
+        client_tool_registry: client_tool_registry.clone(),
+        current_client_id: 0,
+        subagent_registry: subagent_registry.clone(),
+        notification_rx,
+        workflow_state: wf_state.clone(),
+        workflow_config: wf_config,
+        fleet_teardown,
+        discovery: sessions.discovery.clone(),
+        save_session: sessions.save_session.clone(),
+        rewrite: sessions.rewrite.clone(),
+        switch: sessions.switch.clone(),
+        catalogue: catalogue.clone(),
+    };
+
+    run_dispatch_loop(
+        &mut ctx,
+        DispatchLoopArgs {
+            cmd_rx,
+            disconnect_rx,
+            lifetime,
+            shutdown,
+            extensions: extensions.clone(),
+        },
+        &live_clients,
+    )
+    .await;
+    clients::shut_down(&extensions).await;
+
+    accept_task.abort();
+
+    // The final save of an ordinary exit (#1860, #1938): the fleet settled
+    // before the loop returned; the transaction records no operational
+    // child on a killing exit.
+    if let Err(err) = sessions
+        .save_session
+        .save(&mut messages, SaveTrigger::OrdinaryExit)
+        .await
+    {
+        tracing::warn!("failed to persist session on exit: {err}");
+    }
+
+    cli::controllers::launch_rollback_wait::await_launch_rollbacks(
+        cli::controllers::launch_rollback_wait::LAUNCH_ROLLBACK_LIMIT,
+    )
+    .await;
+    0
+}
+
+/// Arguments for [`run_dispatch_loop`].
+struct DispatchLoopArgs {
+    cmd_rx: tokio::sync::mpsc::Receiver<ClientMessage>,
+    disconnect_rx: tokio::sync::mpsc::UnboundedReceiver<ClientDisconnected>,
+    lifetime: crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime,
+    shutdown: super::uds_shutdown::ShutdownRequest,
+    extensions: controllers::uds_extensions::Extensions,
+}
+
+/// Process commands from all clients until no clients remain or a fatal error.
+/// Also drains subagent notifications and injects them as follow-up messages (#523).
+/// During prompt execution, notifications are drained by run_with_token_drain_broadcast (#534).
+async fn run_dispatch_loop(
+    ctx: &mut DispatchCtx<'_>,
+    mut args: DispatchLoopArgs,
+    live_clients: &std::sync::atomic::AtomicU32,
+) {
+    let mut hold = clients::StartupHold::new(ctx, args.extensions.clone());
+    loop {
+        let Some(msg) = hold.next(ctx, &mut args).await else {
+            break;
+        };
+        match msg {
+            DispatchMsg::Shutdown => {
+                // The common shutdown settled the fleet before signalling
+                // exit readiness; persist an empty roster rather than
+                // reviving torn-down rows on the next resume.
+                ctx.sessions
+                    .active_session
+                    .write()
+                    .await
+                    .set_killing_exit(true);
+                break;
+            }
+            DispatchMsg::Client(client_msg) => {
+                if handle_client_msg(ctx, client_msg, args.lifetime, live_clients).await {
+                    // The last client of a lifetime that ends with it left:
+                    // the same common shutdown runs to completion — fleet
+                    // torn down, turn settled — before the loop returns and
+                    // the final save happens (#1938). The exit-readiness
+                    // notification it fires has no waiter left, which is
+                    // fine: this loop is already leaving.
+                    args.shutdown.last_client_disconnected().await;
+                    ctx.sessions
+                        .active_session
+                        .write()
+                        .await
+                        .set_killing_exit(true);
+                    break;
+                }
+            }
+            DispatchMsg::Notification(notif) => {
+                let (agent_id, sequence) = notif.dedupe_key();
+                tracing::info!(%agent_id, sequence, "recording subagent completion note");
+                let mut should_deliver = false;
+                {
+                    // Enqueue the one-line note for delivery at the parent's NEXT
+                    // idle boundary.
+                    // `enqueue_subagent_notification` records the dedupe sequence
+                    // internally and returns whether this completion is new — so we
+                    // don't also call `record_subagent_notification` (that would
+                    // double-dedupe).
+                    let outcome = ctx.session.enqueue_note(&notif);
+                    // #1082 review round 2: only a retained note is announced;
+                    // Duplicate means already delivered, Dropped means both
+                    // buffers are full — the sequence stays retryable and the
+                    // monitor-side retention re-delivers critical alerts.
+                    if outcome.is_retained() {
+                        should_deliver = true;
+                        let ev = AgentEvent::SubagentNotification {
+                            agent_id: agent_id.clone(),
+                            sequence,
+                            message: notif.to_message(),
+                        };
+                        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                    }
+                }
+                // Broadcast state_changed event to all UDS clients (#524).
+                let list = build_live_subagent_info_list(&ctx.subagent_registry);
+                let ev = AgentEvent::SubagentStateChanged { subagents: list };
+                emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                // Auto-await (#816): this branch runs only while the parent is IDLE
+                // (mid-turn completions are buffered and drained after that turn).
+                // Deliver the just-enqueued note NOW so the parent processes it and
+                // can CONTINUE its task — e.g. score a poem the child just wrote —
+                // instead of stalling until the next user message. The TUI defers
+                // DISPLAY of the note until the parent is idle, so acting here never
+                // splits an in-flight response.
+                if should_deliver {
+                    controllers::uds::drain_pending_and_nudge(ctx).await;
+                }
+            }
+        }
+        // Turn boundary: refresh the shared snapshot so a newly-connected client
+        // is served the up-to-date prior conversation on connect (#828).
+        refresh_conversation_snapshot(ctx).await;
+        refresh_state_snapshot(ctx).await;
+        refresh_session_stats_snapshot(ctx).await;
+        refresh_tool_catalogue_snapshot(ctx).await;
+    }
+}
+
+mod clients;
+mod recv;
+use recv::DispatchMsg;
+#[cfg(test)]
+use recv::recv_next_message;
+
+/// Handle a single client message. Returns `true` if the loop should exit.
+async fn handle_client_msg(
+    ctx: &mut DispatchCtx<'_>,
+    client_msg: ClientMessage,
+    lifetime: crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime,
+    live_clients: &std::sync::atomic::AtomicU32,
+) -> bool {
+    match client_msg {
+        ClientMessage::SwarmWake { generation } => {
+            controllers::uds_swarm_control::handle_wake(ctx, generation).await
+        }
+        ClientMessage::Command(cmd) => {
+            ctx.current_client_id = cmd.client_id;
+            match parse_line(&cmd.line) {
+                LineResult::ParseError(e) if e.is_empty() => {}
+                LineResult::ParseError(e) => {
+                    // #994 criterion 2: preserve the detailed serde parse-error
+                    // text, consistent with the single-client loop
+                    // (`uds::run_command_loop`), rather than substituting a
+                    // generic placeholder string.
+                    let ev = AgentEvent::err(None, "parse_error", e);
+                    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                }
+                LineResult::Command(parsed) => {
+                    if controllers::uds::dispatch_parsed(parsed, cmd.admitted, ctx).await {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        ClientMessage::RejectedControl(refused) => {
+            controllers::uds::record_rejected(ctx, &refused.id, &refused.command).await;
+            false
+        }
+        ClientMessage::Disconnected(disc) => {
+            clients::disconnected(ctx, disc.client_id, lifetime, live_clients).await
+        }
+    }
+}
+
+// ─── Per-client handler ───────────────────────────────────────────────────────
+
+mod client;
+pub(crate) use client::{ClientHandlerArgs, handle_client};
+
+// ─── Broadcast prompt execution ───────────────────────────────────────────────
+
+// Test modules for multi-client dispatch and passive-note delivery.
+#[cfg(test)]
+mod accept_loop_tests;
+#[cfg(test)]
+mod cov2_tests;
+#[cfg(test)]
+mod cov_tests;
+#[cfg(test)]
+mod issue_926_wake_tests;
+#[cfg(test)]
+mod issue_994_tests;
+#[cfg(test)]
+mod oversized_tests;
+#[cfg(test)]
+mod paged_history_tests;
+#[cfg(test)]
+mod shutdown_tests;
+#[cfg(test)]
+mod snapshot_tests;

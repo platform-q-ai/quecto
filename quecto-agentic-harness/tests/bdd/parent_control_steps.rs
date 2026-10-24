@@ -21,10 +21,10 @@ use quecto::infrastructure::processes::owned_child_supervisor::{
 use quecto::infrastructure::processes::parent_control::{
     mint_credential, presentation_json, take_sidecar, write_sidecar,
 };
-use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
-use quecto::interface::cli::uds_parent_control::BindDeadline;
-use quecto::interface::cli::uds_parent_control::ParentControlLaunch;
-use quecto::interface::uds::parent_control::wire::BindParentControlWire;
+use quecto::interface::uds::controllers::uds::{UdsLoopArgs, run_uds_loop};
+use quecto::interface::uds::controllers::uds_parent_control::BindDeadline;
+use quecto::interface::uds::controllers::uds_parent_control::ParentControlLaunch;
+use quecto::interface::uds::wire::parent_control_wire::BindParentControlWire;
 
 use crate::QuectoWorld;
 
@@ -444,7 +444,7 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
                 coordinator: false,
             }),
             teardown_graph: Some(build_teardown_graph),
-            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
+            turn_session: quecto::composition::bootstrap::agent_turn::build_turn_session,
             environment_control: None,
         })
     });

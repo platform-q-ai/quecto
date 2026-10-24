@@ -43,11 +43,11 @@ pub(super) fn wire_member(
             "swarm member context ceiling engaged"
         );
     });
-    wire_agent(agent, crate::interface::tool_runtime::swarm_context())
+    wire_agent(agent, super::tool_runtime::swarm_context())
 }
 
-pub(in crate::interface::cli) fn bind_suspension(
-    cancel: &super::super::uds_cancel::CancelHandle,
+pub(in crate::interface) fn bind_suspension(
+    cancel: &crate::interface::uds::controllers::uds_cancel::CancelHandle,
     context: Option<SwarmContext>,
 ) {
     if let Some(context) = context {
@@ -57,18 +57,24 @@ pub(in crate::interface::cli) fn bind_suspension(
     }
 }
 
-pub(in crate::interface::cli) fn suspension_callback(
-    cancel: &super::super::uds_cancel::CancelHandle,
+pub(in crate::interface) fn suspension_callback(
+    cancel: &crate::interface::uds::controllers::uds_cancel::CancelHandle,
     context: SwarmContext,
 ) -> Arc<dyn Fn(crate::domain::swarm::value_objects::lifecycle::RunStatus, u64) + Send + Sync> {
     let cancel = cancel.clone();
     Arc::new(move |status, generation| {
-        super::super::uds_cancel::suspend_swarm_turn(&cancel, generation, &|| {
-            context
-                .control_status()
-                .and_then(|value| SwarmContext::decode_control_receipt(value, false))
-                .is_ok_and(|current| current.status == status && current.generation == generation)
-        });
+        crate::interface::uds::controllers::uds_cancel::suspend_swarm_turn(
+            &cancel,
+            generation,
+            &|| {
+                context
+                    .control_status()
+                    .and_then(|value| SwarmContext::decode_control_receipt(value, false))
+                    .is_ok_and(|current| {
+                        current.status == status && current.generation == generation
+                    })
+            },
+        );
     })
 }
 

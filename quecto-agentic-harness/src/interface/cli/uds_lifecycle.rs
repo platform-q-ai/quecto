@@ -1,6 +1,3 @@
-use super::uds_multi::MultiClientArgs;
-use super::uds_session_handles::SessionLoopInputs;
-use super::uds_single_client::{SingleClientArgs, single_client_loop};
 use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 pub(crate) use crate::domain::conversation::services::conversation_view::inject_system_prompt;
 #[cfg(test)]
@@ -8,6 +5,9 @@ pub(crate) use crate::domain::conversation::services::conversation_view::remove_
 #[cfg(test)]
 use crate::domain::conversation::value_objects::message::Role;
 use crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot;
+use crate::interface::uds::controllers::{uds_extensions, uds_parent_control, uds_session_handles};
+use crate::interface::uds::framing::{uds_multi, uds_single_client, uds_wire};
+use crate::interface::uds::presenters::uds_admission_warnings;
 #[cfg(test)]
 #[path = "uds_lifecycle_cov2_tests.rs"]
 mod cov2_tests;
@@ -37,7 +37,7 @@ pub struct UdsLoopArgs<'a> {
     /// The run's catalogue handles (#1845, #1848), built once by the agent
     /// startup and shared with the spawn tool.
     pub catalogue: super::controllers::catalogue_handles::CatalogueHandles,
-    pub ext_registry: Option<super::uds_extensions::ExtRegistry>,
+    pub ext_registry: Option<uds_extensions::ExtRegistry>,
     /// How long this harness lives (#1937): decided once at startup.
     pub lifetime: crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime,
     pub notification_rx:
@@ -50,17 +50,17 @@ pub struct UdsLoopArgs<'a> {
         Option<crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle>,
     /// The environment control slot (#2070) the loop hands its teardown.
     pub environment_control: Option<EnvironmentControlSlot>,
-    pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
-    pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
+    pub workflow_state: Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>, // #562
+    pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>, // #562
     /// Pre-created broadcast channel for workflow event emission (#598).
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     /// The launch-bound parent control binding (#1935); `None` for a
     /// top-level harness.
-    pub parent_control: Option<super::uds_parent_control::ParentControlLaunch>,
+    pub parent_control: Option<uds_parent_control::ParentControlLaunch>,
     /// Composition's teardown handles builder; `None` runs the loop without
     /// the teardown edge (unit rigs) and is refused for a launched child.
     pub teardown_graph: Option<super::TeardownHandlesBuilder>,
-    pub automatic_turns: super::AutomaticTurnsBuilder, // #1909: composition's builder
+    pub turn_session: super::TurnSessionBuilder, // #1909, #1855: composition's builder
     pub extensions: crate::domain::agents::entities::configured_extensions::AgentExtensions, // #2446
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
@@ -76,7 +76,7 @@ pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     rt.shutdown_timeout(std::time::Duration::from_secs(5));
     code
 }
-use super::uds_socket::{SocketGuard, bind_secure_socket};
+use crate::interface::uds::framing::uds_socket::{SocketGuard, bind_secure_socket};
 async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let UdsLoopArgs {
         agent,
@@ -102,11 +102,11 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         broadcast_tx,
         parent_control,
         teardown_graph,
-        automatic_turns,
+        turn_session,
         extensions,
     } = args;
     let session_key = identity.runtime_key().to_string(); // presenters, owner uuid
-    let sessions = sessions(SessionLoopInputs {
+    let sessions = sessions(uds_session_handles::SessionLoopInputs {
         base_dir: base_dir.to_path_buf(),
         identity,
         ephemeral,
@@ -129,16 +129,16 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     };
     let messages = opened.messages;
     let admission_slots =
-        super::uds_admission_warnings::publish_startup_warnings(&catalogue.runtime_store);
+        uds_admission_warnings::publish_startup_warnings(&catalogue.runtime_store);
     if let (Some(ws), Some(persisted)) = (&workflow_state, opened.workflow_run) {
         crate::domain::workflow::lock_engine(ws).restore_run(persisted);
     }
     if let Some(std_stream) = socket_override {
         // Single-client path: backward-compatible with existing tests.
-        single_client_loop(
-            SingleClientArgs {
+        uds_single_client::single_client_loop(
+            uds_single_client::SingleClientArgs {
                 agent,
-                automatic_turns,
+                turn_session,
                 workspace,
                 messages,
                 model,
@@ -163,12 +163,12 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 return 1;
             }
         };
-        eprint!("{}", super::uds_wire::socket_announcement(&socket_path));
+        eprint!("{}", uds_wire::socket_announcement(&socket_path));
         let guard = SocketGuard(socket_path);
-        super::uds_multi::multi_client_loop(
-            MultiClientArgs {
+        uds_multi::multi_client_loop(
+            uds_multi::MultiClientArgs {
                 agent,
-                automatic_turns,
+                turn_session,
                 workspace,
                 messages,
                 model,
@@ -186,7 +186,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 parent_control,
                 teardown_graph,
                 environment_control,
-                extensions: super::uds_extensions::launch(&extensions, &guard.0, base_dir),
+                extensions: uds_extensions::launch(&extensions, &guard.0, base_dir),
             },
             listener,
             &sessions,

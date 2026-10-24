@@ -393,6 +393,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_conversation_characterization_tests/mod.rs` | `shell` conversation characterization test module split for line budget (#1231) |
 | `shell/app_disconnect.rs` | `shell` runtime/disconnect coordination (relocated, #1257 Phase 6) |
 | `shell/app_admission.rs` | `shell` inference-admission label/spinner owner (#1679 P4) |
+| `shell/app_admission_restart.rs` | `shell` `/admission` command and `restart_admission` response owner (#2615) |
 | `shell/app_startup_warnings.rs` | `shell` startup-warning notices from `get_state` (#2435) |
 | `shell/app_attachments.rs` | `shell` edge of image attachments (#2425): reads the `/image` file and the clipboard off the event loop (a drop guard answers a read that panicked), drops the chips when their conversation ends, the chip lines above the editor, the `Ctrl+V` / `Backspace` / `Esc` / `Enter` keys while chips are pending, and the one-line refusal notices |
 | `shell/app_workflow_automation.rs` | `shell` workflow automation flag mirroring (split from `app_response.rs` for the 750-line cap, #1679 P4) |
@@ -416,6 +417,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
 | `shell/agent_args.rs` | `shell` `quecto agent` argument line built from the TUI flags (split from `cli.rs` for the 750-line cap; `--model`/`--effort` pass-through, #2024 S2) |
 | `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
+| `shell/cli_session_restart.rs` | `shell` restarting the TUI so a fresh agent adopts the admission broker's changed policy (#2615) |
 | `shell/cli_termination.rs` | `shell` why a spawn stopped on a termination signal and what an exit on one did (#2053) |
 | `shell/cli_startup_exit.rs` | `shell` startup-failure leader-only agent termination with a stderr notice (#1956) |
 | `shell/clipboard_image.rs` | `shell` clipboard port (`ClipboardReader`) and its adapter (#2425): an allowlist of two tools, `wl-paste` (Wayland) and `xclip` (X11), each command in its own process group, killed whole at a 2 s timeout, its output capped; a failing listing falls through to the next tool; tests use fake executables or a fake reader, and `tests/contracts/tui_clipboard_reader.rs` is the port's contract |

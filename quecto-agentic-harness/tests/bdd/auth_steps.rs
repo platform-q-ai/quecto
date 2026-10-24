@@ -140,7 +140,9 @@ fn then_credential_file_should_be_unchanged(world: &mut QuectoWorld) {
 
 /// Composition's auth handles over the world's credential store's base
 /// directory.
-fn composed_auth_handles(world: &QuectoWorld) -> quecto::interface::cli::auth::AuthHandles {
+fn composed_auth_handles(
+    world: &QuectoWorld,
+) -> quecto::interface::cli::controllers::auth::AuthHandles {
     let store = world
         .credential_store
         .as_ref()
@@ -151,7 +153,7 @@ fn composed_auth_handles(world: &QuectoWorld) -> quecto::interface::cli::auth::A
         .expect("credentials path has a parent")
         .to_path_buf();
     quecto::composition::bootstrap::auth::build_auth_handles(
-        &quecto::interface::cli::auth::AuthEnvironment {
+        &quecto::interface::cli::controllers::auth::AuthEnvironment {
             base_dir: base,
             oauth_base_url: None,
         },
@@ -427,7 +429,7 @@ fn given_no_stored_credential(world: &mut QuectoWorld, provider: String) {
 
 #[when("the gateway initializes providers")]
 fn when_gateway_initializes_providers(world: &mut QuectoWorld) {
-    use quecto::interface::shared::resolve_api_key;
+    use quecto::interface::cli::controllers::shared::resolve_api_key;
 
     let config = world
         .gateway_config
@@ -457,7 +459,7 @@ fn then_openai_provider_uses_key(world: &mut QuectoWorld, expected: String) {
 
 #[when("the gateway checks provider readiness")]
 fn when_gateway_checks_readiness(world: &mut QuectoWorld) {
-    use quecto::interface::shared::check_provider_readiness;
+    use quecto::interface::cli::controllers::shared::check_provider_readiness;
 
     let store = world
         .gateway_credential_store
@@ -739,7 +741,7 @@ fn given_mock_oauth_refresh_server_error(world: &mut QuectoWorld) {
 #[when(expr = "the gateway resolves API key with refresh for {string}")]
 fn when_gateway_resolves_with_refresh(world: &mut QuectoWorld, provider: String) {
     use quecto::infrastructure::auth::oauth::OAuthConfig;
-    use quecto::interface::shared::resolve_api_key_with_refresh_async_with_oauth_config;
+    use quecto::interface::cli::controllers::shared::resolve_api_key_with_refresh_async_with_oauth_config;
 
     let config = world
         .gateway_config
@@ -1009,8 +1011,8 @@ thread_local! {
 
 /// Composition's auth handles importing from the step's `auth.json`.
 fn import_rig(
-    environment: &quecto::interface::cli::auth::AuthEnvironment,
-) -> quecto::interface::cli::auth::AuthHandles {
+    environment: &quecto::interface::cli::controllers::auth::AuthEnvironment,
+) -> quecto::interface::cli::controllers::auth::AuthHandles {
     let auth_json = IMPORT_AUTH_JSON
         .with(|path| path.borrow().clone())
         .expect("the step names its auth.json");

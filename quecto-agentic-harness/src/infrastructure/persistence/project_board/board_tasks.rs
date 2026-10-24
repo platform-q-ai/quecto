@@ -71,7 +71,7 @@ fn keep(board: &mut Board, entry: &Entry) {
 /// Objects this clone does not hold; git fails, or the tree is past its
 /// bounds.
 pub(super) fn scan_tasks(
-    git: &super::Git,
+    git: &impl super::Reader,
     tree: &str,
     limits: Limits,
     left: &LeftOnRemote,
@@ -154,7 +154,7 @@ pub(super) fn scan_tasks(
 ///
 /// # Errors
 /// git fails to give the files' bytes.
-pub(super) fn load_tasks(git: &super::Git, scan: TasksScan) -> Result<Board, Unread> {
+pub(super) fn load_tasks(git: &impl super::Reader, scan: TasksScan) -> Result<Board, Unread> {
     let TasksScan { mut board, to_read } = scan;
     let wanted: Vec<(&str, usize)> = to_read
         .iter()
@@ -163,6 +163,13 @@ pub(super) fn load_tasks(git: &super::Git, scan: TasksScan) -> Result<Board, Unr
             (entry.oid.as_str(), size)
         })
         .collect();
+    #[cfg(feature = "test-support")]
+    git.witness_artifacts(
+        &to_read
+            .iter()
+            .map(|(_, entry)| (format!("tasks/{}", entry.name), entry.oid.clone()))
+            .collect::<Vec<_>>(),
+    );
     let contents = contents(git, &wanted)?;
     // Ids with a task file in the JSON form older quecto wrote, carried
     // forward: an `.md` beside one that is no task file is the summary it

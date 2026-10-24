@@ -11,7 +11,7 @@
 //! plans (and its open run) as they are on the board, and refuse plans
 //! that contradict each other rather than build on them.
 use super::super::entities::claim::Identity;
-use super::super::entities::plan::{MAX_PLAN_VERSION, Plan, PlanFields, PlanItem};
+use super::super::entities::plan::{MAX_PLAN_VERSION, Plan, PlanEntry, PlanFields, PlanItem};
 use super::super::entities::run::Run;
 use super::super::entities::task::Task;
 use super::super::entities::team::Team;
@@ -20,16 +20,22 @@ use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{PlanState, TaskStatus};
-use super::claims::{after_last, held_live_by, settle, stamp, within_slack};
+use super::claims::{after_last, held_live_by, not_before, settle, stamp, within_slack};
 use super::runs::open_of;
 
-/// What a plan says: its approach, task items and team.
+/// What a plan says: its approach, handoff, task items and team; and how
+/// its approach enters (#2705 T3).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlanContent {
     /// Markdown.
     pub approach: String,
+    /// Markdown; `None` for none.
+    pub handoff: Option<String>,
     pub items: Vec<PlanItem>,
     pub team: Option<Team>,
+    /// How a new approach enters: one an edit leaves as the draft holds
+    /// it enters nothing.
+    pub entry: PlanEntry,
 }
 
 /// When a change happens: the caller's `now`, and the latest time it may
@@ -68,6 +74,15 @@ pub struct TaskPlans<'a> {
     pub runs: &'a [Run],
 }
 
+/// A draft of a task's plan as the board holds it (#2662): the task,
+/// every version of its plan (the draft among them), and the draft.
+#[derive(Debug, Clone, Copy)]
+pub struct DraftOf<'a> {
+    pub task: &'a Task,
+    pub versions: &'a [Plan],
+    pub plan: &'a Plan,
+}
+
 /// What an acceptance's caller read (#2481 M4c): the draft's `updated`,
 /// so the content accepted is the content reviewed, and the version the
 /// task named as accepted (`None`: none), so no acceptance the caller did
@@ -88,26 +103,28 @@ pub struct Accepted {
 }
 
 /// A new draft version of `task`'s plan, after every version in
-/// `versions`, proposed by `actor` at `now`.
+/// `versions`, proposed by `actor` at `when`: stamped no earlier than the
+/// task or any of its plans within `when`'s bound (#2662).
 ///
 /// # Errors
 /// A done or archived task; plans that contradict each other; no version
 /// left; or a plan its schema refuses.
-pub fn propose(
+pub fn propose_at(
     task: &Task,
     versions: &[Plan],
     content: PlanContent,
     actor: &Identity,
-    now: &Timestamp,
+    when: &Moment,
 ) -> Result<Plan, BoardRuleError> {
     open_to_plans(task)?;
     consistent(task, versions)?;
+    let now = &not_before(task, stamps_of(versions, when), &when.now);
     let last = versions
         .iter()
         .map(|plan| plan.fields().version)
         .max()
         .unwrap_or(0);
-    entered(&content)?;
+    entered(&content, None)?;
     match last < MAX_PLAN_VERSION {
         true => {}
         false => {
@@ -122,6 +139,7 @@ pub fn propose(
         version: last + 1,
         state: PlanState::Draft,
         approach: content.approach,
+        handoff: content.handoff,
         items: content.items,
         team: content.team,
         proposed_by: actor.clone(),
@@ -133,8 +151,9 @@ pub fn propose(
     .map_err(BoardRuleError::InvalidPlan)
 }
 
-/// The draft `plan` of `task` saying `content` instead, edited by `actor`
-/// (anyone: drafts are shared) at `when`.
+/// The draft `plan` of `task` (`of`, with every version of its plan)
+/// saying `content` instead, edited by `actor` (anyone: drafts are shared)
+/// at `when`, stamped no earlier than any of the task's plans (#2662).
 /// With `expected`, the draft must still be as the caller read it (its
 /// `updated`), so a newer edit is never overwritten.
 ///
@@ -143,22 +162,32 @@ pub fn propose(
 /// changed since it was read, or stamped ahead of `when`'s bound; an edit
 /// that changes nothing; or a plan its schema refuses.
 pub fn edit_draft(
-    task: &Task,
-    plan: &Plan,
+    of: DraftOf<'_>,
     content: PlanContent,
     expected: Option<&Timestamp>,
     actor: &Identity,
     when: &Moment,
 ) -> Result<Plan, BoardRuleError> {
+    let DraftOf {
+        task,
+        versions,
+        plan,
+    } = of;
+    assert!(
+        versions.contains(plan),
+        "a draft is one of the task's plans as the board holds them"
+    );
     let now = &when.now;
     open_to_plans(task)?;
     of_task(task, std::slice::from_ref(plan))?;
+    of_task(task, versions)?;
     draft(plan)?;
     as_read(plan, expected)?;
     when.may_build_on(plan)?;
-    entered(&content)?;
     let fields = plan.fields();
+    entered(&content, Some(&fields.approach))?;
     let changes = fields.approach != content.approach
+        || fields.handoff != content.handoff
         || fields.items != content.items
         || fields.team != content.team;
     match changes {
@@ -167,18 +196,32 @@ pub fn edit_draft(
     }
     let mut next = fields.clone();
     next.approach = content.approach;
+    next.handoff = content.handoff;
     next.items = content.items;
     next.team = content.team;
     // Drafts are anyone's: the last editor is recorded, the proposer kept.
     next.edited_by = Some(actor.clone());
-    restamped(next, plan, now)
+    restamped(
+        next,
+        plan,
+        &not_before(task, stamps_of(versions, when), now),
+    )
 }
 
 /// `content`'s text is as it enters the board, normalised: its approach
-/// as markdown, each task item's title and criteria as lines.
-fn entered(content: &PlanContent) -> Result<(), BoardRuleError> {
+/// and handoff as markdown, each task item's title and criteria as lines;
+/// and its approach within its entry's cap (#2705 T3) unless it is the
+/// approach `held` (an edit's draft holds it already: a legacy approach
+/// is kept, never forced to be rewritten).
+fn entered(content: &PlanContent, held: Option<&str>) -> Result<(), BoardRuleError> {
     let invalid = BoardRuleError::InvalidPlan;
     entered_text("approach", &content.approach).map_err(invalid)?;
+    if held != Some(content.approach.as_str()) {
+        content.entry.approach(&content.approach).map_err(invalid)?;
+    }
+    if let Some(handoff) = &content.handoff {
+        entered_text("handoff", handoff).map_err(invalid)?;
+    }
     for (index, item) in content.items.iter().enumerate() {
         entered_line(&format!("items/{index}/title"), &item.title).map_err(invalid)?;
         for (at, criterion) in item.criteria.iter().enumerate() {
@@ -245,6 +288,8 @@ pub fn accept(
     for plan in std::iter::once(chosen).chain(before) {
         at = after_last(&plan.fields().updated, &at)?;
     }
+    // Never before any of the task's plans within the bound (#2662).
+    at = not_before(task, stamps_of(versions, when), &at);
     let mut named = task.fields().clone();
     named.accepted_plan = Some(version);
     let task = settle(named, &at)?;
@@ -285,8 +330,9 @@ pub fn accept(
     })
 }
 
-/// The draft `plan` of `task` discarded by `actor` at `when`; it is kept,
-/// as discarded.
+/// The draft `plan` of `task` (`of`, with every version of its plan)
+/// discarded by `actor` at `when`, stamped no earlier than any of the
+/// task's plans (#2662); it is kept, as discarded.
 /// With `expected`, the draft must still be as the caller read it (its
 /// `updated`), so the draft discarded is the one reviewed (#2481 M4c).
 ///
@@ -295,20 +341,33 @@ pub fn accept(
 /// changed since it was read, or stamped ahead of `when`'s bound; or an
 /// actor who may not decide for the task.
 pub fn discard(
-    task: &Task,
-    plan: &Plan,
+    of: DraftOf<'_>,
     expected: Option<&Timestamp>,
     actor: &Identity,
     when: &Moment,
 ) -> Result<Plan, BoardRuleError> {
+    let DraftOf {
+        task,
+        versions,
+        plan,
+    } = of;
+    assert!(
+        versions.contains(plan),
+        "a draft is one of the task's plans as the board holds them"
+    );
     let now = &when.now;
     open_to_plans(task)?;
     of_task(task, std::slice::from_ref(plan))?;
+    of_task(task, versions)?;
     draft(plan)?;
     as_read(plan, expected)?;
     when.may_build_on(plan)?;
     decides(task, actor, now)?;
-    moved(plan, PlanState::Discarded, now)
+    moved(
+        plan,
+        PlanState::Discarded,
+        &not_before(task, stamps_of(versions, when), now),
+    )
 }
 
 /// The task's plans as the board holds them agree with each other and
@@ -419,6 +478,17 @@ fn decides(task: &Task, actor: &Identity, now: &Timestamp) -> Result<(), BoardRu
         Some(_) => held_live_by(task, actor, now).map(|_| ()),
         None => Ok(()),
     }
+}
+
+/// When each of `versions` (the task's plans, as the board holds them)
+/// last changed, within `when`'s bound: what a plan's change is stamped no
+/// earlier than. A plan stamped past the bound (a clock that ran ahead, or
+/// a hand edit) is left out, so it never drags a new stamp ahead of it.
+fn stamps_of<'a>(versions: &'a [Plan], when: &'a Moment) -> impl Iterator<Item = &'a Timestamp> {
+    versions
+        .iter()
+        .map(|plan| &plan.fields().updated)
+        .filter(|updated| within_slack(updated, when.latest.as_ref()))
 }
 
 fn moved(plan: &Plan, state: PlanState, now: &Timestamp) -> Result<Plan, BoardRuleError> {

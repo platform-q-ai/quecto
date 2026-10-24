@@ -16,7 +16,7 @@ use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSes
 use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
+use quecto::interface::uds::controllers::uds::{UdsLoopArgs, run_uds_loop};
 use std::collections::HashMap;
 use std::future::Future;
 use std::io::{Read, Write};
@@ -314,7 +314,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
         },
     );
     let ext_registry = quecto::infrastructure::extensions::registry::ExtensionRegistry::new();
-    quecto::interface::shared::register_bundled_native_extension_tools(
+    quecto::interface::cli::controllers::shared::register_bundled_native_extension_tools(
         &mut registry,
         &ext_registry,
     );
@@ -377,7 +377,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
             broadcast_tx: None,
             parent_control: None,
             teardown_graph: None,
-            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
+            turn_session: quecto::composition::bootstrap::agent_turn::build_turn_session,
             environment_control: None,
         })
     });

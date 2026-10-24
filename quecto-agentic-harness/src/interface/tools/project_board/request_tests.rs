@@ -1,6 +1,12 @@
 use super::*;
+use crate::domain::project_board::entities::task_parts::Entry;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// A request as the agent tool reads it.
+fn parse(value: &Value) -> Result<BoardRequest, RequestError> {
+    super::parse(value, EntryPolicy::Sectioned)
+}
 
 fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
@@ -208,6 +214,7 @@ fn update_draft_sets_only_what_it_names_and_null_takes_the_parent_away() {
             parent: Some(None),
             depends_on: None,
             expected_updated: Some(Timestamp::parse("2026-10-10T08:00:00Z").unwrap()),
+            entry: Entry::Sectioned,
         }
     );
     assert_eq!(
@@ -309,6 +316,7 @@ fn samples(kind: Kind) -> (Value, Value, Value) {
         Kind::Slug => (json!("a"), json!("b"), json!(7)),
         Kind::OptionalSlug => (json!("a"), Value::Null, json!(7)),
         Kind::Slugs => (json!(["a"]), json!(["b"]), json!("a")),
+        Kind::Lines => (json!(["a"]), json!(["b"]), json!("a")),
         Kind::Text => (json!("x"), json!("y"), json!(7)),
         Kind::Timestamp => (
             json!("2026-10-10T08:00:00Z"),
@@ -358,12 +366,12 @@ fn every_field_in_the_table_is_read_by_its_kind() {
             }
             // An edit must set something besides the field under test.
             if *op == "update_draft" {
-                let other = if except == "description" {
-                    "title"
-                } else {
-                    "description"
+                // Not a description field: it is given one way only.
+                let (other, value) = match except {
+                    "title" => ("parent", json!("d")),
+                    _ => ("title", json!("D")),
                 };
-                object.insert(other.into(), json!("D"));
+                object.insert(other.into(), value);
             }
             if *op == "edit_plan" {
                 let (other, value) = match except {
@@ -399,7 +407,7 @@ fn sample(kind: Kind) -> Value {
     match kind {
         Kind::Slug => json!("a"),
         Kind::OptionalSlug => Value::Null,
-        Kind::Slugs => json!([]),
+        Kind::Slugs | Kind::Lines => json!([]),
         Kind::Text => json!("t"),
         Kind::Timestamp => json!("2026-10-10T08:00:00Z"),
         Kind::Status => json!("review"),
@@ -591,4 +599,68 @@ fn end_run_reads_its_run_outcome_and_pin() {
             "{value}"
         );
     }
+}
+
+/// #2705 T2: create and update_draft take a description in its sections,
+/// composed into the text the use case normalises and the task checks.
+#[test]
+fn create_and_update_draft_take_the_descriptions_sections() {
+    let created = parse(&json!({
+        "op": "create",
+        "task": "a",
+        "title": "Ship it",
+        "goal": "Ship it.",
+        "why": "Users wait.",
+        "done_when": ["Merged", "CI green"],
+        "links": ["https://x.io/1"],
+    }));
+    let Ok(BoardRequest::Create(new)) = created else {
+        panic!("{created:?}")
+    };
+    assert_eq!(
+        new.description,
+        "## Goal\nShip it.\n\n## Why\nUsers wait.\n\n## Done when\n- [ ] Merged\n- [ ] CI \
+         green\n\n## Links\n- [x.io/1](https://x.io/1)"
+    );
+    let edit = parse(&json!({
+        "op": "update_draft", "task": "a", "goal": "Ship.", "done_when": ["Merged"],
+    }));
+    let Ok(BoardRequest::UpdateDraft(update)) = edit else {
+        panic!("{edit:?}")
+    };
+    assert_eq!(
+        update.description.as_deref(),
+        Some("## Goal\nShip.\n\n## Done when\n- [ ] Merged")
+    );
+    for op in ["create", "update_draft"] {
+        let both = json!({"op": op, "task": "a", "title": "T", "description": "x", "goal": "y"});
+        assert_eq!(refused(both).field, "description", "{op}");
+        let not_text = json!({"op": op, "task": "a", "title": "T", "done_when": "x"});
+        assert_eq!(refused(not_text).field, "done_when", "{op}");
+        let not_line = json!({"op": op, "task": "a", "title": "T", "links": ["a", 1]});
+        assert_eq!(refused(not_line).field, "links/1", "{op}");
+    }
+}
+
+/// #2705 T2: each front end's policy resolves how a request's title and
+/// description enter: the tool's always sectioned, the CLI's sectioned
+/// only when the request gives the sections.
+#[test]
+fn a_front_ends_policy_resolves_each_requests_entry() {
+    use crate::domain::project_board::value_objects::telemetry::FrontEnd;
+    let entry =
+        |front_end: FrontEnd, value: Value| match super::parse(&value, entry_policy(front_end)) {
+            Ok(BoardRequest::Create(new)) => new.entry,
+            Ok(BoardRequest::UpdateDraft(update)) => update.entry,
+            other => panic!("{other:?}"),
+        };
+    let free = json!({"op": "create", "task": "a", "title": "T", "description": "Why."});
+    let sections = json!({"op": "create", "task": "a", "title": "T", "goal": "Ship."});
+    let retitle = json!({"op": "update_draft", "task": "a", "title": "T"});
+    for value in [&free, &sections, &retitle] {
+        assert_eq!(entry(FrontEnd::Tool, value.clone()), Entry::Sectioned);
+    }
+    assert_eq!(entry(FrontEnd::Cli, free), Entry::Legacy);
+    assert_eq!(entry(FrontEnd::Cli, retitle), Entry::Legacy);
+    assert_eq!(entry(FrontEnd::Cli, sections), Entry::Sectioned);
 }
