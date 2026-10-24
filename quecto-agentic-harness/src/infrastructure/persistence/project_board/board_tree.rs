@@ -41,7 +41,8 @@
 //! it never reads, and never writes over, a board whose tasks it would not
 //! see. Every write adds the marker; a root without one is a board written
 //! before it, read as it is; a marker of a newer format asks for an
-//! upgrade.
+//! upgrade; the fence's (format 4, `format/MOVED` beside it, #2705 B13)
+//! answers that the board moved to a board server, and is never written.
 //!
 //! An object a partial clone does not hold yet is not fetched here (every
 //! local call runs with `GIT_NO_LAZY_FETCH`): the read answers
@@ -352,9 +353,14 @@ fn read(
             "format is named more than once at the root".into(),
         ))),
     };
-    // A newer format first: whatever else this quecto would make of the
-    // board, it asks for an upgrade, before any folder is scanned.
+    // A fence's marker or a newer format first: whatever else this quecto
+    // would make of the board, it answers that the board moved (#2705 B13)
+    // or asks for an upgrade, before any folder is scanned.
     match &marker {
+        Some(Ok(Marker::Moved(moved))) => {
+            return Err(Unread::Failed(BoardStoreError::Moved(moved.clone())));
+        }
+        Some(Ok(Marker::MovedMalformed(why))) => return Err(Unread::Failed(moved_malformed(why))),
         Some(Ok(Marker::Newer(version))) => return Err(Unread::Failed(newer(version))),
         Some(Ok(Marker::Oversized(size))) => {
             return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
@@ -422,7 +428,14 @@ fn read(
         Some(Marker::Damaged(why)) => {
             return Err(damage(&format!("its format marker is damaged ({why})")));
         }
-        Some(Marker::Current | Marker::Newer(_) | Marker::Oversized(_)) | None => {}
+        Some(
+            Marker::Current
+            | Marker::Newer(_)
+            | Marker::Oversized(_)
+            | Marker::Moved(_)
+            | Marker::MovedMalformed(_),
+        )
+        | None => {}
     }
     let tasks = tasks.transpose()?;
     let folders = folders
@@ -651,7 +664,7 @@ pub use writes::{FolderAfter, FolderFile, folder_file};
 #[path = "board_format.rs"]
 mod format;
 pub use format::{FORMAT, FORMAT_FILE, FORMAT_TREE, MOVED_FILE, MOVED_FORMAT};
-use format::{Marker, newer, read_format};
+use format::{Marker, moved_malformed, newer, read_format};
 #[path = "board_fence.rs"]
 pub mod fence;
 

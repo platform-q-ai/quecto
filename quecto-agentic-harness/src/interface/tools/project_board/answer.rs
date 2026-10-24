@@ -579,13 +579,18 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             named.insert("reason".into(), shown_json(why));
             (C::FolderSetAside, named)
         }
-        E::Store(BoardStoreError::Moved(moved)) => (
-            C::StoreUnavailable,
-            fields([("reason", shown_json(&moved.to_string()))]),
-        ),
-        E::Store(BoardStoreError::MovedMalformed(why)) => {
-            (C::StoreUnavailable, fields([("reason", shown_json(why))]))
+        E::Store(BoardStoreError::Moved(moved)) => {
+            let urls = moved.urls().iter().map(|url| shown_json(url)).collect();
+            let board = json!(moved.board().as_str());
+            (
+                C::BoardMoved,
+                fields([("board", board), ("urls", Value::Array(urls))]),
+            )
         }
+        E::Store(BoardStoreError::MovedMalformed(why)) => (
+            C::BoardMovedMalformed,
+            fields([("reason", shown_json(why))]),
+        ),
         E::Rule(rule) => (C::Rule, fields([("rule", rule_json(rule))])),
         E::Invalid(schema) => (
             C::InvalidTask,

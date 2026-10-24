@@ -12,6 +12,9 @@ use crate::infrastructure::persistence::project_board::store::Fence;
 const MOVED: &[u8] =
     b"board_id 0123456789abcdef\nurl https://board.example:7443\nurl http://100.64.0.2:7443\n";
 
+/// The rows of a `format` tree: mode, name and object.
+type FormatRows = Vec<(&'static str, &'static str, Object)>;
+
 fn moved_to(urls: &[&str]) -> BoardMoved {
     let id = BoardId::of_hex("0123456789abcdef").unwrap();
     BoardMoved::new(id, urls.iter().map(|url| (*url).to_string()).collect()).unwrap()
@@ -117,7 +120,7 @@ fn a_malformed_moved_is_refused_and_never_written() {
     };
     let mut huge = MOVED.to_vec();
     huge.resize(MAX_MOVED_BYTES + 1, b'\n');
-    let cases: Vec<(&str, Vec<(&'static str, &'static str, Object)>)> = vec![
+    let cases: Vec<(&str, FormatRows)> = vec![
         ("an unknown key", fence(&[MOVED, b"mirror x\n"].concat())),
         (
             "an ftp url",

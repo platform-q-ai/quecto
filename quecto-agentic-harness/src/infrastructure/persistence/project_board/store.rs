@@ -364,7 +364,7 @@ impl GitBoardStore {
         let base = object_id(&expected.0).map_err(|_| invalid())?;
         if let Some(tip) = self.local_tip()? {
             if self.on_board(&base, &tip)? {
-                return Ok(base);
+                return self.unmoved(base, &tip);
             }
         }
         if self.remote_head(BOARD_REF)?.is_none() {
@@ -372,8 +372,29 @@ impl GitBoardStore {
         }
         let tip = self.fetch()?;
         match self.on_board(&base, &tip)? {
-            true => Ok(base),
+            true => self.unmoved(base, &tip),
             false => Err(invalid()),
+        }
+    }
+
+    /// `base`, unless the board's `tip` past it is fenced (#2705 B13): a
+    /// write from a head before the fence is refused as a read of the
+    /// fence is, before any commit is made. Any other refusal of the tip's
+    /// read is left to the write's own read of `base` and its push.
+    fn unmoved(&self, base: String, tip: &str) -> Result<String, BoardStoreError> {
+        if base == tip {
+            return Ok(base);
+        }
+        match self.board_at(tip) {
+            Err(error)
+                if matches!(
+                    error,
+                    BoardStoreError::Moved(_) | BoardStoreError::MovedMalformed(_)
+                ) =>
+            {
+                Err(error)
+            }
+            Ok(_) | Err(_) => Ok(base),
         }
     }
 

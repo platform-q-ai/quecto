@@ -279,6 +279,10 @@ const KNOWN_KINDS: &[&str] = &[
     "kept",
     "none_kept",
     "not_checked",
+    // A board moved to a board server, and one whose fence is malformed
+    // (#2705 B13).
+    "board_moved",
+    "board_moved_malformed",
 ];
 
 /// Whether every one of [`KNOWN_KINDS`] is shaped as a kind (checked as

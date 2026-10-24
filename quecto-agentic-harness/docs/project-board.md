@@ -52,6 +52,33 @@ The board writes the marker `quecto-board 3` and reads `quecto-board 2` too. A
 build that reads only format 2 asks for an upgrade on a board this build has
 written, rather than taking its folders for someone else's branch.
 
+### A board moved to a board server
+
+When a board moves to a board server (epic #2705), a one-time fence commit on
+`quecto/board` raises the format to 4: `format/board` reads `quecto-board 4`, and
+beside it `format/MOVED` names the board and the URLs that serve it now. Every
+other file stays as it was, and strays are dropped as by any write. `MOVED` is
+UTF-8 text of LF-ended lines, at most 4 KiB:
+
+```
+board_id 0123456789abcdef
+url https://board.example:7443
+url http://100.64.0.2:7443
+```
+
+The first line is `board_id` and the board's id (16 lowercase hex digits). Then
+come 1 to 8 distinct `url` lines, in the order a client tries them. A URL is
+`http://` or `https://`, a host with no userinfo, and an optional path, at most
+256 bytes. A build that reads format 3 refuses a format-4 board for reads and
+writes alike. This build answers every read and write of a fenced board with
+`board_moved`, which gives the `board` id and the `urls`. It never writes to the
+branch again: a write from a head before the fence is refused too, before any
+commit is made. A fence whose `format` tree is anything but the marker and a
+`MOVED` of this grammar answers `board_moved_malformed` with its `reason`, and is
+not read or written either. Building the fence's tree is idempotent: fencing a
+board already fenced to the same board and URLs changes nothing. Fencing it to
+another place is refused with `board_moved`.
+
 A read takes at most the following. Past any of these it answers
 `board_too_large` before it reads any file's bytes.
 
