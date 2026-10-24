@@ -356,6 +356,39 @@ fn a_chat_space_between_words_is_made_plain_in_text() {
     }
 }
 
+/// Epic #2705 T1 (decision 9): every chat space is made plain on entry,
+/// a line's first word, a block marker's neighbour, code spans, math and
+/// fenced code included, so no entry path refuses one. The second row is
+/// `land-layout-2652`'s description, whose no-break spaces in a paragraph
+/// with a link were refused ("all22" is what was left once they were
+/// deleted by hand).
+#[test]
+fn every_chat_space_is_made_plain_on_entry() {
+    for (raw, kept) in [
+        (
+            "Refresh\u{a0}PR #2652: run `cargo\u{a0}test` and $a\u{a0}b$.",
+            "Refresh PR #2652: run `cargo test` and $a b$.",
+        ),
+        (
+            "Refresh PR #2652. [Planning handoff](https://github.com/x/pull/2652) binds \
+             scope including all\u{a0}22 L11-delegated files. Budget\u{a0}500 target.",
+            "Refresh PR #2652. [Planning handoff](https://github.com/x/pull/2652) binds \
+             scope including all 22 L11-delegated files. Budget 500 target.",
+        ),
+        ("-\u{a0}x\n\u{3000}leading", "- x\n leading"),
+        ("```\na\u{202f}b\n```", "```\na b\n```"),
+    ] {
+        let normal = settled(text, raw);
+        assert_eq!(normal, kept, "{raw:?}");
+        assert_eq!(entered_text("description", &normal), Ok(()), "{raw:?}");
+        assert_eq!(
+            super::super::schema_error::markdown("description", &normal, 10_000),
+            Ok(()),
+            "{raw:?}"
+        );
+    }
+}
+
 /// Epic #2481 T4: the kinds of change a normaliser made, each told by
 /// itself, and none for text it kept as written.
 mod changes {

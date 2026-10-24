@@ -360,6 +360,30 @@ fn the_container_scripts_identity_writes_the_board() {
     );
 }
 
+/// #2703: the pocket relay's scope carries 41 settings, its bot committer
+/// at the end: the board commits as that committer, warning of nothing.
+#[test]
+fn the_relays_large_scope_writes_the_board_as_its_identity() {
+    let (_dir, work) = repository();
+    let mut settings = vec![("core.pager", "cat"); 39];
+    settings.extend([
+        ("user.name", "quecto pocket"),
+        ("user.email", "pocket@quecto.invalid"),
+    ]);
+    let relay = with_command_config(environment(&work, Access::Write), &settings);
+    let mut warnings: Vec<String> = Vec::new();
+    let handles = build_with_warnings(&relay, &mut |line| warnings.push(line.into())).unwrap();
+    assert_eq!(warnings, Vec::<String>::new());
+    let ops = |request: Value| run(&*handles.operations, &request.to_string());
+    assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
+    let created = ops(json!({"op": "create", "task": "a", "title": "A"}));
+    assert_eq!(created["ok"], json!(true), "{created}");
+    assert_eq!(
+        board_commit_identities(&work),
+        "quecto pocket <pocket@quecto.invalid>|quecto pocket <pocket@quecto.invalid>"
+    );
+}
+
 /// A malformed command-scope set (here a count of 2 with one setting) is
 /// dropped whole and the board carries on as before: a write, as the
 /// clone's own committer, warns of it once in words that name the

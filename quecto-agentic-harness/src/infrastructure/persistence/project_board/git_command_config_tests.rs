@@ -338,3 +338,25 @@ fn a_malformed_sets_reason_quotes_no_key_or_value() {
          GIT_CONFIG_COUNT is not plain decimal 0 to 16"
     );
 }
+
+/// #2703: the pocket relay's scope carries 41 settings (its guarded git
+/// settings beside the bot committer): the identity among them reaches
+/// git, renumbered, however many other settings come with it, and the
+/// set warns of nothing.
+#[test]
+fn an_identity_in_a_large_set_reaches_git() {
+    let repos = Repos::new();
+    let identity = [
+        ("user.name", "quecto pocket"),
+        ("user.email", "pocket@quecto.invalid"),
+    ];
+    let mut settings = vec![("core.pager", "cat"); 39];
+    settings.extend(identity);
+    assert_eq!(settings.len(), 41);
+    let vars = command_config("41", &settings);
+    assert_eq!(warning(os_vars(vars.clone())), None);
+    assert_eq!(
+        seen(&reaching_git(&repos, &vars)),
+        identity_scope(&identity)
+    );
+}
