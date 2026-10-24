@@ -45,7 +45,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "updated": "2026-10-10T10:00:00Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -54,7 +59,7 @@
       "op": "create",
       "task": "cli",
       "title": "Board CLI",
-      "description": "Why.\r\nHow.\r\n",
+      "description": "## Goal\r\nWhy.\r\n\r\n## Done when\r\n- [ ] How.\r\n",
       "status": "ready",
       "parent": "epic"
     },
@@ -65,7 +70,7 @@
         "id": "cli",
         "title": "Board CLI",
         "kind": "task",
-        "description": "Why.\nHow.",
+        "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
         "status": "ready",
         "parent": "epic",
         "depends_on": [],
@@ -73,7 +78,17 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "updated": "2026-10-10T10:00:00Z",
+        "goal": "Why.",
+        "why": null,
+        "done_when": [
+          {
+            "outcome": "How.",
+            "done": false
+          }
+        ],
+        "links": [],
+        "needs_goal": false
       }
     }
   },
@@ -99,7 +114,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z"
+        "updated": "2026-10-10T10:00:01Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -135,7 +155,7 @@
         "id": "cli",
         "title": "Board CLI",
         "kind": "task",
-        "description": "Why.\nHow.",
+        "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
         "status": "claimed",
         "parent": "epic",
         "depends_on": [],
@@ -150,7 +170,17 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z"
+        "updated": "2026-10-10T10:00:01Z",
+        "goal": "Why.",
+        "why": null,
+        "done_when": [
+          {
+            "outcome": "How.",
+            "done": false
+          }
+        ],
+        "links": [],
+        "needs_goal": false
       }
     }
   },
@@ -186,7 +216,7 @@
         "id": "cli",
         "title": "Board CLI",
         "kind": "task",
-        "description": "Why.\nHow.",
+        "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
         "status": "in_progress",
         "parent": "epic",
         "depends_on": [],
@@ -201,7 +231,17 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:02Z"
+        "updated": "2026-10-10T10:00:02Z",
+        "goal": "Why.",
+        "why": null,
+        "done_when": [
+          {
+            "outcome": "How.",
+            "done": false
+          }
+        ],
+        "links": [],
+        "needs_goal": false
       }
     }
   },
@@ -217,7 +257,7 @@
         "id": "cli",
         "title": "Board CLI",
         "kind": "task",
-        "description": "Why.\nHow.",
+        "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
         "status": "in_progress",
         "parent": "epic",
         "depends_on": [],
@@ -232,7 +272,17 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:02Z"
+        "updated": "2026-10-10T10:00:02Z",
+        "goal": "Why.",
+        "why": null,
+        "done_when": [
+          {
+            "outcome": "How.",
+            "done": false
+          }
+        ],
+        "links": [],
+        "needs_goal": false
       },
       "renew_after": "2026-10-10T11:00:01Z"
     }
@@ -269,7 +319,7 @@
         "id": "cli",
         "title": "Board CLI",
         "kind": "task",
-        "description": "Why.\nHow.",
+        "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
         "status": "in_progress",
         "parent": "epic",
         "depends_on": [],
@@ -284,7 +334,17 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T12:30:00Z"
+        "updated": "2026-10-10T12:30:00Z",
+        "goal": "Why.",
+        "why": null,
+        "done_when": [
+          {
+            "outcome": "How.",
+            "done": false
+          }
+        ],
+        "links": [],
+        "needs_goal": false
       }
     }
   },
@@ -303,7 +363,7 @@
         "id": "cli",
         "title": "Board CLI",
         "kind": "task",
-        "description": "Why.\nHow.",
+        "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
         "status": "in_progress",
         "parent": "epic",
         "depends_on": [],
@@ -320,7 +380,17 @@
           7
         ],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T12:30:01Z"
+        "updated": "2026-10-10T12:30:01Z",
+        "goal": "Why.",
+        "why": null,
+        "done_when": [
+          {
+            "outcome": "How.",
+            "done": false
+          }
+        ],
+        "links": [],
+        "needs_goal": false
       },
       "completion": {
         "done": true,
@@ -328,7 +398,7 @@
           "id": "cli",
           "title": "Board CLI",
           "kind": "task",
-          "description": "Why.\nHow.",
+          "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
           "status": "done",
           "parent": "epic",
           "depends_on": [],
@@ -338,7 +408,17 @@
             7
           ],
           "created": "2026-10-10T10:00:00Z",
-          "updated": "2026-10-10T12:30:02Z"
+          "updated": "2026-10-10T12:30:02Z",
+          "goal": "Why.",
+          "why": null,
+          "done_when": [
+            {
+              "outcome": "How.",
+              "done": false
+            }
+          ],
+          "links": [],
+          "needs_goal": false
         }
       }
     }
@@ -365,7 +445,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "updated": "2026-10-10T10:00:00Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -397,7 +482,12 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z"
+        "updated": "2026-10-10T10:00:01Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -429,7 +519,12 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:02Z"
+        "updated": "2026-10-10T10:00:02Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -463,7 +558,12 @@
           8
         ],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:03Z"
+        "updated": "2026-10-10T10:00:03Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       },
       "completion": {
         "done": false,
@@ -501,7 +601,12 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:04Z"
+        "updated": "2026-10-10T10:00:04Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -533,7 +638,12 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:05Z"
+        "updated": "2026-10-10T10:00:05Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -558,7 +668,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:06Z"
+        "updated": "2026-10-10T10:00:06Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -583,7 +698,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:07Z"
+        "updated": "2026-10-10T10:00:07Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -609,7 +729,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "updated": "2026-10-10T10:00:00Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -641,7 +766,12 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z"
+        "updated": "2026-10-10T10:00:01Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -673,7 +803,12 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:02Z"
+        "updated": "2026-10-10T10:00:02Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -707,7 +842,12 @@
           9
         ],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:03Z"
+        "updated": "2026-10-10T10:00:03Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       },
       "completion": {
         "done": false,
@@ -740,7 +880,12 @@
           9
         ],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:04Z"
+        "updated": "2026-10-10T10:00:04Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -783,7 +928,7 @@
           "id": "cli",
           "title": "Board CLI",
           "kind": "task",
-          "description": "Why.\nHow.",
+          "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
           "status": "done",
           "parent": "epic",
           "depends_on": [],
@@ -793,7 +938,17 @@
             7
           ],
           "created": "2026-10-10T10:00:00Z",
-          "updated": "2026-10-10T12:30:02Z"
+          "updated": "2026-10-10T12:30:02Z",
+          "goal": "Why.",
+          "why": null,
+          "done_when": [
+            {
+              "outcome": "How.",
+              "done": false
+            }
+          ],
+          "links": [],
+          "needs_goal": false
         }
       ],
       "quarantined": []
@@ -812,7 +967,7 @@
         "id": "cli",
         "title": "Board CLI",
         "kind": "task",
-        "description": "Why.\nHow.",
+        "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
         "status": "done",
         "parent": "epic",
         "depends_on": [],
@@ -822,7 +977,17 @@
           7
         ],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T12:30:02Z"
+        "updated": "2026-10-10T12:30:02Z",
+        "goal": "Why.",
+        "why": null,
+        "done_when": [
+          {
+            "outcome": "How.",
+            "done": false
+          }
+        ],
+        "links": [],
+        "needs_goal": false
       },
       "plan": null,
       "plans": [],
@@ -867,7 +1032,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "updated": "2026-10-10T10:00:00Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -950,7 +1120,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "updated": "2026-10-10T10:00:00Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       },
       "clock": {
         "referenced": false,
@@ -1131,7 +1306,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "updated": "2026-10-10T10:00:00Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -1163,7 +1343,12 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z"
+        "updated": "2026-10-10T10:00:01Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -1195,7 +1380,12 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:02Z"
+        "updated": "2026-10-10T10:00:02Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -1313,7 +1503,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "updated": "2026-10-10T10:00:00Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -1616,7 +1811,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z"
+        "updated": "2026-10-10T10:00:01Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       },
       "plan": null,
       "plans": [
@@ -1680,7 +1880,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:03Z"
+        "updated": "2026-10-10T10:00:03Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       },
       "plan": {
         "task": "epic",
@@ -1748,7 +1953,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:04Z"
+        "updated": "2026-10-10T10:00:04Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       },
       "plan": {
         "task": "epic",
@@ -1871,7 +2081,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:04Z"
+        "updated": "2026-10-10T10:00:04Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       },
       "plan": {
         "task": "epic",
@@ -2048,7 +2263,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "updated": "2026-10-10T10:00:00Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -2079,7 +2299,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "updated": "2026-10-10T10:00:00Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -2127,7 +2352,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "updated": "2026-10-10T10:00:00Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -2154,7 +2384,12 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:00Z"
+        "updated": "2026-10-10T10:00:00Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },
@@ -2186,7 +2421,12 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z"
+        "updated": "2026-10-10T10:00:01Z",
+        "goal": null,
+        "why": null,
+        "done_when": [],
+        "links": [],
+        "needs_goal": true
       }
     }
   },

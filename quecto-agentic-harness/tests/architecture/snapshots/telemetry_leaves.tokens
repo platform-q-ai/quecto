@@ -218,6 +218,10 @@ const KNOWN_KINDS : & [
 "not_checked" ,
 "board_moved" ,
 "board_moved_malformed" ,
+"goal" ,
+"why" ,
+"done_when" ,
+"links" ,
 ] ;
 const fn all_shaped (  ) -> bool { let mut at = 0 ; while at < KNOWN_KINDS . len (  ) { if ! kind_shaped ( KNOWN_KINDS [
 at

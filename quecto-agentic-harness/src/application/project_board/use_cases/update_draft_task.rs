@@ -14,18 +14,25 @@
 use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, task_on, written_task};
+use super::description_cells::held;
 use super::task_pointers::{Pointers, pointers_hold};
 use crate::application::project_board::dto::{DraftUpdate, ProjectBoardError};
-use crate::application::project_board::ports::{BoardArtifact, BoardClock, ProjectBoardStore};
+use crate::application::project_board::ports::{
+    BoardArtifact, BoardClock, BoardTextCells, ProjectBoardStore,
+};
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::drafts::{DraftEdit, edit_draft};
 use crate::domain::project_board::value_objects::board_text;
+use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::telemetry::Normalised;
 
 pub struct UpdateDraftTask {
     store: Arc<dyn ProjectBoardStore>,
     clock: Arc<dyn BoardClock>,
+    /// What a board file holds: a new sectioned description's outcomes
+    /// and links are checked against it as they enter (#2705 T2).
+    cells: Arc<dyn BoardTextCells>,
 }
 
 impl UpdateDraftTask {
@@ -34,9 +41,14 @@ impl UpdateDraftTask {
     pub fn new(
         store: Arc<dyn ProjectBoardStore>,
         clock: Arc<dyn BoardClock>,
+        cells: Arc<dyn BoardTextCells>,
     ) -> Result<Self, ProjectBoardError> {
         checked_writer(&*store)?;
-        Ok(Self { store, clock })
+        Ok(Self {
+            store,
+            clock,
+            cells,
+        })
     }
 
     /// The draft `update` names, with the update applied.
@@ -81,6 +93,7 @@ impl UpdateDraftTask {
             description: update.description.as_deref().map(board_text::text),
             parent: update.parent.clone(),
             depends_on: update.depends_on.clone(),
+            entry: update.entry,
         };
         let message = format!("board: edit draft {}", id.as_str());
         let noted = facts.as_deref_mut();
@@ -105,6 +118,12 @@ impl UpdateDraftTask {
             }
             let edited = edit_draft(task, &edit, &when.now).map_err(ProjectBoardError::Rule)?;
             let set = edited.fields();
+            // Only a description the edit gives enters: one it leaves is
+            // never checked again.
+            if edit.description.is_some() {
+                held(&set.description, edit.entry, &*self.cells)
+                    .map_err(|error| ProjectBoardError::Rule(BoardRuleError::Invalid(error)))?;
+            }
             pointers_hold(
                 board,
                 &Pointers {

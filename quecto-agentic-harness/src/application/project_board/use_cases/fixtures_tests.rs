@@ -116,6 +116,7 @@ pub fn new_task(id: &str) -> NewBoardTask {
         status: NewBoardTaskStatus::Ready,
         parent: None,
         depends_on: vec![],
+        entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
     }
 }
 
@@ -125,6 +126,7 @@ pub fn fields(id: &str) -> TaskFields {
         id: slug(id),
         title: format!("Task {id}"),
         kind: TaskKind::Task,
+        description_form: Default::default(),
         description: String::new(),
         status: TaskStatus::Ready,
         parent: None,

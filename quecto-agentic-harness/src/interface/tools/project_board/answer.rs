@@ -59,7 +59,8 @@ mod artifacts;
 #[path = "answer_set_aside.rs"]
 mod set_aside;
 use artifacts::{
-    listing_fields, page_fields, planned_json, quarantined_json, run_json, shown_fields,
+    description_fields, listing_fields, page_fields, planned_json, quarantined_json, run_json,
+    shown_fields,
 };
 
 /// The most characters of an error's message an answer carries.
@@ -438,10 +439,12 @@ fn identity_json(identity: &Identity) -> Value {
 /// A task in the board's own field names, every field present but where
 /// it came from and how it ended (`github_issue`, `resolution`,
 /// `superseded_by`, `references`): those are held back on purpose, as
-/// showing them to agents is the owner's call (M4).
+/// showing them to agents is the owner's call (M4). Beside its
+/// description, its sections ([`description_fields`], #2705 T2).
 pub fn task_json(task: &Task) -> Value {
+    let described = description_fields(&task.fields().description);
     let task = task.fields();
-    json!({
+    let mut answer = json!({
         "id": slug_json(&task.id),
         "title": task.title,
         "kind": task.kind.as_str(),
@@ -458,7 +461,10 @@ pub fn task_json(task: &Task) -> Value {
         "prs": task.prs,
         "created": task.created.as_str(),
         "updated": task.updated.as_str(),
-    })
+    });
+    let fields = answer.as_object_mut().expect("a task answers an object");
+    fields.extend(described);
+    answer
 }
 
 /// A refused answer to `op` (`None` when the request named no op it

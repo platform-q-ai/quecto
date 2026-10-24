@@ -588,7 +588,7 @@ fn start_is_refused_on_the_command_line() {
 /// with flags or `--input` alike; without it a listing is as before.
 #[test]
 fn summary_is_the_command_lines_opt_in_for_listings() {
-    let none = json!({"plan": null, "run": null, "may_be_incomplete": false});
+    let none = json!({"subtitle": null, "plan": null, "run": null, "may_be_incomplete": false});
     for line in [
         &["list", "--summary"][..],
         &["list-ready", "--summary"][..],
@@ -654,5 +654,6 @@ fn summary_is_refused_beside_another_op_or_twice() {
     );
 }
 
+mod entry;
 mod location;
 mod moved;

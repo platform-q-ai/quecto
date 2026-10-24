@@ -76,10 +76,15 @@ impl From<MarkdownError> for CodecError {
 pub trait ArtifactCodec {
     /// Compared with what its file gives back.
     type Value: PartialEq;
+    /// The newest schema it reads and writes.
     const SCHEMA: u32;
+    /// The oldest it still reads and writes (a value keeps the schema it
+    /// was written at, as the task's description form does, #2705 T2).
+    const OLDEST_SCHEMA: u32 = Self::SCHEMA;
     const SHAPE: Shape<'static>;
 
-    /// The document `value` is, at [`Self::SCHEMA`].
+    /// The document `value` is, at a schema from [`Self::OLDEST_SCHEMA`] to
+    /// [`Self::SCHEMA`].
     ///
     /// # Errors
     /// What in `value` no document of the kind holds.
@@ -108,7 +113,7 @@ pub trait ArtifactCodec {
 /// What in `value` the kind's document or a file refuses.
 pub fn encode<C: ArtifactCodec>(value: &C::Value) -> Result<String, CodecError> {
     let document = C::to_document(value)?;
-    let file = match document.schema == C::SCHEMA {
+    let file = match (C::OLDEST_SCHEMA..=C::SCHEMA).contains(&document.schema) {
         // `render` reads what it writes back, release builds included.
         true => render(&document, &C::SHAPE)?,
         false => return Err(CodecError::Schema),
@@ -133,8 +138,9 @@ pub fn encode<C: ArtifactCodec>(value: &C::Value) -> Result<String, CodecError> 
 /// A file of another kind or schema, one the markdown rules refuse, a
 /// document that is not a value of the kind, or `NotCanonical`.
 pub fn decode<C: ArtifactCodec>(bytes: &[u8]) -> Result<C::Value, CodecError> {
+    let read = u64::from(C::OLDEST_SCHEMA)..=u64::from(C::SCHEMA);
     match schema_of(bytes, C::SHAPE.kind) {
-        Some(found) if found == u64::from(C::SCHEMA) => {}
+        Some(found) if read.contains(&found) => {}
         Some(found) if found > u64::from(C::SCHEMA) => {
             return Err(CodecError::NewerSchema {
                 found,
@@ -145,9 +151,8 @@ pub fn decode<C: ArtifactCodec>(bytes: &[u8]) -> Result<C::Value, CodecError> {
         None => return Err(CodecError::Schema),
     }
     let document = parse(bytes, &C::SHAPE)?;
-    debug_assert_eq!(
-        document.schema,
-        C::SCHEMA,
+    debug_assert!(
+        read.contains(&u64::from(document.schema)),
         "the marker read is the one parsed"
     );
     let value = C::from_document(&document)?;

@@ -80,7 +80,9 @@ fn the_board_runs_end_to_end_over_git_and_the_index() {
         (&json!(true), &json!(true)),
         "{bootstrap}"
     );
-    let created = ops(json!({"op": "create", "task": "a", "title": "A", "status": "ready"}));
+    // Sections (#2705 T2) round-trip the store: the summary's subtitle.
+    let create = r#"{"op":"create","task":"a","title":"A","status":"ready","goal":"Ship A.","done_when":["Shipped"]}"#;
+    let created = run(&*handles.operations, create);
     assert_eq!(created["ok"], json!(true), "{created}");
     assert_eq!(
         created["clock"]["referenced"],
@@ -106,7 +108,7 @@ fn the_board_runs_end_to_end_over_git_and_the_index() {
     );
     assert_eq!(
         summarised["tasks"][0]["summary"],
-        json!({"plan": null, "run": null, "may_be_incomplete": false}),
+        json!({"subtitle": "Ship A.", "plan": null, "run": null, "may_be_incomplete": false}),
         "{summarised}"
     );
     assert_eq!(summarised.get("summary_skipped"), None, "{summarised}");

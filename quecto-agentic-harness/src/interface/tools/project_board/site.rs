@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use super::answer::FrontEndRefusal;
 use super::recording::BoardCall;
-use super::request::{RequestError, op_of, parse};
+use super::request::{RequestError, entry_policy, op_of, parse};
 use super::{read, run_recorded_with, summaries_refusal};
 use crate::application::project_board::operations::ListSummaries;
 use crate::application::project_board::ports::{
@@ -186,7 +186,7 @@ pub fn answer_with(
     // Read first: a request refused here builds nothing.
     let op = op_of(&value);
     call.named(op.as_deref());
-    let parsed = match parse(&value) {
+    let parsed = match parse(&value, entry_policy(call.front_end())) {
         Ok(parsed) => parsed,
         Err(error) => return call.refuse_request(op.as_deref(), &error),
     };

@@ -2,7 +2,11 @@
 //! task's own; its fields and sections hold the rest, every list in the
 //! task's own order:
 //!
-//! - Description, prose;
+//! - at schema 1, Description, prose: legacy text, as written; or, at
+//!   schema 2 (a description kept in its sections, #2705 T2), a section
+//!   each in its order: Goal and Why, prose; Done when `[Done | Outcome]`,
+//!   `yes` or `no`; Links, prose (`- [text](https://…)` lines). The task's
+//!   description form picks the schema, never its text;
 //! - Depends on `[Task]`, Superseded by `[Task]`;
 //! - Pull requests `[Pull request]`, `#n`: the links made the old way,
 //!   until S2c retires them;
@@ -16,6 +20,9 @@ use super::cells::{self, column, refused};
 use super::{ArtifactCodec, CodecError};
 use crate::domain::project_board::entities::claim::Claim;
 use crate::domain::project_board::entities::task::{Task, TaskFields};
+use crate::domain::project_board::entities::task_parts::{
+    Description, DescriptionForm, Outcome, PARTS, Shape as PartShape,
+};
 use crate::domain::project_board::value_objects::reference::{IssueNumber, Reference};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::{Resolution, TaskKind, TaskStatus};
@@ -42,6 +49,16 @@ const DEPENDS_ON: &str = "Depends on";
 const SUPERSEDED_BY: &str = "Superseded by";
 const PULL_REQUESTS: &str = "Pull requests";
 const REFERENCES: &str = "References";
+/// Why a file's description sections are refused: they make no
+/// description.
+const NOT_A_DESCRIPTION: &str = "its sections must be a Goal paragraph, an optional Why \
+     paragraph, a Done when table of outcomes, and optional Links written as \"- \" lines";
+/// Why a schema-2 file holding a Description beside the sections is
+/// refused.
+const BESIDE_SECTIONS: &str = "beside its own sections";
+/// Why a schema-1 file holding the description's sections is refused: no
+/// build wrote them at schema 1.
+const SECTIONS_AT_SCHEMA_1: &str = "its sections are written only at schema 2";
 
 const FIELDS: &[Column<'static>] = &[
     column(ID, CellKind::Ascii),
@@ -61,10 +78,40 @@ const FIELDS: &[Column<'static>] = &[
 const TASK_COLUMNS: &[Column<'static>] = &[column("Task", CellKind::Ascii)];
 const PULL_REQUEST_COLUMNS: &[Column<'static>] = &[column("Pull request", CellKind::Ascii)];
 const REFERENCE_COLUMNS: &[Column<'static>] = &[column("Reference", CellKind::Code)];
+/// The done-when outcomes: a table, as a reader would take `- [ ]` in
+/// prose for a checkbox the prose codec does not hold.
+const DONE_WHEN: &str = PARTS[2].heading;
+const OUTCOME_COLUMNS: &[Column<'static>] = &[
+    column("Done", CellKind::Ascii),
+    column("Outcome", CellKind::Text),
+];
+const DONE: &str = "yes";
+const OPEN: &str = "no";
+/// The schema of a file whose description is kept in its sections (#2705
+/// T2). A legacy description stays at schema 1, the bytes earlier builds
+/// wrote; an earlier build reads schema 2 as a newer quecto's ("upgrade
+/// quecto to read it"), never as a file it misreads.
+const SECTIONED_SCHEMA: u32 = 2;
 
 const SECTIONS: &[SectionShape<'static>] = &[
     SectionShape {
         heading: DESCRIPTION,
+        body: BodyShape::Prose,
+    },
+    SectionShape {
+        heading: PARTS[0].heading,
+        body: BodyShape::Prose,
+    },
+    SectionShape {
+        heading: PARTS[1].heading,
+        body: BodyShape::Prose,
+    },
+    SectionShape {
+        heading: DONE_WHEN,
+        body: BodyShape::Table(OUTCOME_COLUMNS),
+    },
+    SectionShape {
+        heading: PARTS[3].heading,
         body: BodyShape::Prose,
     },
     SectionShape {
@@ -104,7 +151,8 @@ pub struct TaskCodec;
 
 impl ArtifactCodec for TaskCodec {
     type Value = Task;
-    const SCHEMA: u32 = 1;
+    const SCHEMA: u32 = SECTIONED_SCHEMA;
+    const OLDEST_SCHEMA: u32 = 1;
     const SHAPE: Shape<'static> = Shape {
         kind: "task",
         fields: FIELDS,
@@ -141,12 +189,28 @@ impl ArtifactCodec for TaskCodec {
         fields.push((CREATED, cells::time(&task.created)));
         fields.push((UPDATED, cells::time(&task.updated)));
         let mut sections = vec![];
-        // The description's own line, from 1, names where it is refused.
-        let description = blocks_of(&task.description)
-            .map_err(|error| refused(DESCRIPTION, error.to_string()))?;
-        if let Some(description) = held(description) {
-            sections.push(section(DESCRIPTION, Body::Prose(description)));
-        }
+        // The description's form, never its text's shape, picks the
+        // layout (#2705 T2): one kept in its sections is a file section
+        // each, at schema 2; any other stays the Description, as written,
+        // at schema 1, the bytes earlier builds wrote. Each one's own
+        // line, from 1, names where it is refused.
+        let schema = match task.description_form {
+            DescriptionForm::Sectioned => {
+                let description = Description::read(&task.description)
+                    .ok_or_else(|| refused(DESCRIPTION, NOT_A_DESCRIPTION))?;
+                for (heading, text) in description.sections() {
+                    match heading == DONE_WHEN {
+                        true => sections.push(section(heading, outcome_rows(&description))),
+                        false => sections.extend(prose(heading, &text)?),
+                    }
+                }
+                SECTIONED_SCHEMA
+            }
+            DescriptionForm::Legacy => {
+                sections.extend(prose(DESCRIPTION, &task.description)?);
+                Self::OLDEST_SCHEMA
+            }
+        };
         let slugs = |slugs: &[Slug]| slugs.iter().map(|slug| vec![cells::slug(slug)]).collect();
         let prs = task
             .prs
@@ -173,7 +237,7 @@ impl ArtifactCodec for TaskCodec {
             "the fields are written in the shape's order"
         );
         Ok(Document {
-            schema: Self::SCHEMA,
+            schema,
             title: task.title.clone(),
             fields: fields
                 .into_iter()
@@ -221,11 +285,13 @@ impl ArtifactCodec for TaskCodec {
         for section in &document.sections {
             read.section(section)?;
         }
+        let (description, description_form) = read.description(document.schema)?;
         let fields = TaskFields {
             id: cells::read_slug(ID, required(ID)?)?,
             title: document.title.clone(),
             kind: cells::read_word(KIND, required(KIND)?, TaskKind::parse)?,
-            description: read.description,
+            description,
+            description_form,
             status: cells::read_word(STATUS, required(STATUS)?, TaskStatus::parse)?,
             parent: field(PARENT)
                 .map(|cell| cells::read_slug(PARENT, cell))
@@ -265,6 +331,25 @@ fn held<T>(entries: Vec<T>) -> Option<Vec<T>> {
     }
 }
 
+/// `text` as a prose section headed `heading`, when it holds any; its
+/// own line, from 1, names where it is refused.
+fn prose(heading: &'static str, text: &str) -> Result<Option<Section>, CodecError> {
+    let blocks = blocks_of(text).map_err(|error| refused(heading, error.to_string()))?;
+    Ok(held(blocks).map(|blocks| section(heading, Body::Prose(blocks))))
+}
+
+/// The description's outcomes as rows: done or not, and the outcome.
+fn outcome_rows(description: &Description) -> Body {
+    let rows = description.done_when().iter().map(|outcome| {
+        let done = match outcome.done {
+            true => DONE,
+            false => OPEN,
+        };
+        vec![cells::word(done), outcome.text.clone()]
+    });
+    Body::Table(rows.collect())
+}
+
 fn section(heading: &str, body: Body) -> Section {
     Section {
         heading: heading.into(),
@@ -276,6 +361,8 @@ fn section(heading: &str, body: Body) -> Section {
 #[derive(Default)]
 struct Read {
     description: String,
+    /// The description's own sections, each a heading and its text.
+    parts: Vec<(&'static str, String)>,
     depends_on: Vec<Slug>,
     superseded_by: Vec<Slug>,
     prs: Vec<u64>,
@@ -283,9 +370,59 @@ struct Read {
 }
 
 impl Read {
+    /// The task's description and its form, by the file's `schema`: at
+    /// schema 1 its Description as written (legacy); at schema 2 the text
+    /// its own sections make, which must be a description in its sections.
+    /// Never both, and never the other schema's layout.
+    fn description(&mut self, schema: u32) -> Result<(String, DescriptionForm), CodecError> {
+        let parts = std::mem::take(&mut self.parts);
+        let text = std::mem::take(&mut self.description);
+        match (schema, text.is_empty(), parts.as_slice()) {
+            (SECTIONED_SCHEMA, true, [_, ..]) => {
+                let pairs = parts
+                    .iter()
+                    .map(|(heading, text)| (*heading, text.as_str()));
+                let text = Description::assemble(pairs);
+                match Description::read(&text) {
+                    Some(_) => Ok((text, DescriptionForm::Sectioned)),
+                    None => Err(refused(DESCRIPTION, NOT_A_DESCRIPTION)),
+                }
+            }
+            (SECTIONED_SCHEMA, false, _) => Err(refused(DESCRIPTION, BESIDE_SECTIONS)),
+            (SECTIONED_SCHEMA, true, []) => Err(refused(DESCRIPTION, NOT_A_DESCRIPTION)),
+            (_, _, []) => Ok((text, DescriptionForm::Legacy)),
+            (_, _, [_, ..]) => Err(refused(DESCRIPTION, SECTIONS_AT_SCHEMA_1)),
+        }
+    }
+
     fn section(&mut self, section: &Section) -> Result<(), CodecError> {
+        let part = PARTS.iter().find(|rule| rule.heading == section.heading);
+        let prose_part =
+            part.filter(|rule| matches!(rule.shape, PartShape::Paragraph | PartShape::List));
+        if let (Some(rule), Body::Prose(blocks)) = (prose_part, &section.body) {
+            self.parts.push((rule.heading, text_of(blocks)));
+            return Ok(());
+        }
         match (section.heading.as_str(), &section.body) {
             (DESCRIPTION, Body::Prose(blocks)) => self.description = text_of(blocks),
+            (DONE_WHEN, Body::Table(rows)) => {
+                let outcomes = rows
+                    .iter()
+                    .map(|row| match row.as_slice() {
+                        [done, text] => Ok(Outcome {
+                            done: cells::read_word(DONE_WHEN, done, |word| match word {
+                                DONE => Some(true),
+                                OPEN => Some(false),
+                                _ => None,
+                            })?,
+                            text: text.clone(),
+                        }),
+                        _ => Err(refused(DONE_WHEN, "a row of two cells")),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.parts
+                    .push((DONE_WHEN, Description::checklist(&outcomes)));
+            }
             (DEPENDS_ON, Body::Table(rows)) => self.depends_on = slugs(DEPENDS_ON, rows)?,
             (SUPERSEDED_BY, Body::Table(rows)) => {
                 self.superseded_by = slugs(SUPERSEDED_BY, rows)?;
@@ -328,3 +465,7 @@ fn slugs(table: &'static str, rows: &[Vec<String>]) -> Result<Vec<Slug>, CodecEr
 #[cfg(test)]
 #[path = "task_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "task_sections_tests.rs"]
+mod sections_tests;

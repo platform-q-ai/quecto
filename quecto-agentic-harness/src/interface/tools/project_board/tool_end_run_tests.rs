@@ -103,6 +103,7 @@ pub(super) fn ready_with_plan() -> (Task, Plan) {
         references: vec![],
         created: at.clone(),
         updated: at,
+        description_form: Default::default(),
     })
     .unwrap();
     (task, plan)

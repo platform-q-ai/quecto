@@ -3,12 +3,12 @@
 //! after it is ready), so anyone with access to the board edits it; a task
 //! past its draft changes only through its moves.
 use super::super::entities::task::Task;
+use super::super::entities::task_parts::Entry;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::TaskStatus;
 use super::claims::{settle, stamp};
-use crate::domain::project_board::value_objects::board_text;
 
 /// What an edit sets; `None` keeps the field as it is. `parent:
 /// Some(None)` takes the parent away.
@@ -18,6 +18,8 @@ pub struct DraftEdit {
     pub description: Option<String>,
     pub parent: Option<Option<Slug>>,
     pub depends_on: Option<Vec<Slug>>,
+    /// How its new title and description enter (#2705 T2).
+    pub entry: Entry,
 }
 
 /// The draft with `edit` applied, stamped `now`.
@@ -31,20 +33,32 @@ pub fn edit_draft(task: &Task, edit: &DraftEdit, now: &Timestamp) -> Result<Task
         TaskStatus::Draft => {}
         status => return Err(BoardRuleError::NotDraft(status)),
     }
-    // The edit's text as it enters the board: normalised by whoever took
-    // it in, or refused.
-    if let Some(title) = &edit.title {
-        board_text::entered_line("title", title).map_err(BoardRuleError::Invalid)?;
+    // The edit's new text as it enters the board: normalised by whoever
+    // took it in and within the rules of its entry (#2705 T2), or
+    // refused. Text it leaves as the draft holds it enters nothing: a
+    // legacy title or description is kept, never forced to be rewritten.
+    let fields = task.fields();
+    if let Some(title) = edit.title.as_ref().filter(|title| **title != fields.title) {
+        edit.entry
+            .title("title", title)
+            .map_err(BoardRuleError::Invalid)?;
     }
-    if let Some(description) = &edit.description {
-        board_text::entered_text("description", description).map_err(BoardRuleError::Invalid)?;
+    let new_description = edit.description.as_ref();
+    let changed = new_description.filter(|text| **text != fields.description);
+    if let Some(description) = changed {
+        edit.entry
+            .description(description)
+            .map_err(BoardRuleError::Invalid)?;
     }
     let mut next = task.fields().clone();
     if let Some(title) = &edit.title {
         next.title = title.clone();
     }
-    if let Some(description) = &edit.description {
+    // A new description is kept in the form it entered in; one left as
+    // it is keeps its form (a legacy file stays legacy).
+    if let Some(description) = changed {
         next.description = description.clone();
+        next.description_form = edit.entry.form(description);
     }
     if let Some(parent) = &edit.parent {
         next.parent = parent.clone();

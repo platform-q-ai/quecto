@@ -132,8 +132,18 @@ fn build_with_warnings(
         CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs).map_err(built)?;
     let parts = BoardOperationParts {
         bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
-        create: CreateBoardTask::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
-        update: UpdateDraftTask::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
+        create: CreateBoardTask::new(
+            Arc::clone(&store),
+            Arc::clone(&clock),
+            Arc::new(MarkdownTextCells),
+        )
+        .map_err(built)?,
+        update: UpdateDraftTask::new(
+            Arc::clone(&store),
+            Arc::clone(&clock),
+            Arc::new(MarkdownTextCells),
+        )
+        .map_err(built)?,
         change: ChangeBoardTask::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         propose_plan: ProposePlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         edit_plan: EditPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,

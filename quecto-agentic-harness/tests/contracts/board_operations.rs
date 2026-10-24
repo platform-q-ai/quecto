@@ -11,6 +11,7 @@ use quecto::application::project_board::dto::{
 use quecto::application::project_board::ports::BoardOperations;
 use quecto::application::project_board::task_summary::{RowSummaries, RowSummary};
 use quecto::composition::bootstrap::project_board::build_project_board_handles;
+use quecto::domain::project_board::entities::task_parts::EntryPolicy;
 use quecto::domain::project_board::value_objects::schema_error::SchemaError;
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::infrastructure::time::remote_time::{ReferenceSource, reference_source};
@@ -29,7 +30,7 @@ pub struct Fixture {
 }
 
 fn request(value: Value) -> BoardRequest {
-    parse(&value).expect("a well-formed request")
+    parse(&value, EntryPolicy::Sectioned).expect("a well-formed request")
 }
 
 fn create(id: &str) -> BoardRequest {

@@ -57,6 +57,7 @@ fn task(description: String, accepted: u32) -> Task {
         references: vec![],
         created: at(),
         updated: at(),
+        description_form: Default::default(),
     })
     .unwrap()
 }

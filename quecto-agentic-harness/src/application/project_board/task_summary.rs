@@ -21,11 +21,14 @@
 //!   ran is not readable on the board, or past the year 9999.
 //! - **may_be_incomplete:** as `show` judges it
 //!   ([`ShownTask::may_be_incomplete`]).
+//! - **subtitle:** the task's goal on one line ([`Description::subtitle`],
+//!   #2705 T2); `None` for legacy text, which needs a goal.
 use super::dto::{BoardListing, ProjectBoardError, ShownTask};
 use super::ports::{BoardHead, QuarantinedFile};
 use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::run::{Run, RunItem};
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::entities::task_parts::Description;
 use crate::domain::project_board::entities::team::run_deadline_seconds;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{ItemState, PlanState, RunOutcome};
@@ -33,6 +36,7 @@ use crate::domain::project_board::value_objects::vocabulary::{ItemState, PlanSta
 /// What a listing says of one task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskSummary {
+    pub subtitle: Option<String>,
     pub plan: Option<PlanSummary>,
     pub run: Option<RunSummary>,
     pub may_be_incomplete: bool,
@@ -110,7 +114,9 @@ pub fn summary_of(shown: &ShownTask) -> TaskSummary {
             version: plan.fields().version,
             state: plan.fields().state,
         });
+    let description = Description::read(&shown.task.fields().description);
     TaskSummary {
+        subtitle: description.as_ref().map(Description::subtitle),
         plan,
         run: shown.latest_run().map(|run| run_summary(run, &shown.plans)),
         may_be_incomplete: shown.may_be_incomplete(),

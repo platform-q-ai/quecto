@@ -42,6 +42,7 @@ fn task() -> Task {
         references: vec![],
         created: at("08:00:00"),
         updated: at("09:00:00"),
+        description_form: Default::default(),
     })
     .unwrap()
 }

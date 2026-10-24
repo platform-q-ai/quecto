@@ -1,0 +1,211 @@
+//! A task's description in its sections (#2705 T2) in the task's file:
+//! its form, never its text's shape, picks the layout. Kept in its
+//! sections it is a file section each, at schema 2, byte for byte; legacy
+//! text stays its Description at schema 1, the bytes master wrote, however
+//! it reads; and a hand edit that mixes the two is refused.
+use super::super::{CodecError, decode, encode};
+use super::*;
+use crate::domain::project_board::value_objects::timestamp::Timestamp;
+use crate::infrastructure::persistence::project_board::markdown::parse;
+use crate::infrastructure::persistence::project_board::markdown::tests::oracle::outline_in;
+
+const SECTIONED_TEXT: &str = "## Goal\nLand L12 (#2652): move the UDS presenters, mapping\nand \
+     loop controllers into `interface/uds` roles.\n\n## Why\nPart of the layout epic \
+     #2357.\n\n## Done when\n- [ ] Current master merged in, moves only\n- [x] CI green, \
+     merged with a merge commit\n\n## Links\n- [PR #2652](https://github.com/o/r/pull/2652)\n- \
+     [Handoff](https://example.com/handoff)";
+
+const FILE: &str = r#"<!-- quecto-task schema=2 -->
+# Land L12: UDS presenters and mapping
+
+| Field | Value |
+|---|---|
+| Id | land-l12 |
+| Kind | task |
+| Status | draft |
+| Created | 2026-10-11T09:30:00Z |
+| Updated | 2026-10-11T09:30:00Z |
+
+## Goal
+Land L12 (#2652): move the UDS presenters, mapping
+and loop controllers into `interface/uds` roles.
+
+## Why
+Part of the layout epic #2357.
+
+## Done when
+| Done | Outcome |
+|---|---|
+| no | Current master merged in, moves only |
+| yes | CI green, merged with a merge commit |
+
+## Links
+- [PR #2652](https://github.com/o/r/pull/2652)
+- [Handoff](https://example.com/handoff)
+
+## Depends on
+| Task |
+|---|
+| l11 |
+"#;
+
+/// Files master wrote (schema 1), legacy text in a Description: one in
+/// the sections' very shape, escaped as master escapes it, and one free.
+const MASTER_FILES: [&str; 2] = [
+    r#"<!-- quecto-task schema=1 -->
+# Ship it
+
+| Field | Value |
+|---|---|
+| Id | ship |
+| Kind | task |
+| Status | draft |
+| Created | 2026-10-11T09:30:00Z |
+| Updated | 2026-10-11T09:30:00Z |
+
+## Description
+\## Goal
+Ship it.
+
+\## Done when
+\- [ ] Merged
+"#,
+    r#"<!-- quecto-task schema=1 -->
+# Ship it
+
+| Field | Value |
+|---|---|
+| Id | ship |
+| Kind | task |
+| Status | ready |
+| Created | 2026-10-11T09:30:00Z |
+| Updated | 2026-10-11T09:30:00Z |
+
+## Description
+Refresh PR #2652 after #2641; moves only.
+"#,
+];
+
+const LEGACY: &str = "Refresh PR #2652.\n## Goal\nnot a section: a legacy line";
+
+fn fields(description: &str, form: DescriptionForm) -> TaskFields {
+    let at = Timestamp::parse("2026-10-11T09:30:00Z").unwrap();
+    TaskFields {
+        id: Slug::parse("land-l12").unwrap(),
+        title: "Land L12: UDS presenters and mapping".into(),
+        kind: TaskKind::Task,
+        description: description.into(),
+        description_form: form,
+        status: TaskStatus::Draft,
+        parent: None,
+        depends_on: vec![Slug::parse("l11").unwrap()],
+        accepted_plan: None,
+        claim: None,
+        prs: vec![],
+        github_issue: None,
+        resolution: None,
+        superseded_by: vec![],
+        references: vec![],
+        created: at.clone(),
+        updated: at,
+    }
+}
+
+#[test]
+fn a_sectioned_description_round_trips_byte_for_byte_at_schema_2() {
+    let task = Task::new(fields(SECTIONED_TEXT, DescriptionForm::Sectioned)).unwrap();
+    let file = encode::<TaskCodec>(&task).unwrap();
+    assert_eq!(file, FILE);
+    let read = decode::<TaskCodec>(file.as_bytes()).unwrap();
+    assert_eq!(read.fields().description, SECTIONED_TEXT);
+    assert_eq!(read, task);
+    assert_eq!(encode::<TaskCodec>(&read).unwrap(), FILE);
+    let document = parse(FILE.as_bytes(), &TaskCodec::SHAPE).unwrap();
+    assert_eq!(outline_in(FILE, &document, &TaskCodec::SHAPE), Ok(()));
+}
+
+/// Review round 1 (HIGH): a file master wrote reads and writes again to
+/// the very same bytes, one whose legacy text is in the sections' shape
+/// included: the form, kept as legacy, picks the layout, never the text.
+#[test]
+fn master_written_files_decode_and_encode_byte_for_byte() {
+    for file in MASTER_FILES {
+        let task = decode::<TaskCodec>(file.as_bytes()).unwrap();
+        assert_eq!(task.fields().description_form, DescriptionForm::Legacy);
+        assert_eq!(encode::<TaskCodec>(&task).unwrap(), file);
+    }
+    let shaped = decode::<TaskCodec>(MASTER_FILES[0].as_bytes()).unwrap();
+    assert_eq!(
+        shaped.fields().description,
+        "## Goal\nShip it.\n\n## Done when\n- [ ] Merged"
+    );
+}
+
+#[test]
+fn a_legacy_description_stays_its_description_never_rewritten() {
+    for text in [LEGACY, SECTIONED_TEXT] {
+        let task = Task::new(fields(text, DescriptionForm::Legacy)).unwrap();
+        let file = encode::<TaskCodec>(&task).unwrap();
+        assert!(
+            file.starts_with("<!-- quecto-task schema=1 -->\n"),
+            "{file}"
+        );
+        assert!(file.contains("\n## Description\n"), "{file}");
+        let read = decode::<TaskCodec>(file.as_bytes()).unwrap();
+        assert_eq!(read, task);
+        assert_eq!(encode::<TaskCodec>(&read).unwrap(), file);
+    }
+}
+
+/// Review round 1 (MEDIUM): a file of a newer schema asks for an upgrade,
+/// as master asks of schema 2 (it reads schema 1 alone).
+#[test]
+fn a_newer_schema_asks_for_an_upgrade() {
+    let newer = FILE.replacen("schema=2", "schema=3", 1);
+    assert_eq!(
+        decode::<TaskCodec>(newer.as_bytes()),
+        Err(CodecError::NewerSchema { found: 3, known: 2 })
+    );
+}
+
+#[test]
+fn a_file_mixing_the_layouts_or_misshaping_one_is_refused() {
+    let refused = |file: &str, from: &str, to: &str| {
+        assert!(file.contains(from), "{from:?}");
+        let edited = file.replacen(from, to, 1);
+        decode::<TaskCodec>(edited.as_bytes()).expect_err(&edited)
+    };
+    let mixed = refused(FILE, "## Goal\n", "## Description\nOld text.\n\n## Goal\n");
+    assert_eq!(mixed, cells::refused(DESCRIPTION, BESIDE_SECTIONS));
+    let at_one = refused(FILE, "schema=2", "schema=1");
+    assert_eq!(at_one, cells::refused(DESCRIPTION, SECTIONS_AT_SCHEMA_1));
+    let not_a_word = refused(FILE, "| yes |", "| maybe |");
+    assert_eq!(
+        not_a_word,
+        cells::refused(DONE_WHEN, "a word of its vocabulary")
+    );
+    let not_a_link = refused(FILE, "\n- [Handoff]", "\n\n[Handoff]");
+    assert_eq!(not_a_link, cells::refused(DESCRIPTION, NOT_A_DESCRIPTION));
+    let goal = "## Goal\nLand L12 (#2652): move the UDS presenters, mapping\nand loop controllers \
+                into `interface/uds` roles.\n\n";
+    assert_eq!(
+        refused(FILE, goal, ""),
+        cells::refused(DESCRIPTION, NOT_A_DESCRIPTION)
+    );
+    let legacy_at_two = refused(MASTER_FILES[1], "schema=1", "schema=2");
+    assert_eq!(legacy_at_two, cells::refused(DESCRIPTION, BESIDE_SECTIONS));
+}
+
+#[test]
+fn awkward_sections_round_trip() {
+    for description in [
+        "## Goal\nShip.\n\n## Done when\n- [ ] A `code | pipe` and \\ backslash",
+        "## Goal\nLand it.\n#2652 goes first.\n\n## Done when\n- [ ] Done\n\n## Links\n- \
+         [#2652](https://github.com/o/r/pull/2652)",
+        "## Goal\nShip.\n#######\n\n## Why\n- a list\n- of reasons\n\n## Done when\n- [x] Done",
+    ] {
+        let task = Task::new(fields(description, DescriptionForm::Sectioned)).unwrap();
+        let file = encode::<TaskCodec>(&task).unwrap();
+        assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(task), "{file}");
+    }
+}

@@ -515,6 +515,10 @@ pub trait PullRequestStates: Send + Sync {
 pub trait BoardTextCells: Send + Sync {
     /// Whether a text cell holds `line` as it is.
     fn holds(&self, line: &str) -> bool;
+
+    /// Whether a prose section holds `text` (a description's goal or why,
+    /// #2705 T2) as it is: written and read back to the same text.
+    fn holds_prose(&self, text: &str) -> bool;
 }
 
 /// What one fold-back came to, as its recorder is given it.
