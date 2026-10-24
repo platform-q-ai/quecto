@@ -44,6 +44,7 @@ pub fn plan(task: &str, version: u32) -> Plan {
             depends_on: vec![],
         }],
         team: None,
+        handoff: None,
         proposed_by: ada(),
         edited_by: None,
         accepted: None,

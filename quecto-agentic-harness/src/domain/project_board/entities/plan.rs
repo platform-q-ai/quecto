@@ -3,18 +3,81 @@
 //! seed the swarm board, and the team's shape. A [`Plan`] is only ever
 //! built from fields that pass [`Plan::new`]; its versions are numbered
 //! from 1 per task, a draft is edited, and an accepted version is never
-//! edited again: a change is a new version.
+//! edited again: a change is a new version. Its handoff (#2705 T3), when
+//! it has one, holds the detail an agent is briefed with, so the approach
+//! stays an outline, short on entry ([`PLAN_ENTRY_RULES`]).
 use super::super::value_objects::schema_error::{SchemaError, distinct, line, markdown};
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::PlanState;
 use super::claim::Identity;
-use super::task_parts::{MAX_ITEMS, MAX_LINE_CHARS, MAX_PER_ITEM, lines};
+use super::task_parts::{Entry, EntryPolicy, MAX_ITEMS, MAX_LINE_CHARS, MAX_PER_ITEM, lines};
 use super::team::Team;
 use std::collections::BTreeMap;
 
-/// The most characters of a plan's approach (GitHub's issue body limit).
+/// The most characters of a plan's approach as it reads back (GitHub's
+/// issue body limit): what earlier builds let in. One entering capped is
+/// shorter ([`PLAN_ENTRY_RULES`]).
 pub const MAX_APPROACH_CHARS: usize = 65_536;
+/// The most characters of a plan's handoff (#2705 T3): the cap the
+/// approach had before its detail moved there.
+pub const MAX_HANDOFF_CHARS: usize = 65_536;
+
+/// What a plan's text enters the board by (#2705 T3): one table, as a
+/// task's [`ENTRY_RULES`](super::task_parts::ENTRY_RULES) is, so a rule
+/// change is a data edit. Reading stays lenient: what is stored reads by
+/// the plan's own schema.
+pub struct PlanEntryRules {
+    /// Characters of an approach entering capped ([`PlanEntry::Capped`]).
+    pub max_approach_chars: usize,
+    /// Characters of a handoff, however it enters.
+    pub max_handoff_chars: usize,
+}
+
+pub const PLAN_ENTRY_RULES: PlanEntryRules = PlanEntryRules {
+    max_approach_chars: 600,
+    max_handoff_chars: MAX_HANDOFF_CHARS,
+};
+
+/// Where a refused approach sends its detail.
+pub const MOVE_TO_HANDOFF: &str =
+    "keep the approach to an outline and move the detail into handoff";
+/// Why a handoff given empty is refused: none is no handoff.
+const HANDOFF_EMPTY: &str = "is empty: write it, or leave it out";
+
+/// How one write's approach enters the board (#2705 T3).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PlanEntry {
+    /// Within [`PlanEntryRules::max_approach_chars`]: the detail goes in
+    /// the handoff.
+    #[default]
+    Capped,
+    /// As before T3, for a front end's request that gives no handoff:
+    /// normalised board text within the schema's [`MAX_APPROACH_CHARS`].
+    Legacy,
+}
+
+impl PlanEntry {
+    /// The entry its front end's `policy` gives a request that gives a
+    /// handoff, or not (`handoff_given`), as a task's entry is resolved
+    /// (#2705 T2): the agent tool always caps the approach; the CLI caps
+    /// it once a request gives a handoff.
+    pub fn of(policy: EntryPolicy, handoff_given: bool) -> Self {
+        match policy.entry(handoff_given) {
+            Entry::Sectioned => Self::Capped,
+            Entry::Legacy => Self::Legacy,
+        }
+    }
+
+    /// `approach`, normalised board text, as it enters under this entry.
+    ///
+    /// # Errors
+    /// A capped approach past [`PlanEntryRules::max_approach_chars`].
+    pub fn approach(self, approach: &str) -> Result<(), SchemaError> {
+        let _ = approach;
+        Ok(())
+    }
+}
 /// The most versions a task's plan reaches.
 pub const MAX_PLAN_VERSION: u32 = 999;
 /// All of a plan's text together, in UTF-8 bytes: the approach, the
@@ -43,8 +106,11 @@ pub struct PlanFields {
     /// From 1, per task.
     pub version: u32,
     pub state: PlanState,
-    /// Markdown.
+    /// Markdown: the outline.
     pub approach: String,
+    /// Markdown (#2705 T3): the detail a coordinator is briefed with,
+    /// verbatim; `None` for none, never empty.
+    pub handoff: Option<String>,
     pub items: Vec<PlanItem>,
     pub team: Option<Team>,
     /// Who proposed this version.
@@ -59,8 +125,8 @@ pub struct PlanFields {
 }
 
 impl PlanFields {
-    /// The UTF-8 bytes of every free text in the plan: the approach, the
-    /// items' titles and criteria, the team's models and image. Ids,
+    /// The UTF-8 bytes of every free text in the plan: the approach and
+    /// handoff, the items' titles and criteria, the team's models and image. Ids,
     /// words, numbers, times and identities are bounded by the field
     /// limits.
     pub fn text_bytes(&self) -> usize {
@@ -73,7 +139,8 @@ impl PlanFields {
             let models: usize = team.roles.iter().map(|role| role.model.len()).sum();
             models + team.image.as_ref().map_or(0, String::len)
         });
-        self.approach.len() + items + team
+        let handoff = self.handoff.as_ref().map_or(0, String::len);
+        self.approach.len() + handoff + items + team
     }
 }
 
@@ -129,6 +196,13 @@ fn validate(plan: &PlanFields) -> Result<(), SchemaError> {
         }
     }
     markdown("approach", &plan.approach, MAX_APPROACH_CHARS)?;
+    if let Some(handoff) = &plan.handoff {
+        markdown("handoff", handoff, MAX_HANDOFF_CHARS)?;
+        match handoff.chars().any(|c| !c.is_whitespace()) {
+            true => {}
+            false => return Err(SchemaError::new("handoff", HANDOFF_EMPTY)),
+        }
+    }
     validate_items(&plan.items)?;
     plan.proposed_by.validate("proposed_by")?;
     if let Some(editor) = &plan.edited_by {

@@ -292,6 +292,7 @@ impl ArtifactCodec for PlanCodec {
             version,
             state: cells::read_word(STATE, required(STATE)?, PlanState::parse)?,
             approach: read.approach,
+            handoff: None,
             items: read.items,
             team,
             proposed_by: cells::read_identity(PROPOSED_BY, required(PROPOSED_BY)?)?,
@@ -435,3 +436,7 @@ fn role(row: &[String]) -> Result<Role, CodecError> {
 #[cfg(test)]
 #[path = "plan_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "plan_handoff_tests.rs"]
+mod handoff_tests;

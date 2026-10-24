@@ -79,6 +79,7 @@ pub(super) fn ready_with_plan() -> (Task, Plan) {
             item("api", "Serve the api"),
         ],
         team: None,
+        handoff: None,
         proposed_by: ada(),
         edited_by: None,
         accepted: Some((ada(), at.clone())),

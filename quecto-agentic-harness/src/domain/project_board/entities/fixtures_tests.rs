@@ -56,6 +56,7 @@ pub fn plan(version: u32, state: PlanState) -> Plan {
         approach: "Spike, then build.".into(),
         items: vec![item("schema", &[]), item("api", &["schema"])],
         team: Some(team()),
+        handoff: None,
         proposed_by: person("Ada"),
         edited_by: None,
         accepted: match state {

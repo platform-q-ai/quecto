@@ -58,6 +58,7 @@ fn plan_fields() -> PlanFields {
             deadline_seconds: Some(4 * 60 * 60),
             image: Some("ghcr.io/platform-q-ai/quecto:0.107".into()),
         }),
+        handoff: None,
         proposed_by: ada(),
         edited_by: None,
         accepted: None,

@@ -347,3 +347,7 @@ fn within_cap(answer: &Value, used: usize) {
 #[cfg(test)]
 #[path = "tool_show_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tool_show_handoff_tests.rs"]
+mod handoff_tests;

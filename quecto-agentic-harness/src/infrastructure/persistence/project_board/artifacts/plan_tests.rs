@@ -139,6 +139,7 @@ fn example() -> PlanFields {
             deadline_seconds: Some(345_600),
             image: Some("ghcr.io/platform-q-ai/quecto_dev:1.2".into()),
         }),
+        handoff: None,
         proposed_by: person("Ada Lovelace", "ada@example.com"),
         edited_by: Some(person("Bo", "bo@example.com")),
         accepted: Some((
@@ -429,6 +430,7 @@ fn widest(approach: String, criterion: impl Fn(usize, usize) -> String) -> PlanF
             deadline_seconds: Some(MAX_DEADLINE_SECONDS),
             image: Some(image),
         }),
+        handoff: None,
         proposed_by: person(&name, &email),
         edited_by: Some(person(&name, &email)),
         accepted: Some((person(&name, &email), at("2026-10-11T12:00:00Z"))),

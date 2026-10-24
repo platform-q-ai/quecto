@@ -126,6 +126,11 @@ pub struct SwarmBrief {
     pub constraints: Vec<String>,
     /// Whether the approach was cut to fit the constraints.
     pub approach_cut: bool,
+    /// The plan's handoff (#2705 T3), verbatim, or as much as the brief
+    /// has room for, ended by [`CUT_MARKER`]; `None` for none.
+    pub handoff: Option<String>,
+    /// Whether the handoff was cut to fit the brief.
+    pub handoff_cut: bool,
     pub criteria: Vec<RunCriterion>,
     /// `None`: the plan names no team, and the coordinator sizes its pool.
     pub member_limit: Option<u32>,
@@ -408,6 +413,8 @@ pub fn brief_of(started: &Started) -> Result<SwarmBrief, BriefRefusal> {
         goal,
         constraints,
         approach_cut,
+        handoff: None,
+        handoff_cut: false,
         criteria: RUN_CRITERIA.to_vec(),
         member_limit: terms.member_limit,
         deadline_in_seconds,
@@ -647,8 +654,12 @@ fn json_list_bytes<'a>(texts: impl IntoIterator<Item = &'a str>) -> usize {
 
 #[path = "swarm_brief_text.rs"]
 mod text;
-pub use text::render;
+pub use text::{HANDOFF_NOTE, render};
 
 #[cfg(test)]
 #[path = "swarm_brief_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "swarm_brief_handoff_tests.rs"]
+mod handoff_tests;

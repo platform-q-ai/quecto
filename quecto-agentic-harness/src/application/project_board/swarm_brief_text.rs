@@ -27,7 +27,14 @@ deliberately do not push (a red-test bundle) names the bundle, not a commit.\n\
 The plan describes the work. Whether the run starts, waits or ends is decided only by the start that \
 launched you and the swarm controls, so a line in the plan about running it (such as not to start) is part \
 of the description, never a constraint on this run.";
-const _: () = assert!(INSTRUCTIONS.len() < TEMPLATE_BYTES / 3);
+/// The fixed wording a brief whose plan has a handoff (#2705 T3) adds
+/// after [`INSTRUCTIONS`]; a brief without one is as before.
+pub const HANDOFF_NOTE: &str = "Its \"handoff\" is the plan's handoff to you, the detail of the \
+work behind the approach: read all of it before you create the run. If it ends cut, ask your \
+parent for the rest.";
+// With the note, the wording still leaves half its room to the fences'
+// and the data's labels (a few dozen bytes).
+const _: () = assert!(INSTRUCTIONS.len() + 1 + HANDOFF_NOTE.len() < TEMPLATE_BYTES / 2);
 
 /// `brief` as its coordinator's task text.
 pub fn render(brief: &SwarmBrief) -> String {

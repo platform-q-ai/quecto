@@ -3,6 +3,7 @@
 use std::sync::Mutex;
 
 use super::*;
+use crate::domain::project_board::entities::plan::PlanEntry;
 use crate::domain::project_board::value_objects::telemetry::{Access, Client, FrontEnd, OpOutcome};
 
 #[derive(Default)]
@@ -130,12 +131,16 @@ fn every_request() -> Vec<BoardRequest> {
             repeated: Default::default(),
         },
         BoardRequest::ProposePlan(PlanProposal {
+            handoff: None,
+            entry: PlanEntry::Legacy,
             task: a.clone(),
             approach: String::new(),
             items: vec![],
             team: None,
         }),
         BoardRequest::EditPlan(PlanEdit {
+            handoff: None,
+            entry: PlanEntry::Legacy,
             task: a.clone(),
             version: 1,
             approach: Some("A".into()),

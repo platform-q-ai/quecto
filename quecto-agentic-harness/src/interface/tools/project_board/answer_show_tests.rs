@@ -79,6 +79,7 @@ fn plan(version: u32, state: PlanState) -> Plan {
             depends_on: vec![],
         }],
         team,
+        handoff: None,
         proposed_by: ada(),
         edited_by: None,
         accepted: Some((ada(), at("08:30:00"))),

@@ -84,6 +84,8 @@ fn a_plans_change_never_stamps_before_its_tasks_last_change() {
     let bob = person("Bob");
     let now = when(&at("10:00:00"));
     let content = PlanContent {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         approach: "Build it.".into(),
         ..PlanContent::default()
     };
@@ -161,6 +163,8 @@ fn a_plans_change_never_stamps_before_another_plan_of_its_task() {
     let early = stamped(plan(2, PlanState::Draft), "09:30:00");
     let versions = [plan(1, PlanState::Accepted), early.clone(), v3];
     let content = PlanContent {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         approach: "Build it.".into(),
         ..PlanContent::default()
     };
@@ -229,6 +233,8 @@ fn a_discarded_draft_is_kept_and_only_a_draft_is_discarded() {
 #[test]
 fn an_edit_records_its_editor_and_keeps_the_proposer() {
     let changed = PlanContent {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         approach: "Build it.".into(),
         ..PlanContent::default()
     };

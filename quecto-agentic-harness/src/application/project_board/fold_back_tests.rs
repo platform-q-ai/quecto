@@ -42,6 +42,7 @@ pub fn plan() -> Plan {
         approach: "Spike, then build.".into(),
         items: vec![item("api"), item("store"), item("docs")],
         team: None,
+        handoff: None,
         proposed_by: ada(),
         edited_by: None,
         accepted: Some((ada(), at())),
