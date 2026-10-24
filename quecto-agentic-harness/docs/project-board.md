@@ -48,6 +48,15 @@ in its message, the way out: mend the file, or discard it with
 `origin`), so there a missing `origin` answers `store_unavailable`, as git failing
 to say whether a remote exists does.
 
+`quecto board --board-id <16 hex digits> --remote-url <url>` names where the
+board is, for a caller that already knows (the pocket relay): the id its records
+name it by and the remote's fetch URL. Each is taken as given, so git is not
+asked for it; with both, a read is composed with no git process (the request
+itself still reads the board with git), and the `--remote` name is then not
+checked against the clone's remotes. A board id that is not 16 lower-case hex
+digits, or a URL with a control or invisible character or over 4096 bytes,
+answers `invalid_request` on field `board-id` or `remote-url`.
+
 The board writes the marker `quecto-board 3` and reads `quecto-board 2` too. A
 build that reads only format 2 asks for an upgrade on a board this build has
 written, rather than taking its folders for someone else's branch.

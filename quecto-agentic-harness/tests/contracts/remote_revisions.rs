@@ -1,22 +1,27 @@
-//! The remote revisions port's contract (#2666), run against the git
-//! store: two clones of one bare remote. A revision is on the remote when
-//! one of its branches or tags reaches the commit it names (by its full id
-//! or a prefix of at least 12 hex digits), whichever clone asks and whether
-//! or not that clone holds the commit; a commit made in a clone and never
+//! The remote revisions port's contract (#2666): two clones of one bare
+//! remote, each asking through a port its adapter opens on the clone's
+//! `origin` ([`Open`]). A revision is on the remote when one of its
+//! branches or tags reaches the commit it names (by its full id or a
+//! prefix of at least 12 hex digits), whichever clone asks and whether or
+//! not that clone holds the commit; a commit made in a clone and never
 //! pushed is not, nor is text that names no commit. Asking moves no
-//! branch, tag or `FETCH_HEAD` of the asking clone.
+//! branch, tag or `FETCH_HEAD` of the asking clone. Run against git in
+//! `project_board_remote_revisions` (#2705 B1).
 use super::project_board_git_store::{Remote, sh};
 use quecto::application::project_board::ports::{BoardStoreError, RemoteRevisions};
 
+/// Opens the port on clone `clone`'s `origin`, asking as `name`.
+pub type Open = fn(&Remote, usize, &str) -> Box<dyn RemoteRevisions>;
+
 /// A new empty commit on clone `clone`'s branch, not pushed: its id.
-fn commit_in(remote: &Remote, clone: usize, message: &str) -> String {
+pub fn commit_in(remote: &Remote, clone: usize, message: &str) -> String {
     let dir = remote.clone_dir(clone);
     sh(dir, &["commit", "-q", "--allow-empty", "-m", message], b"");
     sh(dir, &["rev-parse", "HEAD"], b"")
 }
 
 /// Clone `clone` pushes `commit` to `reference` on the remote.
-fn push(remote: &Remote, clone: usize, commit: &str, reference: &str) {
+pub fn push(remote: &Remote, clone: usize, commit: &str, reference: &str) {
     let spec = format!("{commit}:{reference}");
     sh(
         remote.clone_dir(clone),
@@ -36,15 +41,24 @@ fn refs_of(remote: &Remote, clone: usize) -> (String, bool) {
     (refs, dir.join(".git/FETCH_HEAD").exists())
 }
 
-fn asked(store: &dyn RemoteRevisions, revisions: &[&str]) -> Vec<String> {
+pub fn asked(store: &dyn RemoteRevisions, revisions: &[&str]) -> Vec<String> {
     let revisions: Vec<String> = revisions.iter().map(|r| (*r).to_string()).collect();
     store.not_on_remote(&revisions).unwrap()
 }
 
-#[test]
-fn a_revision_is_on_the_remote_only_when_a_branch_or_tag_there_reaches_it() {
+/// Points clone `clone`'s `origin` at a repository that is not there.
+fn lose_origin(remote: &Remote, clone: usize) {
+    let gone = remote.clone_dir(clone).join("no-such-remote.git");
+    sh(
+        remote.clone_dir(clone),
+        &["remote", "set-url", "origin", gone.to_str().unwrap()],
+        b"",
+    );
+}
+
+pub fn check_on_the_remote_only_when_a_branch_or_tag_there_reaches_it(open: Open) {
     let remote = Remote::new();
-    let (alice, bob) = (remote.client(0, "Alice"), remote.client(1, "Bob"));
+    let (alice, bob) = (open(&remote, 0, "Alice"), open(&remote, 1, "Bob"));
     let pushed = commit_in(&remote, 0, "pushed");
     push(&remote, 0, &pushed, "refs/heads/feature");
     let unpushed = commit_in(&remote, 0, "made in the container, never pushed");
@@ -101,33 +115,21 @@ fn a_revision_is_on_the_remote_only_when_a_branch_or_tag_there_reaches_it() {
     assert_eq!(alice.commit_id_hex_len(), Ok(40), "a SHA-1 repository");
 }
 
-#[test]
-fn nothing_is_judged_while_the_remote_cannot_be_read() {
+pub fn check_nothing_is_judged_while_the_remote_cannot_be_read(open: Open) {
     let remote = Remote::new();
-    let alice = remote.client(0, "Alice");
+    let alice = open(&remote, 0, "Alice");
     let commit = commit_in(&remote, 0, "made here");
-    let gone = remote.clone_dir(0).join("no-such-remote.git");
-    sh(
-        remote.clone_dir(0),
-        &["remote", "set-url", "origin", gone.to_str().unwrap()],
-        b"",
-    );
+    lose_origin(&remote, 0);
     assert!(matches!(
         alice.not_on_remote(&[commit]),
         Err(BoardStoreError::Unavailable(_))
     ));
 }
 
-#[test]
-fn text_that_names_no_commit_never_reads_the_remote() {
+pub fn check_text_that_names_no_commit_never_reads_the_remote(open: Open) {
     let remote = Remote::new();
-    let alice = remote.client(0, "Alice");
-    let gone = remote.clone_dir(0).join("no-such-remote.git");
-    sh(
-        remote.clone_dir(0),
-        &["remote", "set-url", "origin", gone.to_str().unwrap()],
-        b"",
-    );
+    let alice = open(&remote, 0, "Alice");
+    lose_origin(&remote, 0);
     assert_eq!(
         asked(&*alice, &["working tree", "-v"]),
         ["working tree", "-v"],

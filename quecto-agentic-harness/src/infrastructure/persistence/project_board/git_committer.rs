@@ -76,6 +76,32 @@ impl Git {
         )
     }
 
+    /// [`Self::reader`], with git never asked whether it would record the
+    /// placeholder as given (#2705 B1): a reader commits nothing, so
+    /// building it starts no process. For a front end that knows where its
+    /// board is; a repository git cannot run in then fails at the first
+    /// read rather than here.
+    ///
+    /// # Errors
+    /// No git on the `PATH`.
+    pub fn reader_unasked(repo: &Path, env: GitEnvironment) -> Result<Self, GitError> {
+        let program = env
+            .get("PATH")
+            .and_then(|path| on_path(path, "git"))
+            .ok_or(GitError::NotFound)?;
+        assert!(program.is_absolute(), "git is run by its absolute path");
+        let (name, email) = READER;
+        let identity = Identity {
+            name: name.into(),
+            email: email.into(),
+        };
+        debug_assert!(identity.validate("identity").is_ok());
+        Ok(Self {
+            identity,
+            ..Self::unidentified(program, repo, &env)
+        })
+    }
+
     /// This git, every call bounded by `bound` (local or reaching the
     /// remote): for a read that must answer soon, as a teardown's (#2666).
     #[must_use]

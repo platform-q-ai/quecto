@@ -217,6 +217,7 @@ fn built_in_definitions(workspace: &std::path::Path) -> Vec<ToolDefinition> {
                 crate::interface::tools::project_board::site::BoardSite {
                     repo: workspace.to_path_buf(),
                     remote: "origin".into(),
+                    known: Default::default(),
                     build: None,
                     launcher: None,
                     swarm_session: None,
