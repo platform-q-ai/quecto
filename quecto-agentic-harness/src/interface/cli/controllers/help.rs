@@ -90,6 +90,8 @@ pub(in crate::interface::cli) fn help_text(out: &mut String) {
         "                  The board is cooperative: branch protection or a server hook is the\n",
     );
     out.push_str("                  real control\n");
+    out.push_str("  board-server serve --socket <path> --repo <clone> [--remote <name>]\n");
+    out.push_str("              Serve the board over HTTP on a Unix socket (this user only)\n");
     out.push_str("  container   Container runtimes for subagents\n");
     out.push_str(
         "              init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\n",

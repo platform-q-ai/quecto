@@ -1664,7 +1664,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-agentic-harness"
-version = "0.107.435"
+version = "0.107.436"
 dependencies = [
  "base64",
  "comrak",
@@ -1673,8 +1673,11 @@ dependencies = [
  "filetime",
  "futures",
  "http",
+ "http-body-util",
  "httpdate",
  "humantime",
+ "hyper",
+ "hyper-util",
  "libc",
  "proc-macro2",
  "pulldown-cmark",

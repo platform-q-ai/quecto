@@ -23,6 +23,10 @@ mod auth_runtime_builder;
 mod authority_starts;
 #[path = "architecture/bdd_lanes.rs"]
 mod bdd_lanes;
+/// The board server's listener knows no board and calls injected handles
+/// only (epic #2705 B4).
+#[path = "architecture/board_service.rs"]
+mod board_service;
 /// Production-token and relative-path scanning shared by the layer rules
 /// (#1637).
 #[path = "architecture/dependency_scan.rs"]
