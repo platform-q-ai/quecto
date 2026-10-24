@@ -14,6 +14,8 @@ type Rows = Vec<(String, String, Vec<u8>)>;
 pub struct SqliteProjectBoardStore {
     connection: Mutex<Connection>,
     writer: Identity,
+    #[cfg(feature = "test-support")]
+    payload_fetches: Mutex<Vec<(String, String, usize)>>,
 }
 fn unavailable(e: impl std::fmt::Display) -> BoardStoreError {
     BoardStoreError::Unavailable(e.to_string())
@@ -21,13 +23,34 @@ fn unavailable(e: impl std::fmt::Display) -> BoardStoreError {
 fn invalid(e: impl std::fmt::Display) -> BoardStoreError {
     BoardStoreError::InvalidWrite(e.to_string())
 }
-fn rows(c: &Connection) -> Result<Rows, BoardStoreError> {
+fn rows_observed(
+    c: &Connection,
+    #[cfg(feature = "test-support")] fetches: &Mutex<Vec<(String, String, usize)>>,
+) -> Result<Rows, BoardStoreError> {
     c.prepare("SELECT path, object, bytes FROM files ORDER BY path")
         .map_err(unavailable)?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .query_map([], |r| {
+            let path: String = r.get(0)?;
+            let object: String = r.get(1)?;
+            let bytes: Vec<u8> = r.get(2)?;
+            // Observe actual BLOB materialization, never a predicted read.
+            #[cfg(feature = "test-support")]
+            fetches.lock().expect("payload observation lock").push((
+                path.clone(),
+                object.clone(),
+                bytes.len(),
+            ));
+            Ok((path, object, bytes))
+        })
         .map_err(unavailable)?
         .collect::<Result<_, _>>()
         .map_err(unavailable)
+}
+// Preserve the original unit fixture's private rows(c) entry point.
+#[cfg(test)]
+#[cfg(feature = "test-support")]
+fn rows(c: &Connection) -> Result<Rows, BoardStoreError> {
+    rows_observed(c, &Mutex::new(Vec::new()))
 }
 fn head(c: &Connection) -> Result<BoardHead, BoardStoreError> {
     c.query_row("SELECT head FROM state WHERE id=1", [], |r| r.get(0))
@@ -99,6 +122,8 @@ impl SqliteProjectBoardStore {
         Ok(Self {
             connection: Mutex::new(connection),
             writer,
+            #[cfg(feature = "test-support")]
+            payload_fetches: Mutex::new(Vec::new()),
         })
     }
     fn advance(&self, c: &Connection) -> Result<BoardHead, BoardStoreError> {
@@ -157,7 +182,11 @@ impl SqliteProjectBoardStore {
         if refuse {
             return Ok(BoardWrite::Refused("fixture refusal".into()));
         }
-        let before_rows = rows(&tx)?;
+        let before_rows = rows_observed(
+            &tx,
+            #[cfg(feature = "test-support")]
+            &self.payload_fetches,
+        )?;
         let before = from_rows(&before_rows)?;
         let mut encoded = vec![];
         let after = match (artifacts, clear) {
@@ -207,7 +236,12 @@ impl SqliteProjectBoardStore {
                 unreachable!("injected SQL must fail");
             }
         }
-        let after = from_rows(&rows(&tx)?).map_err(|e| match e {
+        let after = from_rows(&rows_observed(
+            &tx,
+            #[cfg(feature = "test-support")]
+            &self.payload_fetches,
+        )?)
+        .map_err(|e| match e {
             BoardStoreError::TooLarge(why) => BoardStoreError::WriteTooLarge(why),
             other => other,
         })?;
@@ -217,6 +251,17 @@ impl SqliteProjectBoardStore {
         let next = self.advance(&tx)?;
         tx.commit().map_err(unavailable)?;
         Ok(BoardWrite::Written(next))
+    }
+    /// Drain actual SQL BLOB fetches (path, object identity, byte length).
+    /// This cfg-only observer does not alter SQL, bounds, or transactions.
+    #[cfg(feature = "test-support")]
+    pub fn fixture_take_payload_fetches(&self) -> Vec<(String, String, usize)> {
+        std::mem::take(
+            &mut *self
+                .payload_fetches
+                .lock()
+                .expect("payload observation lock"),
+        )
     }
     #[cfg(feature = "test-support")]
     pub fn connection_settings(&self) -> Result<(String, i64), BoardStoreError> {
@@ -280,7 +325,12 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
         let mut c = self.connection.lock().map_err(unavailable)?;
         let tx = c.transaction().map_err(unavailable)?;
         let head = head(&tx)?;
-        Ok(from_rows(&rows(&tx)?)?.snapshot(head))
+        Ok(from_rows(&rows_observed(
+            &tx,
+            #[cfg(feature = "test-support")]
+            &self.payload_fetches,
+        )?)?
+        .snapshot(head))
     }
     fn bootstrap(&self) -> Result<BoardBootstrap, BoardStoreError> {
         let mut c = self.connection.lock().map_err(unavailable)?;
