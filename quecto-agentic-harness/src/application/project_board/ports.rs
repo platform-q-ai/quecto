@@ -2,7 +2,10 @@
 //! (the S1d git store implements [`ProjectBoardStore`] over the
 //! repository's `quecto/board` branch), its listings from a local view of
 //! it (the S1e index implements [`BoardListings`]) and what time it is.
-use super::dto::{BoardListing, FoldBackFacts, FoldedBack, ProjectBoardError, SwarmRunView};
+use super::dto::{
+    BoardExecution, BoardListing, BoardRequest, FoldBackFacts, FoldedBack, ListSummaries, OpNoting,
+    ProjectBoardError, RunEnd, SwarmRunView,
+};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::discussion::Discussion;
@@ -685,4 +688,36 @@ pub trait CoordinatorLaunch: Send + Sync {
         request: &CoordinatorRequest,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Result<LaunchedCoordinator, LaunchRefused>;
+}
+
+/// Port: the board's operations as a front end reaches them (epic #2705
+/// B6). The `quecto board` CLI and the agent `board` tool hand each read
+/// and checked request to it and answer what it gives back. Requests and
+/// answers are owned values and refusals the board's own typed errors: no
+/// store handle crosses. The local adapter runs every request on this
+/// machine's board; a board server's (B7) will send the board's reads and
+/// writes there, while a start (its coordinator's launch) and
+/// [`Self::left_runs`] read this session's swarms, so they stay local
+/// until B8. Blocking: the board's store, clock and host all block, so
+/// callers run it off the async workers.
+pub trait BoardOperations: Send + Sync {
+    /// What `request` comes to, a listing summarising its tasks as
+    /// `summaries` asks, noted as `noting` asks: a noted request gives
+    /// back what its use cases saw, answered or refused. A listing is
+    /// never refused for its summaries; summaries asked of a request that
+    /// is no listing ([`BoardRequest::is_listing`]) are refused as invalid.
+    fn execute(
+        &self,
+        request: &BoardRequest,
+        summaries: ListSummaries,
+        noting: OpNoting,
+    ) -> BoardExecution;
+
+    /// The ends this front end owes as its session ends (#2655): each run
+    /// its starts launched that the board still shows open; none for a
+    /// front end that launches none.
+    ///
+    /// # Errors
+    /// The board could not be read.
+    fn left_runs(&self) -> Result<Vec<RunEnd>, ProjectBoardError>;
 }

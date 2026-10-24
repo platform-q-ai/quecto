@@ -19,13 +19,13 @@ use crate::application::environments::ports::{
 };
 use crate::application::environments::use_cases::FinalizeEnvironmentMember;
 use crate::application::project_board::operations::NoPullRequestHost;
-use crate::application::project_board::operations::query_listings::{
-    QueryListings, Swarms, assembled_reporting,
-};
 use crate::application::project_board::ports::{BoardArtifact, BoardClock, ProjectBoardStore};
 use crate::application::project_board::swarm_brief::brief_of;
 use crate::application::project_board::use_cases::QueryBoard;
 use crate::application::tools::ports::Tool;
+use crate::composition::bootstrap::project_board_operations::fixtures::{
+    QueryListings, Swarms, assembled_reporting,
+};
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
@@ -155,7 +155,7 @@ fn started_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHa
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
     Ok(ProjectBoardHandles {
-        operations,
+        operations: Box::new(operations),
         board: None,
     })
 }

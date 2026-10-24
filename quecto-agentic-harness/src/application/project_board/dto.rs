@@ -703,6 +703,13 @@ mod start;
 pub use plans::{PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal};
 pub use start::{EndedRun, LivenessCheck, RunEnd, RunEndOutcome, RunReport, TaskStart};
 
+#[path = "dto_requests.rs"]
+mod requests;
+pub use requests::{
+    BoardAnswered, BoardExecution, BoardOutcome, BoardRequest, Completion, ListFilter,
+    ListSummaries, OpNoting, PlanPage, PlanView, SUMMARIES_LISTINGS_ONLY,
+};
+
 #[cfg(test)]
 #[path = "dto_tests.rs"]
 mod tests;

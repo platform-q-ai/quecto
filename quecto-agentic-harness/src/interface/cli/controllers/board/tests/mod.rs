@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::project_board::operations::NoPullRequestHost;
-use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
 use crate::application::project_board::use_cases::QueryBoard;
+use crate::composition::bootstrap::project_board_operations::fixtures::{QueryListings, assembled};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
 use crate::interface::tools::project_board::run;
@@ -108,7 +108,7 @@ fn memory_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHan
     );
     assert_eq!(created["ok"], json!(true), "{created}");
     Ok(ProjectBoardHandles {
-        operations,
+        operations: Box::new(operations),
         board: None,
     })
 }

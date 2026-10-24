@@ -1,9 +1,9 @@
 use super::*;
-use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
 use crate::application::project_board::ports::{
     BoardClock, BoardClockError, PullRequestState, ReferenceStatus,
 };
 use crate::application::project_board::use_cases::QueryBoard;
+use crate::composition::bootstrap::project_board_operations::fixtures::{QueryListings, assembled};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
