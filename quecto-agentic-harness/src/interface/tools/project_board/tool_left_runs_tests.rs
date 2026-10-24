@@ -393,6 +393,7 @@ fn a_site_without_a_launcher_ends_quietly_without_building_a_board() {
     let tool = super::tests::tool(BoardSite {
         repo: ".".into(),
         remote: "origin".into(),
+        known: Default::default(),
         build: Some(forbidden_build),
         launcher: None,
         swarm_session: None,
