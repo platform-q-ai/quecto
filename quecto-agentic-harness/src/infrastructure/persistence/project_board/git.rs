@@ -627,4 +627,4 @@ mod command_config;
 #[path = "git_committer.rs"]
 mod committer;
 use command_config::command_config;
-pub use command_config::{CommandScopeWarning, MAX_COMMAND_CONFIG};
+pub use command_config::{CommandScopeWarning, MAX_COUNT};

@@ -600,10 +600,40 @@ fn a_title_spaced_with_another_space_is_refused_by_the_domain() {
     }
 }
 
+/// Rich-text paste (mail, documents, chat) writes empty paragraphs and
+/// indents as no-break or ideographic spaces: a chat space at a line's
+/// edge is removed, a line of nothing else becomes empty, so the
+/// description is held through the codec, fences included.
+#[test]
+fn a_pasted_description_with_chat_spaces_at_line_edges_is_held() {
+    for (raw, kept) in [
+        ("Notes\n\u{a0}\nMore", "Notes\n\nMore"),
+        ("\u{a0}Indented", "Indented"),
+        ("Hello\n\u{a0}world", "Hello\nworld"),
+        ("Steps:\n\u{a0}\u{a0}1. do", "Steps:\n1. do"),
+        // A gap between list items goes: the list stays one.
+        ("- a\n\u{a0}\n- b", "- a\n- b"),
+        ("\u{3000}\u{3000}本文です。", "本文です。"),
+        ("`x` end\u{a0}", "`x` end"),
+        ("a\u{a0}\u{a0}\nb", "a\nb"),
+        ("```\nx\u{a0}\n```", "```\nx\n```"),
+    ] {
+        let normal = board_text::text(raw);
+        assert_eq!(normal, kept, "{raw:?}");
+        let held = Task::entered(TaskFields {
+            description: normal,
+            ..example()
+        })
+        .unwrap_or_else(|error| panic!("{raw:?}: {error:?}"));
+        let file = encode::<TaskCodec>(&held).unwrap_or_else(|error| panic!("{raw:?}: {error:?}"));
+        assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(held), "{raw:?}");
+    }
+}
+
 /// A description typed on a French keyboard, its chat spaces before `!`
 /// and `?`, is held once normalised, and so is a chat space beside a block
-/// marker or in a code span (epic #2705 decision 9: entry makes every one
-/// plain); an em space, which no keyboard puts between words, is
+/// marker or in a code span (the approved #2705 plan, T1: entry makes
+/// every one between words plain); an em space, which no keyboard puts between words, is
 /// refused by the domain with the description's field, never by the file
 /// at write time.
 #[test]

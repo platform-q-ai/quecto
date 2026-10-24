@@ -1,9 +1,11 @@
 //! The board text normaliser against a reader (#2481 D4): normalising
-//! text the domain accepts never changes what GitHub shows, past making
-//! every chat space plain (epic #2705 decision 9, which may change it on
-//! purpose). comrak, with the oracle's GitHub options and raw HTML
-//! rendered, renders the text, its chat spaces plain, before and after,
-//! and the two agree exactly.
+//! text the domain accepts never changes what GitHub shows, past its chat
+//! spaces (epic #2705 T1: made plain between words, which may change what
+//! a reader sees in code and math, where an NBSP between words is never
+//! meaningful; removed at a line's edge). comrak, with the oracle's GitHub
+//! options and raw HTML rendered, renders text with chat spaces only
+//! between words, those made plain, before and after, and the two agree
+//! exactly. Chat spaces at a line's edge are checked against the codec.
 use super::*;
 use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::schema_error::markdown;
@@ -18,6 +20,19 @@ fn shown(text: &str) -> String {
     comrak::markdown_to_html(text, &options)
 }
 
+const CHAT: [char; 4] = ['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}'];
+
+/// Whether a line of `text` holds a chat space at its edge (in its leading
+/// or trailing spacing, or as the whole line), which entry removes.
+fn chat_at_an_edge(text: &str) -> bool {
+    let spaced = |c: char| matches!(c, ' ' | '\t') || CHAT.contains(&c);
+    text.replace("\r\n", "\n").split(['\n', '\r']).any(|line| {
+        let start = &line[..line.len() - line.trim_start_matches(spaced).len()];
+        let end = &line[line.trim_end_matches(spaced).len()..];
+        start.contains(CHAT) || end.contains(CHAT)
+    })
+}
+
 /// What the normaliser may change: spacing, line ends and blank lines;
 /// every other character, in order, is the text's own.
 fn content(text: &str) -> String {
@@ -28,7 +43,8 @@ fn content(text: &str) -> String {
 }
 
 /// What GitHub shows for `text` with each chat space made plain, as entry
-/// makes every one: the rest of the normaliser never changes markup.
+/// makes each between words: the rest of the normaliser never changes
+/// markup.
 fn shown_plain(text: &str) -> String {
     shown(&text.replace(['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}'], " "))
 }
@@ -191,13 +207,16 @@ fn normalising_never_changes_what_a_reader_shows() {
             continue;
         }
         checked += 1;
-        // A chat space the domain took was made plain by the normaliser.
-        plain += usize::from(raw.contains(['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}']));
-        assert_eq!(
-            shown_plain(&raw),
-            shown_plain(&normal),
-            "{raw:?} → {normal:?}"
-        );
+        // A chat space between words was made plain by the normaliser; one
+        // at a line's edge, removed, is the codec's to check (below).
+        if !chat_at_an_edge(&raw) {
+            plain += usize::from(raw.contains(CHAT));
+            assert_eq!(
+                shown_plain(&raw),
+                shown_plain(&normal),
+                "{raw:?} → {normal:?}"
+            );
+        }
         // What the codec holds, it holds as the normaliser wrote it.
         if let Ok(blocks) = blocks_of(&normal) {
             assert_eq!(text_of(&blocks), normal, "{raw:?}");
@@ -240,5 +259,89 @@ fn what_d4_leaves_is_refused_by_the_codec_with_its_line() {
             format!("{refused}").contains(&format!("line {line}")),
             "{raw:?}: {refused}"
         );
+    }
+}
+
+/// Text the codec holds, chat spaces added only at its lines' edges or as
+/// whole lines (as rich-text paste writes indents and empty paragraphs),
+/// is held once normalised: entry removes each of them.
+#[test]
+fn chat_spaces_at_line_edges_never_stop_text_being_held() {
+    const LINES: &[&str] = &[
+        "Hello world",
+        "Ça va ?",
+        "`x` and y",
+        "本文です。",
+        "Steps:",
+    ];
+    let mut seeded = Seeded(2705);
+    let edge = |seeded: &mut Seeded| -> String {
+        (0..seeded.below(3))
+            .map(|_| match seeded.below(4) {
+                0 => ' ',
+                _ => CHAT[seeded.below(CHAT.len())],
+            })
+            .collect()
+    };
+    for _ in 0..2_000 {
+        let mut lines: Vec<String> = Vec::new();
+        let (mut in_list, mut blocks) = (false, 1 + seeded.below(4));
+        while blocks > 0 {
+            blocks -= 1;
+            // A list never follows a list: a reader would join them.
+            let list = !in_list && seeded.below(2) == 0;
+            in_list = list;
+            for _ in 0..1 + seeded.below(3) {
+                let word = LINES[seeded.below(LINES.len())];
+                let marker = if list { "- " } else { "" };
+                // A whole line of chat spaces, inside a block only.
+                if seeded.below(4) == 0 && lines.last().is_some_and(|l| !l.is_empty()) {
+                    lines.push(format!("{}{}", edge(&mut seeded), CHAT[0]));
+                }
+                // Chat spaces only at the edges: a plain one there is the
+                // writer's own, which entry keeps.
+                let lead = edge(&mut seeded).replace(' ', "");
+                let tail = edge(&mut seeded).replace(' ', "");
+                lines.push(format!("{lead}{marker}{word}{tail}"));
+            }
+            lines.push(String::new());
+        }
+        let raw = lines.join("\n");
+        let normal = board_text::text(&raw);
+        let blocks = blocks_of(&normal).unwrap_or_else(|error| panic!("{raw:?}: {error}"));
+        assert_eq!(text_of(&blocks), normal, "{raw:?}");
+    }
+}
+
+/// What the review found a wider normaliser changed in what GitHub shows
+/// is left as written, but for its chat spaces, and the codec holds it as
+/// written or refuses it with its line.
+#[test]
+fn what_a_reader_shows_differently_is_left_as_written() {
+    for (raw, kept, held) in [
+        ("\tcode", "\tcode", false),
+        ("- a\n\n  b", "- a\n\n  b", false),
+        ("`a\tb` `x\u{fe0f}`", "`a\tb` `x\u{fe0f}`", false),
+        ("line  \nnext", "line  \nnext", false),
+        ("A\u{fe0f} and a\tb", "A\u{fe0f} and a\tb", false),
+        ("a\n\n\n\nb", "a\n\n\n\nb", false),
+        ("   a", "   a", false),
+        ("    a \nb", "    a \nb", false),
+        ("a\n\u{a0}\nb", "a\n\nb", true),
+        ("`a\u{a0}b` `a\u{3000}b`", "`a b` `a b`", true),
+        ("\u{a0}- a", "- a", true),
+    ] {
+        let normal = board_text::text(raw);
+        assert_eq!(normal, kept, "{raw:?}");
+        match blocks_of(&normal) {
+            Ok(blocks) => {
+                assert!(held, "{raw:?} is held");
+                assert_eq!(text_of(&blocks), normal, "{raw:?}");
+            }
+            Err(refused) => {
+                assert!(!held, "{raw:?}: {refused}");
+                assert!(format!("{refused}").contains("line "), "{raw:?}: {refused}");
+            }
+        }
     }
 }

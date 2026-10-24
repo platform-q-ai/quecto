@@ -111,8 +111,9 @@ kinds!(
 kinds!(
     /// A kind of change the board's normaliser made to a text field as it
     /// entered the board (T4), never the text: a CRLF, a lone CR or
-    /// another line break made one LF; a chat space or a tab made a plain
-    /// space; blank lines gone from a text's edges; trailing spaces gone
+    /// another line break made one LF; a chat space made plain or removed,
+    /// or a tab made a plain space; blank lines gone from a text's edges
+    /// (or a gap of chat spaces between list items); trailing spaces gone
     /// from a line; spacing gone from a one-line field's edges.
     TextChange {
         Crlf => "crlf", LoneCr => "lone_cr", LineBreak => "line_break",

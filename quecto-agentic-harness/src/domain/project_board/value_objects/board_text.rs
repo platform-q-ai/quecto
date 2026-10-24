@@ -7,16 +7,20 @@
 //!   vertical tab as one);
 //! - a space chat writes between words (no-break, narrow no-break,
 //!   figure, ideographic: French keyboards put them before `!`, `?` and
-//!   `:`) becomes a plain space wherever it stands (epic #2705, decision
-//!   9): in a one-line field, a message and markdown text alike, a line's
-//!   first word, a block marker's neighbour, code spans, math, fenced code,
-//!   HTML and links included. No entry path refuses one. In code, math or
-//!   beside a marker this can change what a reader sees (a no-break space
-//!   after `-` now starts a list item, one inside backticks shows as a
-//!   plain space): accepted, since a no-break space there is never meant.
-//!   Text then reads exactly as the same text typed with plain spaces:
-//!   where the codec refuses a plain space (one before a paragraph's
-//!   line), it refuses the one a chat space became, with its line;
+//!   `:`, and rich-text paste writes empty paragraphs and indents with
+//!   them) never stays (epic #2705 T1), so no entry path refuses one. In a
+//!   one-line field and a message it becomes a plain space. In markdown
+//!   text one at a line's end goes (fenced code included); one at a line's
+//!   start, before anything else, goes too (in fenced code, and what is
+//!   kept as written, it becomes a plain space, an indent); a line of
+//!   nothing but plain and chat spaces becomes empty outside a fence, and
+//!   goes between two list items (a pasted empty paragraph would make two
+//!   lists of one, which the codec refuses); and
+//!   every other one becomes a plain space: beside a block marker (`-`
+//!   then a no-break space starts a list item), in code spans, math, HTML
+//!   and links. Normalising inside code and math is accepted in the
+//!   approved #2705 plan (T1): an NBSP between words there is never
+//!   meaningful. Typed plain spaces keep the rules below;
 //! - blank lines go from the text's start and end, the final newline
 //!   included;
 //! - trailing spaces and tabs go from a prose line only where nothing can
@@ -35,10 +39,10 @@
 //! Text from agents and phones is NFC in practice. Everything else (tabs in
 //! markdown, any other space, selectors, indents, hard breaks, inner blank
 //! lines, fenced code, HTML blocks, footnote definitions) is kept as
-//! written, but for its chat spaces: the domain's schema refuses a space other than a plain one, a
-//! tab or a line end with its field (`PLAIN_SPACES_ONLY`, which stays for
-//! what is read back), and the codec holds the rest or refuses it with its
-//! field and line.
+//! written, but for its chat spaces: the domain's schema refuses a space
+//! other than a plain one, a tab or a line end with its field
+//! (`PLAIN_SPACES_ONLY`, which stays for what is read back), and the codec
+//! holds the rest or refuses it with its field and line.
 //!
 //! The write paths take only normalised text, so no entry point skips
 //! normalising: `Task::entered` (create) and the task's `edit_draft` check
@@ -62,9 +66,9 @@ const NOT_ENTERED_LINE: &str =
 /// (owner-approved wording, #2481 S7).
 const NOT_ENTERED_MESSAGE: &str = "has spacing the board removes: use one LF between lines, no \
      blank lines, and no spaces or tabs at the start or end of a line";
-/// The spaces chat writes between words that entry makes plain, wherever
-/// they stand: no-break, narrow no-break (French before `:`), figure and
-/// ideographic. A file holds no other space.
+/// The spaces chat writes between words, which entry never keeps:
+/// no-break, narrow no-break (French before `:`), figure and ideographic.
+/// A file holds no other space.
 const CHAT_SPACES: [char; 4] = ['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}'];
 /// What chat and imports break a line with besides LF: a lone CR, a line
 /// or paragraph separator, a next line and a vertical tab. A line or a
@@ -98,32 +102,63 @@ enum Place {
 /// Markdown text (a description, an approach) as the board keeps it. A
 /// discussion message is one line per row, normalised by [`message`].
 pub fn text(raw: &str) -> String {
-    // Every chat space is a plain one, wherever it stands (decision 9).
-    let unified = plain_spaces(&raw.replace("\r\n", "\n").replace('\r', "\n"));
+    let kept: Vec<String> = kept_lines(raw).into_iter().flatten().collect();
+    let normal = kept.join("\n");
+    debug_assert!(!normal.contains('\r'), "one LF between lines");
+    debug_assert!(!normal.contains(CHAT_SPACES), "no chat space stays");
+    debug_assert_eq!(
+        unchanged(&normal),
+        unchanged(raw),
+        "only spacing, line ends and blank lines change"
+    );
+    normal
+}
+
+/// Each line of `raw` (CRLF and a lone CR read as LF) as [`text`] keeps
+/// it, or `None` where it goes: a blank line at the text's edges, or a
+/// gap of chat spaces between two list items (rich-text paste's empty
+/// paragraph, which would make two lists of one to the codec).
+fn kept_lines(raw: &str) -> Vec<Option<String>> {
+    let unified = raw.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = unified.split('\n').collect();
     let mut kept: Vec<String> = Vec::with_capacity(lines.len());
+    // Whether each line is a prose line of chat (and plain) spaces only,
+    // made empty.
+    let mut gap: Vec<bool> = Vec::with_capacity(lines.len());
     let mut place = Place::Prose { marked: false };
-    for (at, line) in lines.iter().enumerate() {
-        let before_blank = lines.get(at + 1).is_none_or(|next| blank(next));
+    for (at, raw_line) in lines.iter().enumerate() {
+        // A line of chat spaces is blank, wherever it stands.
+        let before_blank = lines
+            .get(at + 1)
+            .is_none_or(|next| blank(&plain_spaces(next)));
+        // Each line's chat spaces first, as where it stands takes them.
+        let edged = match place {
+            Place::Prose { .. } => without_chat(raw_line, Edge::Prose),
+            Place::Fenced(_) | Place::Unknown => without_chat(raw_line, Edge::Code),
+        };
+        let line = edged.as_str();
+        let emptied = matches!(place, Place::Prose { .. })
+            && line.is_empty()
+            && raw_line.contains(CHAT_SPACES);
         let (next, written) = match place {
             Place::Fenced(open) if open.closed_by(line) => {
-                (Place::Prose { marked: false }, (*line).to_string())
+                (Place::Prose { marked: false }, line.to_string())
             }
-            Place::Fenced(_) | Place::Unknown => (place, (*line).to_string()),
+            Place::Fenced(_) | Place::Unknown => (place, line.to_string()),
             Place::Prose { marked } => match Fence::opened_by(line) {
-                Some(open) if open.at_margin => (Place::Fenced(open), (*line).to_string()),
-                Some(_) => (Place::Unknown, (*line).to_string()),
+                Some(open) if open.at_margin => (Place::Fenced(open), line.to_string()),
+                Some(_) => (Place::Unknown, line.to_string()),
                 None if may_start_html_block(line) || defines_footnote(line) => {
-                    (Place::Unknown, (*line).to_string())
+                    (Place::Unknown, line.to_string())
                 }
                 // A blank line ends a paragraph; its own spacing may still
                 // count (an indented blank line stays in a list item).
-                None if blank(line) => (Place::Prose { marked: false }, (*line).to_string()),
+                None if blank(line) => (Place::Prose { marked: false }, line.to_string()),
                 None => {
                     let marked = marked || line.contains(['`', '$', '<']) || links(line);
                     let written = match marked {
                         false => without_trailing(line, before_blank),
-                        true => (*line).to_string(),
+                        true => line.to_string(),
                     };
                     (Place::Prose { marked }, written)
                 }
@@ -131,6 +166,7 @@ pub fn text(raw: &str) -> String {
         };
         place = next;
         kept.push(written);
+        gap.push(emptied);
     }
     let first = kept
         .iter()
@@ -149,14 +185,97 @@ pub fn text(raw: &str) -> String {
             _ => kept.len(),
         },
     };
-    let normal = kept[first..end.max(first)].join("\n");
-    debug_assert!(!normal.contains('\r'), "one LF between lines");
-    debug_assert!(!normal.contains(CHAT_SPACES), "every chat space plain");
-    debug_assert_eq!(
-        unchanged(&normal),
-        unchanged(raw),
-        "only spacing, line ends and blank lines change"
-    );
+    let gapped = list_gaps(&kept, &gap);
+    debug_assert_eq!(gapped.len(), kept.len());
+    kept.into_iter()
+        .enumerate()
+        .map(
+            |(at, line)| match ((first..end.max(first)).contains(&at), gapped[at]) {
+                (true, false) => Some(line),
+                (false, _) | (true, true) => None,
+            },
+        )
+        .collect()
+}
+
+/// Which of `kept` go as a gap between list items: each run of lines
+/// `gap` marks whose nearest other lines, before and after, are both list
+/// items. Two passes, so a long run costs no more than a short one.
+fn list_gaps(kept: &[String], gap: &[bool]) -> Vec<bool> {
+    // The nearest line before each that is no gap: a list item or not.
+    let mut item_before = Vec::with_capacity(kept.len());
+    let mut last = false;
+    for (line, gapped) in kept.iter().zip(gap) {
+        item_before.push(last);
+        last = match gapped {
+            true => last,
+            false => list_item(line),
+        };
+    }
+    let mut item_after = vec![false; kept.len()];
+    let mut next = false;
+    for at in (0..kept.len()).rev() {
+        item_after[at] = next;
+        next = match gap[at] {
+            true => next,
+            false => list_item(&kept[at]),
+        };
+    }
+    (0..kept.len())
+        .map(|at| gap[at] && item_before[at] && item_after[at])
+        .collect()
+}
+
+/// Whether `line` starts a list item at the margin (at most three spaces
+/// in): `-`, `*` or `+`, or one to nine digits and `.` or `)`, then a
+/// space.
+fn list_item(line: &str) -> bool {
+    let rest = line.trim_start_matches(' ');
+    let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    let marker = match digits {
+        0 => rest.starts_with(['-', '*', '+']).then_some(1),
+        1..=9 => rest[digits..].starts_with(['.', ')']).then_some(digits + 1),
+        _ => None,
+    };
+    line.len() - rest.len() <= CLOSING_INDENT
+        && marker.is_some_and(|width| rest[width..].starts_with(' '))
+}
+
+/// Where a line stands, as far as its chat spaces go: prose, or code
+/// (fenced, or kept as written), whose indent a reader shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Edge {
+    Prose,
+    Code,
+}
+
+/// `line` with no chat space left: those at its end removed; those at its
+/// start removed in prose and made plain in code (an indent); a prose line
+/// of nothing but plain and chat spaces, a chat space among them, made
+/// empty; and every other one made plain. Plain spaces and tabs are kept.
+fn without_chat(line: &str, edge: Edge) -> String {
+    let chat = |c: char| CHAT_SPACES.contains(&c);
+    let spaced = |c: char| spacing(c) || chat(c);
+    let spaces_only = line.chars().all(|c| c == ' ' || chat(c));
+    if edge == Edge::Prose && spaces_only && line.contains(CHAT_SPACES) {
+        return String::new();
+    }
+    let body = line.trim_matches(spaced);
+    let start = line.len() - line.trim_start_matches(spaced).len();
+    let (head, tail) = match body.is_empty() {
+        // Spacing only: all of it is the line's end.
+        true => ("", line),
+        false => (&line[..start], &line[start + body.len()..]),
+    };
+    // An edge run's plain spaces and tabs (an allowlist).
+    let plain_only = |run: &str| run.chars().filter(|c| spacing(*c)).collect::<String>();
+    let head = match edge {
+        Edge::Prose => plain_only(head),
+        Edge::Code => plain_spaces(head),
+    };
+    let normal = format!("{head}{}{}", plain_spaces(body), plain_only(tail));
+    debug_assert!(!normal.contains(CHAT_SPACES), "no chat space stays");
+    debug_assert!(normal.len() <= line.len(), "only spacing changes");
     normal
 }
 
@@ -231,42 +350,39 @@ pub fn entered_message(field: &str, held: &str) -> Result<(), SchemaError> {
 
 /// The kinds of change [`text`] makes to `raw` (epic #2481 T4), each
 /// once, in [`TextChange`]'s order: none exactly when it keeps `raw` as
-/// written. Its steps are [`text`]'s, told apart: line ends unified and
-/// every chat space made plain, then each kept line's trailing spacing
-/// (lines line up past the blank ones dropped at the start, as [`text`]
-/// drops none inside), then the lines dropped at the edges.
+/// written. Its steps are [`text`]'s, told apart, line for line with what
+/// it keeps: line ends unified and no chat space kept, then each line that
+/// holds something losing trailing spacing, then blank lines gone (at the
+/// edges, or a gap of chat spaces in a list).
 pub fn text_changes(raw: &str) -> Vec<TextChange> {
     let unified = raw.replace("\r\n", "\n");
-    let lines_of = |text: &str| -> Vec<String> {
-        match text.is_empty() {
-            true => vec![],
-            false => text.split('\n').map(str::to_string).collect(),
-        }
-    };
-    // Read as `text` reads it: a line of chat spaces only is blank.
-    let read = lines_of(&plain_spaces(&unified.replace('\r', "\n")));
+    // Read with chat spaces plain: a line of them only is blank, as in
+    // `text`.
+    let plain = plain_spaces(&unified.replace('\r', "\n"));
+    let read: Vec<&str> = plain.split('\n').collect();
+    let kept = kept_lines(raw);
+    assert_eq!(read.len(), kept.len(), "a kept line for each line read");
     let normal = text(raw);
-    let kept = lines_of(&normal);
-    let first = read
-        .iter()
-        .position(|line| !blank(line))
-        .unwrap_or(read.len());
-    debug_assert!(
-        first + kept.len() <= read.len(),
-        "text keeps lines, never adds one"
-    );
-    let pairs = || read[first..].iter().zip(&kept);
     let trailing = |line: &str| line.len() - line.trim_end_matches(spacing).len();
+    let trimmed = read
+        .iter()
+        .zip(&kept)
+        .any(|(was, now)| match (now, blank(was)) {
+            (Some(now), false) => trailing(was) > trailing(now),
+            (Some(_), true) | (None, _) => false,
+        });
+    // An empty text is one empty line, which goes, changing nothing.
+    let dropped = match raw.is_empty() {
+        true => false,
+        false => kept.iter().any(Option::is_none),
+    };
     let changes = [
         (TextChange::Crlf, unified.len() < raw.len()),
         (TextChange::LoneCr, unified.contains('\r')),
-        // `text` makes every chat space plain, wherever it stands.
+        // `text` keeps no chat space, wherever it stands.
         (TextChange::ChatSpace, raw.contains(CHAT_SPACES)),
-        (TextChange::EdgeBlankLines, kept.len() < read.len()),
-        (
-            TextChange::TrailingSpace,
-            pairs().any(|(was, now)| trailing(was) > trailing(now)),
-        ),
+        (TextChange::EdgeBlankLines, dropped),
+        (TextChange::TrailingSpace, trimmed),
     ];
     told(raw, &normal, &changes)
 }
