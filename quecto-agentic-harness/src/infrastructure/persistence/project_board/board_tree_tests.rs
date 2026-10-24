@@ -116,6 +116,7 @@ pub(super) fn a_task() -> Task {
         references: vec![],
         created: at.clone(),
         updated: at,
+        description_form: Default::default(),
     })
     .unwrap()
 }

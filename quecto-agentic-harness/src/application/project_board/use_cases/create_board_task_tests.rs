@@ -16,8 +16,15 @@ use crate::infrastructure::test_support::board_artifacts;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use std::sync::Arc;
 
-fn create(store: &MemoryBoardStore, clock: Arc<SetClock>) -> CreateBoardTask {
-    CreateBoardTask::new(Arc::new(store.client()), clock).unwrap()
+pub(super) fn create(store: &MemoryBoardStore, clock: Arc<SetClock>) -> CreateBoardTask {
+    CreateBoardTask::new(
+        Arc::new(store.client()),
+        clock,
+        std::sync::Arc::new(
+            crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+        ),
+    )
+    .unwrap()
 }
 
 /// Another writer's task, written straight to the store.
@@ -54,7 +61,7 @@ fn a_new_task_holds_only_its_own_fields() {
     let draft = create(&store, SetClock::at("10:00:00"))
         .execute(&NewBoardTask {
             status: NewBoardTaskStatus::Draft,
-            description: "Why and how.".into(),
+            description: "## Goal\nWhy and how.\n\n## Done when\n- [ ] Done".into(),
             ..new_task("a")
         })
         .unwrap();
@@ -62,7 +69,10 @@ fn a_new_task_holds_only_its_own_fields() {
         draft.into_fields(),
         TaskFields {
             status: TaskStatus::Draft,
-            description: "Why and how.".into(),
+            description: "## Goal\nWhy and how.\n\n## Done when\n- [ ] Done".into(),
+            // Entered as sections, it is kept in them (#2705 T2).
+            description_form:
+                crate::domain::project_board::entities::task_parts::DescriptionForm::Sectioned,
             created: at("10:00:00"),
             updated: at("10:00:00"),
             ..fields("a")
@@ -458,12 +468,16 @@ fn board_text_is_normalised_before_the_schema_reads_it() {
     let created = create(&store, SetClock::at("10:00:00"))
         .execute(&NewBoardTask {
             title: "\tShip it ".into(),
-            description: "Why. \r\nHow so.\r\n".into(),
+            description: "## Goal \r\nWhy. \r\nHow so.\r\n\r\n## Done when\r\n- [ ] Done\r\n"
+                .into(),
             ..new_task("a")
         })
         .unwrap();
     assert_eq!(created.fields().title, "Ship it");
-    assert_eq!(created.fields().description, "Why.\nHow so.");
+    assert_eq!(
+        created.fields().description,
+        "## Goal\nWhy.\nHow so.\n\n## Done when\n- [ ] Done"
+    );
 }
 
 /// An id the board's other artifacts already name (a plan, run, change or
@@ -643,7 +657,14 @@ fn a_write_notes_the_lock_races_its_store_met() {
         races: std::sync::atomic::AtomicU64::new(5),
         per_write: 2,
     };
-    let creator = CreateBoardTask::new(Arc::new(racing), SetClock::at("10:00:00")).unwrap();
+    let creator = CreateBoardTask::new(
+        Arc::new(racing),
+        SetClock::at("10:00:00"),
+        std::sync::Arc::new(
+            crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+        ),
+    )
+    .unwrap();
     let mut facts = crate::application::project_board::telemetry::OpFacts::default();
     creator
         .execute_noted(&new_task("a"), Some(&mut facts))

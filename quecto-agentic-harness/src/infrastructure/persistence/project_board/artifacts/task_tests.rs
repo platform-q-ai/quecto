@@ -92,6 +92,7 @@ fn example() -> TaskFields {
         id: slug("board-cli"),
         title: "The board CLI answers in `JSON`".into(),
         kind: TaskKind::Task,
+        description_form: Default::default(),
         description:
             "Build the CLI on the store.\n# not a heading\n\n- read first\n- then write\n\n\
                       ```sh\nquecto board list\n\nquecto board show board-cli\n```"
@@ -316,10 +317,10 @@ fn a_claim_needs_all_three_rows() {
 
 #[test]
 fn a_newer_task_schema_asks_for_an_upgrade() {
-    let newer = edited("quecto-task schema=1", "quecto-task schema=2");
+    let newer = edited("quecto-task schema=1", "quecto-task schema=3");
     assert_eq!(
         decode::<TaskCodec>(newer.as_bytes()),
-        Err(CodecError::NewerSchema { found: 2, known: 1 })
+        Err(CodecError::NewerSchema { found: 3, known: 2 })
     );
     let other = edited("quecto-task schema=1", "quecto-plan schema=1");
     assert_eq!(
@@ -358,6 +359,7 @@ fn widest(title: String, description: String) -> TaskFields {
         id: long_slug(999),
         title,
         kind: TaskKind::Chore,
+        description_form: Default::default(),
         description,
         status: TaskStatus::InProgress,
         parent: Some(long_slug(998)),
@@ -620,7 +622,10 @@ fn a_pasted_description_with_chat_spaces_at_line_edges_is_held() {
     ] {
         let normal = board_text::text(raw);
         assert_eq!(normal, kept, "{raw:?}");
-        let held = Task::entered(TaskFields {
+        // Free text no longer enters (#2705 T2), but a legacy one like it
+        // still reads, and is held through the codec.
+        assert_eq!(board_text::entered_text("description", &normal), Ok(()));
+        let held = Task::new(TaskFields {
             description: normal,
             ..example()
         })
@@ -638,11 +643,15 @@ fn a_pasted_description_with_chat_spaces_at_line_edges_is_held() {
 /// at write time.
 #[test]
 fn a_description_with_chat_spaces_is_held_once_normalised() {
+    // Free text no longer enters (#2705 T2): as a goal it does.
     let described = |description: &str| {
-        Task::entered(TaskFields {
-            description: description.into(),
-            ..example()
-        })
+        Task::entered(
+            TaskFields {
+                description: format!("## Goal\n{description}\n\n## Done when\n- [ ] Held"),
+                ..example()
+            },
+            crate::domain::project_board::entities::task_parts::Entry::Sectioned,
+        )
     };
     let probe = "Bonjour\u{202f}! On commence\u{a0}?";
     let normal = board_text::text(probe);
@@ -661,7 +670,7 @@ fn a_description_with_chat_spaces_is_held_once_normalised() {
         described(&board_text::text("an em\u{2003}space")).map(|_| ()),
         Err(SchemaError::new(
             "description",
-            format!("line 1: {PLAIN_SPACES_ONLY}")
+            format!("line 2: {PLAIN_SPACES_ONLY}")
         ))
     );
 }

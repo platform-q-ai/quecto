@@ -92,6 +92,7 @@ fn launching_board(
         references: vec![],
         created: at.clone(),
         updated: at,
+        description_form: Default::default(),
     })
     .unwrap();
     let head = store.read().unwrap().head;

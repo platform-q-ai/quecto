@@ -5,6 +5,7 @@ use crate::application::project_board::ports::{
 use crate::application::project_board::use_cases::QueryBoard;
 use crate::composition::bootstrap::project_board_operations::fixtures::{QueryListings, assembled};
 use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::entities::task_parts::EntryPolicy;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::test_support::memory_pull_requests::MemoryPullRequests;
@@ -202,7 +203,9 @@ fn a_command_line_reaches_the_same_request_as_the_tools_json() {
     );
     let pr_word = line("link-pr", &["--task", "a", "--pr", "twelve"]).unwrap();
     assert_eq!(
-        request::parse(&pr_word).unwrap_err().field,
+        request::parse(&pr_word, EntryPolicy::SectionedOrLegacy)
+            .unwrap_err()
+            .field,
         "pr",
         "the parser refuses it"
     );

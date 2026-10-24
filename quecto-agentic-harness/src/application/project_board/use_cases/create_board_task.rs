@@ -10,13 +10,15 @@ use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, written_task};
 use super::board_view;
+use super::description_cells::held;
 use super::task_pointers::{Pointers, pointers_hold};
 use crate::application::project_board::dto::{NewBoardTask, ProjectBoardError};
 use crate::application::project_board::ports::{
-    BoardArtifact, BoardClock, BoardSnapshot, ProjectBoardStore,
+    BoardArtifact, BoardClock, BoardSnapshot, BoardTextCells, ProjectBoardStore,
 };
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::task::{Task, TaskFields};
+use crate::domain::project_board::entities::task_parts::DescriptionForm;
 use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::telemetry::Normalised;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -25,6 +27,9 @@ use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 pub struct CreateBoardTask {
     store: Arc<dyn ProjectBoardStore>,
     clock: Arc<dyn BoardClock>,
+    /// What a board file holds: a sectioned description's outcomes and
+    /// links are checked against it as they enter (#2705 T2).
+    cells: Arc<dyn BoardTextCells>,
 }
 
 impl CreateBoardTask {
@@ -33,9 +38,14 @@ impl CreateBoardTask {
     pub fn new(
         store: Arc<dyn ProjectBoardStore>,
         clock: Arc<dyn BoardClock>,
+        cells: Arc<dyn BoardTextCells>,
     ) -> Result<Self, ProjectBoardError> {
         checked_writer(&*store)?;
-        Ok(Self { store, clock })
+        Ok(Self {
+            store,
+            clock,
+            cells,
+        })
     }
 
     /// The task `new` describes, created and updated now.
@@ -79,8 +89,10 @@ impl CreateBoardTask {
         let noted = facts.as_deref_mut();
         let written = commit(store, clock, &message, noted, |board, when| {
             free(board, new)?;
-            let task =
-                Task::entered(created_at(new, &when.now)).map_err(ProjectBoardError::Invalid)?;
+            let task = Task::entered(created_at(new, &when.now), new.entry)
+                .map_err(ProjectBoardError::Invalid)?;
+            held(&task.fields().description, new.entry, &*self.cells)
+                .map_err(ProjectBoardError::Invalid)?;
             Ok(vec![BoardArtifact::Task(task)])
         });
         let written = written.map(written_task);
@@ -99,6 +111,8 @@ fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
         title: board_text::line(&new.title),
         kind: new.kind,
         description: board_text::text(&new.description),
+        // Task::entered keeps it in the form its entry gives.
+        description_form: DescriptionForm::Legacy,
         status: new.status.into(),
         parent: new.parent.clone(),
         depends_on: new.depends_on.clone(),
@@ -148,3 +162,7 @@ fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardErr
 #[cfg(test)]
 #[path = "create_board_task_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "create_board_task_entry_tests.rs"]
+mod entry_tests;

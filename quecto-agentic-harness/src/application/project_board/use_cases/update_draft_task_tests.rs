@@ -33,7 +33,14 @@ fn holding(tasks: &[(&str, TaskStatus, Option<&str>, &[&str])]) -> MemoryBoardSt
 }
 
 fn update(store: &MemoryBoardStore) -> UpdateDraftTask {
-    UpdateDraftTask::new(Arc::new(store.client()), SetClock::at("10:00:00")).unwrap()
+    UpdateDraftTask::new(
+        Arc::new(store.client()),
+        SetClock::at("10:00:00"),
+        std::sync::Arc::new(
+            crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+        ),
+    )
+    .unwrap()
 }
 
 /// An update of draft `id` setting nothing yet.
@@ -45,6 +52,7 @@ fn of(id: &str) -> DraftUpdate {
         parent: None,
         depends_on: None,
         expected_updated: None,
+        entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
     }
 }
 
@@ -219,12 +227,15 @@ fn board_text_is_normalised_before_the_schema_reads_it() {
     let store = holding(&[("a", TaskStatus::Draft, None, &[])]);
     let edit = DraftUpdate {
         title: Some(" New title\t".into()),
-        description: Some("Why. \r\nHow so.\r\n".into()),
+        description: Some("## Goal \r\nWhy. \r\nHow so.\r\n\r\n## Done when\r\n- [ ] Done".into()),
         ..of("a")
     };
     let edited = update(&store).execute(&edit).unwrap();
     assert_eq!(edited.fields().title, "New title");
-    assert_eq!(edited.fields().description, "Why.\nHow so.");
+    assert_eq!(
+        edited.fields().description,
+        "## Goal\nWhy.\nHow so.\n\n## Done when\n- [ ] Done"
+    );
 }
 
 #[test]

@@ -95,6 +95,7 @@ fn a_task_with_no_plan_or_run_summarises_none() {
     assert_eq!(
         summary_of(&shown(vec![], vec![])),
         TaskSummary {
+            subtitle: None,
             plan: None,
             run: None,
             may_be_incomplete: false,
@@ -270,4 +271,28 @@ fn a_set_aside_file_may_leave_it_incomplete() {
     assert_eq!(summary.may_be_incomplete, task.may_be_incomplete());
     assert_eq!(summary.plan, plan_summary(1, PlanState::Accepted));
     assert_eq!(summary.run, None, "only a readable run is summarised");
+}
+
+/// #2705 T2: a task's goal, on one line, is its subtitle; legacy text has
+/// none.
+#[test]
+fn the_goal_is_the_subtitle() {
+    let described = |description: &str| {
+        let task = Task::new(crate::domain::project_board::entities::task::TaskFields {
+            description: description.into(),
+            ..fields("a")
+        })
+        .unwrap();
+        summary_of(&ShownTask {
+            task,
+            ..shown(vec![], vec![])
+        })
+        .subtitle
+    };
+    assert_eq!(
+        described("## Goal\nShip the\nstore.\n\n## Done when\n- [ ] Shipped"),
+        Some("Ship the store.".into())
+    );
+    assert_eq!(described("Free text."), None);
+    assert_eq!(described(""), None);
 }

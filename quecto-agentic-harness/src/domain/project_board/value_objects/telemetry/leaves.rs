@@ -283,6 +283,11 @@ const KNOWN_KINDS: &[&str] = &[
     // (#2705 B13).
     "board_moved",
     "board_moved_malformed",
+    // A task description's sections (#2705 T2).
+    "goal",
+    "why",
+    "done_when",
+    "links",
 ];
 
 /// Whether every one of [`KNOWN_KINDS`] is shaped as a kind (checked as

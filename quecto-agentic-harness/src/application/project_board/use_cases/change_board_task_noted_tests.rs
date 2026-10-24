@@ -190,9 +190,16 @@ mod a_task_gone_on_retry {
             parent: None,
             depends_on: None,
             expected_updated: None,
+            entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
         };
-        let edit =
-            UpdateDraftTask::new(Arc::new(store.client()), SetClock::at("10:20:00")).unwrap();
+        let edit = UpdateDraftTask::new(
+            Arc::new(store.client()),
+            SetClock::at("10:20:00"),
+            std::sync::Arc::new(
+                crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+            ),
+        )
+        .unwrap();
         let mut facts = OpFacts::default();
         assert_eq!(
             edit.execute_noted(&update, Some(&mut facts)),

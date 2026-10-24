@@ -13,6 +13,7 @@ use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells as Cells;
 use crate::infrastructure::test_support::board_artifacts;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::test_support::memory_pull_requests::MemoryPullRequests;
@@ -333,7 +334,7 @@ fn a_store_with_an_invalid_writer_is_refused_when_built() {
         Err(ProjectBoardError::InvalidWriter(_))
     ));
     assert!(matches!(
-        super::super::CreateBoardTask::new(invalid(), SetClock::at("10:00:00")),
+        super::super::CreateBoardTask::new(invalid(), SetClock::at("10:00:00"), Arc::new(Cells)),
         Err(ProjectBoardError::InvalidWriter(_))
     ));
 }

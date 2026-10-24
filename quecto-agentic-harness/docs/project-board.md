@@ -165,6 +165,103 @@ and a text cell such as a task item's title or criterion) holds every backslash 
 itself: one a reader would take for an escape (before ASCII punctuation, or at the
 end, outside code) is written doubled, and read back as one.
 
+## Task descriptions in sections
+
+A task's description is written for people in four fixed sections (#2705 T2),
+in this order, one blank line between them:
+
+```markdown
+## Goal
+Land L12 (#2652): move the UDS presenters, mapping
+and loop controllers into interface/uds roles.
+
+## Why
+Part of the layout epic #2357.
+
+## Done when
+- [ ] Current master merged in, moves only
+- [ ] CI green, merged with a merge commit
+
+## Links
+- [PR #2652](https://github.com/platform-q-ai/quecto/pull/2652)
+- [Planning handoff](https://example.com/handoff)
+```
+
+`create` and `update_draft` take the sections as fields: `goal` and `why`
+(text), `done_when` and `links` (lists of lines; on the command line, JSON:
+`--done-when '["Merged"]'`). The board composes the text above from them. A
+request gives either the sections or `description` text, never both. On
+`update_draft` the sections replace the whole description: give every section
+the task keeps. Agent briefs (scope rules, gate commands) go in the plan or a
+handoff, never in the description.
+
+The rules are one table (`ENTRY_RULES` and `PARTS` in
+`domain/project_board/entities/task_parts.rs`), so a rule change is a data
+edit:
+
+| Rule | On entry |
+|---|---|
+| Goal | Required: 1 to 3 sentences, one paragraph, no heading or blank line. Sentences are counted at a word ending in `.`, `!` or `?` before a capital, but never at an abbreviation (`Mr.`, `Mrs.`, `Ms.`, `Dr.`, `St.`, `Jr.`, `e.g.`, `i.e.`, `etc.`, `vs.`, `cf.`, `Inc.`, `Ltd.`, `Co.`), an initial (`X.`) or a word with a `.` inside (`U.S.`, `p.m.`): the count may fall short, and over-counts only at an abbreviation the table does not list. Its text must be prose a board file holds (no raw HTML, comments, character references, images, `http://` links or indented lines), kept as written and never rewritten: a bare `https://` or `http://` address is refused with "write the address as [text](https://…)" (one in `code` is kept) |
+| Why | Optional: one short paragraph, no heading, prose a board file holds (as the goal's) |
+| Done when | Required: 1 to 8 outcomes, each `- [ ] ` (or `- [x] `) and the outcome on one line, text a board file's table cell holds (plain words, `code`, `[text](https://…)` links) |
+| Links | Optional: each `- [text](https://…)`, shown as chips. Given as a field, a bare `https://` address is written `[address](https://…)` |
+| Description | At most 1,200 characters, headings included: a longer one is refused with "move details into the plan or a handoff" |
+| Title | At most 70 characters (Unicode scalar values, not graphemes), written as an outcome |
+
+An empty description still enters, for a draft not written yet. Reading never
+checks these rules: a description in any other shape is legacy text, read,
+shown and listed as it is and never rewritten (editing a legacy draft's other
+fields keeps it byte for byte), and a title reads back to 256 characters.
+
+Every task answer carries the sections beside `description`: `goal` and `why`
+(text or `null`), `done_when` (`[{"outcome", "done"}]`), `links` (lines), and
+`needs_goal`, `true` for legacy or empty text, which answers no sections. A
+listing's `summary` carries the goal on one line as its `subtitle`.
+
+Each field given as a section is checked on its own field before it is
+composed: a goal or why with a blank line or a heading, and an outcome or
+link that is empty or more than one line, are refused on `goal`, `why`,
+`done_when/{i}` or `links/{i}`. Sections given only empty (`links: []`, `goal: ""`)
+never clear a description: they are refused on `goal`. Only an explicit
+`description: ""` clears one.
+
+A task keeps the form its description entered in, and the form, never the
+text's shape, picks its file's layout. A description entered as sections is
+written at `schema=2`, a file section each: `## Goal`, `## Why` and
+`## Links` as prose, and `## Done when` as a `| Done | Outcome |` table (`yes`
+or `no`). Any other description (legacy text, text from the CLI's legacy
+entry, or none) stays `schema=1` with its `## Description`, the bytes earlier
+builds wrote, however its text reads; an existing task stays at schema 1 on
+every write until its description is given anew as sections. A file holding
+both layouts, sections at schema 1, or sections that make no description, is
+refused.
+
+**Deploy order (strict).** Upgrade every reader first: every host that runs
+quecto, the Pocket relay's host included. Only then let agents write sectioned
+tasks. A quecto from before T2 reads only schema 1 and never misreads a
+schema-2 task; it sets it aside:
+
+- its `list` leaves the task out of `tasks` and names its file under
+  `quarantined`, with the reason "schema 2, written by a newer quecto; this
+  quecto reads schema 1: upgrade quecto to read it";
+- its `show` of the task refuses it as set aside: "task <id> is set aside as
+  unreadable; mend its file, or discard it with clear_set_aside(path ...,
+  object ...)".
+
+That advice is wrong for a schema-2 task: the file is sound, only the reader
+is old. **Never `clear_set_aside` a schema-2 task from an old build** (it
+deletes a newer task); upgrade quecto there instead.
+
+### Entry policies by front end
+
+Each front end lets in what its policy allows, an allowlist resolved per
+request:
+
+| Front end | Policy | Entry |
+|---|---|---|
+| The agent `board` tool | Sections only | Every rule above. Free-text `description` is refused (`invalid_task`, field `description`): "is free text: give it as goal, why, done_when and links (move details into the plan or a handoff)" |
+| `quecto board` (people, the Pocket relay) | Sections or legacy | A request that gives `goal`, `why`, `done_when` or `links` keeps every rule above. One that gives only `description` text and a title enters as before T2: normalised board text within the schema's limits (65,536 characters, a 256-character title), held as legacy text with `needs_goal: true` |
+
 ## List
 
 `list`, `list_ready` and `list_takeable` answer the board's `head`, the
@@ -185,6 +282,7 @@ anything is built.
 
 ```json
 "summary": {
+  "subtitle": "Land L12: move the UDS presenters." | null,
   "plan": null | { "version": 2, "state": "draft" | "accepted" },
   "run": null | {
     "number": 2,
@@ -201,6 +299,7 @@ anything is built.
 
 | Field | Meaning |
 |---|---|
+| `subtitle` | The task's goal on one line (its paragraph's lines joined by a space); `null` for legacy text |
 | `plan` | The newest version of the task's plan that is a draft or accepted (superseded and discarded versions are skipped), so a draft newer than the accepted plan is the one named. `null` when there is none |
 | `run` | The task's latest readable run: `number`, `plan_version`, `state`, `started` and `ended` as `show` gives them; `deadline`; and `items`, how many of its task items stand in each state (`todo`, `doing`, `review`, `done`, `blocked`) and in all. `null` when it has none |
 | `items` of a running run | All `0`: a run records its task items on the board when it ends (folded back from its swarm, or ended by hand), so while it runs the board holds none. Its swarm's own board has them live |

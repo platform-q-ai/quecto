@@ -7,6 +7,7 @@ use super::*;
 use crate::application::project_board::operations::{BoardOutcome, NoPullRequestHost};
 use crate::application::project_board::ports::ProjectBoardStore;
 use crate::application::project_board::use_cases::QueryBoard;
+use crate::domain::project_board::entities::task_parts::EntryPolicy;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
 use crate::interface::tools::project_board::request::parse;
@@ -25,7 +26,7 @@ fn local(store: &MemoryBoardStore) -> LocalBoardOperations {
 }
 
 fn request(value: Value) -> BoardRequest {
-    parse(&value).unwrap()
+    parse(&value, EntryPolicy::Sectioned).unwrap()
 }
 
 fn ready(id: &str) -> BoardRequest {

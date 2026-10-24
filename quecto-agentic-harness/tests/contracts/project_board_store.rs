@@ -38,6 +38,7 @@ pub fn task(id: &str, title: &str) -> Task {
         references: vec![],
         created: at.clone(),
         updated: at,
+        description_form: Default::default(),
     })
     .unwrap()
 }

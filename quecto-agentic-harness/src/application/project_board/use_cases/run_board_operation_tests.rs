@@ -347,7 +347,7 @@ mod noted {
         assert_eq!(facts, OpFacts::default(), "a bootstrap writes no task");
         let create = BoardRequest::Create(NewBoardTask {
             title: "  A title".into(),
-            description: "Why.\r\nHow. ".into(),
+            description: "## Goal\r\nWhy.\r\n\r\n## Done when\r\n- [ ] How. ".into(),
             status: NewBoardTaskStatus::Draft,
             ..new_task("a")
         });
@@ -372,10 +372,11 @@ mod noted {
         let edit = BoardRequest::UpdateDraft(DraftUpdate {
             id: slug("a"),
             title: None,
-            description: Some("Plain.".into()),
+            description: Some("## Goal\nPlain.\n\n## Done when\n- [ ] Done".into()),
             parent: None,
             depends_on: None,
             expected_updated: None,
+            entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
         });
         let (edited, facts) = noted(&ops, &edit);
         assert!(edited.is_ok(), "{edited:?}");
@@ -398,6 +399,7 @@ mod noted {
             parent: Some(None),
             depends_on: None,
             expected_updated: None,
+            entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
         });
         let (_, facts) = noted(&ops, &untitled);
         assert_eq!(facts.normalised, None, "no text given, none told");

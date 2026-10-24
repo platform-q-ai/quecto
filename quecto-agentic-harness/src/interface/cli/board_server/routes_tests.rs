@@ -24,6 +24,7 @@ fn task(id: &str) -> Task {
         title: format!("Task {id}"),
         kind: TaskKind::Task,
         description: "Do it.".into(),
+        description_form: Default::default(),
         status: TaskStatus::Ready,
         parent: None,
         depends_on: vec![],

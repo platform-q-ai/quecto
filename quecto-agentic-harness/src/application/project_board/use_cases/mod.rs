@@ -8,6 +8,7 @@ mod change_board_task;
 mod clear_set_aside;
 mod complete_merged_task;
 mod create_board_task;
+mod description_cells;
 mod discard_plan;
 mod edit_plan;
 mod end_run;

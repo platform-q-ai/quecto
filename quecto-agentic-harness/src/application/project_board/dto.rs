@@ -11,6 +11,7 @@ use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::review::Review;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::entities::task_parts::Entry;
 use crate::domain::project_board::services::artifacts_of;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
@@ -32,6 +33,9 @@ pub struct NewBoardTask {
     pub status: NewBoardTaskStatus,
     pub parent: Option<Slug>,
     pub depends_on: Vec<Slug>,
+    /// How its title and description enter (#2705 T2), as its front end's
+    /// policy resolved it.
+    pub entry: Entry,
 }
 
 /// An edit of a draft in place: the fields it sets (`None` keeps one as
@@ -48,6 +52,9 @@ pub struct DraftUpdate {
     pub parent: Option<Option<Slug>>,
     pub depends_on: Option<Vec<Slug>>,
     pub expected_updated: Option<Timestamp>,
+    /// How a new title or description enters (#2705 T2), as its front
+    /// end's policy resolved it.
+    pub entry: Entry,
 }
 
 /// The statuses a task is created in.
