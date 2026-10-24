@@ -141,6 +141,26 @@ pub fn start(
     })
 }
 
+/// A start undone (#2705 T4): `task`, in progress, back in the review or
+/// blocked status its start moved it from, by `actor` at `now`.
+pub fn unstart(
+    task: &Task,
+    from: TaskStatus,
+    runs: &[Run],
+    actor: &Identity,
+    now: &Timestamp,
+) -> Result<Task, BoardRuleError> {
+    let _ = (runs, actor, now);
+    Err(BoardRuleError::NotAllowed {
+        from: task.fields().status,
+        to: from,
+    })
+}
+
 #[cfg(test)]
 #[path = "starts_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "starts_undo_tests.rs"]
+mod undo_tests;

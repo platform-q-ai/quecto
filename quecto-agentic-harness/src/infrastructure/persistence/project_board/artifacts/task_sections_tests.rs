@@ -108,6 +108,7 @@ fn fields(description: &str, form: DescriptionForm) -> TaskFields {
         references: vec![],
         created: at.clone(),
         updated: at,
+        reason: None,
     }
 }
 

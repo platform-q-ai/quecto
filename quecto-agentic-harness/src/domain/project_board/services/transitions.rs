@@ -68,6 +68,65 @@ const TRANSITIONS: &[(TaskStatus, TaskStatus, Actor, ClaimEffect)] = &[
     (Blocked,    Ready,      Actor::HolderWhileLive, ClaimEffect::Clear),
 ];
 
+/// Why a move is made (#2705 T4), as its front end lets a mover say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MoveReason {
+    /// None given.
+    Absent,
+    /// The mover's reason, as it enters the board: one line.
+    Given(String),
+    /// None given, through a front end that lets a task move back to
+    /// ready from review without one: the CLI, which the Pocket relay
+    /// moves through until its task page sends a reason (as it lets the
+    /// relay's free text in, `EntryPolicy::SectionedOrLegacy`).
+    Unasked,
+}
+
+/// `task` moved to `to` as [`move_task`] moves it, for `reason` (#2705
+/// T4).
+pub fn move_with_reason(
+    task: &Task,
+    to: TaskStatus,
+    reason: &MoveReason,
+    actor: &Identity,
+    works: (&[Run], &[Change]),
+    tasks: &[Task],
+    now: &Timestamp,
+) -> Result<Task, BoardRuleError> {
+    let _ = reason;
+    move_task(task, to, actor, works, tasks, now)
+}
+
+/// What [`done_without_run`] reads of the task's work, once its rule
+/// allows the actor to finish it so.
+///
+/// # Errors
+/// What [`done_without_run`] refuses before it looks at runs or changes.
+pub fn done_without_run_reads(
+    task: &Task,
+    actor: &Identity,
+    now: &Timestamp,
+) -> Result<MoveReads, BoardRuleError> {
+    let _ = (actor, now);
+    Err(BoardRuleError::NotAllowed {
+        from: task.fields().status,
+        to: Done,
+    })
+}
+
+/// `task` done without a run (#2705 T4) by `actor` at `now`, for
+/// `reason`.
+pub fn done_without_run(
+    task: &Task,
+    reason: &str,
+    actor: &Identity,
+    works: (&[Run], &[Change]),
+    now: &Timestamp,
+) -> Result<Task, BoardRuleError> {
+    let _ = (reason, works);
+    done_without_run_reads(task, actor, now).map(|_| task.clone())
+}
+
 /// What a move reads of the task's work: its runs, its changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MoveReads {
@@ -413,3 +472,7 @@ mod relations_tests;
 #[cfg(test)]
 #[path = "transitions_holder_tests.rs"]
 mod holder_tests;
+
+#[cfg(test)]
+#[path = "transitions_lifecycle_tests.rs"]
+mod lifecycle_tests;

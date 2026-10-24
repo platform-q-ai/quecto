@@ -1,5 +1,6 @@
 //! Epic #2481 T1: a recording exists only while the event log is on; T3:
 //! a request's op reads or writes, and names its task and pull request.
+use crate::domain::project_board::services::transitions::MoveReason;
 use std::sync::Mutex;
 
 use super::*;
@@ -119,7 +120,7 @@ fn every_request() -> Vec<BoardRequest> {
             expected_updated: None,
             entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
         }),
-        change(BoardOp::Move(TaskStatus::Ready)),
+        change(BoardOp::Move(TaskStatus::Ready, MoveReason::Absent)),
         change(BoardOp::Renew),
         change(BoardOp::TakeOver),
         change(BoardOp::AddPr(7)),

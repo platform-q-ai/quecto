@@ -133,6 +133,7 @@ fn task(id: &str) -> Task {
         created: at.clone(),
         updated: at,
         description_form: Default::default(),
+        reason: None,
     })
     .unwrap()
 }

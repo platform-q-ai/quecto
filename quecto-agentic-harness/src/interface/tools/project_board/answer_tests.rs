@@ -11,7 +11,7 @@ use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{
-    DiscussionLimit, PlanState, TaskStatus,
+    DiscussionLimit, LifecycleAction, PlanState, TaskStatus,
 };
 
 fn slug(text: &str) -> Slug {
@@ -392,6 +392,8 @@ macro_rules! board_rules {
 
 board_rules! {
     R::NotAllowed { .. } => R::NotAllowed { from: TaskStatus::Draft, to: TaskStatus::Done }, "not_allowed", ["from", "to"];
+    R::UseLifecycle { .. } => R::UseLifecycle { from: TaskStatus::InProgress, to: TaskStatus::Review, action: LifecycleAction::EndRun }, "use_lifecycle", ["action", "from", "to"];
+    R::ReasonRequired { .. } => R::ReasonRequired { from: TaskStatus::Review, to: TaskStatus::Ready }, "reason_required", ["from", "to"];
     R::NotHolder => R::NotHolder, "not_holder", [];
     R::NotHolderExpired => R::NotHolderExpired, "not_holder", ["expired"];
     R::NoClaim => R::NoClaim, "no_claim", [];

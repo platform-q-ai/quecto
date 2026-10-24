@@ -97,6 +97,7 @@ const TOOL_OPS: &[&str] = &[
     "link_pr",
     "unlink_pr",
     "complete",
+    "done_without_run",
     "propose_plan",
     "edit_plan",
     "accept_plan",

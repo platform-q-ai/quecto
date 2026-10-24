@@ -120,6 +120,7 @@ fn example() -> TaskFields {
         .collect(),
         created: at("2026-10-11T09:30:00Z"),
         updated: at("2026-10-11T12:00:00Z"),
+        reason: None,
     }
 }
 
@@ -377,6 +378,7 @@ fn widest(title: String, description: String) -> TaskFields {
         references: vec![],
         created: at("2026-10-11T09:30:00Z"),
         updated: at("2026-10-11T12:00:00Z"),
+        reason: None,
     };
     let left = MAX_TEXT_BYTES - fields.text_bytes();
     let left = left.min(MAX_REFERENCES * MAX_REFERENCE_BYTES);

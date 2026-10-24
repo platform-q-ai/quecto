@@ -3,6 +3,7 @@
 //! between them on the clock's monotonic time.
 use super::*;
 use crate::application::project_board::telemetry::OpFacts;
+use crate::domain::project_board::services::transitions::MoveReason;
 use crate::domain::project_board::value_objects::telemetry::ClaimFacts;
 use std::time::Duration;
 
@@ -13,7 +14,10 @@ fn renew_losing_once(store: &MemoryBoardStore) -> (ChangeBoardTask, Arc<SetClock
         let other =
             ChangeBoardTask::new(Arc::new(board.client()), SetClock::at("10:10:00")).unwrap();
         other
-            .execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress))
+            .execute(
+                &slug("a"),
+                &BoardOp::Move(TaskStatus::InProgress, MoveReason::Absent),
+            )
             .unwrap();
     });
     let clock = SetClock::at("10:20:00");
@@ -116,7 +120,7 @@ fn a_refused_move_tells_its_target_and_the_claim_it_found() {
     let mut facts = OpFacts::default();
     let refused = change(&store, "Bob", "11:00:30").execute_noted(
         &slug("a"),
-        &BoardOp::Move(TaskStatus::Review),
+        &BoardOp::Move(TaskStatus::Review, MoveReason::Absent),
         Some(&mut facts),
     );
     assert!(

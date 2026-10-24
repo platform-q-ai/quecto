@@ -13,6 +13,7 @@ use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::entities::task_parts::Entry;
 use crate::domain::project_board::services::artifacts_of;
+use crate::domain::project_board::services::transitions::MoveReason;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -81,9 +82,17 @@ pub enum BoardOp {
     Renew,
     /// Take an expired claim over.
     TakeOver,
-    /// Move the task through the transition table; `Move(Claimed)` claims
-    /// a ready task.
-    Move(TaskStatus),
+    /// Move the task through the transition table, for the reason its
+    /// mover gives (#2705 T4: back to ready from review takes one);
+    /// `Move(Claimed, _)` claims a ready task.
+    Move(TaskStatus, MoveReason),
+    /// Finish a ready or claimed task done without a run, saying why
+    /// (#2705 T4).
+    DoneWithoutRun(String),
+    /// A start's own undo (#2705 T4): an in-progress task back in the
+    /// review or blocked status its start moved it from. No op names it:
+    /// only the start use case makes it.
+    UndoStart(TaskStatus),
     /// The holder links a pull request.
     AddPr(u64),
     /// The holder unlinks a pull request deliberately (a wrong or
@@ -100,7 +109,9 @@ impl BoardOp {
         match self {
             Self::Renew => format!("board: renew {id}"),
             Self::TakeOver => format!("board: take over {id}"),
-            Self::Move(to) => format!("board: move {id} to {}", to.as_str()),
+            Self::Move(to, _) => format!("board: move {id} to {}", to.as_str()),
+            Self::DoneWithoutRun(_) => format!("board: done {id} without a run"),
+            Self::UndoStart(to) => format!("board: undo the start of {id} to {}", to.as_str()),
             Self::AddPr(pr) => format!("board: link pull request {pr} to {id}"),
             Self::RemovePr(pr) => format!("board: unlink pull request {pr} from {id}"),
         }

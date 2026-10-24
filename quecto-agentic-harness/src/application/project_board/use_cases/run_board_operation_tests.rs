@@ -1,3 +1,4 @@
+use crate::domain::project_board::services::transitions::MoveReason;
 use std::sync::Arc;
 
 use super::*;
@@ -48,8 +49,14 @@ fn a_completion_is_pending_until_the_pull_requests_merge() {
     for request in [
         BoardRequest::Bootstrap,
         ready_task("a"),
-        BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::Claimed)),
-        BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::InProgress)),
+        BoardRequest::Change(
+            a.clone(),
+            BoardOp::Move(TaskStatus::Claimed, MoveReason::Absent),
+        ),
+        BoardRequest::Change(
+            a.clone(),
+            BoardOp::Move(TaskStatus::InProgress, MoveReason::Absent),
+        ),
     ] {
         ops.execute(&request).unwrap();
     }
@@ -64,7 +71,7 @@ fn a_completion_is_pending_until_the_pull_requests_merge() {
     let review = ops
         .execute(&BoardRequest::Change(
             a.clone(),
-            BoardOp::Move(TaskStatus::Review),
+            BoardOp::Move(TaskStatus::Review, MoveReason::Absent),
         ))
         .unwrap();
     let BoardOutcome::Changed {
@@ -98,13 +105,22 @@ fn a_task_linking_no_pull_request_reports_no_completion() {
     for request in [
         BoardRequest::Bootstrap,
         ready_task("a"),
-        BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::Claimed)),
-        BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::InProgress)),
+        BoardRequest::Change(
+            a.clone(),
+            BoardOp::Move(TaskStatus::Claimed, MoveReason::Absent),
+        ),
+        BoardRequest::Change(
+            a.clone(),
+            BoardOp::Move(TaskStatus::InProgress, MoveReason::Absent),
+        ),
     ] {
         ops.execute(&request).unwrap();
     }
     let review = ops
-        .execute(&BoardRequest::Change(a, BoardOp::Move(TaskStatus::Review)))
+        .execute(&BoardRequest::Change(
+            a,
+            BoardOp::Move(TaskStatus::Review, MoveReason::Absent),
+        ))
         .unwrap();
     assert!(
         matches!(
@@ -192,8 +208,14 @@ fn a_complete_with_no_host_needs_one_only_for_pull_requests() {
     let e = slug("e");
     for request in [
         ready_task("e"),
-        BoardRequest::Change(e.clone(), BoardOp::Move(TaskStatus::Claimed)),
-        BoardRequest::Change(e.clone(), BoardOp::Move(TaskStatus::InProgress)),
+        BoardRequest::Change(
+            e.clone(),
+            BoardOp::Move(TaskStatus::Claimed, MoveReason::Absent),
+        ),
+        BoardRequest::Change(
+            e.clone(),
+            BoardOp::Move(TaskStatus::InProgress, MoveReason::Absent),
+        ),
         BoardRequest::Change(e.clone(), BoardOp::AddPr(8)),
     ] {
         ops.execute(&request).unwrap();
@@ -417,8 +439,14 @@ mod noted {
         for request in [
             BoardRequest::Bootstrap,
             ready_task("a"),
-            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::Claimed)),
-            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::InProgress)),
+            BoardRequest::Change(
+                a.clone(),
+                BoardOp::Move(TaskStatus::Claimed, MoveReason::Absent),
+            ),
+            BoardRequest::Change(
+                a.clone(),
+                BoardOp::Move(TaskStatus::InProgress, MoveReason::Absent),
+            ),
         ] {
             ops.execute(&request).unwrap();
         }
@@ -501,8 +529,14 @@ mod noted {
         for request in [
             BoardRequest::Bootstrap,
             ready_task("a"),
-            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::Claimed)),
-            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::InProgress)),
+            BoardRequest::Change(
+                a.clone(),
+                BoardOp::Move(TaskStatus::Claimed, MoveReason::Absent),
+            ),
+            BoardRequest::Change(
+                a.clone(),
+                BoardOp::Move(TaskStatus::InProgress, MoveReason::Absent),
+            ),
         ] {
             ops.execute(&request).unwrap();
         }

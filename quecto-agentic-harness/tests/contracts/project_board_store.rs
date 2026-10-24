@@ -9,6 +9,7 @@ use quecto::application::project_board::ports::{
 };
 use quecto::domain::project_board::entities::claim::Identity;
 use quecto::domain::project_board::entities::task::{Task, TaskFields};
+use quecto::domain::project_board::services::transitions::MoveReason;
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::timestamp::Timestamp;
 use quecto::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
@@ -39,6 +40,7 @@ pub fn task(id: &str, title: &str) -> Task {
         created: at.clone(),
         updated: at,
         description_form: Default::default(),
+        reason: None,
     })
     .unwrap()
 }
@@ -420,7 +422,7 @@ pub fn check_carried_set_aside(
     change
         .execute(
             &Slug::parse("a").unwrap(),
-            &BoardOp::Move(TaskStatus::Claimed),
+            &BoardOp::Move(TaskStatus::Claimed, MoveReason::Absent),
         )
         .unwrap();
     add_stray();

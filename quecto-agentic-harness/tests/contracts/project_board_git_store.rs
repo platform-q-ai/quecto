@@ -573,6 +573,7 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
         created: at.clone(),
         updated: at.clone(),
         description_form: Default::default(),
+        reason: None,
     })
     .unwrap();
     let plan = Plan::new(PlanFields {

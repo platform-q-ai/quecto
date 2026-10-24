@@ -2,7 +2,7 @@
 use super::schema_error::SchemaError;
 use super::slug::Slug;
 use super::timestamp::Timestamp;
-use super::vocabulary::{DiscussionLimit, PlanState, TaskStatus};
+use super::vocabulary::{DiscussionLimit, LifecycleAction, PlanState, TaskStatus};
 use std::fmt;
 
 /// Whether a run ended by hand had a board of its swarm to report its
@@ -27,6 +27,16 @@ impl SwarmReport {
 pub enum BoardRuleError {
     /// No row of the transition table moves a task between these statuses.
     NotAllowed { from: TaskStatus, to: TaskStatus },
+    /// A move the task's lifecycle makes, never `move` (#2705 T4): the
+    /// action named makes it, or is the way on.
+    UseLifecycle {
+        from: TaskStatus,
+        to: TaskStatus,
+        action: LifecycleAction,
+    },
+    /// This move is made only with a reason (#2705 T4): back to ready
+    /// from review.
+    ReasonRequired { from: TaskStatus, to: TaskStatus },
     /// Another's claim has expired: only its holder may do this, and
     /// anyone may take the task over first (#2659).
     NotHolderExpired,
@@ -224,6 +234,37 @@ impl fmt::Display for BoardRuleError {
                     to.as_str()
                 )
             }
+            Self::UseLifecycle { from, to, action } => {
+                let way = match action {
+                    LifecycleAction::Start => {
+                        "start(task, plan_version) is the only way to in_progress: it runs the \
+                         accepted plan"
+                    }
+                    LifecycleAction::EndRun => {
+                        "the task's run decides it: end the run with end_run(task, run, outcome)"
+                    }
+                    LifecycleAction::Release => {
+                        "blocking is a run's outcome: release the task with move(task, to ready) \
+                         and say why"
+                    }
+                    LifecycleAction::DoneWithoutRun => {
+                        "finish work done without a run with done_without_run(task, reason)"
+                    }
+                };
+                write!(
+                    f,
+                    "move does not take a task from {} to {}: {way}",
+                    from.as_str(),
+                    to.as_str()
+                )
+            }
+            Self::ReasonRequired { from, to } => write!(
+                f,
+                "a task moves from {} back to {} only with a reason: move(task, to {}, reason)",
+                from.as_str(),
+                to.as_str(),
+                to.as_str()
+            ),
             Self::NotHolder => f.write_str("only the claim's holder may do this"),
             Self::NotHolderExpired => f.write_str(
                 "only the claim's holder may do this, and the task's claim has expired: take the task \

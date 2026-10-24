@@ -1,5 +1,6 @@
 use super::*;
 use crate::domain::project_board::entities::task_parts::Entry;
+use crate::domain::project_board::services::transitions::MoveReason;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -76,7 +77,10 @@ fn each_op_reads_its_own_fields() {
         ),
         (
             json!({"op": "move", "task": "a", "to": "in_progress"}),
-            BoardRequest::Change(task(), BoardOp::Move(TaskStatus::InProgress)),
+            BoardRequest::Change(
+                task(),
+                BoardOp::Move(TaskStatus::InProgress, MoveReason::Absent),
+            ),
         ),
         (
             json!({"op": "renew", "task": "a"}),

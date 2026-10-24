@@ -308,6 +308,7 @@ impl ArtifactCodec for TaskCodec {
             references: read.references,
             created: cells::read_time(CREATED, required(CREATED)?)?,
             updated: cells::read_time(UPDATED, required(UPDATED)?)?,
+            reason: None,
         };
         Task::new(fields)
             .map_err(|error| refused("Task", format!("{}: {}", error.field, error.problem)))
@@ -469,3 +470,7 @@ mod tests;
 #[cfg(test)]
 #[path = "task_sections_tests.rs"]
 mod sections_tests;
+
+#[cfg(test)]
+#[path = "task_reason_tests.rs"]
+mod reason_tests;

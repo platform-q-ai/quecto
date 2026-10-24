@@ -2,6 +2,7 @@
 //! fold it back (its undo's fold-back refused, after a failed launch or a
 //! cancel) is recovered by `end_run`, and then the task leaves its holder.
 //! A write followed by a crash is `end_run`'s own test.
+use crate::domain::project_board::services::transitions::MoveReason;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -69,7 +70,10 @@ fn recovered_by_end_run(store: &MemoryBoardStore) {
     )
     .unwrap();
     let task = release
-        .execute(&slug("a"), &BoardOp::Move(TaskStatus::Ready))
+        .execute(
+            &slug("a"),
+            &BoardOp::Move(TaskStatus::Ready, MoveReason::Absent),
+        )
         .unwrap();
     assert_eq!(
         (task.fields().status, &task.fields().claim),

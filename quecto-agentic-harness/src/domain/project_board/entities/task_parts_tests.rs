@@ -91,6 +91,7 @@ fn fields() -> TaskFields {
         references: vec![],
         created: at("08:00:00"),
         updated: at("10:00:00"),
+        reason: None,
     }
 }
 

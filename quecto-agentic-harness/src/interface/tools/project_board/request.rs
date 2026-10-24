@@ -10,6 +10,7 @@ use crate::application::project_board::dto::{
 use crate::application::project_board::operations::{BoardRequest, ListFilter, PlanPage, PlanView};
 use crate::application::project_board::ports::KeepCopy;
 use crate::domain::project_board::entities::task_parts::EntryPolicy;
+use crate::domain::project_board::services::transitions::MoveReason;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{FaultKind, RequestFault, StaticKind};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -233,7 +234,15 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("expected_updated", Kind::Timestamp),
         ],
     ),
-    ("move", &[TASK, required("to", Kind::Status)]),
+    (
+        "move",
+        &[
+            TASK,
+            required("to", Kind::Status),
+            optional("reason", Kind::Text),
+        ],
+    ),
+    ("done_without_run", &[TASK, required("reason", Kind::Text)]),
     ("renew", &[TASK]),
     ("take_over", &[TASK]),
     ("link_pr", &[TASK, required("pr", Kind::Pr)]),
@@ -511,7 +520,11 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "update_draft" => update_draft(read),
         "move" => {
             let to = read.status("to")?.expect("a required field is present");
-            change(BoardOp::Move(to))
+            change(BoardOp::Move(to, move_reason(read)?))
+        }
+        "done_without_run" => {
+            let reason = read.text("reason")?.expect("a required field is present");
+            change(BoardOp::DoneWithoutRun(reason))
         }
         "renew" => change(BoardOp::Renew),
         "take_over" => change(BoardOp::TakeOver),
@@ -527,6 +540,19 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "clear_set_aside" => clear(read),
         other => unreachable!("op {other} is in OPS but not built"),
     }
+}
+
+/// A move's reason (#2705 T4): the one given, or, given none, as its
+/// front end's policy lets a move be made without one (an allowlist): the
+/// agent tool's is absent, so back to ready from review is refused
+/// without one; the CLI's is unasked, as the Pocket relay moves a task
+/// back through it with no reason until its task page sends one.
+fn move_reason(read: &Read<'_>) -> Result<MoveReason, RequestError> {
+    Ok(match (read.text("reason")?, read.policy) {
+        (Some(reason), _) => MoveReason::Given(reason),
+        (None, EntryPolicy::Sectioned) => MoveReason::Absent,
+        (None, EntryPolicy::SectionedOrLegacy) => MoveReason::Unasked,
+    })
 }
 
 /// A full SHA-1 or SHA-256 object name in lowercase hex.
@@ -736,3 +762,7 @@ pub use description::entry_policy;
 #[cfg(test)]
 #[path = "request_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "request_lifecycle_tests.rs"]
+mod lifecycle_tests;

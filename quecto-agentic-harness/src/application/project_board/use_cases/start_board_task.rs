@@ -49,6 +49,7 @@ use crate::application::project_board::telemetry::{OpFacts, counted};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::services::plans::as_accepted;
 use crate::domain::project_board::services::starts::{Started, start};
+use crate::domain::project_board::services::transitions::MoveReason;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::StartClaim;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -351,14 +352,17 @@ impl StartBoardTask {
         };
         // A held task leaves progress only once its run has ended.
         let ended = matches!(run_state, RunAfterUndo::Folded | RunAfterUndo::EndedAlready);
-        let moved_to = |status| ended && self.change.execute(id, &BoardOp::Move(status)).is_ok();
-        let released = started.took_claim().then(|| moved_to(TaskStatus::Ready));
-        // A task held in review or blocked goes back there; one claimed or
-        // in progress stays in progress (no row of the table moves it back).
+        let changed = |op: BoardOp| ended && self.change.execute(id, &op).is_ok();
+        let released = started
+            .took_claim()
+            .then(|| changed(BoardOp::Move(TaskStatus::Ready, MoveReason::Absent)));
+        // A task held in review or blocked goes back there, by the start's
+        // own undo (#2705 T4: `move` no longer takes a task out of
+        // progress there); one claimed or in progress stays in progress.
         let restored = match started.from() {
             status @ (TaskStatus::Review | TaskStatus::Blocked) => Some(Restored {
                 status,
-                moved: moved_to(status),
+                moved: changed(BoardOp::UndoStart(status)),
             }),
             TaskStatus::Draft
             | TaskStatus::Ready
