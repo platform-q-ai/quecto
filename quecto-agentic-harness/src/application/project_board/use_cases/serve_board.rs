@@ -1,13 +1,11 @@
-//! A board server's reads of its board (epic #2705 B4). A panic here is
-//! fatal: the panic hook aborts the whole server outside a tool call
-//! (ADR-0029). A breach of a port's contract is a [`ServeError`] instead,
-//! and nothing indexes or unwraps board data.
+//! A board server's reads of its board (epic #2705 B4): its status and
+//! its time. A panic here is fatal: the panic hook aborts the whole server
+//! outside a tool call (ADR-0029), so every failure is a [`ServeError`].
 use std::sync::Arc;
 
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{
-    BoardClock, BoardStoreError, ProjectBoardStore, ServeError, ServedSnapshot, ServedStatus,
-    ServerRole, SnapshotFiles, SnapshotFilesError,
+    BoardClock, BoardStoreError, ProjectBoardStore, ServeError, ServedStatus, ServerRole,
 };
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -16,7 +14,6 @@ use crate::domain::project_board::value_objects::timestamp::Timestamp;
 pub struct ServeBoard {
     store: Arc<dyn ProjectBoardStore>,
     clock: Arc<dyn BoardClock>,
-    files: Arc<dyn SnapshotFiles>,
     board: BoardId,
 }
 
@@ -24,13 +21,11 @@ impl ServeBoard {
     pub fn new(
         store: Arc<dyn ProjectBoardStore>,
         clock: Arc<dyn BoardClock>,
-        files: Arc<dyn SnapshotFiles>,
         board: BoardId,
     ) -> Self {
         Self {
             store,
             clock,
-            files,
             board,
         }
     }
@@ -39,7 +34,8 @@ impl ServeBoard {
         &self.board
     }
 
-    /// The server's role, its board, and the head its store gives.
+    /// The server's role, its board, and the head its store gives (none
+    /// while there is no board).
     /// # Errors
     /// The store could not be read.
     pub fn status(&self) -> Result<ServedStatus, ServeError> {
@@ -62,41 +58,5 @@ impl ServeBoard {
         self.clock
             .now()
             .map_err(|error| ServeError::Board(ProjectBoardError::Clock(error)))
-    }
-
-    /// `board`'s stored files at its head, when it is the board served.
-    /// # Errors
-    /// Another board, no board, or the store's or files' failure.
-    pub fn snapshot(&self, board: &BoardId) -> Result<ServedSnapshot, ServeError> {
-        let snapshot = match *board == self.board {
-            true => self.store.read(),
-            false => return Err(ServeError::UnknownBoard),
-        }
-        .map_err(|error| ServeError::Board(ProjectBoardError::Store(error)))?;
-        let files = self.files.files(&snapshot).map_err(|error| match error {
-            SnapshotFilesError::TooLarge(why) => ServeError::TooLarge(why),
-            SnapshotFilesError::Unreadable(why) => ServeError::Files(why),
-        })?;
-        let read = snapshot.tasks.len()
-            + snapshot.plans.len()
-            + snapshot.runs.len()
-            + snapshot.changes.len()
-            + snapshot.reviews.len()
-            + snapshot.discussions.len();
-        let set_aside = snapshot.quarantined.len();
-        let given = files.iter().filter(|file| file.set_aside.is_none()).count();
-        // The port's contract: one file per artifact read and one per file
-        // set aside. A breach is answered as a fault, never a panic.
-        match (given == read, files.len() - given == set_aside) {
-            (true, true) => Ok(ServedSnapshot {
-                board: self.board.clone(),
-                head: snapshot.head,
-                files,
-            }),
-            (false, _) | (_, false) => Err(ServeError::Files(format!(
-                "the store gave {} files for {read} artifacts and {set_aside} set aside",
-                files.len()
-            ))),
-        }
     }
 }

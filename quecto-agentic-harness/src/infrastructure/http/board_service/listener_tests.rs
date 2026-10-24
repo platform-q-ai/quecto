@@ -2,6 +2,11 @@ use super::*;
 use crate::infrastructure::http::board_service::test_server::{
     SERVER_UID, raw, request, start, start_with, whole,
 };
+use std::io::Write;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::os::unix::net::UnixStream as StdStream;
+use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 const KEPT_ALIVE: &[u8] = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\n\r\n";
 
@@ -54,11 +59,6 @@ fn a_refused_method_names_what_its_path_takes() {
     let nowhere = b"DELETE /nowhere HTTP/1.1\r\nHost: board\r\nConnection: close\r\n\r\n";
     assert_eq!(raw(&running.socket, nowhere).0, 404);
 }
-use std::io::Write;
-use std::os::unix::fs::{FileTypeExt, PermissionsExt};
-use std::os::unix::net::UnixStream as StdStream;
-use std::sync::atomic::Ordering;
-use std::time::Instant;
 
 /// Review round 1: 64 peers that pipeline requests and never read their
 /// replies held every slot for good. Now each loses its connection once
@@ -115,7 +115,55 @@ fn a_peer_of_another_uid_is_refused_before_the_handler() {
     let running = start(SERVER_UID + 1);
     let (status, body) = raw(&running.socket, &request("GET", 2, "", b""));
     assert_eq!(status, 403, "{body}");
+    assert!(body.contains(r#""code":"peer""#), "{body}");
     assert_eq!(running.handler.calls.load(Ordering::SeqCst), 0);
+}
+
+/// Review round 3: every error reply the listener makes has a typed code.
+#[test]
+fn each_listener_refusal_has_its_code() {
+    let running = start(SERVER_UID);
+    let chunked = request("POST", 3, "Transfer-Encoding: chunked\r\n", b"0\r\n\r\n");
+    let over = request("POST", 3, "Content-Length: 1048577\r\n", b"");
+    let nowhere = b"DELETE /nowhere HTTP/1.1\r\nHost: board\r\nConnection: close\r\n\r\n";
+    for (sent, code) in [
+        (request("DELETE", 2, "", b""), "method"),
+        (nowhere.to_vec(), "route"),
+        (chunked, "length"),
+        (over, "too_large"),
+    ] {
+        let (_, body) = raw(&running.socket, &sent);
+        assert!(
+            body.contains(&format!(r#""code":"{code}""#)),
+            "{code}: {body}"
+        );
+    }
+}
+
+/// Review round 3: past its lifetime a connection has the grace to finish
+/// what it answers, and no more: a peer that never reads its reply has it
+/// cut short, though the write deadline alone would wait far longer.
+#[test]
+fn a_connection_past_its_life_is_dropped_after_its_grace() {
+    let limits = ConnectionLimits {
+        write_timeout: Duration::from_secs(60),
+        lifetime: Duration::from_millis(200),
+        grace: Duration::from_millis(200),
+    };
+    let pad = 4 * 1024 * 1024;
+    let running = start_with(SERVER_UID, pad, limits);
+    let mut peer = StdStream::connect(&running.socket).unwrap();
+    peer.write_all(&request("GET", 2, "", b"")).unwrap();
+    std::thread::sleep(Duration::from_secs(1));
+    peer.set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut answer = Vec::new();
+    let _ = std::io::Read::read_to_end(&mut peer, &mut answer);
+    assert!(
+        answer.len() < pad,
+        "the reply was cut short: {} bytes",
+        answer.len()
+    );
 }
 
 #[test]

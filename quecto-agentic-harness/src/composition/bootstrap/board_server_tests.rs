@@ -1,6 +1,5 @@
 //! The board server's graph over a real git store (epic #2705 B4): its
-//! status gives the remote's board head, and its snapshot is exactly the
-//! artifact files on the remote's `quecto/board` tree.
+//! status gives the remote's board head.
 use std::ffi::OsString;
 use std::path::Path;
 use std::process::Command;
@@ -91,9 +90,8 @@ fn get(routes: &BoardRoutes, path: &str) -> (u16, Value) {
 }
 
 #[test]
-fn the_server_serves_the_git_boards_head_and_files() {
+fn the_server_serves_the_git_boards_head() {
     let (dir, work) = seeded();
-    edited_by_hand(dir.path());
     let remote = dir.path().join("remote.git");
     let handles = build_board_server(&BoardServerEnvironment {
         repo: work.clone(),
@@ -108,88 +106,8 @@ fn the_server_serves_the_git_boards_head_and_files() {
     let head = sh(&remote, &["rev-parse", "quecto/board"]);
     assert_eq!(body["head"], head.trim());
     assert_eq!(body["role"], "primary");
-    let board = body["board"].as_str().unwrap().to_string();
-    let (status, snapshot) = get(&routes, &format!("/v1/boards/{board}/snapshot"));
-    assert_eq!(status, 200, "{snapshot}");
-    assert_eq!(snapshot["head"], head.trim());
-    let folders = [
-        "tasks/",
-        "plans/",
-        "runs/",
-        "changes/",
-        "reviews/",
-        "discussions/",
-    ];
-    let listed = sh(&remote, &["ls-tree", "-r", "--name-only", "quecto/board"]);
-    let expected: Vec<Value> = listed
-        .lines()
-        .filter(|path| folders.iter().any(|folder| path.starts_with(folder)))
-        .filter(|path| path.ends_with(".md"))
-        .map(|path| {
-            let text = sh(&remote, &["show", &format!("quecto/board:{path}")]);
-            json!({ "path": path, "encoding": "utf-8", "content": text })
-        })
-        .collect();
-    assert_eq!(expected.len(), 3, "a task, its plan, a stray: {listed}");
-    let served: Vec<Value> = snapshot["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|file| {
-            json!({ "path": file["path"], "encoding": file["encoding"],
-                            "content": file["content"] })
-        })
-        .collect();
-    // Byte for byte: the legacy plan as stored, its read-past row kept.
-    assert_eq!(served, expected);
-    assert!(served[0]["content"].as_str().unwrap().contains(LEGACY_ROW));
-    let set_aside: Vec<&Value> = snapshot["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|file| &file["set_aside"])
-        .collect();
-    assert_eq!((set_aside[0], set_aside[1]), (&Value::Null, &Value::Null));
-    assert!(
-        set_aside[2].is_string(),
-        "the stray is set aside: {snapshot}"
-    );
-}
-
-/// A row the plan codec reads past and never writes (#2481).
-const LEGACY_ROW: &str = "| Budget tokens | 5000 |\n";
-
-/// Edits the remote's board as an older quecto and a hand would: the plan
-/// gains a legacy row its codec reads past, and a stray task file no
-/// codec reads is added.
-fn edited_by_hand(dir: &Path) {
-    sh(
-        dir,
-        &["clone", "-q", "-b", "quecto/board", "remote.git", "edit"],
-    );
-    let edit = dir.join("edit");
-    let plan_path = edit.join("plans").join("a.1.md");
-    let plan = std::fs::read_to_string(&plan_path).unwrap();
-    let at = plan
-        .find("| Created |")
-        .expect("the plan has its Created row");
-    let legacy = format!("{}{LEGACY_ROW}{}", &plan[..at], &plan[at..]);
-    std::fs::write(&plan_path, legacy).unwrap();
-    std::fs::write(edit.join("tasks").join("broken.md"), "not a task\n").unwrap();
-    sh(&edit, &["add", "-A"]);
-    sh(
-        &edit,
-        &[
-            "-c",
-            "user.name=T",
-            "-c",
-            "user.email=t@x.io",
-            "commit",
-            "-qm",
-            "a hand edit",
-        ],
-    );
-    sh(&edit, &["push", "-q", "origin", "quecto/board"]);
+    assert_eq!(body["board"].as_str().map(str::len), Some(16), "{body}");
+    assert_eq!(get(&routes, "/v1/time").0, 200);
 }
 
 #[test]

@@ -1,16 +1,11 @@
 use super::*;
-use crate::application::project_board::ports::{
-    ArtifactKey, BoardArtifact, BoardFile, BoardHead, BoardSnapshot, ProjectBoardStore,
-    SnapshotFiles, SnapshotFilesError,
-};
+use crate::application::project_board::ports::{BoardArtifact, BoardHead, ProjectBoardStore};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
 use crate::infrastructure::http::board_service::listener::{ServiceMethod, ServiceRequest};
-use crate::infrastructure::persistence::project_board::artifacts::file_of;
-use crate::infrastructure::persistence::project_board::board_tree::{folder_file, task_file};
 use crate::infrastructure::test_support::board_artifacts::plan;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
@@ -19,7 +14,7 @@ use std::sync::Arc;
 
 pub(in crate::interface::cli::board_server) const BOARD: &str = "0123456789abcdef";
 
-pub(in crate::interface::cli::board_server) fn task(id: &str) -> Task {
+fn task(id: &str) -> Task {
     let at = Timestamp::parse("2026-10-24T08:00:00Z").unwrap();
     Task::new(TaskFields {
         id: Slug::parse(id).unwrap(),
@@ -42,63 +37,11 @@ pub(in crate::interface::cli::board_server) fn task(id: &str) -> Task {
     .unwrap()
 }
 
-/// The memory store's stored files: it keeps artifacts by value, so its
-/// bytes are their codec's; a file set aside keeps none.
-struct MemoryFiles;
-
-impl SnapshotFiles for MemoryFiles {
-    fn files(&self, snapshot: &BoardSnapshot) -> Result<Vec<BoardFile>, SnapshotFilesError> {
-        let artifacts = snapshot
-            .tasks
-            .iter()
-            .cloned()
-            .map(BoardArtifact::Task)
-            .chain(snapshot.plans.iter().cloned().map(BoardArtifact::Plan));
-        let mut files: Vec<BoardFile> = artifacts
-            .map(|artifact| {
-                let path = match artifact.key() {
-                    ArtifactKey::Task(id) => format!("tasks/{}", task_file(&id)),
-                    key => {
-                        let file = folder_file(&key, Vec::new()).unwrap();
-                        format!("{}/{}", file.folder, file.name)
-                    }
-                };
-                BoardFile {
-                    path,
-                    bytes: Some(file_of(&artifact).unwrap()),
-                    set_aside: None,
-                }
-            })
-            .chain(snapshot.quarantined.iter().map(|file| BoardFile {
-                path: file.path.clone(),
-                bytes: None,
-                set_aside: Some(file.reason.clone()),
-            }))
-            .collect();
-        files.sort_by(|a, b| a.path.cmp(&b.path));
-        Ok(files)
-    }
-}
-
-/// A files port that answers as told, whatever the snapshot.
-struct Told(Result<Vec<BoardFile>, SnapshotFilesError>);
-
-impl SnapshotFiles for Told {
-    fn files(&self, _: &BoardSnapshot) -> Result<Vec<BoardFile>, SnapshotFilesError> {
-        self.0.clone()
-    }
-}
-
 /// The server's reads of `store`'s board, served as board [`BOARD`].
 pub(in crate::interface::cli::board_server) fn serving(store: &MemoryBoardStore) -> ServeBoard {
-    serving_with(store, Arc::new(MemoryFiles))
-}
-
-fn serving_with(store: &MemoryBoardStore, files: Arc<dyn SnapshotFiles>) -> ServeBoard {
     ServeBoard::new(
         Arc::new(store.client()),
         Arc::new(SystemBoardClock::default()),
-        files,
         BoardId::of_hex(BOARD).unwrap(),
     )
 }
@@ -134,10 +77,6 @@ fn answer(routes: &BoardRoutes, method: ServiceMethod, path: &str) -> (u16, Valu
     (reply.status, body)
 }
 
-fn snapshot_path() -> String {
-    format!("/v1/boards/{BOARD}/snapshot")
-}
-
 #[test]
 fn status_answers_the_role_the_board_and_the_head() {
     let (store, head) = written();
@@ -166,169 +105,28 @@ fn time_answers_the_servers_clock() {
     assert!(Timestamp::parse(time).is_ok(), "{time}");
 }
 
-#[test]
-fn the_snapshot_is_the_stores_files_those_set_aside_included() {
-    let (store, _) = written();
-    store.quarantine("broken", "no marker opens it");
-    let head = store.read().unwrap().head;
-    let (status, body) = get(&BoardRoutes::new(serving(&store)), &snapshot_path());
-    assert_eq!(status, 200, "{body}");
-    assert_eq!(body["board"], BOARD);
-    assert_eq!(body["head"], head.0.as_str());
-    let text = |artifact: &BoardArtifact| String::from_utf8(file_of(artifact).unwrap()).unwrap();
-    let expected = serde_json::json!([
-        { "path": "plans/alpha.1.md", "encoding": "utf-8",
-          "content": text(&BoardArtifact::Plan(plan("alpha", 1))), "set_aside": null },
-        { "path": "tasks/alpha.md", "encoding": "utf-8",
-          "content": text(&BoardArtifact::Task(task("alpha"))), "set_aside": null },
-        { "path": "tasks/broken.md", "encoding": "none", "content": null,
-          "set_aside": "no marker opens it" },
-    ]);
-    assert_eq!(body["files"], expected);
-}
-
-#[test]
-fn bytes_that_are_not_plain_text_are_sent_as_base64() {
-    let store = MemoryBoardStore::default();
-    store.bootstrap().unwrap();
-    store.quarantine("odd", "binary");
-    let odd = |bytes: &[u8]| {
-        Told(Ok(vec![BoardFile {
-            path: "tasks/odd.md".into(),
-            bytes: Some(bytes.to_vec()),
-            set_aside: Some("binary".into()),
-        }]))
-    };
-    for (bytes, encoding, content) in [
-        (&[0xff, 0x00, 0x41][..], "base64", "/wBB"),
-        (b"bell\x07", "base64", "YmVsbAc="),
-        (b"plain\n\ttext \"q\" \\", "utf-8", "plain\n\ttext \"q\" \\"),
-    ] {
-        let routes = BoardRoutes::new(serving_with(&store, Arc::new(odd(bytes))));
-        let (status, body) = get(&routes, &snapshot_path());
-        assert_eq!(status, 200, "{body}");
-        assert_eq!(body["files"][0]["encoding"], encoding);
-        assert_eq!(body["files"][0]["content"], content);
-    }
-}
-
-#[test]
-fn files_the_port_cannot_give_whole_are_500_never_a_panic() {
-    let (store, _) = written();
-    for (files, status_code, says) in [
-        // One file for a board of two artifacts: the port's contract broken.
-        (
-            Told(Ok(vec![BoardFile {
-                path: "tasks/alpha.md".into(),
-                bytes: Some(b"x".to_vec()),
-                set_aside: None,
-            }])),
-            (500, "files"),
-            "1 files for 2 artifacts",
-        ),
-        // Review round 2: a board past one answer's bound has its own code.
-        (
-            Told(Err(SnapshotFilesError::TooLarge("past 64 MiB".into()))),
-            (413, "too_large"),
-            "past 64 MiB",
-        ),
-        (
-            Told(Err(SnapshotFilesError::Unreadable("no blob".into()))),
-            (500, "files"),
-            "no blob",
-        ),
-    ] {
-        let routes = BoardRoutes::new(serving_with(&store, Arc::new(files)));
-        let (status, body) = get(&routes, &snapshot_path());
-        assert_eq!(
-            (status, body["code"].as_str().unwrap()),
-            status_code,
-            "{body}"
-        );
-        assert!(body["error"].as_str().unwrap().contains(says), "{body}");
-    }
-}
-
-/// Files that wait for a signal before answering (none, for an empty
-/// board), saying when they have begun.
-struct Slow {
-    begun: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
-    go: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
-}
-
-impl SnapshotFiles for Slow {
-    fn files(&self, _: &BoardSnapshot) -> Result<Vec<BoardFile>, SnapshotFilesError> {
-        self.begun.lock().unwrap().send(()).unwrap();
-        self.go.lock().unwrap().recv().unwrap();
-        Ok(vec![])
-    }
-}
-
-/// Review round 2: one snapshot at a time; a second waits its bound, then
-/// is answered 503 `busy`, and the gate opens again once the first ends.
-#[test]
-fn a_second_snapshot_at_once_waits_then_is_busy() {
-    let store = MemoryBoardStore::default();
-    store.bootstrap().unwrap();
-    let ((begun, began), (go, wait)) = (std::sync::mpsc::channel(), std::sync::mpsc::channel());
-    let slow = Slow {
-        begun: std::sync::Mutex::new(begun),
-        go: std::sync::Mutex::new(wait),
-    };
-    let routes = Arc::new(BoardRoutes {
-        serve: serving_with(&store, Arc::new(slow)),
-        snapshots: std::sync::Mutex::new(()),
-        wait: std::time::Duration::from_millis(50),
-    });
-    let first = {
-        let routes = Arc::clone(&routes);
-        std::thread::spawn(move || get(&routes, &snapshot_path()))
-    };
-    began.recv().unwrap();
-    let (status, body) = get(&routes, &snapshot_path());
-    assert_eq!(
-        (status, body["code"].as_str()),
-        (503, Some("busy")),
-        "{body}"
-    );
-    go.send(()).unwrap();
-    assert_eq!(first.join().unwrap().0, 200);
-    go.send(()).unwrap();
-    assert_eq!(
-        get(&routes, &snapshot_path()).0,
-        200,
-        "the gate opened again"
-    );
-}
-
-/// Review round 2: a route's 405 names the methods it takes.
+/// A route's 405 names the methods it takes, with its code.
 #[test]
 fn a_routes_405_names_its_methods() {
     let (store, _) = written();
     let routes = BoardRoutes::new(serving(&store));
-    let reply = routes.answer(&ServiceRequest {
-        method: ServiceMethod::Post,
-        path: "/v1/status".into(),
-        body: vec![],
-    });
-    assert_eq!((reply.status, reply.allow), (405, Some("GET")));
+    for path in ["/v1/status", "/v1/time"] {
+        let reply = routes.answer(&ServiceRequest {
+            method: ServiceMethod::Post,
+            path: path.into(),
+            body: vec![],
+        });
+        assert_eq!((reply.status, reply.allow), (405, Some("GET")), "{path}");
+        assert_eq!(
+            answer(&routes, ServiceMethod::Post, path).1["code"],
+            "method"
+        );
+    }
     assert_eq!(routes.allowed("/v1/time"), Some("GET"));
     assert_eq!(routes.allowed("/v1/nothing"), None);
 }
 
-#[test]
-fn another_boards_snapshot_is_404() {
-    let (store, _) = written();
-    let routes = BoardRoutes::new(serving(&store));
-    for path in [
-        "/v1/boards/fedcba9876543210/snapshot",
-        "/v1/boards/NOT-AN-ID/snapshot",
-        "/v1/boards//snapshot",
-    ] {
-        assert_eq!(get(&routes, path).0, 404, "{path}");
-    }
-}
-
+/// The snapshot route moved to B11: its path is no route here.
 #[test]
 fn a_path_outside_the_route_table_is_404() {
     let (store, _) = written();
@@ -339,23 +137,14 @@ fn a_path_outside_the_route_table_is_404() {
         "/v1/status/",
         "/v2/status",
         "/v1/boards",
-        &format!("/v1/boards/{BOARD}"),
-        &format!("/v1/boards/{BOARD}/snapshot/extra"),
-    ] {
-        assert_eq!(get(&routes, path).0, 404, "{path}");
-    }
-}
-
-#[test]
-fn a_route_asked_by_a_method_it_does_not_take_is_405() {
-    let (store, _) = written();
-    let routes = BoardRoutes::new(serving(&store));
-    for path in [
-        "/v1/status",
-        "/v1/time",
         &format!("/v1/boards/{BOARD}/snapshot"),
     ] {
-        assert_eq!(answer(&routes, ServiceMethod::Post, path).0, 405, "{path}");
+        let (status, body) = get(&routes, path);
+        assert_eq!(
+            (status, &body["code"]),
+            (404, &Value::from("route")),
+            "{path}"
+        );
     }
 }
 
@@ -369,7 +158,7 @@ fn a_store_that_cannot_be_read_is_503() {
     );
     let routes = BoardRoutes::new(serving(&store));
     let (status, body) = get(&routes, "/v1/status");
-    assert_eq!(status, 503, "{body}");
+    assert_eq!((status, &body["code"]), (503, &Value::from("unavailable")));
     assert!(
         body["error"]
             .as_str()

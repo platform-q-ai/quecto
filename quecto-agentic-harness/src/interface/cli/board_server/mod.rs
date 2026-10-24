@@ -77,12 +77,13 @@ pub fn cmd_board_server(
                 started.socket.display(),
                 started.elapsed.as_millis()
             );
+            // A server runs until stopped: its line cannot wait for the
+            // command's end. A closed stdout never stops it (no panic).
             match live {
-                // A server runs until stopped: its line cannot wait for
-                // the command's end.
                 true => {
-                    print!("{line}");
-                    let _ = std::io::Write::flush(&mut std::io::stdout());
+                    let mut out = std::io::stdout().lock();
+                    let _ = std::io::Write::write_all(&mut out, line.as_bytes())
+                        .and_then(|()| std::io::Write::flush(&mut out));
                 }
                 false => stdout.push_str(&line),
             }

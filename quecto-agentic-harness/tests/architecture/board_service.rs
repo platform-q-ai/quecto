@@ -60,7 +60,7 @@ const FRONT_END_NEVER_REACHES: &[&str] = &[
 ];
 
 /// What the front end may never name.
-const FRONT_END_NEVER_NAMES: &[&str] = &["GitBoardStore", "GitSnapshotFiles", "SystemBoardClock"];
+const FRONT_END_NEVER_NAMES: &[&str] = &["GitBoardStore", "SystemBoardClock"];
 
 /// The listener's module, for resolving a synthetic source's paths.
 const LISTENER: &str = "src/infrastructure/http/board_service/listener.rs";

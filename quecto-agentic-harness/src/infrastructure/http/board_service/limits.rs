@@ -4,7 +4,8 @@
 //! which also ends an idle keep-alive, and 10 s for a body (408); 10 s for
 //! a peer to take any reply byte ([`WriteDeadline`]); 64 connections at
 //! once; and each connection at most 60 s or 1,000 requests, then it
-//! finishes what it answers and closes. No peer holds a slot for good.
+//! finishes what it answers within 15 s and closes. No peer holds a slot
+//! for good.
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
@@ -28,6 +29,8 @@ pub const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 pub const MAX_CONNECTIONS: usize = 64;
 pub const CONNECTION_LIFETIME: Duration = Duration::from_secs(60);
 pub const MAX_REQUESTS: usize = 1_000;
+/// How long a connection past its life may take to finish what it answers.
+pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(15);
 
 /// The methods the service takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,13 +49,13 @@ pub enum Refusal {
 }
 
 impl Refusal {
-    /// The status it is answered with, and what its answer says.
-    pub fn verdict(self) -> (u16, &'static str) {
+    /// The status it is answered with, its typed code, and what it says.
+    pub fn verdict(self) -> (u16, &'static str, &'static str) {
         match self {
-            Self::Method => (405, "method not allowed"),
-            Self::LengthRequired => (411, "a body needs a Content-Length"),
-            Self::BadLength => (400, "Content-Length is not a length"),
-            Self::TooLarge => (413, "the body is past 1 MiB"),
+            Self::Method => (405, "method", "method not allowed"),
+            Self::LengthRequired => (411, "length", "a body needs a Content-Length"),
+            Self::BadLength => (400, "length", "Content-Length is not a length"),
+            Self::TooLarge => (413, "too_large", "the body is past 1 MiB"),
         }
     }
 }

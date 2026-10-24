@@ -99,12 +99,14 @@ pub struct ServiceParts {
 pub struct ConnectionLimits {
     pub write_timeout: Duration,
     pub lifetime: Duration,
+    pub grace: Duration,
 }
 
 impl ConnectionLimits {
     pub const PRODUCTION: Self = Self {
         write_timeout: limits::WRITE_TIMEOUT,
         lifetime: limits::CONNECTION_LIFETIME,
+        grace: limits::SHUTDOWN_GRACE,
     };
 }
 
@@ -260,7 +262,8 @@ async fn connection(stream: UnixStream, parts: &ServiceParts) {
         ended = connection.as_mut() => ended,
         () = tokio::time::sleep(parts.limits.lifetime) => {
             connection.as_mut().graceful_shutdown();
-            connection.await
+            // What it still answers is bounded too: past it, it is dropped.
+            tokio::time::timeout(parts.limits.grace, connection).await.unwrap_or(Ok(()))
         }
     };
     if let Err(error) = ended {
@@ -271,7 +274,8 @@ async fn connection(stream: UnixStream, parts: &ServiceParts) {
 /// Answers a peer not let in with 403, parsing nothing it sent (only
 /// draining it, to a bound, so it reads the answer whole).
 async fn refuse(mut stream: UnixStream) {
-    const BODY: &str = r#"{"error":"forbidden: only the server's own user may connect"}"#;
+    const BODY: &str =
+        r#"{"error":"forbidden: only the server's own user may connect","code":"peer"}"#;
     let reply = format!(
         "HTTP/1.1 403 Forbidden\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\
          connection: close\r\n\r\n{BODY}",
@@ -317,12 +321,15 @@ async fn admitted(handler: Arc<dyn ServiceHandler>, request: Request<Incoming>) 
             return match handler.allowed(&path) {
                 Some(allow) => ServiceReply {
                     allow: Some(allow),
-                    ..error(405, Refusal::Method.verdict().1)
+                    ..error(405, "method", Refusal::Method.verdict().2)
                 },
-                None => error(404, "no such route"),
+                None => error(404, "route", "no such route"),
             };
         }
-        Err(refusal) => return error(refusal.verdict().0, refusal.verdict().1),
+        Err(refusal) => {
+            let (status, code, why) = refusal.verdict();
+            return error(status, code, why);
+        }
     };
     let body = match read_body(request.into_body(), admitted.body_bytes).await {
         Ok(body) => body,
@@ -335,7 +342,7 @@ async fn admitted(handler: Arc<dyn ServiceHandler>, request: Request<Incoming>) 
     };
     tokio::task::spawn_blocking(move || handler.answer(&request))
         .await
-        .unwrap_or_else(|_| error(500, "the request's handler failed"))
+        .unwrap_or_else(|_| error(500, "handler", "the request's handler failed"))
 }
 
 /// The body, of `declared` bytes, read whole within the read timeout.
@@ -350,16 +357,21 @@ async fn read_body(body: Incoming, declared: u64) -> Result<Vec<u8>, ServiceRepl
             // hyper reads the declared length; anything else is refused.
             match u64::try_from(bytes.len()) == Ok(declared) {
                 true => Ok(bytes),
-                false => Err(error(400, "the body is not of its Content-Length")),
+                false => Err(error(
+                    400,
+                    "length",
+                    "the body is not of its Content-Length",
+                )),
             }
         }
-        Ok(Err(_)) => Err(error(400, "the body could not be read")),
-        Err(_) => Err(error(408, "the body did not arrive in time")),
+        Ok(Err(_)) => Err(error(400, "body", "the body could not be read")),
+        Err(_) => Err(error(408, "timeout", "the body did not arrive in time")),
     }
 }
 
-fn error(status: u16, why: &str) -> ServiceReply {
-    ServiceReply::json(status, &serde_json::json!({ "error": why }))
+/// An error reply with its typed `code`.
+fn error(status: u16, code: &str, why: &str) -> ServiceReply {
+    ServiceReply::json(status, &serde_json::json!({ "error": why, "code": code }))
 }
 
 fn response(reply: ServiceReply) -> Response<Full<Bytes>> {
