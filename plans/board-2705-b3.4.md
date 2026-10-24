@@ -5,10 +5,12 @@
 |---|---|
 | Task | board-2705-b3 |
 | Version | 4 |
-| State | draft |
+| State | accepted |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-24T19:23:46Z |
 | Created | 2026-10-24T19:23:23Z |
-| Updated | 2026-10-24T19:23:23Z |
+| Updated | 2026-10-24T19:23:46Z |
 
 ## Approach
 COORDINATION/AGGREGATE PLAN ONLY: oversized all-in-one delivery run1 endedSTOPPED19:05:56, full honestWIP82e1a1b1f9b68322ef9b59a85cc6c3e0386afe14 durably preserved/verified and oldcontainer removed. Do NOTrestart old all-in-oneplan3 or merge >1500production PR. Accepted fresh alternative planning /home/shane-pocket/.quecto/artifacts/b3-split-planning/ produces minimumTWOserialcompletePRs: childboard-2705-b3-a-native-export(A complete nativeSQLfoundation PLUScompleteusable rollbackEXPORT) thenboard-2705-b3-b-history-import(B fullcapture/import/preparedatomicproof/exactoriginalreplayextension). Aownsone schema/View/Reader/serializer/export; BextendsONEView/reusesnativeexport unchanged. No halfimporttrait/Unavailablecommand/duplicateownership/scopecut.

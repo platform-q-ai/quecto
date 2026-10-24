@@ -5,12 +5,12 @@
 |---|---|
 | Task | board-2705-b3 |
 | Version | 3 |
-| State | accepted |
+| State | superseded |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted at | 2026-10-24T16:47:47Z |
 | Created | 2026-10-24T16:47:29Z |
-| Updated | 2026-10-24T16:47:47Z |
+| Updated | 2026-10-24T19:23:46Z |
 
 ## Approach
 Fresh DELIVERY ONLY after accepted complete fresh FEATURE-RED at52dc4fc6b92dbca7bb8bae6ec169e03a75337293. Scope unchanged from accepted plan2 and full authoritative planning /home/shane-pocket/.quecto/artifacts/b3-readonly-planning/. Read parent-complete-report.md, parent-continuation-decision.md, continuation/{coverage-complete.md,author-report-complete.md,independent-review.md,failure-depth-final.json,commands-planned.md} under /home/shane-pocket/.quecto/artifacts/b3-fresh-red/ in full. Preserve all documented GREEN/source-review obligations and 69 permanent new cases, not merely first missing-shell failures. No planning/RED-role rollover: fixed FRESH coordinator+ONEauthor/builder+ONEread-only source verifier, member_limit25; only coordinator integrates Git, one editor/lane builder, at most2 builders globally including operator. No workflow/mutation in delivery.
