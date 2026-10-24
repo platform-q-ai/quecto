@@ -22,6 +22,14 @@
 //! with git). A write takes neither on trust: git names the location, as
 //! without them.
 //!
+//! `--url <url>` (#2705 B7) sends the request to a board server instead:
+//! `unix:///<socket>`, or `http://<ip>:<port>` on loopback or a Tailscale
+//! address, whose bearer token is read from `QUECTO_BOARD_TOKEN` or the
+//! global config's `board.token`, never from the command line. Without
+//! it, `QUECTO_BOARD_URL` or the global config's `board.url` names one;
+//! with none, the board is the clone's, as before. The server writes as
+//! `QUECTO_BOARD_COMMITTER` when it is set, else as the clone's committer.
+//!
 //! `--summary` (no value; `list`, `list_ready` and `list_takeable` only,
 //! with flags or `--input` alike) gives each listed task its `summary`:
 //! where its plan and latest run stand, read from one whole read of the
@@ -170,7 +178,7 @@ fn client(named: Option<&OsStr>) -> Client {
 
 const USAGE: &str = "usage: quecto board <op> [--<field> <value>]... [--input <json>|-] \
                      [--repo <path>] [--remote <name>] [--board-id <hex>] \
-                     [--remote-url <url>] [--json] [--summary]\n";
+                     [--remote-url <url>] [--url <board server>] [--json] [--summary]\n";
 
 /// The most bytes `--remote-url` takes.
 const MAX_REMOTE_URL_BYTES: usize = 4096;
@@ -276,6 +284,12 @@ fn read_into(line: &mut Line, args: &[String]) -> Result<(), RequestError> {
                     invalid("--remote-url", REMOTE_URL_SHAPE, FaultKind::InvalidValue)
                 })?;
                 line.known.remote_url = Some(url);
+            }
+            "--url" => {
+                let given = own("--url", rest.next())?;
+                let url = remote_url(given)
+                    .ok_or_else(|| invalid("--url", REMOTE_URL_SHAPE, FaultKind::InvalidValue))?;
+                line.known.url = Some(url);
             }
             flag if flag.starts_with("--") => {
                 // An unknown flag is never echoed back as a field.

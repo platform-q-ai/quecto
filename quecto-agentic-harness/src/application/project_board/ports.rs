@@ -3,8 +3,8 @@
 //! repository's `quecto/board` branch), its listings from a local view of
 //! it (the S1e index implements [`BoardListings`]) and what time it is.
 use super::dto::{
-    BoardExecution, BoardListing, BoardRequest, FoldBackFacts, FoldedBack, ListSummaries, OpNoting,
-    ProjectBoardError, RunEnd, SwarmRunView,
+    BoardExecution, BoardListing, FoldBackFacts, FoldedBack, ListSummaries, OpNoting,
+    ProjectBoardError, ReadRequest, RunEnd, SwarmRunView,
 };
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::claim::Identity;
@@ -22,7 +22,10 @@ use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{Effort, TaskStatus};
 
 mod served;
-pub use served::{ServeError, ServedStatus, ServerRole};
+pub use served::{
+    BoardOpStore, BoardOperationsOver, OpWrite, ServeError, ServedStatus, ServerRole, Transacted,
+    WriteId,
+};
 mod listen_address;
 pub use listen_address::ListenAddress;
 mod tokens;
@@ -713,20 +716,25 @@ pub trait CoordinatorLaunch: Send + Sync {
 /// and checked request to it and answer what it gives back. Requests and
 /// answers are owned values and refusals the board's own typed errors: no
 /// store handle crosses. The local adapter runs every request on this
-/// machine's board; a board server's (B7) will send the board's reads and
-/// writes there, while a start (its coordinator's launch) and
-/// [`Self::left_runs`] read this session's swarms, so they stay local
-/// until B8. Blocking: the board's store, clock and host all block, so
-/// callers run it off the async workers.
+/// machine's board; a board server's (B7) sends each request's text there
+/// and hands back the server's answer ([`BoardOutcome::Served`]). A start
+/// (its coordinator's launch) and [`Self::left_runs`] read this session's
+/// swarms, so they cross the wire only with B8. Blocking: the board's
+/// store, clock, host and server all block, so callers run it off the
+/// async workers.
+///
+/// [`BoardOutcome::Served`]: super::dto::BoardOutcome::Served
 pub trait BoardOperations: Send + Sync {
     /// What `request` comes to, a listing summarising its tasks as
     /// `summaries` asks, noted as `noting` asks: a noted request gives
     /// back what its use cases saw, answered or refused. A listing is
     /// never refused for its summaries; summaries asked of a request that
     /// is no listing ([`BoardRequest::is_listing`]) are refused as invalid.
+    ///
+    /// [`BoardRequest::is_listing`]: super::dto::BoardRequest::is_listing
     fn execute(
         &self,
-        request: &BoardRequest,
+        request: ReadRequest<'_>,
         summaries: ListSummaries,
         noting: OpNoting,
     ) -> BoardExecution;

@@ -4,9 +4,10 @@ use crate::infrastructure::http::board_service::listener::{
     PeerCredentials, SocketPeerCredentials, this_uid,
 };
 use crate::infrastructure::http::board_service::test_server::raw;
+use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::test_support::memory_board_tokens::MemoryBoardTokens;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
-use crate::interface::cli::board_server::routes::tests::{BOARD, serving, written};
+use crate::interface::cli::board_server::routes::tests::{BOARD, operating, serving, written};
 use std::sync::Arc;
 
 /// Serves `handles` on a temp socket on its own thread; gives the socket
@@ -71,6 +72,7 @@ fn handles(serve: crate::application::project_board::use_cases::ServeBoard) -> B
     let tokens = Arc::new(MemoryBoardTokens::default());
     BoardServerHandles {
         serve,
+        operations: operating(&MemoryBoardStore::default()),
         access: BoardAccess::new(tokens, Arc::new(SystemBoardClock::default())),
         peers: Arc::new(SocketPeerCredentials) as Arc<dyn PeerCredentials>,
         uid: this_uid(),

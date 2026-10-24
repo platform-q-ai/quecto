@@ -2,9 +2,9 @@
 use super::*;
 use crate::infrastructure::persistence::project_board::board_tree::{Entry, raw_entry_bytes};
 
-const VERSION: i64 = 2;
+const VERSION: i64 = 3;
 const APPLICATION: i64 = 0x51424f32;
-const TABLES: [(&str, &str); 4] = [
+const TABLES: [(&str, &str); 6] = [
     (
         "objects",
         "CREATE TABLE objects (oid TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('blob','tree')), bytes BLOB, tree_size INTEGER, CHECK((kind='blob' AND typeof(bytes)='blob' AND tree_size IS NULL) OR (kind='tree' AND bytes IS NULL AND typeof(tree_size)='integer' AND tree_size>=0)))",
@@ -21,12 +21,106 @@ const TABLES: [(&str, &str); 4] = [
         "state",
         "CREATE TABLE state (id INTEGER PRIMARY KEY CHECK(id=1), head TEXT NOT NULL)",
     ),
+    // B7: who a board server let in for each revision it wrote.
+    (
+        "revision_principals",
+        "CREATE TABLE revision_principals (head TEXT PRIMARY KEY NOT NULL, principal TEXT NOT NULL)",
+    ),
+    // B7: each served write's answer, by its write id, for its retries.
+    (
+        "op_results",
+        "CREATE TABLE op_results (write_id TEXT PRIMARY KEY NOT NULL, answer TEXT NOT NULL)",
+    ),
 ];
-const INDEXES: [(&str, &str); 3] = [
+const INDEXES: [(&str, &str); 5] = [
     ("sqlite_autoindex_objects_1", "objects"),
     ("sqlite_autoindex_tree_entries_1", "tree_entries"),
     ("sqlite_autoindex_revisions_1", "revisions"),
+    (
+        "sqlite_autoindex_revision_principals_1",
+        "revision_principals",
+    ),
+    ("sqlite_autoindex_op_results_1", "op_results"),
 ];
+
+/// The most served writes' answers kept for their retries (B7): a retry
+/// comes within seconds, so the oldest past this are dropped.
+const KEPT_ANSWERS: i64 = 4096;
+
+/// A store call's own transaction, or, inside a served operation's (B7),
+/// a savepoint of it, so a failed call undoes its own rows alone.
+pub(super) enum Scope<'c> {
+    Own(rusqlite::Transaction<'c>),
+    Within(rusqlite::Savepoint<'c>),
+}
+
+impl Scope<'_> {
+    /// A scope on `c`: its own transaction (immediate when it writes)
+    /// while none is open, else a savepoint of the open one.
+    pub(super) fn begin(c: &mut Connection, writes: bool) -> Result<Scope<'_>, BoardStoreError> {
+        let behavior = match writes {
+            true => TransactionBehavior::Immediate,
+            false => TransactionBehavior::Deferred,
+        };
+        match c.is_autocommit() {
+            true => c.transaction_with_behavior(behavior).map(Scope::Own),
+            false => c.savepoint().map(Scope::Within),
+        }
+        .map_err(unavailable)
+    }
+
+    pub(super) fn commit(self) -> Result<(), BoardStoreError> {
+        match self {
+            Self::Own(tx) => tx.commit(),
+            Self::Within(savepoint) => savepoint.commit(),
+        }
+        .map_err(unavailable)
+    }
+}
+
+impl std::ops::Deref for Scope<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        match self {
+            Self::Own(tx) => tx,
+            Self::Within(savepoint) => savepoint,
+        }
+    }
+}
+
+/// The answer kept for `write_id`, if any (B7).
+pub(super) fn kept_answer(
+    c: &Connection,
+    write_id: &str,
+) -> Result<Option<String>, BoardStoreError> {
+    c.query_row(
+        "SELECT answer FROM op_results WHERE write_id=?1",
+        [write_id],
+        |r| r.get(0),
+    )
+    .optional()
+    .map_err(unavailable)
+}
+
+/// Keeps `answer` for `write_id`, dropping the oldest past [`KEPT_ANSWERS`].
+pub(super) fn keep_answer(
+    c: &Connection,
+    write_id: &str,
+    answer: &str,
+) -> Result<(), BoardStoreError> {
+    c.execute(
+        "INSERT INTO op_results (write_id, answer) VALUES (?1, ?2)",
+        params![write_id, answer],
+    )
+    .map_err(unavailable)?;
+    c.execute(
+        "DELETE FROM op_results WHERE rowid <= (SELECT max(rowid) FROM op_results) - ?1",
+        [KEPT_ANSWERS],
+    )
+    .map_err(unavailable)?;
+    Ok(())
+}
 
 pub(super) fn open(path: &Path) -> Result<Connection, BoardStoreError> {
     let mut c = Connection::open(path).map_err(unavailable)?;
@@ -177,6 +271,7 @@ impl<'a> ObjectWriter<'a> {
         &mut self,
         root: &str,
         writer: &Identity,
+        principal: Option<&str>,
     ) -> Result<BoardHead, BoardStoreError> {
         let head = BoardHead(digest(
             b"revision",
@@ -186,6 +281,12 @@ impl<'a> ObjectWriter<'a> {
             "INSERT INTO revisions VALUES (?1,?2,?3,?4)",
             params![head.0, root, writer.name, writer.email],
         )?;
+        if let Some(principal) = principal {
+            self.insert(
+                "INSERT INTO revision_principals VALUES (?1,?2)",
+                params![head.0, principal],
+            )?;
+        }
         self.insert(
             "INSERT INTO state VALUES (1,?1) ON CONFLICT(id) DO UPDATE SET head=excluded.head",
             [&head.0],
@@ -253,8 +354,9 @@ pub(super) fn advance(
     c: &Connection,
     root: &str,
     writer: &Identity,
+    principal: Option<&str>,
 ) -> Result<BoardHead, BoardStoreError> {
-    ObjectWriter::new(c).advance(root, writer)
+    ObjectWriter::new(c).advance(root, writer, principal)
 }
 pub(super) fn blob(c: &Connection, bytes: &[u8]) -> Result<String, BoardStoreError> {
     ObjectWriter::new(c).blob(bytes)

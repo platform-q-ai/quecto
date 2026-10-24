@@ -307,6 +307,8 @@ pub fn outcome(
             }
         }
         BoardOutcome::Started(started) => fields.extend(started_fields(started)),
+        // Rendered by its server; its call answers it as it came.
+        BoardOutcome::Served(_) => {}
         BoardOutcome::Accepted(accepted) => {
             fields.insert("task".into(), task_json(&accepted.task));
             fields.insert("plan".into(), planned_json(&accepted.plan));

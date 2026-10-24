@@ -1,9 +1,10 @@
 //! Who may ask a board server what (epic #2705 B5), each rule an allowlist:
 //! a Unix-socket caller is local; a TCP caller is a device only with a held
-//! token. Reads are for both, the admin (token) routes for local only.
+//! token. Reads and writes are for both; the admin routes and the board's
+//! admin operations (`bootstrap`, `clear_set_aside`) for local only.
 use std::sync::Arc;
 
-use crate::application::project_board::dto::ProjectBoardError;
+use crate::application::project_board::dto::{BoardRequest, ProjectBoardError};
 use crate::application::project_board::ports::{
     BoardClock, BoardTokens, IssuedToken, TokenError, TokenRecord,
 };
@@ -16,11 +17,35 @@ pub enum Principal {
     Device(Slug),
 }
 
-/// What a route does: read the board, or administer the server.
+impl Principal {
+    /// How a revision records who it was let in as (B7): `local`, or
+    /// `token:<name>`.
+    pub fn recorded(&self) -> String {
+        match self {
+            Self::Local => "local".into(),
+            Self::Device(name) => format!("token:{}", name.as_str()),
+        }
+    }
+}
+
+/// What a request does: read the board, write it, or administer it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
     Read,
+    Write,
     Admin,
+}
+
+impl Scope {
+    /// The scope of the board operation `request` (B7), an allowlist:
+    /// making the board and clearing a file set aside administer it.
+    pub fn of(request: &BoardRequest) -> Self {
+        match (request, request.writes()) {
+            (BoardRequest::Bootstrap | BoardRequest::Clear { .. }, _) => Self::Admin,
+            (_, true) => Self::Write,
+            (_, false) => Self::Read,
+        }
+    }
 }
 
 /// Why a request is refused: no held token, admin over TCP, or no tokens.
@@ -62,13 +87,13 @@ impl BoardAccess {
             .map_err(|_| Refused::Token)
     }
 
-    /// Whether `principal` may use a route of `scope`.
+    /// Whether `principal` may make a request of `scope`.
     /// # Errors
-    /// A device asking an admin route.
+    /// A device asking an admin route or operation.
     pub fn authorize(principal: &Principal, scope: Scope) -> Result<(), Refused> {
         match (principal, scope) {
-            (Principal::Local, Scope::Read | Scope::Admin)
-            | (Principal::Device(_), Scope::Read) => Ok(()),
+            (Principal::Local, Scope::Read | Scope::Write | Scope::Admin)
+            | (Principal::Device(_), Scope::Read | Scope::Write) => Ok(()),
             (Principal::Device(_), Scope::Admin) => Err(Refused::LocalOnly),
         }
     }

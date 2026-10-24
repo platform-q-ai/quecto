@@ -9,20 +9,24 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 #[cfg(feature = "test-support")]
 mod fixture;
 mod mutation;
+mod op_store;
 mod reader;
 mod storage;
 #[cfg(feature = "test-support")]
 pub use fixture::{FixtureHooks, RawEditor, RawEntry};
+pub use op_store::SqliteBoardOps;
 
 pub struct SqliteProjectBoardStore {
-    connection: Mutex<Connection>,
+    connection: Arc<Mutex<Connection>>,
     writer: Identity,
+    /// Who a board server let in, recorded beside each revision (B7).
+    principal: Option<String>,
     #[cfg(feature = "test-support")]
     payload_fetches: Mutex<Vec<(String, String, usize)>>,
     #[cfg(feature = "test-support")]
@@ -38,8 +42,9 @@ impl SqliteProjectBoardStore {
     pub fn open(path: &Path, writer: Identity) -> Result<Self, BoardStoreError> {
         writer.validate("writer").map_err(invalid)?;
         Ok(Self {
-            connection: Mutex::new(storage::open(path)?),
+            connection: Arc::new(Mutex::new(storage::open(path)?)),
             writer,
+            principal: None,
             #[cfg(feature = "test-support")]
             payload_fetches: Mutex::new(vec![]),
             #[cfg(feature = "test-support")]
@@ -50,7 +55,7 @@ impl SqliteProjectBoardStore {
 impl ProjectBoardStore for SqliteProjectBoardStore {
     fn read(&self) -> Result<BoardSnapshot, BoardStoreError> {
         let mut c = self.connection.lock().map_err(unavailable)?;
-        let tx = c.transaction().map_err(unavailable)?;
+        let tx = storage::Scope::begin(&mut c, false)?;
         let (head, root) = storage::current(&tx)?;
         Ok(self.board(&tx, &root)?.snapshot(head))
     }
@@ -60,9 +65,7 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
             store::README,
         };
         let mut c = self.connection.lock().map_err(unavailable)?;
-        let tx = c
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(unavailable)?;
+        let tx = storage::Scope::begin(&mut c, true)?;
         match storage::current(&tx) {
             Ok((head, root)) => {
                 self.board(&tx, &root)?;
@@ -84,8 +87,8 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
                         storage::entry("040000", b"tasks", tasks),
                     ],
                 )?;
-                let head = storage::advance(&tx, &root, &self.writer)?;
-                tx.commit().map_err(unavailable)?;
+                let head = storage::advance(&tx, &root, &self.writer, self.principal.as_deref())?;
+                tx.commit()?;
                 Ok(BoardBootstrap::Created(head))
             }
             Err(e) => Err(e),

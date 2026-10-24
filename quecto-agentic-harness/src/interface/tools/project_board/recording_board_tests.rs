@@ -6,7 +6,7 @@ use super::*;
 struct Factless;
 
 impl BoardOperations for Factless {
-    fn execute(&self, _: &BoardRequest, _: ListSummaries, _: OpNoting) -> BoardExecution {
+    fn execute(&self, _: ReadRequest<'_>, _: ListSummaries, _: OpNoting) -> BoardExecution {
         BoardExecution {
             result: Err(ProjectBoardError::Contended { attempts: 1 }),
             facts: None,
@@ -28,7 +28,12 @@ impl BoardOperations for Factless {
 fn a_recorded_call_flags_an_adapter_that_gives_back_no_facts() {
     let records = Arc::new(Records::default());
     let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Tool, Client::Agent);
-    let _ = call.executed(&Factless, &BoardRequest::ListReady, ListSummaries::Omitted);
+    let read = ReadRequest {
+        request: &BoardRequest::ListReady,
+        text: r#"{"op": "list_ready"}"#,
+        front_end: FrontEnd::Tool,
+    };
+    let _ = call.executed(&Factless, read, ListSummaries::Omitted);
 }
 
 /// #2663 review round 1: every record of a call names the board it

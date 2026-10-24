@@ -10,6 +10,7 @@ fn located_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHa
         KnownLocation {
             board_id: BoardId::of_hex("0123456789abcdef"),
             remote_url: Some("https://github.com/acme/widgets.git".into()),
+            url: None,
         },
         "the location the command line names reaches composition"
     );

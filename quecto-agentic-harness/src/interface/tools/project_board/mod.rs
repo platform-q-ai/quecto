@@ -18,6 +18,7 @@ pub mod tool;
 
 use serde_json::Value;
 
+use crate::application::project_board::dto::ReadRequest;
 use crate::application::project_board::operations::{BoardRequest, ListSummaries};
 use crate::application::project_board::ports::BoardOperations;
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
@@ -86,7 +87,12 @@ pub fn run_recorded_with(
         return call.refuse_request(op.as_deref(), &refusal);
     }
     let op = op.expect("a parsed request names an op");
-    match call.executed(operations, &request, summaries) {
+    let read = ReadRequest {
+        request: &request,
+        text,
+        front_end: call.front_end(),
+    };
+    match call.executed(operations, read, summaries) {
         Ok(answered) => call.answer(&op, &answered.outcome, answered.clock_note),
         Err(error) => {
             let steps = answer::start_steps::refused(&request, &error);

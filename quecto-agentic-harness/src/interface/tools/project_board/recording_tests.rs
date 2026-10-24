@@ -648,12 +648,18 @@ fn a_rule_failed_completion_records_its_rule() {
     let board = board();
     let created = json!({"op": "create", "task": "a", "title": "A", "status": "ready"});
     run_recorded(&board, &created.to_string(), &mut BoardCall::unrecorded());
+    let shown = BoardRequest::Show(
+        crate::domain::project_board::value_objects::slug::Slug::parse("a").unwrap(),
+        crate::application::project_board::operations::PlanView::default(),
+    );
+    let read = ReadRequest {
+        request: &shown,
+        text: r#"{"op": "show", "task": "a"}"#,
+        front_end: FrontEnd::Tool,
+    };
     let BoardOutcome::Shown(shown, _) = board
         .execute(
-            &BoardRequest::Show(
-                crate::domain::project_board::value_objects::slug::Slug::parse("a").unwrap(),
-                crate::application::project_board::operations::PlanView::default(),
-            ),
+            read,
             ListSummaries::Omitted,
             crate::application::project_board::dto::OpNoting::Unnoted,
         )

@@ -17,6 +17,7 @@ use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::plans::Accepted;
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::telemetry::FrontEnd;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
 /// Why summaries are refused of a request that lists nothing.
@@ -247,6 +248,25 @@ pub enum BoardOutcome {
     RunEnded(EndedRun),
     /// A task started and its coordinator launched (S4c).
     Started(Box<StartedTask>),
+    /// What a board server answered (epic #2705 B7), rendered there as
+    /// this front end renders an answer.
+    Served(ServedAnswer),
+}
+
+/// A board server's answer (epic #2705 B7): the JSON object its front
+/// end rendered, as text, handed on as it came.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServedAnswer(pub String);
+
+/// A request as its front end read it (epic #2705 B7): typed, and the
+/// JSON text that front end read it from. The local adapter runs the
+/// typed request; one over a wire sends the text, so the board server
+/// reads it again exactly as the front end did.
+#[derive(Debug, Clone, Copy)]
+pub struct ReadRequest<'a> {
+    pub request: &'a BoardRequest,
+    pub text: &'a str,
+    pub front_end: FrontEnd,
 }
 
 /// Whether a board request's run notes what its use cases saw, for the

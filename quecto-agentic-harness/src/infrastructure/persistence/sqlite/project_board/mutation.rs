@@ -15,9 +15,7 @@ impl SqliteProjectBoardStore {
     ) -> Result<BoardWrite, BoardStoreError> {
         object_id(&expected.0).map_err(|_| invalid("not a board head"))?;
         let mut c = self.connection.lock().map_err(unavailable)?;
-        let tx = c
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(unavailable)?;
+        let tx = storage::Scope::begin(&mut c, true)?;
         let (current, root) = storage::current(&tx)?;
         let known: bool = tx
             .query_row(
@@ -84,8 +82,8 @@ impl SqliteProjectBoardStore {
         let writer = writer.with_fault(fault);
         let mut writer = writer;
         let root = Self::assemble(&mut writer, &after, &tasks, &files)?;
-        let next = writer.advance(&root, &self.writer)?;
-        tx.commit().map_err(unavailable)?;
+        let next = writer.advance(&root, &self.writer, self.principal.as_deref())?;
+        tx.commit()?;
         Ok(BoardWrite::Written(next))
     }
     fn assemble(

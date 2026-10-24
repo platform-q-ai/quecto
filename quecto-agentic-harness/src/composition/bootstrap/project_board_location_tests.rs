@@ -108,6 +108,7 @@ fn a_list_on_a_given_location_spawns_only_the_remote_check_to_compose() {
     let known = KnownLocation {
         board_id: Some(board.clone()),
         remote_url: Some(url),
+        url: None,
     };
     let handles = build_project_board_handles(&counted(&work, Access::Read, known, &bin)).unwrap();
     assert_eq!(
@@ -292,6 +293,7 @@ fn given_location() -> KnownLocation {
     KnownLocation {
         board_id: Some(BoardId::of_hex("0123456789abcdef").unwrap()),
         remote_url: Some("https://github.com/acme/widgets.git".into()),
+        url: None,
     }
 }
 
@@ -340,6 +342,7 @@ fn each_given_part_skips_only_the_git_call_it_answers() {
     let known = KnownLocation {
         board_id: Some(named.clone()),
         remote_url: None,
+        url: None,
     };
     let handles = build_project_board_handles(&counted(&work, Access::Read, known, &bin)).unwrap();
     let asked = calls(&log);
@@ -353,6 +356,7 @@ fn each_given_part_skips_only_the_git_call_it_answers() {
     let known = KnownLocation {
         board_id: None,
         remote_url: Some(given.into()),
+        url: None,
     };
     let handles = build_project_board_handles(&counted(&work, Access::Read, known, &bin)).unwrap();
     let asked = calls(&log);
@@ -379,6 +383,7 @@ fn a_given_location_still_refuses_a_remote_name_quecto_does_not_accept() {
     reading.known = KnownLocation {
         board_id: Some(BoardId::of_hex("0123456789abcdef").unwrap()),
         remote_url: Some("https://github.com/acme/widgets.git".into()),
+        url: None,
     };
     assert!(matches!(
         build_project_board_handles(&reading),

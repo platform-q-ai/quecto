@@ -60,6 +60,55 @@ fn routes_with(serve: ServeBoard, tokens: Arc<MemoryBoardTokens>) -> BoardRoutes
     BoardRoutes::new(serve, access)
 }
 
+/// The board's operations over `store` as a server runs them, written
+/// without a lock or kept answers (the SQLite store's are its own tests').
+pub(in crate::interface::cli::board_server) fn operating(
+    store: &MemoryBoardStore,
+) -> crate::application::project_board::use_cases::ServeBoardOperation {
+    use crate::application::project_board::ports::{
+        BoardOpStore, BoardOperations, BoardOperationsOver, BoardStoreError, OpWrite, Transacted,
+    };
+    struct Unlocked(MemoryBoardStore);
+    impl BoardOpStore for Unlocked {
+        fn reads(&self) -> Arc<dyn ProjectBoardStore> {
+            Arc::new(self.0.client())
+        }
+        fn transact(
+            &self,
+            _: &OpWrite,
+            op: &mut dyn FnMut(Arc<dyn ProjectBoardStore>) -> Result<String, BoardStoreError>,
+        ) -> Result<Transacted, BoardStoreError> {
+            op(Arc::new(self.0.client())).map(Transacted::Answered)
+        }
+    }
+    struct Over;
+    impl BoardOperationsOver for Over {
+        fn over(
+            &self,
+            store: Arc<dyn ProjectBoardStore>,
+        ) -> Result<
+            Box<dyn BoardOperations>,
+            crate::application::project_board::dto::ProjectBoardError,
+        > {
+            use crate::composition::bootstrap::project_board_operations::fixtures::{
+                QueryListings, assembled,
+            };
+            let listings = QueryListings(
+                crate::application::project_board::use_cases::QueryBoard::new(Arc::clone(&store)),
+            );
+            let no_host =
+                crate::application::project_board::dto::NoPullRequestHost::NotAPullRequestHost;
+            let clock = Arc::new(SystemBoardClock::default());
+            assembled(store, clock, Arc::new(listings), Err(no_host))
+                .map(|operations| Box::new(operations) as Box<dyn BoardOperations>)
+        }
+    }
+    crate::application::project_board::use_cases::ServeBoardOperation::new(
+        Arc::new(Unlocked(store.client())),
+        Arc::new(Over),
+    )
+}
+
 /// A board holding a task and a plan of it.
 pub(in crate::interface::cli::board_server) fn written() -> (MemoryBoardStore, BoardHead) {
     let store = MemoryBoardStore::default();

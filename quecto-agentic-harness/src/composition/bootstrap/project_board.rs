@@ -1,4 +1,6 @@
-//! The project board's operations for one run (#2477): the git store on
+//! The project board's operations for one run (#2477): on a board server
+//! when one is named (epic #2705 B7, [`super::project_board_remote`]);
+//! else the git store on
 //! the repository's board remote, writing as its configured committer (a
 //! read needs none); the SQLite index of the board in the repository's
 //! git directory; the clock referenced to the remote's HTTPS `Date`
@@ -52,6 +54,7 @@ use crate::infrastructure::tools::agents::coordinator_launch::KeptRunReports;
 use crate::interface::cli::controllers::board::{
     Access, BuildError, KnownLocation, ProjectBoardEnvironment, ProjectBoardHandles,
 };
+use crate::interface::tools::project_board::site::Launcher;
 
 /// # Errors
 /// A write with no committer configured, or one git would not record as
@@ -73,6 +76,10 @@ fn build_with_warnings(
     warn: &mut dyn FnMut(&str),
 ) -> Result<ProjectBoardHandles, BuildError> {
     let unavailable = |why: String| BuildError::Unavailable(why);
+    // A board server named takes every request (B7): no git store is built.
+    if let Some(url) = super::project_board_remote::server_url(environment) {
+        return super::project_board_remote::remote_handles(environment, &url);
+    }
     let vars = GitEnvironment::allowlisted(environment.vars.iter().cloned());
     // Only a write names a committer, so only a write is told what the
     // set naming one warns of. A warning names variables and the
@@ -128,80 +135,116 @@ fn build_with_warnings(
     let built = |error: crate::application::project_board::dto::ProjectBoardError| {
         unavailable(error.to_string())
     };
-    let complete =
-        CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs).map_err(built)?;
-    let parts = BoardOperationParts {
-        bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
-        create: CreateBoardTask::new(
-            Arc::clone(&store),
-            Arc::clone(&clock),
-            Arc::new(MarkdownTextCells),
-        )
-        .map_err(built)?,
-        update: UpdateDraftTask::new(
-            Arc::clone(&store),
-            Arc::clone(&clock),
-            Arc::new(MarkdownTextCells),
-        )
-        .map_err(built)?,
-        change: ChangeBoardTask::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
-        propose_plan: ProposePlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
-        edit_plan: EditPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
-        accept_plan: AcceptPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
-        discard_plan: DiscardPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
-        end_run: EndRun::new(
-            Arc::clone(&store),
-            Arc::clone(&clock),
-            Arc::new(MarkdownTextCells),
-            Arc::clone(&revisions),
-            environment
-                .launcher
-                .clone()
-                .map(|swarms| swarms as Arc<dyn RunLiveness>),
-            // A run's end reads the boards its session's teardown kept.
-            environment.swarm_session.as_deref().map(|session| {
-                Arc::new(KeptRunReports::new(
-                    super::super::environments::kept_swarm_boards(),
-                    session,
-                )) as Arc<dyn SwarmRunReports>
-            }),
-        )
-        .map_err(built)?,
-        start: StartBoardTask::new(
-            Arc::clone(&store),
-            undo_store,
-            Arc::clone(&clock),
-            Arc::new(MarkdownTextCells),
-            environment
-                .launcher
-                .clone()
-                .map(|swarms| swarms as Arc<dyn CoordinatorLaunch>),
-            environment.cancelled.clone(),
-        )
-        .map_err(built)?
-        .seeing(
-            environment
-                .launcher
-                .clone()
-                .map(|swarms| swarms as Arc<dyn RunLiveness>),
-        ),
-        // A session's end ends the runs its starts left open (#2655).
-        left_runs: environment
-            .launcher
-            .clone()
-            .map(|swarms| ListLeftRuns::new(Arc::clone(&store), swarms as Arc<dyn StartedRuns>)),
-        clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
-        complete,
+    let parts = operation_parts(PartsOf {
+        store,
+        undo_store,
         clock,
         listings,
-        query: QueryBoard::new(store),
-    };
+        prs,
+        revisions,
+        launcher: environment.launcher.clone(),
+        swarm_session: environment.swarm_session.clone(),
+        cancelled: environment.cancelled.clone(),
+    })
+    .map_err(built)?;
     Ok(ProjectBoardHandles {
         // The front ends reach the use case only through the port (#2705 B6).
         operations: Box::new(super::project_board_operations::LocalBoardOperations::new(
             RunBoardOperation::new(parts),
         )),
         board: location.board,
+    })
+}
+
+/// What one board's operations are assembled from.
+pub(super) struct PartsOf {
+    pub store: Arc<dyn ProjectBoardStore>,
+    /// The store a start's undo writes through, past any cancel.
+    pub undo_store: Arc<dyn ProjectBoardStore>,
+    pub clock: Arc<dyn BoardClock>,
+    pub listings: Arc<dyn crate::application::project_board::ports::BoardListings>,
+    pub prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
+    pub revisions: Arc<dyn RemoteRevisions>,
+    pub launcher: Option<Launcher>,
+    pub swarm_session: Option<String>,
+    pub cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
+}
+
+/// The board's operations over `of` (a board server's too, B7).
+///
+/// # Errors
+/// One of them could not be built.
+pub(super) fn operation_parts(
+    of: PartsOf,
+) -> Result<BoardOperationParts, crate::application::project_board::dto::ProjectBoardError> {
+    let PartsOf {
+        store,
+        undo_store,
+        clock,
+        listings,
+        prs,
+        revisions,
+        launcher,
+        swarm_session,
+        cancelled,
+    } = of;
+    let complete = CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs)?;
+    Ok(BoardOperationParts {
+        bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
+        create: CreateBoardTask::new(
+            Arc::clone(&store),
+            Arc::clone(&clock),
+            Arc::new(MarkdownTextCells),
+        )?,
+        update: UpdateDraftTask::new(
+            Arc::clone(&store),
+            Arc::clone(&clock),
+            Arc::new(MarkdownTextCells),
+        )?,
+        change: ChangeBoardTask::new(Arc::clone(&store), Arc::clone(&clock))?,
+        propose_plan: ProposePlan::new(Arc::clone(&store), Arc::clone(&clock))?,
+        edit_plan: EditPlan::new(Arc::clone(&store), Arc::clone(&clock))?,
+        accept_plan: AcceptPlan::new(Arc::clone(&store), Arc::clone(&clock))?,
+        discard_plan: DiscardPlan::new(Arc::clone(&store), Arc::clone(&clock))?,
+        end_run: EndRun::new(
+            Arc::clone(&store),
+            Arc::clone(&clock),
+            Arc::new(MarkdownTextCells),
+            Arc::clone(&revisions),
+            launcher
+                .clone()
+                .map(|swarms| swarms as Arc<dyn RunLiveness>),
+            // A run's end reads the boards its session's teardown kept.
+            swarm_session.as_deref().map(|session| {
+                Arc::new(KeptRunReports::new(
+                    super::super::environments::kept_swarm_boards(),
+                    session,
+                )) as Arc<dyn SwarmRunReports>
+            }),
+        )?,
+        start: StartBoardTask::new(
+            Arc::clone(&store),
+            undo_store,
+            Arc::clone(&clock),
+            Arc::new(MarkdownTextCells),
+            launcher
+                .clone()
+                .map(|swarms| swarms as Arc<dyn CoordinatorLaunch>),
+            cancelled,
+        )?
+        .seeing(
+            launcher
+                .clone()
+                .map(|swarms| swarms as Arc<dyn RunLiveness>),
+        ),
+        // A session's end ends the runs its starts left open (#2655).
+        left_runs: launcher
+            .map(|swarms| ListLeftRuns::new(Arc::clone(&store), swarms as Arc<dyn StartedRuns>)),
+        clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock))?,
+        complete,
+        clock,
+        listings,
+        query: QueryBoard::new(store),
     })
 }
 
@@ -213,6 +256,7 @@ fn located(known: &KnownLocation) -> bool {
         KnownLocation {
             board_id: Some(_),
             remote_url: Some(_),
+            ..
         }
     )
 }
@@ -222,9 +266,9 @@ fn located(known: &KnownLocation) -> bool {
 /// per composition, each part from what the front end knows, and only
 /// what it does not from git.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct BoardLocation {
-    board: Option<BoardId>,
-    url: String,
+pub(super) struct BoardLocation {
+    pub board: Option<BoardId>,
+    pub url: String,
 }
 
 impl BoardLocation {
@@ -235,7 +279,7 @@ impl BoardLocation {
     ///
     /// # Errors
     /// The remote's URL was not given and git could not read it.
-    fn resolve(
+    pub(super) fn resolve(
         known: &KnownLocation,
         store: &GitBoardStore,
         repo: &Path,
@@ -318,7 +362,7 @@ pub fn board_remote_revisions(repo: &Path) -> Result<Arc<dyn RemoteRevisions>, S
 /// Pull request states of the remote at `url`, read with `gh` when it is
 /// on GitHub or the configured enterprise host (`GH_HOST` in `vars`); or
 /// why none are.
-fn pull_request_states(
+pub(super) fn pull_request_states(
     url: &str,
     vars: &[(std::ffi::OsString, std::ffi::OsString)],
 ) -> Result<Arc<dyn PullRequestStates>, NoPullRequestHost> {
@@ -352,7 +396,7 @@ const COMMITTER_VARIABLE: &str = "QUECTO_BOARD_COMMITTER";
 /// # Errors
 /// A value not shaped `name <email>`, or naming an identity no task can
 /// hold: refused, never ignored for the clone's own.
-fn board_committer(
+pub(super) fn board_committer(
     vars: &[(std::ffi::OsString, std::ffi::OsString)],
 ) -> Option<Result<Identity, String>> {
     let (_, value) = vars.iter().find(|(key, _)| key == COMMITTER_VARIABLE)?;
@@ -376,7 +420,7 @@ fn board_committer(
     })
 }
 
-fn write_refusal(error: GitError) -> BuildError {
+pub(super) fn write_refusal(error: GitError) -> BuildError {
     match error {
         GitError::Identity(why) => BuildError::NoCommitter(why),
         unavailable @ (GitError::NotFound
@@ -390,7 +434,7 @@ fn write_refusal(error: GitError) -> BuildError {
 }
 
 /// A store's refusal in its own words.
-fn store_reason(error: &BoardStoreError) -> String {
+pub(super) fn store_reason(error: &BoardStoreError) -> String {
     match error {
         BoardStoreError::NoBoard => "the project has no board yet".into(),
         BoardStoreError::Clash(why)

@@ -714,7 +714,8 @@ pub use start::{EndedRun, LivenessCheck, RunEnd, RunEndOutcome, RunReport, TaskS
 mod requests;
 pub use requests::{
     BoardAnswered, BoardExecution, BoardOutcome, BoardRequest, Completion, ListFilter,
-    ListSummaries, OpNoting, PlanPage, PlanView, SUMMARIES_LISTINGS_ONLY,
+    ListSummaries, OpNoting, PlanPage, PlanView, ReadRequest, SUMMARIES_LISTINGS_ONLY,
+    ServedAnswer,
 };
 
 #[cfg(test)]
