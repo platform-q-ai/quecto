@@ -27,7 +27,7 @@ fn stored_canonical_blob_is_byte_exact() {
     let raw = rusqlite::Connection::open(&path).unwrap();
     let (kind, bytes): (String, Vec<u8>) = raw
         .query_row(
-            "SELECT typeof(bytes),bytes FROM files WHERE path='tasks/a.md'",
+            "SELECT typeof(objects.bytes),objects.bytes FROM state JOIN revisions ON revisions.head=state.head JOIN tree_entries folder ON folder.tree=revisions.root JOIN tree_entries file ON file.tree=folder.oid JOIN objects ON objects.oid=file.oid WHERE folder.raw_name=CAST('tasks' AS BLOB) AND file.raw_name=CAST('a.md' AS BLOB)",
             [],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )

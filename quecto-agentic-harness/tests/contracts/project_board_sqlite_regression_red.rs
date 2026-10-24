@@ -1,5 +1,5 @@
 //! Fresh, real-SQL regression red on the integrated, intentionally unfixed adapter.
-//! Raw fixture construction is confined to the existing flat regular-file schema.
+//! Raw fixture construction uses the production structural writer, without interpreting artifacts.
 use super::project_board_store::task;
 use quecto::application::project_board::ports::{
     BoardArtifact, BoardHead, BoardStoreError, ProjectBoardStore, SetAsideClear,
@@ -10,8 +10,7 @@ use quecto::infrastructure::persistence::{
     sqlite::project_board::SqliteProjectBoardStore,
 };
 use quecto::infrastructure::test_support::board_artifacts::run;
-use rusqlite::{Connection, params, types::Value};
-use sha2::{Digest, Sha256};
+use rusqlite::{Connection, types::Value};
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -39,16 +38,34 @@ impl Fixture {
     }
 
     fn put_many(&mut self, files: impl IntoIterator<Item = (String, Vec<u8>)>) {
-        let tx = self.raw.transaction().unwrap();
-        for (path, bytes) in files {
-            let object = format!("{:x}", Sha256::digest(&bytes));
-            tx.execute(
-                "INSERT INTO files VALUES (?1,?2,?3)",
-                params![path, object, bytes],
-            )
+        use quecto::infrastructure::persistence::sqlite::project_board::RawEntry;
+        let files: Vec<_> = files.into_iter().collect();
+        self.store
+            .fixture_edit(|editor| {
+                let (_, root) = editor.current()?;
+                let mut roots = editor.entries(&root)?;
+                let mut folders = std::collections::BTreeMap::<String, Vec<RawEntry>>::new();
+                for (path, bytes) in &files {
+                    let (folder, name) = path.split_once('/').unwrap();
+                    let rows = folders.entry(folder.into()).or_default();
+                    rows.push(RawEntry {
+                        mode: "100644".into(),
+                        name: name.as_bytes().to_vec(),
+                        oid: editor.blob(bytes)?,
+                    });
+                }
+                for (folder, rows) in folders {
+                    let tree = editor.tree(&rows)?;
+                    roots.retain(|row| row.name != folder.as_bytes());
+                    roots.push(RawEntry {
+                        mode: "040000".into(),
+                        name: folder.into_bytes(),
+                        oid: tree,
+                    });
+                }
+                editor.tree(&roots)
+            })
             .unwrap();
-        }
-        tx.commit().unwrap();
     }
 
     // Every physical user table, including rows unreachable from the current head.
@@ -118,7 +135,7 @@ fn mixed_canonical_and_blocked_legacy_hides_task_without_touching_raw_files() {
 fn admitted_payload_fetch_positive_control_is_connected_to_real_sql_blob() {
     let mut f = Fixture::new();
     let (path, bytes) = canonical("a");
-    let object = format!("{:x}", Sha256::digest(&bytes));
+    let object = SqliteProjectBoardStore::fixture_blob_id(&bytes);
     f.put_many([(path.clone(), bytes.clone())]);
     assert!(f.store.fixture_take_payload_fetches().is_empty());
     assert_eq!(f.store.read().unwrap().tasks.len(), 1);

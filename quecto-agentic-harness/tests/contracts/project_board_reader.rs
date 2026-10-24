@@ -442,7 +442,10 @@ fn project_board_reader_quarantine_legacy_opaque_and_repeated_copies() {
 
 #[test]
 fn project_board_reader_legacy_format_is_read_and_upgraded() {
-    let f = fresh();
+    check_legacy_format(fresh);
+}
+fn check_legacy_format<F: ReaderFixture>(make: impl Fn() -> F) {
+    let f = make();
     f.batch(&[(
         "format",
         vec![Raw::encoded("board".into(), b"quecto-board 2\n".to_vec())],
@@ -727,4 +730,108 @@ fn project_board_reader_prospective_write_bytes_exact_and_over() {
 #[test]
 fn project_board_reader_prospective_kept_copy_bytes_exact_and_over() {
     check_prospective_bytes(fresh, true);
+}
+
+// The same full runtime bodies above, now on real normalized SQLite storage.
+// Raw setup carries every untouched root child, including FORMAT and archive.
+impl ReaderFixture for super::project_board_sqlite::Database {
+    fn store(&self) -> Box<dyn ProjectBoardStore> {
+        Box::new(self.client())
+    }
+    fn head(&self) -> BoardHead {
+        self.client().fixture_head().unwrap()
+    }
+    fn fingerprint(&self) -> String {
+        self.client().fixture_fingerprint().unwrap()
+    }
+    fn observed_head(&self) -> Option<String> {
+        self.client().fixture_head().ok().map(|head| head.0)
+    }
+    fn object_size(&self, oid: &str) -> usize {
+        self.client().fixture_object_size(oid).unwrap()
+    }
+    fn batch(&self, folders: &[(&str, Vec<Raw>)]) {
+        use quecto::infrastructure::persistence::sqlite::project_board::RawEntry;
+        self.client()
+            .fixture_edit(|editor| {
+                let (_, root) = editor.current()?;
+                let mut roots = editor.entries(&root)?;
+                for (folder, rows) in folders {
+                    let files = rows
+                        .iter()
+                        .map(|row| {
+                            Ok(RawEntry {
+                                mode: row.mode.into(),
+                                name: row.name.as_bytes().to_vec(),
+                                oid: editor.blob(&row.bytes)?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, BoardStoreError>>()?;
+                    let tree = editor.tree(&files)?;
+                    roots.retain(|row| row.name != folder.as_bytes());
+                    roots.push(RawEntry {
+                        mode: "040000".into(),
+                        name: folder.as_bytes().to_vec(),
+                        oid: tree,
+                    });
+                }
+                editor.tree(&roots)
+            })
+            .unwrap();
+    }
+}
+fn fresh_sqlite() -> super::project_board_sqlite::Database {
+    let fixture = super::project_board_sqlite::Database::new();
+    fixture.store().bootstrap().unwrap();
+    fixture
+}
+#[cfg(test)]
+mod sqlite {
+    use super::*;
+    #[test]
+    fn counts_exact_and_over() {
+        check_counts(fresh_sqlite);
+    }
+    #[test]
+    fn bytes_exact_over_and_admission() {
+        check_bytes(fresh_sqlite);
+    }
+    #[test]
+    fn task_read_write_clear_caps() {
+        check_task_mutations(fresh_sqlite);
+    }
+    #[test]
+    fn rejected_heads_preserve_raw_state() {
+        check_heads(fresh_sqlite);
+    }
+    #[test]
+    fn quarantine_legacy_opaque_and_repeated_copies() {
+        check_quarantine(fresh_sqlite);
+    }
+    #[test]
+    fn legacy_format_is_read_and_upgraded() {
+        check_legacy_format(fresh_sqlite);
+    }
+    #[test]
+    fn whole_board_write_clear_counts() {
+        check_board_mutations(fresh_sqlite);
+    }
+    #[test]
+    fn folder_write_and_clear_counts() {
+        check_folder_writes(fresh_sqlite);
+    }
+    #[test]
+    fn unknown_and_malformed_expected_heads() {
+        check_unknown_heads(fresh_sqlite, |f, head| {
+            f.client().fixture_object_absent(head).unwrap()
+        });
+    }
+    #[test]
+    fn prospective_write_bytes_exact_and_over() {
+        check_prospective_bytes(fresh_sqlite, false);
+    }
+    #[test]
+    fn prospective_kept_copy_bytes_exact_and_over() {
+        check_prospective_bytes(fresh_sqlite, true);
+    }
 }

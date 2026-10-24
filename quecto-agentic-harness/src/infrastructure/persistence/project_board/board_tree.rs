@@ -56,13 +56,14 @@
 //! file at the root is fetched by its id, so a damaged root is judged by
 //! its real objects, as in a full clone.
 use super::artifacts::task::TASK_LIMITS;
-use super::cat_file::{Found, Object};
+pub(crate) use super::cat_file::{Found, Object};
 use super::git::{Git, GitError, capped, quoted, sanitised, shown_name};
 use crate::application::project_board::ports::{BoardArtifact, BoardStoreError, QuarantinedFile};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::shown_text::shown_board_path;
 use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
-use reader::{Reader, contents, objects};
+pub(crate) use reader::Reader;
+use reader::{contents, objects};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The punctuation a name kept in `tasks/` may hold besides letters and
@@ -256,13 +257,13 @@ pub(super) fn named_twice(path: &str, head: &str, copies: &[TreeCopy], writes: &
 
 /// One entry of a listed tree.
 #[derive(Debug, Clone)]
-struct Entry {
-    mode: String,
-    oid: String,
+pub(crate) struct Entry {
+    pub(crate) mode: String,
+    pub(crate) oid: String,
     /// As shown: invalid UTF-8 replaced.
-    name: String,
+    pub(crate) name: String,
     /// As the tree holds it.
-    raw: Vec<u8>,
+    pub(crate) raw: Vec<u8>,
 }
 
 impl Entry {
@@ -314,10 +315,13 @@ pub fn read_board(
     limits: Limits,
     left: &LeftOnRemote,
 ) -> Result<Board, Unread> {
-    read(git, &tree_of(git, commit)?, limits, left)
+    read_root(git, &tree_of(git, commit)?, limits, left)
 }
 
-fn read(
+#[cfg(test)]
+use read_root as read;
+
+pub(crate) fn read_root(
     git: &impl Reader,
     root: &str,
     limits: Limits,
@@ -626,6 +630,7 @@ pub fn object_id(text: &str) -> Result<String, BoardStoreError> {
 
 #[path = "board_bounds.rs"]
 mod bounds;
+pub(crate) use bounds::raw_entry_bytes;
 use bounds::within_read;
 pub use bounds::{ClearKeeps, within};
 #[path = "board_entries.rs"]
@@ -657,7 +662,3 @@ mod reader;
 #[cfg(test)]
 #[path = "board_tree_tests.rs"]
 mod tests;
-
-#[path = "board_rows.rs"]
-mod rows;
-pub(crate) use rows::from_rows;

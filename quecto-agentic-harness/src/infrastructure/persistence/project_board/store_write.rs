@@ -104,7 +104,7 @@ type Encoded<'a> = (Vec<(&'a Task, Vec<u8>)>, Vec<FolderFile>);
 ///
 /// # Errors
 /// What a codec refuses, named by its key, field and line.
-fn encoded(artifacts: &[BoardArtifact]) -> Result<Encoded<'_>, String> {
+pub(crate) fn encoded(artifacts: &[BoardArtifact]) -> Result<Encoded<'_>, String> {
     let (mut tasks, mut files) = (vec![], vec![]);
     for artifact in artifacts {
         let bytes = file_of(artifact)?;

@@ -2,7 +2,7 @@
 use super::*;
 type Metadata = BTreeMap<String, Found>;
 type Content = BTreeMap<String, Vec<u8>>;
-pub(super) trait Reader {
+pub(crate) trait Reader {
     fn metadata(&self, ids: &[&str]) -> Result<Metadata, BoardStoreError>;
     fn listing(&self, tree: &str, cap: usize) -> Result<Vec<Entry>, Unread>;
     fn admitted(&self, wanted: &[(&str, usize)]) -> Result<Content, BoardStoreError>;

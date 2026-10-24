@@ -4,12 +4,15 @@ use super::project_board_kinds as kinds;
 use super::project_board_store::{self as store, Clients};
 use quecto::application::project_board::ports::{BoardStoreError, BoardWrite, ProjectBoardStore};
 use quecto::domain::project_board::entities::claim::Identity;
-use quecto::infrastructure::persistence::sqlite::project_board::SqliteProjectBoardStore;
+use quecto::infrastructure::persistence::sqlite::project_board::{
+    FixtureHooks, SqliteProjectBoardStore,
+};
 use std::path::Path;
 use tempfile::TempDir;
 
-struct Database {
+pub(super) struct Database {
     directory: TempDir,
+    hooks: std::sync::Arc<FixtureHooks>,
 }
 
 fn identity(name: &str) -> Identity {
@@ -24,9 +27,10 @@ fn open(path: &Path, name: &str) -> SqliteProjectBoardStore {
 }
 
 impl Database {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             directory: tempfile::tempdir().unwrap(),
+            hooks: std::sync::Arc::new(FixtureHooks::default()),
         }
     }
 
@@ -34,13 +38,17 @@ impl Database {
         self.directory.path().join("board.sqlite")
     }
 
-    fn client(&self) -> SqliteProjectBoardStore {
-        open(&self.path(), "Fixture")
+    pub(super) fn client(&self) -> SqliteProjectBoardStore {
+        self.named("Fixture")
+    }
+
+    fn named(&self, name: &str) -> SqliteProjectBoardStore {
+        SqliteProjectBoardStore::open_with_hooks(&self.path(), identity(name), self.hooks.clone())
+            .expect("independent connection sharing fixture hooks")
     }
 
     fn clients(&self) -> Clients {
-        let path = self.path();
-        (Box::new(open(&path, "Alice")), Box::new(open(&path, "Bob")))
+        (Box::new(self.named("Alice")), Box::new(self.named("Bob")))
     }
 
     fn put(&self, path: &str, bytes: &[u8]) {
@@ -294,4 +302,374 @@ fn sqlite_failure_after_first_row_rolls_back_then_writer_recovers() {
         "writer recovers after rollback: {retry:?}"
     );
     assert_eq!(bob.read().unwrap().tasks.len(), 2);
+}
+
+mod remediation {
+    use super::*;
+    use quecto::application::project_board::ports::{BoardArtifact, BoardHead, SetAsideClear};
+    use quecto::infrastructure::persistence::sqlite::project_board::RawEntry;
+
+    fn assert_after_first_insert_rollback_and_retry(
+        database: &Database,
+        mutate: impl Fn(&SqliteProjectBoardStore) -> Result<BoardWrite, BoardStoreError>,
+    ) {
+        let alice = database.named("Alice");
+        let bob = database.named("Bob");
+        let before = alice.read().unwrap();
+        let raw_before = alice.fixture_fingerprint().unwrap();
+        let raw = rusqlite::Connection::open(database.path()).unwrap();
+        let count = || {
+            raw.query_row("SELECT count(*) FROM revisions", [], |r| r.get::<_, i64>(0))
+                .unwrap()
+        };
+        let revisions = count();
+        database.client().fixture_fail_after_first_row().unwrap();
+        let failed = mutate(&alice);
+        assert!(
+            matches!(failed, Err(BoardStoreError::Unavailable(_))),
+            "actual first inserted row must trigger SQL fault: {failed:?}"
+        );
+        assert_eq!(
+            bob.read().unwrap(),
+            before,
+            "head and complete snapshot roll back"
+        );
+        assert_eq!(
+            bob.fixture_fingerprint().unwrap(),
+            raw_before,
+            "every object/tree/revision/state row, including unreachable rows, rolls back"
+        );
+        assert_eq!(count(), revisions, "failed writer leaves no provenance");
+        let retry = mutate(&bob);
+        let Ok(BoardWrite::Written(head)) = retry else {
+            panic!("separate client retries after one-shot fault: {retry:?}");
+        };
+        assert_eq!(bob.fixture_committed_by(&head).unwrap(), identity("Bob"));
+        assert_eq!(
+            count(),
+            revisions + 1,
+            "exactly the successful retry adds provenance"
+        );
+    }
+
+    #[test]
+    fn clear_after_first_insert_fault_rolls_back_then_another_writer_recovers() {
+        let database = Database::new();
+        database.client().bootstrap().unwrap();
+        database.put("tasks/b.md", b"{");
+        let board = database.client().read().unwrap();
+        let file = &board.quarantined[0];
+        let clearing = SetAsideClear {
+            path: file.path.clone(),
+            object: file.object.clone(),
+            repeated: Default::default(),
+        };
+        assert_after_first_insert_rollback_and_retry(&database, |client| {
+            client.clear_set_aside(&board.head, &clearing, "board: clear fault")
+        });
+        assert!(database.client().read().unwrap().quarantined.is_empty());
+    }
+
+    #[test]
+    fn identical_write_after_first_insert_fault_rolls_back_then_another_writer_recovers() {
+        let database = Database::new();
+        let alice = database.named("Alice");
+        alice.bootstrap().unwrap();
+        let task = store::task("a", "Same bytes");
+        let head = alice.read().unwrap().head;
+        assert!(matches!(
+            alice.write_tasks(&head, std::slice::from_ref(&task), "board: initial"),
+            Ok(BoardWrite::Written(_))
+        ));
+        let before = alice.read().unwrap();
+        assert_after_first_insert_rollback_and_retry(&database, |client| {
+            client.write_tasks(
+                &before.head,
+                std::slice::from_ref(&task),
+                "board: identical fault",
+            )
+        });
+        assert_eq!(database.client().read().unwrap().tasks, [task]);
+    }
+
+    #[test]
+    fn shared_hooks_reject_overwrite_survive_invalid_unknown_stale_and_are_one_shot() {
+        let database = Database::new();
+        let alice = database.client();
+        let bob = database.client();
+        alice.bootstrap().unwrap();
+        let stale = alice.read().unwrap().head;
+        database.put("tasks/b.md", b"{");
+        let head = bob.read().unwrap().head;
+        database.refuse(); // Short-lived arming client is deliberately dropped.
+        assert!(matches!(
+            bob.fixture_fail_after_first_row(),
+            Err(BoardStoreError::Unavailable(_))
+        ));
+        let before = bob.fixture_fingerprint().unwrap();
+        for expected in [
+            BoardHead("a".repeat(40)),
+            BoardHead("b".repeat(64)),
+            BoardHead("invalid".into()),
+        ] {
+            assert!(matches!(
+                alice.write_tasks(&expected, &[store::task("a", "A")], "board: invalid"),
+                Err(BoardStoreError::InvalidWrite(_))
+            ));
+        }
+        assert_eq!(
+            alice.write_tasks(&stale, &[store::task("a", "A")], "board: stale"),
+            Ok(BoardWrite::Lost)
+        );
+        assert!(matches!(
+            alice.write(&head, &[], "board: empty"),
+            Err(BoardStoreError::InvalidWrite(_))
+        ));
+        let clearing = SetAsideClear {
+            path: "tasks/b.md".into(),
+            object: "invalid".into(),
+            repeated: Default::default(),
+        };
+        assert!(matches!(
+            alice.clear_set_aside(&head, &clearing, "board: invalid clear"),
+            Err(BoardStoreError::InvalidWrite(_))
+        ));
+        assert!(matches!(
+            alice.write_tasks(&head, &[store::task("a", "A")], "bad\nmessage"),
+            Err(BoardStoreError::InvalidWrite(_))
+        ));
+        assert_eq!(bob.fixture_fingerprint().unwrap(), before);
+        assert!(matches!(
+            bob.write_tasks(&head, &[store::task("a", "A")], "board: refused"),
+            Ok(BoardWrite::Refused(_))
+        ));
+        assert_eq!(bob.fixture_fingerprint().unwrap(), before);
+        assert!(matches!(
+            alice.write_tasks(&head, &[store::task("a", "A")], "board: retry"),
+            Ok(BoardWrite::Written(_))
+        ));
+    }
+
+    #[test]
+    fn failed_sql_has_no_orphan_object_tree_revision_or_provenance_residue() {
+        let database = Database::new();
+        let alice = database.client();
+        alice.bootstrap().unwrap();
+        let head = alice.read().unwrap().head;
+        let before = alice.fixture_fingerprint().unwrap();
+        database.client().fixture_fail_after_first_row().unwrap();
+        assert!(matches!(
+            alice.write_tasks(
+                &head,
+                &[store::task("a", "One"), store::task("b", "Two")],
+                "board: fault"
+            ),
+            Err(BoardStoreError::Unavailable(_))
+        ));
+        assert_eq!(database.client().fixture_fingerprint().unwrap(), before);
+        assert!(matches!(
+            database
+                .client()
+                .write_tasks(&head, &[store::task("a", "One")], "board: retry"),
+            Ok(BoardWrite::Written(_))
+        ));
+    }
+
+    #[test]
+    fn full_fingerprint_observes_unreachable_objects_entries_and_typed_nulls() {
+        let database = Database::new();
+        let client = database.client();
+        client.bootstrap().unwrap();
+        let raw = rusqlite::Connection::open(database.path()).unwrap();
+        let before = client.fixture_fingerprint().unwrap();
+        let blob = "c".repeat(64);
+        let tree = "d".repeat(64);
+        raw.execute("INSERT INTO objects VALUES (?1,'blob',X'',NULL)", [&blob])
+            .unwrap();
+        let empty = client.fixture_fingerprint().unwrap();
+        assert_ne!(
+            empty, before,
+            "unreachable empty BLOB/cardinality is included"
+        );
+        raw.execute("UPDATE objects SET bytes=X'00' WHERE oid=?1", [&blob])
+            .unwrap();
+        assert_ne!(
+            client.fixture_fingerprint().unwrap(),
+            empty,
+            "exact unreachable bytes are included"
+        );
+        raw.execute("INSERT INTO objects VALUES (?1,'tree',NULL,0)", [&tree])
+            .unwrap();
+        let no_rows = client.fixture_fingerprint().unwrap();
+        raw.execute(
+            "INSERT INTO tree_entries VALUES (?1,0,'120000',X'FF00',?2)",
+            rusqlite::params![tree, blob],
+        )
+        .unwrap();
+        assert_ne!(
+            client.fixture_fingerprint().unwrap(),
+            no_rows,
+            "orphan ordinal rows/raw bytes are included"
+        );
+        raw.execute(
+            "UPDATE objects SET kind='blob',bytes=X'',tree_size=NULL WHERE oid=?1",
+            [&tree],
+        )
+        .unwrap();
+        assert_ne!(
+            client.fixture_fingerprint().unwrap(),
+            no_rows,
+            "NULL/type domains do not collapse to empty bytes"
+        );
+    }
+
+    #[test]
+    fn opaque_modes_raw_names_and_archive_are_carried_by_reference_without_blob_reads() {
+        let database = Database::new();
+        let client = database.client();
+        client.bootstrap().unwrap();
+        client
+            .fixture_edit(|editor| {
+                let (_, root) = editor.current()?;
+                let mut roots = editor.entries(&root)?;
+                let opaque = editor.blob(&vec![b'x'; 600 * 1024])?;
+                let subtree = editor.tree(&[RawEntry {
+                    mode: "100644".into(),
+                    name: b"hidden".to_vec(),
+                    oid: opaque.clone(),
+                }])?;
+                let tasks = editor.tree(&[
+                    RawEntry {
+                        mode: "100755".into(),
+                        name: b"a.md".to_vec(),
+                        oid: opaque.clone(),
+                    },
+                    RawEntry {
+                        mode: "120000".into(),
+                        name: b"a.json".to_vec(),
+                        oid: opaque.clone(),
+                    },
+                    RawEntry {
+                        mode: "040000".into(),
+                        name: b"nested.md".to_vec(),
+                        oid: subtree.clone(),
+                    },
+                    RawEntry {
+                        mode: "100644".into(),
+                        name: vec![0xff, b'/', 0],
+                        oid: opaque,
+                    },
+                ])?;
+                roots.retain(|row| row.name != b"tasks");
+                roots.push(RawEntry {
+                    mode: "040000".into(),
+                    name: b"tasks".to_vec(),
+                    oid: tasks,
+                });
+                roots.push(RawEntry {
+                    mode: "040000".into(),
+                    name: b"archive".to_vec(),
+                    oid: subtree,
+                });
+                editor.tree(&roots)
+            })
+            .unwrap();
+        let board = client.read().unwrap();
+        assert!(board.tasks.is_empty());
+        assert_eq!(board.quarantined.len(), 4);
+        assert!(client.fixture_take_payload_fetches().is_empty());
+        let before = client.fixture_fingerprint().unwrap();
+        let archive = before
+            .lines()
+            .find(|row| row.ends_with("\tarchive"))
+            .unwrap();
+        assert!(matches!(
+            client.write(
+                &board.head,
+                &[BoardArtifact::Task(store::task("new", "New"))],
+                "board: retain opaque"
+            ),
+            Ok(BoardWrite::Written(_))
+        ));
+        assert!(client.fixture_take_payload_fetches().is_empty());
+        assert!(
+            client
+                .fixture_fingerprint()
+                .unwrap()
+                .lines()
+                .any(|row| row == archive)
+        );
+        let after = client.read().unwrap();
+        assert_eq!(after.tasks, [store::task("new", "New")]);
+        for path in ["tasks/a.md", "tasks/a.json", "tasks/nested.md"] {
+            let old = board
+                .quarantined
+                .iter()
+                .find(|row| row.path == path)
+                .unwrap();
+            assert!(
+                after
+                    .quarantined
+                    .iter()
+                    .any(|row| row.path == path && row.object == old.object && row.carried)
+            );
+        }
+    }
+
+    #[test]
+    fn falsified_tree_size_cannot_admit_an_unbounded_listing_and_mismatch_is_unavailable() {
+        let database = Database::new();
+        let client = database.client();
+        client.bootstrap().unwrap();
+        database.put("tasks/a.md", b"{");
+        let raw = rusqlite::Connection::open(database.path()).unwrap();
+        let tree:String=raw.query_row("SELECT folder.oid FROM state JOIN revisions ON revisions.head=state.head JOIN tree_entries folder ON folder.tree=revisions.root WHERE folder.raw_name=CAST('tasks' AS BLOB)",[],|r| r.get(0)).unwrap();
+        raw.execute("UPDATE objects SET tree_size=0 WHERE oid=?1", [&tree])
+            .unwrap();
+        assert!(
+            matches!(client.read(), Err(BoardStoreError::Unavailable(_))),
+            "stored size must equal structural rows"
+        );
+        raw.execute(
+            "UPDATE tree_entries SET raw_name=?1 WHERE tree=?2",
+            rusqlite::params![vec![b'x'; 3 * 1024 * 1024], tree],
+        )
+        .unwrap();
+        assert!(
+            matches!(client.read(), Err(BoardStoreError::Unavailable(_))),
+            "independent length preflight rejects allocation before listing collection"
+        );
+    }
+
+    #[test]
+    fn unreleased_old_schema_is_refused_before_wal_or_schema_mutation() {
+        let database = Database::new();
+        let raw = rusqlite::Connection::open(database.path()).unwrap();
+        raw.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA user_version=1; CREATE TABLE revisions(head TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT NOT NULL); CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),head TEXT NOT NULL,refuse INTEGER NOT NULL DEFAULT 0,fault INTEGER NOT NULL DEFAULT 0); CREATE TABLE files(path TEXT PRIMARY KEY,object TEXT NOT NULL,bytes BLOB NOT NULL); INSERT INTO files VALUES ('tasks/a.md','original',X'00FF');").unwrap();
+        let snapshot = || {
+            let schema: Vec<(String, Option<String>)> = raw
+                .prepare("SELECT name,sql FROM sqlite_schema ORDER BY name")
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            let journal: String = raw
+                .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+                .unwrap();
+            let version: i64 = raw
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap();
+            let bytes: Vec<u8> = raw
+                .query_row("SELECT bytes FROM files", [], |r| r.get(0))
+                .unwrap();
+            (schema, journal, version, bytes)
+        };
+        let before = snapshot();
+        assert!(matches!(
+            SqliteProjectBoardStore::open(&database.path(), identity("Reader")),
+            Err(BoardStoreError::Clash(_))
+        ));
+        assert_eq!(snapshot(), before);
+    }
 }
