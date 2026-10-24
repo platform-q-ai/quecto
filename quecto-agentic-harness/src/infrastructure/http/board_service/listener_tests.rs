@@ -170,5 +170,17 @@ fn a_live_socket_is_refused_and_a_stale_one_replaced() {
     drop(bind(&stale).unwrap());
     // The listener is closed, its file left behind: a stale socket.
     assert!(std::fs::symlink_metadata(&stale).is_ok());
-    assert!(bind(&stale).is_ok());
+    // A test running beside this one may fork a child (git) while the
+    // listener is open: until that child execs, it holds the descriptor
+    // and the socket still listens. So the stale socket is replaced once
+    // nothing holds it, within a bound.
+    let rebound = (0..100).find_map(|_| match bind(&stale) {
+        Ok(listener) => Some(Ok(listener)),
+        Err(BindError::AlreadyServing(_)) => {
+            std::thread::sleep(Duration::from_millis(20));
+            None
+        }
+        Err(error) => Some(Err(error)),
+    });
+    assert!(matches!(rebound, Some(Ok(_))), "{rebound:?}");
 }
