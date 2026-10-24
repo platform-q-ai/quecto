@@ -1,10 +1,7 @@
-//! The board server's graph (epic #2705 B4): the repository's board
-//! through the git store, read as git's placeholder reader (the server
-//! writes nothing yet: B7), this machine's clock as the clock authority,
-//! the stored blobs of its repository for its files, and the kernel's peer
-//! credentials letting in this process's own user only. The server reads
-//! its board through the `ProjectBoardStore` port alone, so a SQLite
-//! store (B2) slots in here with no server change.
+//! The board server's graph (epic #2705 B4): the git store, read only
+//! (writes are B7), its blobs for the files, this machine's clock, and
+//! peer credentials letting in this user only. A SQLite store (B2) slots
+//! in here with no server change.
 use std::sync::Arc;
 
 use crate::application::project_board::ports::{BoardClock, ProjectBoardStore, SnapshotFiles};
@@ -19,20 +16,14 @@ use crate::infrastructure::time::board_clock::SystemBoardClock;
 pub use crate::interface::cli::board_server::{BoardServerEnvironment, BoardServerHandles};
 
 /// Builds the board server for `environment`'s clone and board remote.
-///
 /// # Errors
-/// No git, a repository git cannot run in, no such remote, or a remote
-/// whose URL git cannot read or that names no board id: each said, with
-/// any secret or URL userinfo redacted.
+/// No git, no such remote, or one with no URL or board id: each said,
+/// secrets and URL userinfo redacted.
 pub fn build_board_server(
     environment: &BoardServerEnvironment,
 ) -> Result<BoardServerHandles, String> {
-    let refused = |why: &str| {
-        format!(
-            "board-server: {}",
-            redact_secrets(&redact_url_userinfo(why))
-        )
-    };
+    let redacted = |why: &str| redact_secrets(&redact_url_userinfo(why));
+    let refused = |why: &str| format!("board-server: {}", redacted(why));
     let vars = GitEnvironment::allowlisted(environment.vars.iter().cloned());
     let git = Git::reader(&environment.repo, vars).map_err(|error| {
         refused(&format!(

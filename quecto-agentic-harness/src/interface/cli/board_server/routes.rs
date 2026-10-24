@@ -1,11 +1,9 @@
-//! The board service's route table (epic #2705 B4), a fixed allowlist:
-//! `GET /v1/status` `{role, board, head}`, `GET /v1/time` `{time}`, and
-//! `GET /v1/boards/{id}/snapshot` `{board, head, files}` (stored bytes).
-//! A path outside the table is 404; one asked by another method is 405.
-//! One snapshot is served at a time (each holds its board's bytes): a
-//! second waits [`SNAPSHOT_WAIT`], then is answered 503 `busy`.
+//! The board service's route table (epic #2705 B4), an allowlist: `GET
+//! /v1/status`, `/v1/time` and `/v1/boards/{id}/snapshot` (else 404, or
+//! 405). One snapshot at a time; a second waits [`SNAPSHOT_WAIT`], then is
+//! answered 503 `busy`.
 use std::io::Write;
-use std::sync::{Condvar, Mutex};
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -26,7 +24,7 @@ pub const SNAPSHOT_WAIT: Duration = Duration::from_secs(5);
 /// The routes, over the server's reads of its board.
 pub struct BoardRoutes {
     serve: ServeBoard,
-    snapshots: OneAtATime,
+    snapshots: Mutex<()>,
     wait: Duration,
 }
 
@@ -58,50 +56,26 @@ impl Route {
     }
 }
 
-/// A gate one holder passes at a time; the others wait a bounded time.
-#[derive(Default)]
-struct OneAtATime {
-    busy: Mutex<bool>,
-    freed: Condvar,
-}
-
-/// The gate, held until dropped.
-struct Held<'a>(&'a OneAtATime);
-
-impl OneAtATime {
-    fn enter(&self, wait: Duration) -> Option<Held<'_>> {
-        let busy = self.busy.lock().ok()?;
-        let (mut busy, _) = self
-            .freed
-            .wait_timeout_while(busy, wait, |busy| *busy)
-            .ok()?;
-        match *busy {
-            false => {
-                *busy = true;
-                Some(Held(self))
-            }
-            true => None,
-        }
-    }
-}
-
-impl Drop for Held<'_> {
-    fn drop(&mut self) {
-        if let Ok(mut busy) = self.0.busy.lock() {
-            *busy = false;
-        }
-        self.0.freed.notify_one();
-    }
-}
-
 impl BoardRoutes {
     pub fn new(serve: ServeBoard) -> Self {
-        let (snapshots, wait) = (OneAtATime::default(), SNAPSHOT_WAIT);
+        let (snapshots, wait) = (Mutex::new(()), SNAPSHOT_WAIT);
         Self {
             serve,
             snapshots,
             wait,
         }
+    }
+
+    /// The snapshot gate, held until dropped, tried every 10 ms for `wait`.
+    fn gate(&self) -> Option<MutexGuard<'_, ()>> {
+        let tries = self.wait.as_millis() / 10 + 1;
+        (0..tries).find_map(|_| match self.snapshots.try_lock() {
+            Ok(held) => Some(held),
+            Err(_) => {
+                std::thread::sleep(Duration::from_millis(10));
+                None
+            }
+        })
     }
 
     fn route(&self, route: Route) -> ServiceReply {
@@ -123,7 +97,7 @@ impl BoardRoutes {
             },
             // An id that is not a board id names no board served.
             Route::Snapshot(id) => match BoardId::of_hex(&id) {
-                Some(board) => match self.snapshots.enter(self.wait) {
+                Some(board) => match self.gate() {
                     Some(_held) => match self.serve.snapshot(&board) {
                         Ok(snapshot) => snapshot_reply(snapshot),
                         Err(error) => failed(&error),
@@ -153,25 +127,24 @@ impl ServiceHandler for BoardRoutes {
     }
 }
 
-/// A snapshot's reply, written straight into one buffer, each file's
-/// bytes dropped once written. A file of UTF-8 text with no control
-/// character but tab and newline is sent as that text (at most twice its
-/// bytes in JSON); any other as base64; one with no bytes as none.
+/// A snapshot's reply, written into one buffer, each file dropped once
+/// written: plain UTF-8 as text (at most twice its bytes), else base64.
 fn snapshot_reply(snapshot: ServedSnapshot) -> ServiceReply {
     let held: usize = snapshot
         .files
         .iter()
-        .map(|file| file.bytes.as_ref().map_or(0, Vec::len))
+        .filter_map(|file| file.bytes.as_ref())
+        .map(Vec::len)
         .sum();
     let mut body = Vec::with_capacity(held.saturating_add(held / 3).saturating_add(4096));
-    match write_snapshot(&mut body, snapshot) {
-        Ok(()) => ServiceReply {
-            status: 200,
+    let written = write_snapshot(&mut body, snapshot);
+    written.map_or_else(
+        |error| failed(&ServeError::Files(error.to_string())),
+        |()| ServiceReply {
             body,
-            allow: None,
+            ..ServiceReply::json(200, &json!(null))
         },
-        Err(error) => failed(&ServeError::Files(error.to_string())),
-    }
+    )
 }
 
 fn write_snapshot(out: &mut Vec<u8>, snapshot: ServedSnapshot) -> std::io::Result<()> {
@@ -210,8 +183,7 @@ fn write_snapshot(out: &mut Vec<u8>, snapshot: ServedSnapshot) -> std::io::Resul
     out.write_all(b"]}")
 }
 
-/// A character a JSON string holds as itself, or as two bytes (`\n`,
-/// `\t`, `\"`, `\\`).
+/// A character JSON holds as itself, or as two bytes (`\n`, `\"`, ...).
 fn plain_char(c: char) -> bool {
     matches!(c, '\n' | '\t') || !c.is_control()
 }
@@ -221,10 +193,7 @@ fn coded(status: u16, code: &str, why: &str) -> ServiceReply {
     ServiceReply::json(status, &json!({ "error": why, "code": code }))
 }
 
-/// What a failed read is answered with: 404 for no such board, 413 for a
-/// board past one answer's bound, 500 (and a log line) for files that
-/// cannot be given whole and true, and 503 while the store or clock
-/// cannot answer.
+/// A failed read's reply, with its typed code (a 500 is logged too).
 fn failed(error: &ServeError) -> ServiceReply {
     let (status, code, why) = match error {
         ServeError::UnknownBoard => (404, "board", "no such board on this server".to_string()),

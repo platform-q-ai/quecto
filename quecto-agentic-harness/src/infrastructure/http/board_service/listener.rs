@@ -35,8 +35,7 @@ pub struct ServiceRequest {
     pub body: Vec<u8>,
 }
 
-/// A handler's reply: a status, a JSON body, and for a 405 the methods its
-/// path takes (`Allow`).
+/// A handler's reply: a status, a JSON body, and a 405's `Allow`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceReply {
     pub status: u16,
@@ -45,13 +44,8 @@ pub struct ServiceReply {
 }
 
 impl ServiceReply {
-    /// `value` as the body of a reply of `status`; a code outside 100 to
-    /// 599 is sent as 500 (never a panic on the data path).
+    /// `value` as the body of a reply of `status` (no code is sent as 500).
     pub fn json(status: u16, value: &serde_json::Value) -> Self {
-        let status = match (100..=599).contains(&status) {
-            true => status,
-            false => 500,
-        };
         let body = value.to_string().into_bytes();
         Self {
             status,
@@ -61,8 +55,7 @@ impl ServiceReply {
     }
 }
 
-/// What answers the service's requests. Blocking: the listener calls it
-/// on a blocking thread.
+/// What answers the service's requests, on a blocking thread.
 pub trait ServiceHandler: Send + Sync {
     fn answer(&self, request: &ServiceRequest) -> ServiceReply;
     /// The methods `path` takes (an `Allow` value), or `None` for no route.
@@ -71,15 +64,13 @@ pub trait ServiceHandler: Send + Sync {
 
 /// Reads who is at the other end of an accepted connection.
 pub trait PeerCredentials: Send + Sync {
-    /// The peer's effective uid.
-    ///
+    /// The peer's effective uid; a peer whose uid cannot be read is refused.
     /// # Errors
-    /// The credentials could not be read; the peer is then refused.
+    /// The credentials could not be read.
     fn uid(&self, stream: &UnixStream) -> io::Result<u32>;
 }
 
-/// [`PeerCredentials`] by the kernel's record of the peer
-/// (`SO_PEERCRED`, taken when it connected).
+/// [`PeerCredentials`] by `SO_PEERCRED`, taken when the peer connected.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SocketPeerCredentials;
 
@@ -95,8 +86,7 @@ pub fn this_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
-/// What a listener serves with: the handler, the peer reader, and the one
-/// uid let in.
+/// What a listener serves with: handler, peer reader, the uid let in.
 pub struct ServiceParts {
     pub handler: Arc<dyn ServiceHandler>,
     pub peers: Arc<dyn PeerCredentials>,
@@ -104,69 +94,52 @@ pub struct ServiceParts {
     pub limits: ConnectionLimits,
 }
 
-/// Each connection's deadlines ([`limits`]'s in production; tests shorten
-/// them): a write's wait for the peer, and the connection's lifetime.
+/// Each connection's deadlines; tests shorten them.
 #[derive(Debug, Clone, Copy)]
 pub struct ConnectionLimits {
     pub write_timeout: Duration,
     pub lifetime: Duration,
 }
 
-impl Default for ConnectionLimits {
-    fn default() -> Self {
-        let (write_timeout, lifetime) = (limits::WRITE_TIMEOUT, limits::CONNECTION_LIFETIME);
-        Self {
-            write_timeout,
-            lifetime,
-        }
-    }
+impl ConnectionLimits {
+    pub const PRODUCTION: Self = Self {
+        write_timeout: limits::WRITE_TIMEOUT,
+        lifetime: limits::CONNECTION_LIFETIME,
+    };
 }
 
-/// Why a socket was not bound.
+/// Why a socket was not bound: a server answers on it, or why not.
 #[derive(Debug)]
 pub enum BindError {
-    Relative(PathBuf),
-    /// Its directory is not one only this user can enter.
-    Directory(PathBuf, String),
-    /// Something other than this user's socket is at its path.
-    NotASocket(PathBuf),
     AlreadyServing(PathBuf),
-    Io(PathBuf, io::Error),
+    Refused(String),
 }
 
 impl std::fmt::Display for BindError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Relative(path) => write!(f, "the socket path {} is not absolute", path.display()),
-            Self::Directory(path, why) => write!(f, "{}: {why}", path.display()),
-            Self::NotASocket(path) => write!(
-                f,
-                "{} exists and is not a socket of this user's: it is left as it is",
-                path.display()
-            ),
             Self::AlreadyServing(path) => {
                 write!(f, "a server is already serving on {}", path.display())
             }
-            Self::Io(path, error) => write!(f, "{}: {error}", path.display()),
+            Self::Refused(why) => f.write_str(why),
         }
     }
 }
 
-impl std::error::Error for BindError {}
-
 /// Binds a Unix socket at `path`, mode 0600, in a directory of mode 0700
 /// (made if missing). Only a stale socket of this user's is replaced.
-///
 /// # Errors
-/// A relative path, a shared or foreign directory, a path holding
-/// anything but a stale socket of this user's, or the bind.
+/// A relative path, a shared directory, a path holding anything but a
+/// stale socket of this user's, or the bind.
 pub fn bind(path: &Path) -> Result<std::os::unix::net::UnixListener, BindError> {
-    let dir = match (path.is_absolute(), path.parent()) {
-        (true, Some(dir)) => dir,
-        (false, _) | (true, None) => return Err(BindError::Relative(path.to_path_buf())),
-    };
-    private_dir(dir)?;
-    let io = |error| BindError::Io(path.to_path_buf(), error);
+    let shown = path.display();
+    let relative = || BindError::Refused(format!("the socket path {shown} is not absolute"));
+    private_dir(
+        path.parent()
+            .filter(|_| path.is_absolute())
+            .ok_or_else(relative)?,
+    )?;
+    let io = |error| BindError::Refused(format!("{shown}: {error}"));
     match fs::symlink_metadata(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Ok(meta) if meta.file_type().is_socket() && meta.uid() == this_uid() => {
@@ -178,7 +151,11 @@ pub fn bind(path: &Path) -> Result<std::os::unix::net::UnixListener, BindError> 
                 Err(error) => return Err(io(error)),
             }
         }
-        Ok(_) => return Err(BindError::NotASocket(path.to_path_buf())),
+        Ok(_) => {
+            let why =
+                format!("{shown} exists and is not a socket of this user's: it is left as it is");
+            return Err(BindError::Refused(why));
+        }
         Err(error) => return Err(io(error)),
     }
     let listener = std::os::unix::net::UnixListener::bind(path).map_err(io)?;
@@ -189,11 +166,10 @@ pub fn bind(path: &Path) -> Result<std::os::unix::net::UnixListener, BindError> 
     }
 }
 
-/// `dir` as a directory of mode 0700 owned by this user: made so when
-/// missing, else taken only when it is so.
+/// `dir` as a directory of mode 0700 of this user's, made so if missing.
 fn private_dir(dir: &Path) -> Result<(), BindError> {
-    let refused = |why: &str| BindError::Directory(dir.to_path_buf(), why.to_string());
-    let io = |error| BindError::Io(dir.to_path_buf(), error);
+    let refused = |why: &str| BindError::Refused(format!("{}: {why}", dir.display()));
+    let io = |error: io::Error| refused(&error.to_string());
     match fs::symlink_metadata(dir).map_err(|error| error.kind()) {
         Ok(_) => {}
         Err(io::ErrorKind::NotFound) => match fs::DirBuilder::new().mode(0o700).create(dir) {
@@ -216,9 +192,8 @@ fn private_dir(dir: &Path) -> Result<(), BindError> {
     }
 }
 
-/// Serves `listener` until `stop` completes: each connection on its own
-/// task, at most [`limits::MAX_CONNECTIONS`] at once.
-///
+/// Serves `listener` until `stop` completes, at most
+/// [`limits::MAX_CONNECTIONS`] connections at once.
 /// # Errors
 /// The listener could not be handed to the runtime.
 pub async fn serve(
@@ -293,9 +268,8 @@ async fn connection(stream: UnixStream, parts: &ServiceParts) {
     }
 }
 
-/// Answers a peer that is not let in with 403, without parsing anything
-/// it sent; what it sent is read and dropped (to a bound) so it reads the
-/// answer whole.
+/// Answers a peer not let in with 403, parsing nothing it sent (only
+/// draining it, to a bound, so it reads the answer whole).
 async fn refuse(mut stream: UnixStream) {
     const BODY: &str = r#"{"error":"forbidden: only the server's own user may connect"}"#;
     let reply = format!(

@@ -12,7 +12,7 @@ fn a_connection_closes_at_the_end_of_its_lifetime() {
     let lifetime = Duration::from_millis(300);
     let limits = ConnectionLimits {
         lifetime,
-        ..ConnectionLimits::default()
+        ..ConnectionLimits::PRODUCTION
     };
     let running = start_with(SERVER_UID, 0, limits);
     let began = Instant::now();
@@ -69,7 +69,7 @@ fn peers_that_never_read_free_their_slots_for_a_fresh_client() {
     let write_timeout = Duration::from_millis(500);
     let limits = ConnectionLimits {
         write_timeout,
-        ..ConnectionLimits::default()
+        ..ConnectionLimits::PRODUCTION
     };
     let running = start_with(SERVER_UID, 64 * 1024, limits);
     let one = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\n\r\n";

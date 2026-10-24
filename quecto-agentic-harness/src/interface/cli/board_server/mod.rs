@@ -1,8 +1,7 @@
-//! `quecto board-server serve` (epic #2705 B4): serves the repository's
-//! board over HTTP/1.1 on a Unix socket until SIGINT or SIGTERM, to this
-//! user only. Composition builds the store, clock and files
-//! ([`BoardServerBuilder`]); this front end owns the command line, the
-//! route table and the one tokio runtime the command starts.
+//! `quecto board-server serve` (epic #2705 B4): the board over HTTP/1.1 on
+//! a Unix socket, to this user only, until SIGINT or SIGTERM. Composition
+//! builds the graph ([`BoardServerBuilder`]); this owns the command line,
+//! the route table and the one tokio runtime.
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,8 +13,8 @@ use crate::interface::cli::CliContext;
 pub mod routes;
 pub mod serve;
 
-/// What composition builds a board server from: the clone, its board
-/// remote, and the process environment (allowlisted for git there).
+/// What composition builds a board server from (the environment is
+/// allowlisted for git there).
 #[derive(Debug, Clone)]
 pub struct BoardServerEnvironment {
     pub repo: PathBuf,
@@ -33,9 +32,8 @@ pub struct BoardServerHandles {
 /// Composition's builder of a board server.
 pub type BoardServerBuilder = fn(&BoardServerEnvironment) -> Result<BoardServerHandles, String>;
 
-/// `quecto board-server <args>`: serves until stopped; 0 when stopped by
-/// a signal, 1 when it could not start or serve. Its one line out says
-/// where it serves and how long it took to start, as soon as it can.
+/// `quecto board-server <args>`: 0 once stopped by a signal, 1 when it
+/// could not start or serve; its one line out comes as soon as it serves.
 pub fn cmd_board_server(
     ctx: &CliContext,
     args: &[String],

@@ -28,7 +28,6 @@ pub enum SnapshotFilesError {
 /// read, at the path a read finds it, and one per file set aside.
 pub trait SnapshotFiles: Send + Sync {
     /// The files of `snapshot`, in path order.
-    ///
     /// # Errors
     /// Files past the bound of one answer, or bytes that cannot be read.
     fn files(&self, snapshot: &BoardSnapshot) -> Result<Vec<BoardFile>, SnapshotFilesError>;
@@ -64,15 +63,13 @@ pub struct ServedSnapshot {
     pub files: Vec<BoardFile>,
 }
 
-/// Why a board server could not answer.
+/// Why a board server could not answer: a board it does not serve, its
+/// store's or clock's failure, files it cannot give whole and true, or
+/// files past what one answer holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServeError {
-    /// The request named a board this server does not serve.
     UnknownBoard,
-    /// The board's store or clock failed, or there is no board.
     Board(ProjectBoardError),
-    /// The board's files could not be given whole and true: why.
     Files(String),
-    /// The board's files are past what one answer holds: why.
     TooLarge(String),
 }

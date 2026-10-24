@@ -1,6 +1,5 @@
-//! `quecto board-server serve`: its options, and the one tokio runtime
-//! the command starts, confined to it. The socket is bound before the
-//! runtime starts and removed when the server stops.
+//! `quecto board-server serve`: its options, and the one tokio runtime,
+//! confined to the command.
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,17 +8,14 @@ use std::time::{Duration, Instant};
 use super::BoardServerHandles;
 use super::routes::BoardRoutes;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
-
 use crate::infrastructure::http::board_service::listener::{self, ConnectionLimits, ServiceParts};
 
-/// How the command is used.
 pub const USAGE: &str =
     "usage: quecto board-server serve --socket <path> --repo <clone> [--remote <name>]";
 
 /// The blocking threads the server's reads may hold at once.
 const BLOCKING_THREADS: usize = 16;
 
-/// `serve`'s options.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServeOptions {
     pub socket: PathBuf,
@@ -27,13 +23,10 @@ pub struct ServeOptions {
     pub remote: String,
 }
 
-/// `args` (after `board-server`) as `serve`'s options: `--socket` and
-/// `--repo` required, `--remote` defaulting to `origin`, each once, and
-/// nothing else.
-///
+/// `args` (after `board-server`) as `serve`'s options, each at most once.
 /// # Errors
-/// Another action, an option outside the allowlist, one without its
-/// value or given twice, or a required one missing.
+/// Another action or option, one without its value or twice, or one of
+/// `--socket` and `--repo` missing.
 pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
     let refused = |why: String| Err(format!("board-server: {why}"));
     let Some((action, options)) = args.split_first() else {
@@ -71,8 +64,7 @@ pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
     }
 }
 
-/// A server that has started: where, which board, and how long it took
-/// from the command's start to its socket listening.
+/// A server that has started, and how long it took to listen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Started {
     pub socket: PathBuf,
@@ -80,13 +72,10 @@ pub struct Started {
     pub elapsed: Duration,
 }
 
-/// Serves `handles` on `socket` until the future `stop` makes completes:
-/// binds the socket, starts the runtime, tells `ready`, serves, then
-/// removes the socket.
-///
+/// Binds `socket`, starts the runtime, tells `ready`, serves `handles`
+/// until the future `stop` makes completes, then removes the socket.
 /// # Errors
-/// The socket could not be bound, the runtime not started, or the
-/// listener not served.
+/// The socket could not be bound, the runtime started, or it served.
 pub fn serve<S, F>(
     handles: BoardServerHandles,
     socket: &Path,
@@ -100,14 +89,13 @@ where
 {
     let board = handles.serve.board().clone();
     let bound = listener::bind(socket).map_err(|error| format!("board-server: {error}"))?;
-    // The socket's identity: only it is removed at the end, never a newer
-    // server's socket bound at the same path since.
+    // Only this socket is removed at the end, never a newer server's.
     let ours = identity(socket);
     let parts = ServiceParts {
         handler: Arc::new(BoardRoutes::new(handles.serve)),
         peers: handles.peers,
         uid: handles.uid,
-        limits: ConnectionLimits::default(),
+        limits: ConnectionLimits::PRODUCTION,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

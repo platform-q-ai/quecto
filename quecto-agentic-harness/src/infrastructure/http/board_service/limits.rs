@@ -1,20 +1,10 @@
-//! The board service's limits (epic #2705 B4), each an allowlist:
-//!
-//! - methods: `GET` and `POST` (else 405);
-//! - bodies only of a declared `Content-Length`, up to 1 MiB (else 411,
-//!   400 or 413);
-//! - at most 32 headers in 8 KiB (hyper's parser: 431);
-//! - 10 s for a request's head to arrive, which also closes a keep-alive
-//!   connection idle that long, and 10 s for its body (408);
-//! - 10 s for a peer to take any of a reply's bytes ([`WriteDeadline`]): a
-//!   peer that sends requests but never reads its replies loses its
-//!   connection, so it never holds a connection slot for good;
-//! - 64 connections served at once; a further peer waits to be accepted;
-//! - a connection lives at most 60 s or 1,000 requests, whichever comes
-//!   first, then finishes what it is answering and closes, so 64 busy
-//!   peers cannot hold every slot for good.
-//!
-//! [`admit`] judges a parsed head before any body is read.
+//! The board service's limits (epic #2705 B4), each an allowlist: `GET`
+//! and `POST` (else 405); bodies of a declared `Content-Length` up to 1 MiB
+//! (else 411, 400 or 413); 32 headers in 8 KiB (431); 10 s for a head,
+//! which also ends an idle keep-alive, and 10 s for a body (408); 10 s for
+//! a peer to take any reply byte ([`WriteDeadline`]); 64 connections at
+//! once; and each connection at most 60 s or 1,000 requests, then it
+//! finishes what it answers and closes. No peer holds a slot for good.
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
@@ -31,13 +21,11 @@ pub const MAX_HEADERS: usize = 32;
 pub const MAX_HEAD_BYTES: usize = 8 * 1024;
 /// The most bytes a request's body may declare.
 pub const MAX_BODY_BYTES: u64 = 1024 * 1024;
-/// How long a request's head, and then its body, may take to arrive.
+/// How long a head, then a body, may take to arrive; and a write may wait.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long a write may wait for the peer to take any byte.
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
-/// The most connections served at once.
+/// The most connections at once; each one's longest life and most requests.
 pub const MAX_CONNECTIONS: usize = 64;
-/// The longest a connection lives, and the most requests it takes.
 pub const CONNECTION_LIFETIME: Duration = Duration::from_secs(60);
 pub const MAX_REQUESTS: usize = 1_000;
 
@@ -51,13 +39,9 @@ pub enum Method {
 /// Why a request is refused before its body is read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
-    /// A method outside the allowlist.
     Method,
-    /// A body of no declared length (`Transfer-Encoding`).
     LengthRequired,
-    /// A `Content-Length` that is not one plain decimal number.
     BadLength,
-    /// A declared body past [`MAX_BODY_BYTES`].
     TooLarge,
 }
 
@@ -116,9 +100,7 @@ pub fn admit(
 /// `bytes` as a plain decimal number of at most 19 digits (so it fits).
 fn decimal(bytes: &[u8]) -> Option<u64> {
     let plain = (1..=19).contains(&bytes.len()) && bytes.iter().all(u8::is_ascii_digit);
-    plain
-        .then(|| std::str::from_utf8(bytes).ok()?.parse().ok())
-        .flatten()
+    plain.then(|| std::str::from_utf8(bytes).ok()?.parse().ok())?
 }
 
 /// An HTTP/1.1 connection builder with the head limits and timeout set.
@@ -133,9 +115,8 @@ pub fn http1_builder() -> http1::Builder {
     builder
 }
 
-/// A connection whose writes fail with `TimedOut` once the peer has taken
-/// no byte for `limit`: each write or flush that cannot go on starts the
-/// clock, and any progress stops it. Reads pass through.
+/// A connection whose writes fail `TimedOut` once the peer takes no byte
+/// for `limit`: a stalled write starts the clock, any progress stops it.
 pub struct WriteDeadline<S> {
     io: S,
     limit: Duration,

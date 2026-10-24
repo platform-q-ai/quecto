@@ -287,8 +287,7 @@ pub struct CliContext {
     /// T3), into the day's `board-cli` log; without it the CLI records
     /// nothing.
     pub board_cli_recording: Option<board::CliRecordingBuilder>,
-    /// Composition's board server builder (epic #2705 B4); `quecto
-    /// board-server` refuses to run without it.
+    /// Composition's board server builder (epic #2705 B4).
     pub board_server: Option<board_server::BoardServerBuilder>,
     /// Output reaches the real terminal (`run`, not `run_with_output`): a
     /// one-shot run writes its answer out before it settles its children.

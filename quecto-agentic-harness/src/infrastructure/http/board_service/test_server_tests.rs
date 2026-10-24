@@ -67,7 +67,7 @@ impl Drop for Running {
 
 /// A listener whose peers all read as `peer_uid`.
 pub fn start(peer_uid: u32) -> Running {
-    start_with(peer_uid, 0, ConnectionLimits::default())
+    start_with(peer_uid, 0, ConnectionLimits::PRODUCTION)
 }
 
 /// A listener whose peers all read as `peer_uid`, its replies padded by

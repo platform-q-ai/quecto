@@ -1,9 +1,7 @@
-//! What a board server answers of the one board it serves (epic #2705
-//! B4): its status, its time and its stored files at the head.
-//!
-//! A panic here is fatal: the panic hook aborts the whole server for any
-//! panic outside a tool call (ADR-0029). A breach of a port's contract is
-//! a [`ServeError`] instead, and nothing indexes or unwraps board data.
+//! A board server's reads of its board (epic #2705 B4). A panic here is
+//! fatal: the panic hook aborts the whole server outside a tool call
+//! (ADR-0029). A breach of a port's contract is a [`ServeError`] instead,
+//! and nothing indexes or unwraps board data.
 use std::sync::Arc;
 
 use crate::application::project_board::dto::ProjectBoardError;
@@ -42,7 +40,6 @@ impl ServeBoard {
     }
 
     /// The server's role, its board, and the head its store gives.
-    ///
     /// # Errors
     /// The store could not be read.
     pub fn status(&self) -> Result<ServedStatus, ServeError> {
@@ -59,7 +56,6 @@ impl ServeBoard {
     }
 
     /// What time it is, by the server's clock: the clock authority.
-    ///
     /// # Errors
     /// The clock reads a time the board cannot spell.
     pub fn time(&self) -> Result<Timestamp, ServeError> {
@@ -68,11 +64,9 @@ impl ServeBoard {
             .map_err(|error| ServeError::Board(ProjectBoardError::Clock(error)))
     }
 
-    /// `board`'s files at its head, when it is the board served.
-    ///
+    /// `board`'s stored files at its head, when it is the board served.
     /// # Errors
-    /// Another board, no board, the store's failure, or an artifact no
-    /// file holds.
+    /// Another board, no board, or the store's or files' failure.
     pub fn snapshot(&self, board: &BoardId) -> Result<ServedSnapshot, ServeError> {
         let snapshot = match *board == self.board {
             true => self.store.read(),

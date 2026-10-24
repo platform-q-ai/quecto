@@ -277,7 +277,7 @@ fn a_second_snapshot_at_once_waits_then_is_busy() {
     };
     let routes = Arc::new(BoardRoutes {
         serve: serving_with(&store, Arc::new(slow)),
-        snapshots: OneAtATime::default(),
+        snapshots: std::sync::Mutex::new(()),
         wait: std::time::Duration::from_millis(50),
     });
     let first = {
