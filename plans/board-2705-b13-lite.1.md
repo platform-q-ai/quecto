@@ -5,10 +5,10 @@
 |---|---|
 | Task | board-2705-b13-lite |
 | Version | 1 |
-| State | draft |
+| State | discarded |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
 | Created | 2026-10-23T16:49:57Z |
-| Updated | 2026-10-23T16:49:57Z |
+| Updated | 2026-10-24T03:02:25Z |
 
 ## Approach
 One serial PR after remote runs. Format4 moved fence/read-write answer plus application backup use case/SQLite online backup CLI. Scratch rollback rehearsal and consistent completed copies for existing sync; no live fence/import/cut-over. Red-first/independent review, hard900 all-in.
