@@ -5,12 +5,12 @@
 |---|---|
 | Task | board-service-mvp-2705 |
 | Version | 1 |
-| State | accepted |
+| State | superseded |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted at | 2026-10-23T16:45:28Z |
 | Created | 2026-10-23T16:45:10Z |
-| Updated | 2026-10-23T16:45:28Z |
+| Updated | 2026-10-24T00:11:14Z |
 
 ## Approach
 Deliver nine owner-approved serial MVP stages in minimum complete independently green PRs: B2, B3, B1 after #2648 merged, B4+B6, B7, B5-lite, B8, B13-lite, Pocket P1+P2. Revised handoffs stored externally at /home/shane-pocket/handover/board-epic/mvp-planning/. Earlier32-PR plan rejected. One PR per stage baseline; measured splitting only if unavoidable above900. B2 forecast825 approved above500 target, hard900 inclusive of tests/version. Separate fresh red, delivery and independent review swarms; compiling failing red commit handed off as verified bundle, never pushed alone. Version bump final, merge-requested CI, independent current-head review and resolved threads before serial merge. At most two building members. Stop before deployment/cut-over and preserve live systems unchanged.
