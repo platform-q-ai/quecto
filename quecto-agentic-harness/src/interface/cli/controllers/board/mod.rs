@@ -12,6 +12,16 @@
 //! is accepted and changes nothing: the answer is always JSON. A read
 //! needs no committer; a write needs the repository's configured one.
 //!
+//! `--board-id <16 hex digits>` and `--remote-url <url>` (#2705 B1) name
+//! where the board is, as a caller that already knows (the pocket relay)
+//! can: the id its records name it by and the remote's fetch URL. A read
+//! takes each one given as given, so git is not asked for it; with both,
+//! a read is composed with one git process: the check that `--remote` is
+//! a remote the clone configures, with a URL of its own, so git never
+//! takes the name for a folder (the request itself then reads the board
+//! with git). A write takes neither on trust: git names the location, as
+//! without them.
+//!
 //! `--summary` (no value; `list`, `list_ready` and `list_takeable` only,
 //! with flags or `--input` alike) gives each listed task its `summary`:
 //! where its plan and latest run stand, read from one whole read of the
@@ -70,7 +80,10 @@ use serde_json::Value;
 
 use crate::application::project_board::operations::ListSummaries;
 use crate::application::project_board::telemetry::BoardRecording;
-use crate::domain::project_board::value_objects::telemetry::{Client, FaultKind, FrontEnd};
+use crate::domain::project_board::value_objects::shown_text::shown_char;
+use crate::domain::project_board::value_objects::telemetry::{
+    BoardId, Client, FaultKind, FrontEnd,
+};
 use crate::interface::cli::CliContext;
 use crate::interface::tools::project_board::recording::{BoardCall, CLIENT_VARIABLE, named_client};
 use crate::interface::tools::project_board::request::{RequestError, fields_of};
@@ -78,7 +91,8 @@ use crate::interface::tools::project_board::site::{self, BoardSite};
 use crate::interface::tools::project_board::{MAX_REQUEST_BYTES, command_line, json};
 
 pub use crate::interface::tools::project_board::site::{
-    Access, BuildError, ProjectBoardEnvironment, ProjectBoardHandles, ProjectBoardHandlesBuilder,
+    Access, BuildError, KnownLocation, ProjectBoardEnvironment, ProjectBoardHandles,
+    ProjectBoardHandlesBuilder,
 };
 
 /// Composition's builder of the agent `board` tool's recording (epic
@@ -152,7 +166,25 @@ fn client(named: Option<&OsStr>) -> Client {
 }
 
 const USAGE: &str = "usage: quecto board <op> [--<field> <value>]... [--input <json>|-] \
-                     [--repo <path>] [--remote <name>] [--json] [--summary]\n";
+                     [--repo <path>] [--remote <name>] [--board-id <hex>] \
+                     [--remote-url <url>] [--json] [--summary]\n";
+
+/// The most bytes `--remote-url` takes.
+const MAX_REMOTE_URL_BYTES: usize = 4096;
+
+/// Why `--board-id` is refused.
+const BOARD_ID_SHAPE: &str = "must be 16 lower-case hex digits";
+
+/// Why `--remote-url` is refused.
+const REMOTE_URL_SHAPE: &str = "must be at most 4096 bytes of shown characters and spaces";
+
+/// `--remote-url`'s value, when it is one the command line takes: at most
+/// [`MAX_REMOTE_URL_BYTES`] of shown characters and plain spaces (an
+/// allowlist: no control or invisible character reaches git or a record).
+fn remote_url(value: String) -> Option<String> {
+    let shown = value.chars().all(|c| c == ' ' || shown_char(c));
+    (shown && value.len() <= MAX_REMOTE_URL_BYTES).then_some(value)
+}
 
 /// The command line, read.
 struct Line {
@@ -161,6 +193,8 @@ struct Line {
     input: Option<String>,
     repo: Option<PathBuf>,
     remote: String,
+    /// `--board-id` and `--remote-url`: where the board is, if known.
+    known: KnownLocation,
     /// `--summary`: a listing's tasks each with its summary.
     summary: bool,
 }
@@ -180,6 +214,7 @@ fn read_line(args: &[String]) -> Result<Line, LineRefused> {
         input: None,
         repo: None,
         remote: "origin".into(),
+        known: KnownLocation::default(),
         summary: false,
     };
     match read_into(&mut line, args) {
@@ -225,6 +260,20 @@ fn read_into(line: &mut Line, args: &[String]) -> Result<(), RequestError> {
             "--input" => line.input = Some(own("--input", rest.next())?),
             "--repo" => line.repo = Some(PathBuf::from(own("--repo", rest.next())?)),
             "--remote" => line.remote = own("--remote", rest.next())?,
+            "--board-id" => {
+                let given = own("--board-id", rest.next())?;
+                let id = BoardId::of_hex(&given).ok_or_else(|| {
+                    invalid("--board-id", BOARD_ID_SHAPE, FaultKind::InvalidValue)
+                })?;
+                line.known.board_id = Some(id);
+            }
+            "--remote-url" => {
+                let given = own("--remote-url", rest.next())?;
+                let url = remote_url(given).ok_or_else(|| {
+                    invalid("--remote-url", REMOTE_URL_SHAPE, FaultKind::InvalidValue)
+                })?;
+                line.known.remote_url = Some(url);
+            }
             flag if flag.starts_with("--") => {
                 // An unknown flag is never echoed back as a field.
                 let value = rest.next().ok_or_else(|| {
@@ -419,6 +468,7 @@ fn answer(ctx: &CliContext, args: &[String], call: &mut BoardCall) -> Value {
     let site = BoardSite {
         repo,
         remote: line.remote.clone(),
+        known: line.known.clone(),
         build: ctx.project_board,
         launcher: None,
         swarm_session: None,

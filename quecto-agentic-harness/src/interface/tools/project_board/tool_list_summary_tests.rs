@@ -144,6 +144,7 @@ fn environment() -> ProjectBoardEnvironment {
     ProjectBoardEnvironment {
         repo: std::path::PathBuf::from("."),
         remote: "origin".into(),
+        known: Default::default(),
         access: crate::interface::tools::project_board::site::Access::Read,
         vars: vec![],
         cancelled: None,

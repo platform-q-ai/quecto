@@ -12,6 +12,7 @@ fn tool(recordings: &Arc<SessionRecording>) -> BoardTool {
     let site = BoardSite {
         repo: ".".into(),
         remote: "origin".into(),
+        known: Default::default(),
         build: None,
         launcher: None,
         swarm_session: None,

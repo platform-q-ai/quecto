@@ -286,6 +286,7 @@ async fn an_attached_session_records_the_board_tools_calls() {
         let site = BoardSite {
             repo: cwd.path().into(),
             remote: "origin".into(),
+            known: Default::default(),
             build: None,
             launcher: None,
             swarm_session: None,
@@ -349,6 +350,7 @@ async fn a_session_with_the_event_log_off_records_no_board_tool_call() {
     let site = BoardSite {
         repo: cwd.path().into(),
         remote: "origin".into(),
+        known: Default::default(),
         build: None,
         launcher: None,
         swarm_session: None,
