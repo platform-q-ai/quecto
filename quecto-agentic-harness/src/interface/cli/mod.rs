@@ -1,4 +1,3 @@
-pub mod board;
 pub mod controllers;
 /// Drive an in-process harness through the termination-signal path (#1938)
 /// without signalling the test process.
@@ -9,7 +8,7 @@ pub use controllers::container::{
     ContainerStatusBuilder, EnvironmentRegistryBuilder,
 };
 use controllers::{
-    admission_broker, admission_handles, auth, catalogue_handles, claude_member,
+    admission_broker, admission_handles, auth, board, catalogue_handles, claude_member,
     configuration_handles, container_config_handles, retention_handles, run_end_fleet,
     swarm_board_handles,
 };
@@ -29,9 +28,6 @@ mod uds_thinking_1231_tests;
 use crate::application::configuration::dto::{ConfigSelection, ConfigSelectionRequest};
 use controllers::config_flag::{extract_config_flag, strip_global_config_flag};
 use std::path::PathBuf;
-
-// Re-export shared functions for backward compatibility.
-pub use super::shared::merge_prompts;
 
 /// Result of a CLI invocation, capturing stdout, stderr, and exit code.
 #[derive(Debug, Clone)]

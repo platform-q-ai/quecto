@@ -429,7 +429,7 @@ fn given_no_stored_credential(world: &mut QuectoWorld, provider: String) {
 
 #[when("the gateway initializes providers")]
 fn when_gateway_initializes_providers(world: &mut QuectoWorld) {
-    use quecto::interface::shared::resolve_api_key;
+    use quecto::interface::cli::controllers::shared::resolve_api_key;
 
     let config = world
         .gateway_config
@@ -459,7 +459,7 @@ fn then_openai_provider_uses_key(world: &mut QuectoWorld, expected: String) {
 
 #[when("the gateway checks provider readiness")]
 fn when_gateway_checks_readiness(world: &mut QuectoWorld) {
-    use quecto::interface::shared::check_provider_readiness;
+    use quecto::interface::cli::controllers::shared::check_provider_readiness;
 
     let store = world
         .gateway_credential_store
@@ -741,7 +741,7 @@ fn given_mock_oauth_refresh_server_error(world: &mut QuectoWorld) {
 #[when(expr = "the gateway resolves API key with refresh for {string}")]
 fn when_gateway_resolves_with_refresh(world: &mut QuectoWorld, provider: String) {
     use quecto::infrastructure::auth::oauth::OAuthConfig;
-    use quecto::interface::shared::resolve_api_key_with_refresh_async_with_oauth_config;
+    use quecto::interface::cli::controllers::shared::resolve_api_key_with_refresh_async_with_oauth_config;
 
     let config = world
         .gateway_config

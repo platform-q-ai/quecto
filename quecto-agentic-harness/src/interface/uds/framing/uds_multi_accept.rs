@@ -34,7 +34,8 @@ pub(in crate::interface) struct AcceptLoopArgs {
         Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     /// Live workflow engine (#914): read mid-turn so a busy `get_state` reports
     /// current step progress, not the turn-boundary frozen snapshot.
-    pub(in crate::interface) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    pub(in crate::interface) workflow_state:
+        Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
     pub(in crate::interface) workspace_path: std::path::PathBuf,
     /// Launch-bound parent control / teardown edge shared by every
     /// connection (#1935).

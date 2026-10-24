@@ -161,9 +161,7 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     /// selection the spawn tool resolves `container: true` through and the
     /// discovery query it and agent_cmd list through; `None` refuses new
     /// containers and lists nothing.
-    pub container_configs: Option<
-        crate::interface::cli::controllers::container_config_handles::ContainerConfigHandles,
-    >,
+    pub container_configs: Option<super::container_config_handles::ContainerConfigHandles>,
     /// Composition's durable environment registry (#2024 S4d) the spawn
     /// tool commits to; `None` (unit rigs) builds an in-memory one.
     pub environment_registry:
@@ -197,7 +195,7 @@ pub(crate) struct ToolRuntimeBuild {
     /// The environment control slot (#2070) the dispatch loop hands the
     /// teardown, for the emptied `retained` environments an owner exit ends.
     pub environment_control: Option<agent_cmd_containers::EnvironmentControlSlot>,
-    pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    pub workflow_state: Option<super::shared::WorkflowStateHandle>,
     pub policy_state: ToolRuntimePolicyState,
     pub catalogue_entries:
         Vec<crate::domain::tool_policy::value_objects::tool_descriptor::ToolCatalogueEntry>,
@@ -351,7 +349,7 @@ pub(crate) fn build_tool_runtime(
         swarm_participation: swarm_participation.clone(),
         swarm_context,
         base_dir: base_dir.to_path_buf(),
-        socket_dir: crate::interface::shared::xdg_runtime_dir_or_temp(),
+        socket_dir: super::shared::xdg_runtime_dir_or_temp(),
         broadcast_tx: workflow.broadcast_tx.clone(),
         parent_session_name,
         inherited_tool_policy: None,
@@ -468,13 +466,10 @@ pub(crate) fn build_tool_runtime(
         });
     }
 
-    let ext_registry = crate::interface::shared::build_and_register_native_extensions(
-        config,
-        http_client,
-        web_fetch_tool,
-    );
+    let ext_registry =
+        super::shared::build_and_register_native_extensions(config, http_client, web_fetch_tool);
     let extension_prompt_snippets = ext_registry.system_prompt_snippets();
-    crate::interface::shared::register_bundled_native_extension_tools(&mut registry, &ext_registry);
+    super::shared::register_bundled_native_extension_tools(&mut registry, &ext_registry);
     if !policy_state.web_default_enabled {
         registry.disable_tool_by_entrypoint_default("web_search");
         registry.disable_tool_by_entrypoint_default("web_fetch");
@@ -563,7 +558,7 @@ fn require_requested_workflow_tool(
 /// requested bound spec could not be loaded.
 #[derive(Debug)]
 struct WorkflowRuntime {
-    engine: Option<crate::interface::shared::WorkflowStateHandle>,
+    engine: Option<super::shared::WorkflowStateHandle>,
     spec_error: Option<String>,
 }
 
@@ -658,7 +653,7 @@ fn build_workflow_runtime(
             }
         }
     };
-    let state = crate::interface::shared::register_workflow_tool_with_participation(
+    let state = super::shared::register_workflow_tool_with_participation(
         registry,
         wf_config,
         workflow.workflow_guards,
@@ -691,27 +686,21 @@ fn build_workflow_runtime(
 }
 
 #[cfg(test)]
-#[path = "tool_runtime_catalogue_tests.rs"]
 mod catalogue_tests;
 
 #[cfg(test)]
-#[path = "tool_runtime_profile_tests.rs"]
 mod profile_tests;
 
 #[cfg(test)]
-#[path = "tool_runtime_swarm_board_tests.rs"]
 mod swarm_board_tests;
 
 #[cfg(test)]
-#[path = "tool_runtime_inherited_workflow_tests.rs"]
 mod inherited_workflow_tests;
 
 #[cfg(test)]
-#[path = "tool_runtime_workflow_denial_tests.rs"]
 mod workflow_denial_tests;
 
 #[cfg(test)]
-#[path = "tool_runtime_workflow_engine_tests.rs"]
 mod workflow_engine_tests;
 
 /// Canonicalize the parent's own config path before it is plumbed into the

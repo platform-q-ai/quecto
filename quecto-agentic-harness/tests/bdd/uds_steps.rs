@@ -80,7 +80,8 @@ pub(crate) struct UdsAgentContext {
         std::sync::Mutex<quecto::infrastructure::extensions::registry::ExtensionRegistry>,
     >,
     pub(crate) persist: bool,
-    pub(crate) workflow_state: Option<quecto::interface::shared::WorkflowStateHandle>,
+    pub(crate) workflow_state:
+        Option<quecto::interface::cli::controllers::shared::WorkflowStateHandle>,
     pub(crate) workflow_config: Option<quecto::domain::workflow::WorkflowConfig>,
     pub(crate) broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     /// The run's catalogue handles (#1849), composed over its reloadable
@@ -162,7 +163,7 @@ pub(crate) fn build_uds_agent(
 
     // Register workflow engine when scenario requests it (#568–#577).
     let workflow_state = if world._workflow_enabled {
-        match quecto::interface::shared::register_workflow_tool(
+        match quecto::interface::cli::controllers::shared::register_workflow_tool(
             &mut registry,
             config.workflow.clone(),
             true, // guards enabled
@@ -194,7 +195,7 @@ pub(crate) fn build_uds_agent(
 
     // Build empty extension registry (script extensions removed in #353).
     let ext_registry = quecto::infrastructure::extensions::registry::ExtensionRegistry::new();
-    quecto::interface::shared::register_bundled_native_extension_tools(
+    quecto::interface::cli::controllers::shared::register_bundled_native_extension_tools(
         &mut registry,
         &ext_registry,
     );

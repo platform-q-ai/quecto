@@ -9,7 +9,7 @@ use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
 use crate::application::sessions::ports::{SessionKeyPropagation, SessionSwitchRuntime};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::interface::shared::WorkflowStateHandle;
+use crate::interface::cli::controllers::shared::WorkflowStateHandle;
 use crate::interface::uds::controllers::uds_turn_accounting::LoopTurnAccounting;
 use crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle;
 

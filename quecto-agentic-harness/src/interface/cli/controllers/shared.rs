@@ -19,7 +19,7 @@ pub fn agent_role_preamble() -> &'static str {
 
 /// Parent-only routing policy, kept out of the shared manual.
 fn parent_coordination_policy() -> &'static str {
-    include_str!("../../../PARENT_PLAYBOOK.md").trim_ascii_end()
+    include_str!("../../../../../PARENT_PLAYBOOK.md").trim_ascii_end()
 }
 
 /// Child ownership boundary permits useful decomposition without coordinator chains.
@@ -34,7 +34,7 @@ fn coordinator_role_preamble() -> &'static str {
 
 /// Coordinator-only policy, packaged beside the parent playbook (#2461).
 fn coordinator_playbook() -> &'static str {
-    include_str!("../../../COORDINATOR_PLAYBOOK.md").trim_ascii_end()
+    include_str!("../../../../../COORDINATOR_PLAYBOOK.md").trim_ascii_end()
 }
 
 /// Which core prompt an agent starts from (#2461), chosen only by its
@@ -169,7 +169,6 @@ pub fn append_extension_prompt(system: &mut String, snippets: &str) {
 pub type WorkflowStateHandle =
     std::sync::Arc<std::sync::Mutex<crate::domain::workflow::WorkflowEngine>>;
 
-#[path = "shared_workflow.rs"]
 mod shared_workflow;
 #[cfg(any(test, feature = "test-support"))]
 pub use shared_workflow::register_workflow_tool;
@@ -386,7 +385,7 @@ pub fn build_official_tool_registry(
         workspace,
         sandbox,
         exec_options,
-        crate::interface::tool_runtime::swarm_context(),
+        super::tool_runtime::swarm_context(),
     )
 }
 
@@ -434,10 +433,6 @@ pub fn register_bundled_native_extension_tools(
     }
 }
 
-pub(crate) use crate::interface::tool_runtime::{
-    ToolEntrypoint, ToolRuntimeBuildArgs, ToolRuntimeWorkflowPolicy, build_tool_runtime,
-};
-
 /// Resolve the XDG runtime directory or fall back to temp.
 ///
 /// Returns `$XDG_RUNTIME_DIR` if it exists, is a directory, and is writable.
@@ -457,17 +452,13 @@ pub fn xdg_runtime_dir_or_temp() -> std::path::PathBuf {
 }
 
 #[cfg(test)]
-#[path = "native_provider_catalogue_tests.rs"]
 mod native_provider_catalogue_tests;
 
 #[cfg(test)]
-#[path = "shared_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "shared_cov_tests.rs"]
 mod cov_tests;
 
 #[cfg(test)]
-#[path = "shared_parent_policy_tests.rs"]
 mod parent_policy_tests;

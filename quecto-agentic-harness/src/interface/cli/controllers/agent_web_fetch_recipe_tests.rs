@@ -1,7 +1,7 @@
 //! #1942 ledger row 12: every production agent construction, the plain CLI
 //! run, the UDS agent and a spawned child of either, builds its web_fetch
 //! tool through `build_agent_from_config`, which hands the web-fetch
-//! factory `interface::shared::web_fetch_client_recipe()`. A recording
+//! factory `interface::cli::controllers::shared::web_fetch_client_recipe()`. A recording
 //! factory (the real composition underneath) shows the recipe each got, and
 //! the built agent is shown to carry the very tool the factory returned,
 //! which fetches from a local listener. (The recording factory builds the
@@ -93,7 +93,8 @@ fn every_agent_entry_point_builds_web_fetch_from_the_production_recipe() {
         let (timeout, returned) = *received.last().unwrap();
         assert_eq!(
             timeout,
-            crate::interface::shared::web_fetch_client_recipe().configured_connect_timeout(),
+            crate::interface::cli::controllers::shared::web_fetch_client_recipe()
+                .configured_connect_timeout(),
             "{entry}: the production recipe"
         );
         assert_eq!(

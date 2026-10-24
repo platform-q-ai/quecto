@@ -68,10 +68,10 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::CliContext;
 use crate::application::project_board::operations::ListSummaries;
 use crate::application::project_board::telemetry::BoardRecording;
 use crate::domain::project_board::value_objects::telemetry::{Client, FaultKind, FrontEnd};
+use crate::interface::cli::CliContext;
 use crate::interface::tools::project_board::recording::{BoardCall, CLIENT_VARIABLE, named_client};
 use crate::interface::tools::project_board::request::{RequestError, fields_of};
 use crate::interface::tools::project_board::site::{self, BoardSite};
@@ -431,5 +431,4 @@ fn answer(ctx: &CliContext, args: &[String], call: &mut BoardCall) -> Value {
 }
 
 #[cfg(test)]
-#[path = "mod_tests.rs"]
 mod tests;

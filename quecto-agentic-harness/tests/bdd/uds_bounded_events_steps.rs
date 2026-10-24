@@ -1566,7 +1566,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
         },
     );
     let ext_registry = quecto::infrastructure::extensions::registry::ExtensionRegistry::new();
-    quecto::interface::shared::register_bundled_native_extension_tools(
+    quecto::interface::cli::controllers::shared::register_bundled_native_extension_tools(
         &mut registry,
         &ext_registry,
     );

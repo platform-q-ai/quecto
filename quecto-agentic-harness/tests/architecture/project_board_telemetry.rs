@@ -549,7 +549,7 @@ const PROJECT_BOARD: &[&str] = &[
     "src/domain/project_board/",
     "src/application/project_board/",
     "src/interface/tools/project_board/",
-    "src/interface/cli/board/",
+    "src/interface/cli/controllers/board/",
     "src/infrastructure/persistence/project_board/",
     "src/composition/bootstrap/project_board.rs",
 ];

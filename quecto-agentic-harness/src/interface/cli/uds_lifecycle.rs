@@ -50,8 +50,8 @@ pub struct UdsLoopArgs<'a> {
         Option<crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle>,
     /// The environment control slot (#2070) the loop hands its teardown.
     pub environment_control: Option<EnvironmentControlSlot>,
-    pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
-    pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
+    pub workflow_state: Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>, // #562
+    pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>, // #562
     /// Pre-created broadcast channel for workflow event emission (#598).
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     /// The launch-bound parent control binding (#1935); `None` for a

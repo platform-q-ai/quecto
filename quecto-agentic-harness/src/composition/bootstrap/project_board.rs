@@ -45,7 +45,7 @@ use crate::infrastructure::persistence::project_board::store::{GitBoardStore, St
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use crate::infrastructure::time::remote_time::ReferencedBoardClock;
 use crate::infrastructure::tools::agents::coordinator_launch::KeptRunReports;
-use crate::interface::cli::board::{
+use crate::interface::cli::controllers::board::{
     Access, BuildError, ProjectBoardEnvironment, ProjectBoardHandles,
 };
 

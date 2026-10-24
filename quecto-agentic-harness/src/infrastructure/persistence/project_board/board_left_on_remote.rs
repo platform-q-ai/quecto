@@ -1,7 +1,7 @@
 //! What a partial clone fetches of the trees a read misses, and what it
 //! knows a filtered fetch left on the remote (#2481 S10b): split out of
 //! `board_tree` (review round 2).
-use super::{Entry, FILTER_BYTES, Found, Git, Object, Unread, kind_of_mode, looked_up, objects};
+use super::{Entry, FILTER_BYTES, Found, Object, Unread, kind_of_mode, looked_up, objects};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What a partial clone knows a filtered fetch left on the remote: blobs
@@ -38,7 +38,7 @@ pub enum Wanted {
 /// # Errors
 /// What to fetch, or git fails.
 pub(super) fn kinds_in(
-    git: &Git,
+    git: &impl super::Reader,
     tree: &str,
     entries: &[Entry],
     left: &LeftOnRemote,

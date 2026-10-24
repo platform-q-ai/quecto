@@ -43,7 +43,7 @@ pub(super) fn wire_member(
             "swarm member context ceiling engaged"
         );
     });
-    wire_agent(agent, crate::interface::tool_runtime::swarm_context())
+    wire_agent(agent, super::tool_runtime::swarm_context())
 }
 
 pub(in crate::interface) fn bind_suspension(

@@ -17,6 +17,9 @@ use std::path::{Path, PathBuf};
 #[path = "production_tokens.rs"]
 pub mod production_tokens;
 
+#[path = "declaration_ownership.rs"]
+pub(crate) mod declaration_ownership;
+
 pub fn harness_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -33,27 +36,46 @@ pub const LEGACY_BRIDGE_MODULES: [&str; 2] = [
 /// removed) of every non-test `.rs` file under `dir`, as `(path, content)`
 /// pairs. `_tests.rs` companions are skipped entirely.
 pub fn production_sources(dir: &Path) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for entry in fs::read_dir(dir).expect("readable source dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_dir() {
-            out.extend(production_sources(&path));
-            continue;
+    fn rust_sources(dir: &Path, files: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).expect("readable source dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                rust_sources(&path, files);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(path);
+            }
         }
-        let name = path.file_name().unwrap().to_string_lossy().to_string();
-        if !name.ends_with(".rs") || name.ends_with("_tests.rs") {
-            continue;
-        }
-        let raw = fs::read_to_string(&path).expect("readable source file");
-        out.push((
-            path.display().to_string(),
-            // Production tokens, not the text before the first
-            // `#[cfg(test)]`: items after a test module still count (#1637).
-            production_tokens::production_text(&raw)
-                .unwrap_or_else(|| panic!("{} does not parse", path.display())),
-        ));
     }
-    out
+    enum Ownership {
+        Scan,
+        OnlyTest,
+    }
+    let mut files = Vec::new();
+    rust_sources(dir, &mut files);
+    let test_sources = declaration_ownership::declaration_test_sources(&files);
+    files
+        .into_iter()
+        .filter(|path| {
+            let name = path.file_name().unwrap().to_string_lossy();
+            let ownership = if name.ends_with("_tests.rs")
+                || test_sources.contains(&path.canonicalize().unwrap())
+            {
+                Ownership::OnlyTest
+            } else {
+                Ownership::Scan
+            };
+            matches!(ownership, Ownership::Scan)
+        })
+        .map(|path| {
+            let raw = fs::read_to_string(&path).expect("readable source file");
+            (
+                path.display().to_string(),
+                // Items after a test module still count (#1637).
+                production_tokens::production_text(&raw)
+                    .unwrap_or_else(|| panic!("{} does not parse", path.display())),
+            )
+        })
+        .collect()
 }
 
 /// Legacy bridge modules still present on disk (empty = converged).

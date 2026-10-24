@@ -394,7 +394,7 @@ pub(crate) fn build_agent_from_config_in(
     if !admission_startup::negotiate_from_flags(&config, base_dir, selection, flags, stderr) {
         return None;
     }
-    let http_client = crate::interface::shared::build_http_client();
+    let http_client = super::shared::build_http_client();
     let provider = match build_provider(&config, base_dir, &http_client) {
         Ok(p) => p,
         Err(msg) => {
@@ -411,7 +411,7 @@ pub(crate) fn build_agent_from_config_in(
             "web-fetch factory missing"
         );
         flags.web_fetch_tool_factory.expect("checked")(
-            crate::interface::shared::web_fetch_client_recipe(),
+            super::shared::web_fetch_client_recipe(),
             config.tools.web.fetch.max_response_kb,
         )
     });

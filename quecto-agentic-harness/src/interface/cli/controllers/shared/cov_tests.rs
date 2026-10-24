@@ -159,14 +159,14 @@ async fn production_registry_carries_the_production_recipe_and_user_agent() {
             .unwrap();
         request
     });
-    let client = crate::interface::shared::build_http_client();
+    let client = crate::interface::cli::controllers::shared::build_http_client();
     let mut config = crate::infrastructure::config::Config::default();
     config.tools.web.fetch.enabled = true;
     // The production graph over the production recipe; only the destination
     // policy admits the local peer, and the test resolver answers
     // `web-fetch.test` with it (#1942).
     let graph = crate::composition::web_fetch::build_allowing_loopback_for_tests(
-        crate::interface::shared::web_fetch_client_recipe(),
+        crate::interface::cli::controllers::shared::web_fetch_client_recipe(),
         config.tools.web.fetch.max_response_kb,
     );
     let extensions = build_and_register_native_extensions(&config, &client, Some(graph));
@@ -216,13 +216,14 @@ async fn production_registry_preserves_injected_private_ca_tls_trust() {
             .unwrap();
     });
     let certificate = reqwest::Certificate::from_der(cert_der.as_ref()).unwrap();
-    let client = crate::interface::shared::build_http_client();
+    let client = crate::interface::cli::controllers::shared::build_http_client();
     let mut config = crate::infrastructure::config::Config::default();
     config.tools.web.fetch.enabled = true;
     // The production recipe plus the private CA: the adapter's own client
     // trusts it (#1942).
     let graph = crate::composition::web_fetch::build_allowing_loopback_for_tests(
-        crate::interface::shared::web_fetch_client_recipe().add_root_certificate(certificate),
+        crate::interface::cli::controllers::shared::web_fetch_client_recipe()
+            .add_root_certificate(certificate),
         config.tools.web.fetch.max_response_kb,
     );
     let extensions = build_and_register_native_extensions(&config, &client, Some(graph));
@@ -432,13 +433,13 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
             tmp.path().to_path_buf(),
         );
         let mut stderr = String::new();
-        crate::interface::shared::build_tool_runtime(
-            crate::interface::shared::ToolRuntimeBuildArgs {
+        crate::interface::cli::controllers::tool_runtime::build_tool_runtime(
+            crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuildArgs {
                 child_extensions: Vec::new(),
                 swarm_context: None,
                 swarm_participation:
                     crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared(),
-                profile_context: crate::interface::tool_runtime::ToolRuntimeProfileContext::Parent,
+                profile_context: crate::interface::cli::controllers::tool_runtime::ToolRuntimeProfileContext::Parent,
                 entrypoint,
                 base_dir: tmp.path(),
                 config: &config,
@@ -463,7 +464,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
                 project_board: None,
                 disabled_tools: &[],
                 inherited_tool_policy: None,
-                workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy::disabled(
+                workflow: crate::interface::cli::controllers::tool_runtime::ToolRuntimeWorkflowPolicy::disabled(
                     cwd,
                     Some(cwd),
                 ),
@@ -474,15 +475,15 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
         .expect("runtime builds")
     };
 
-    let cli = build(crate::interface::shared::ToolEntrypoint::CliAgent);
-    let uds = build(crate::interface::shared::ToolEntrypoint::UdsAgent);
+    let cli = build(crate::interface::cli::controllers::tool_runtime::ToolEntrypoint::CliAgent);
+    let uds = build(crate::interface::cli::controllers::tool_runtime::ToolEntrypoint::UdsAgent);
     assert_eq!(
         cli.policy_state.entrypoint,
-        crate::interface::shared::ToolEntrypoint::CliAgent
+        crate::interface::cli::controllers::tool_runtime::ToolEntrypoint::CliAgent
     );
     assert_eq!(
         uds.policy_state.entrypoint,
-        crate::interface::shared::ToolEntrypoint::UdsAgent
+        crate::interface::cli::controllers::tool_runtime::ToolEntrypoint::UdsAgent
     );
     for built in [&cli, &uds] {
         for name in [

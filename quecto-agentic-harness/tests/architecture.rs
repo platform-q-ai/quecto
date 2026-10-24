@@ -29,6 +29,8 @@ mod bdd_lanes;
 mod dependency_scan;
 #[path = "architecture/external_child_ownership.rs"]
 mod external_child_ownership;
+#[path = "architecture/l13e_test_ownership.rs"]
+mod l13e_test_ownership;
 #[path = "architecture/layout.rs"]
 mod layout;
 #[path = "architecture/uds_canonical_modules.rs"]
@@ -4957,8 +4959,8 @@ fn find_graph_guards_parse_grouping_aliases_and_calls() {
             source
         ));
         for file in [
-            "src/interface/tool_runtime.rs",
-            "src/interface/shared.rs",
+            "src/interface/cli/controllers/tool_runtime.rs",
+            "src/interface/cli/controllers/shared.rs",
             "src/interface/tools/find.rs",
         ] {
             assert!(
@@ -4968,7 +4970,7 @@ fn find_graph_guards_parse_grouping_aliases_and_calls() {
         }
     }
     assert!(find_graph_dependencies_allowed(
-        "src/interface/shared.rs",
+        "src/interface/cli/controllers/shared.rs",
         "// FdFindPaths::new()\nfn allowed() { NotFdFindPaths::new(); }"
     ));
     for source in [
@@ -5084,6 +5086,13 @@ fn find_interface_dependencies_allowed(source: &str) -> bool {
 }
 
 fn find_composition_delegation_allowed(file: &str, source: &str) -> bool {
+    if dependency_scan::mounted_under(&[])
+        .iter()
+        .any(|(path, _, _)| path == Path::new(file))
+        && dependency_scan::test_only_file(file)
+    {
+        return true;
+    }
     dependency_paths(source).is_some_and(|paths| {
         paths.iter().all(|path| {
             let parts: Vec<_> = path.split("::").collect();
@@ -5095,15 +5104,16 @@ fn find_composition_delegation_allowed(file: &str, source: &str) -> bool {
                     "build_find_tool" | "build_find_tool_with_binary",
                 ] => matches!(
                     file,
-                    "src/interface/tool_runtime.rs" | "src/interface/shared.rs"
+                    "src/interface/cli/controllers/tool_runtime.rs"
+                        | "src/interface/cli/controllers/shared.rs"
                 ),
                 ["crate", "composition", "web_fetch", "build"] => matches!(
                     file,
                     "src/interface/cli/controllers/agent/agent_tool_registry.rs"
-                        | "src/interface/find_runtime_tests.rs"
-                        | "src/interface/shared_cov_tests.rs"
-                        | "src/interface/tool_runtime_catalogue_tests.rs"
-                        | "src/interface/tool_runtime_profile_tests.rs"
+                        | "src/interface/cli/controllers/find_runtime_tests.rs"
+                        | "src/interface/cli/controllers/shared/cov_tests.rs"
+                        | "src/interface/cli/controllers/tool_runtime/catalogue_tests.rs"
+                        | "src/interface/cli/controllers/tool_runtime/profile_tests.rs"
                 ),
                 ["crate", "composition", ..] => file == "src/composition/find.rs",
                 _ => true,
@@ -5167,7 +5177,10 @@ fn find_boundary_allowlists_reject_unauthorized_siblings() {
     ] {
         assert!(!find_interface_dependencies_allowed(source), "{source}");
     }
-    for file in ["src/interface/tool_runtime.rs", "src/interface/shared.rs"] {
+    for file in [
+        "src/interface/cli/controllers/tool_runtime.rs",
+        "src/interface/cli/controllers/shared.rs",
+    ] {
         assert!(find_composition_delegation_allowed(
             file,
             "use crate::composition::find::build_find_tool as build;"
@@ -5899,10 +5912,19 @@ fn interface_dependency_roots(source: &str) -> BTreeSet<String> {
 }
 
 fn assert_interface_dependencies_allowlisted(path: &str, source: &str) {
+    if dependency_scan::mounted_under(&[])
+        .iter()
+        .any(|(file, _, _)| file == Path::new(path))
+        && dependency_scan::test_only_file(path)
+    {
+        return;
+    }
     const ALLOWED: &[&str] = &["application", "domain", "infrastructure", "interface"];
     for root in interface_dependency_roots(source) {
-        const LEGACY_FIND_EXCEPTIONS: &[&str] =
-            &["src/interface/shared.rs", "src/interface/tool_runtime.rs"];
+        const LEGACY_FIND_EXCEPTIONS: &[&str] = &[
+            "src/interface/cli/controllers/shared.rs",
+            "src/interface/cli/controllers/tool_runtime.rs",
+        ];
         let explicitly_allowed = ALLOWED.contains(&root.as_str())
             || (LEGACY_FIND_EXCEPTIONS.contains(&path) && root == "composition::find");
         assert!(

@@ -84,7 +84,7 @@ const WIKI: &str =
 const BUDGETS: &[FlatBudget<'_>] = &[
     FlatBudget { path: "domain", expected: 1 },
     FlatBudget { path: "application", expected: 2 },
-    FlatBudget { path: "interface", expected: 6 },
+    FlatBudget { path: "interface", expected: 3 },
     FlatBudget { path: "infrastructure", expected: 1 },
     FlatBudget { path: "composition", expected: 24 },
     FlatBudget { path: "interface/cli", expected: 13 },

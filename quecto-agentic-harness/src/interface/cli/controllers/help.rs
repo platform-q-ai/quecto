@@ -144,7 +144,7 @@ fn board_ops(out: &mut String) {
     const INDENT: &str = "                  ";
     const WIDTH: usize = 92;
     let mut line = format!("{INDENT}ops:");
-    for op in crate::interface::cli::board::command_line_ops() {
+    for op in crate::interface::cli::controllers::board::command_line_ops() {
         if line.len() + 1 + op.len() > WIDTH {
             out.push_str(&line);
             out.push('\n');

@@ -56,13 +56,13 @@
 //! file at the root is fetched by its id, so a damaged root is judged by
 //! its real objects, as in a full clone.
 use super::artifacts::task::TASK_LIMITS;
-pub use super::cat_file::contents;
-use super::cat_file::{Found, Object, objects};
+use super::cat_file::{Found, Object};
 use super::git::{Git, GitError, capped, quoted, sanitised, shown_name};
 use crate::application::project_board::ports::{BoardArtifact, BoardStoreError, QuarantinedFile};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::shown_text::shown_board_path;
 use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
+use reader::{Reader, contents, objects};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The punctuation a name kept in `tasks/` may hold besides letters and
@@ -314,7 +314,16 @@ pub fn read_board(
     limits: Limits,
     left: &LeftOnRemote,
 ) -> Result<Board, Unread> {
-    let root = listed(git, &tree_of(git, commit)?, limits.tree_bytes)?;
+    read(git, &tree_of(git, commit)?, limits, left)
+}
+
+fn read(
+    git: &impl Reader,
+    root: &str,
+    limits: Limits,
+    left: &LeftOnRemote,
+) -> Result<Board, Unread> {
+    let root = listed(git, root, limits.tree_bytes)?;
     let kinds = objects(git, looked_up(&root))?;
     let named = |name: &'static str| root.iter().filter(move |entry| entry.name == name);
     // A tree named once: a folder to read, or the archive to carry.
@@ -563,7 +572,7 @@ fn tree_of(git: &Git, commit: &str) -> Result<String, Unread> {
 
 /// The entries of `tree`, whose real type and size are checked before it
 /// is listed.
-fn listed(git: &Git, tree: &str, max_bytes: usize) -> Result<Vec<Entry>, Unread> {
+fn listed(git: &impl Reader, tree: &str, max_bytes: usize) -> Result<Vec<Entry>, Unread> {
     let not_read = |why: String| Unread::Failed(BoardStoreError::Unavailable(why));
     match objects(git, std::iter::once(tree))?.remove(tree) {
         Some(Found::Present(object)) if object.kind == "tree" && object.size <= max_bytes => {}
@@ -580,14 +589,7 @@ fn listed(git: &Git, tree: &str, max_bytes: usize) -> Result<Vec<Entry>, Unread>
         Some(Found::Missing) => return Err(Unread::Missing(vec![Wanted::Alone(tree.to_string())])),
         None => return Err(not_read(format!("cat-file did not report {tree}"))),
     }
-    let listing = git
-        .ok_up_to(&["ls-tree", "-z", tree], None, MAX_LISTING_BYTES)
-        .map_err(unavailable)?;
-    Ok(listing
-        .split(|byte| *byte == 0)
-        .filter(|row| !row.is_empty())
-        .map(entry)
-        .collect::<Result<Vec<Entry>, BoardStoreError>>()?)
+    git.listing(tree, MAX_LISTING_BYTES)
 }
 
 fn entry(row: &[u8]) -> Result<Entry, BoardStoreError> {
@@ -648,6 +650,9 @@ pub use writes::{FolderAfter, FolderFile, folder_file};
 mod format;
 pub use format::{FORMAT, FORMAT_FILE, FORMAT_TREE};
 use format::{Marker, newer, read_format};
+
+#[path = "board_reader.rs"]
+mod reader;
 
 #[cfg(test)]
 #[path = "board_tree_tests.rs"]
