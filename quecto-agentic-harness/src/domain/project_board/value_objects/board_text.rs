@@ -17,9 +17,9 @@
 //!     kept as written, a chat space there becomes a plain space: an
 //!     indent);
 //!   - one at a line's end goes (fenced code included), unless going
-//!     would leave a prose line ending in a backslash, a setext underline,
-//!     thematic break or bare list marker, or plain spacing: then it
-//!     becomes a plain space, read as typed text is;
+//!     would leave a prose line ending in a backslash, a setext underline
+//!     or thematic break, or plain spacing: then it becomes a plain space,
+//!     read as typed text is;
 //!   - outside a fence, a line of nothing but spacing, a chat space among
 //!     it, becomes empty, and each run of blank lines holding such a line
 //!     becomes one empty line, or none between two items of a list with
@@ -36,8 +36,9 @@
 //!   included;
 //! - trailing spaces and tabs go from a prose line only where nothing can
 //!   change: the run is a single space, or comes before a blank line or
-//!   the end (no hard break forms); the line is no bare list marker
-//!   (`- ` is an empty item, `-` a setext underline); the character before
+//!   the end (no hard break forms); the line is no lone `-` under
+//!   paragraph text (`- ` is text there, `-` a setext underline); the
+//!   character before
 //!   it is a safe one (a letter, a digit, or punctuation but a backslash,
 //!   which a line end would make a hard break); its paragraph so far holds no backtick or
 //!   dollar (a code span or math may run on across lines, showing the
@@ -50,8 +51,9 @@
 //! left as written, and the codec's NFC rule refuses it with its line.
 //! Text from agents and phones is NFC in practice. Everything else (tabs in
 //! markdown, any other space, selectors, indents, hard breaks, inner blank
-//! lines, fenced code, HTML blocks, footnote definitions) is kept as
-//! written, but for its chat spaces: the domain's schema refuses a space
+//! lines, fenced code, HTML blocks (opened by `<` then a letter, `/`, `!`
+//! or `?`; ended by a blank line, but for a comment, `<pre>` and the like),
+//! footnote definitions) is kept as written, but for its chat spaces: the domain's schema refuses a space
 //! other than a plain one, a tab or a line end with its field
 //! (`PLAIN_SPACES_ONLY`, which stays for what is read back), and the codec
 //! holds the rest or refuses it with its field and line.
@@ -106,9 +108,13 @@ enum Place {
     Prose { marked: bool },
     /// Inside fenced code opened at the margin, which only its close ends.
     Fenced(Fence),
+    /// An HTML block that a blank line ends (CommonMark's types 6 and 7):
+    /// its lines are kept as written.
+    Html,
     /// After a fence opened inside a quote, a list item or an indent (which
-    /// may end with its container), or a line that may start an HTML block
-    /// (which keeps its lines as written): the rest is kept as written.
+    /// may end with its container), an HTML block only its own close ends
+    /// (a comment, `<pre>`, `<script>` and the like), or a footnote
+    /// definition: the rest is kept as written.
     Unknown,
 }
 
@@ -139,6 +145,10 @@ fn kept_lines(raw: &str) -> Vec<Option<String>> {
     let mut gap: Vec<bool> = Vec::with_capacity(lines.len());
     let mut prose_blank: Vec<bool> = Vec::with_capacity(lines.len());
     let mut place = Place::Prose { marked: false };
+    // Whether the line before is paragraph text a `-` would underline as a
+    // setext heading (not an item, a heading, a quote or an indent, in a
+    // paragraph no list item opened).
+    let (mut under_text, mut item_in_paragraph) = (false, false);
     for (at, raw_line) in lines.iter().enumerate() {
         // A line of chat spaces is blank, wherever it stands.
         let before_blank = lines
@@ -147,7 +157,7 @@ fn kept_lines(raw: &str) -> Vec<Option<String>> {
         // Each line's chat spaces first, as where it stands takes them.
         let edged = match place {
             Place::Prose { .. } => without_chat(raw_line, Edge::Prose),
-            Place::Fenced(_) | Place::Unknown => without_chat(raw_line, Edge::Code),
+            Place::Fenced(_) | Place::Html | Place::Unknown => without_chat(raw_line, Edge::Code),
         };
         let line = edged.as_str();
         let in_prose = matches!(place, Place::Prose { .. });
@@ -156,26 +166,40 @@ fn kept_lines(raw: &str) -> Vec<Option<String>> {
             Place::Fenced(open) if open.closed_by(line) => {
                 (Place::Prose { marked: false }, line.to_string())
             }
-            Place::Fenced(_) | Place::Unknown => (place, line.to_string()),
-            Place::Prose { marked } => match Fence::opened_by(line) {
-                Some(open) if open.at_margin => (Place::Fenced(open), line.to_string()),
-                Some(_) => (Place::Unknown, line.to_string()),
-                None if may_start_html_block(line) || defines_footnote(line) => {
-                    (Place::Unknown, line.to_string())
-                }
+            // A fence, or a block only its own close ends, inside may be a
+            // reader's, if the block is no HTML to it (a lone `<span` is
+            // text): the rest is kept as written.
+            Place::Html
+                if Fence::opened_by(line).is_some()
+                    || html_block(line) == Some(HtmlEnd::OwnClose)
+                    || defines_footnote(line) =>
+            {
+                (Place::Unknown, line.to_string())
+            }
+            Place::Html if blank(line) => (Place::Prose { marked: false }, line.to_string()),
+            Place::Fenced(_) | Place::Html | Place::Unknown => (place, line.to_string()),
+            Place::Prose { marked } => match (Fence::opened_by(line), html_block(line)) {
+                (Some(open), _) if open.at_margin => (Place::Fenced(open), line.to_string()),
+                (Some(_), _) => (Place::Unknown, line.to_string()),
+                (None, Some(HtmlEnd::BlankLine)) => (Place::Html, line.to_string()),
+                (None, Some(HtmlEnd::OwnClose)) => (Place::Unknown, line.to_string()),
+                (None, None) if defines_footnote(line) => (Place::Unknown, line.to_string()),
                 // A blank line ends a paragraph; its own spacing may still
                 // count (an indented blank line stays in a list item).
-                None if blank(line) => (Place::Prose { marked: false }, line.to_string()),
-                None => {
+                (None, None) if blank(line) => (Place::Prose { marked: false }, line.to_string()),
+                (None, None) => {
                     let marked = marked || line.contains(['`', '$', '<']) || links(line);
                     let written = match marked {
-                        false => without_trailing(line, before_blank),
+                        false => without_trailing(line, before_blank, under_text),
                         true => line.to_string(),
                     };
                     (Place::Prose { marked }, written)
                 }
             },
         };
+        let paragraph = in_prose && matches!(next, Place::Prose { .. }) && !blank(&written);
+        item_in_paragraph = paragraph && (item_in_paragraph || list_item(&written));
+        under_text = paragraph && !item_in_paragraph && paragraph_text(&written);
         place = next;
         prose_blank.push(in_prose && blank(&written));
         kept.push(written);
@@ -193,7 +217,7 @@ fn kept_lines(raw: &str) -> Vec<Option<String>> {
         // Code may run to the end, its blank lines shown: only a final
         // line end after a line that holds something goes, which no reader
         // shows.
-        Place::Fenced(_) | Place::Unknown => match kept.as_slice() {
+        Place::Fenced(_) | Place::Html | Place::Unknown => match kept.as_slice() {
             [.., before, last] if last.is_empty() && !before.is_empty() => kept.len() - 1,
             _ => kept.len(),
         },
@@ -314,8 +338,8 @@ enum Edge {
 ///   code a chat space at the start becomes plain (an indent);
 /// - those at its end go, but in prose only where nothing forms: when going
 ///   would leave the line ending in a backslash or plain spacing, or a
-///   setext underline, thematic break or bare list marker, the run becomes
-///   plain, read as a typed one is ([`without_trailing`] then decides);
+///   setext underline or thematic break, the run becomes plain, read as a
+///   typed one is ([`without_trailing`] then decides);
 /// - every other one becomes plain.
 fn without_chat(line: &str, edge: Edge) -> String {
     let chat = |c: char| CHAT_SPACES.contains(&c);
@@ -338,10 +362,8 @@ fn without_chat(line: &str, edge: Edge) -> String {
         (Edge::Code, _) => plain_spaces(head),
     };
     let content = format!("{head}{}", plain_spaces(body));
-    let marks = rule_line(&content)
-        || bare_marker(&content)
-        || content.ends_with('\\')
-        || plain_only(tail).chars().next().is_some();
+    let marks =
+        rule_line(&content) || content.ends_with('\\') || plain_only(tail).chars().next().is_some();
     let tail = match (edge, tail.contains(CHAT_SPACES) && marks) {
         (Edge::Prose, true) => plain_spaces(tail),
         (Edge::Prose, false) | (Edge::Code, _) => plain_only(tail),
@@ -352,21 +374,28 @@ fn without_chat(line: &str, edge: Edge) -> String {
     normal
 }
 
-/// Whether `content` is a list marker alone (`-`, `*`, `+`, or one to nine
-/// digits and `.` or `)`, at most three spaces in): a space after it makes
-/// an empty item, its absence text or a setext underline.
-fn bare_marker(content: &str) -> bool {
-    let marker = content.trim_start_matches(' ');
-    let digits = marker.len()
-        - marker
-            .trim_start_matches(|c: char| c.is_ascii_digit())
-            .len();
-    let bare = match digits {
-        0 => matches!(marker, "-" | "*" | "+"),
-        1..=9 => matches!(&marker[digits..], "." | ")"),
-        _ => false,
-    };
-    content.len() - marker.len() <= CLOSING_INDENT && bare
+/// Whether `content` is a lone `-` (at most three spaces in): under
+/// paragraph text it underlines a setext heading, which `- ` (an empty
+/// item, or text) does not.
+fn setext_dash(content: &str) -> bool {
+    let dash = content.trim_start_matches(' ');
+    content.len() - dash.len() <= CLOSING_INDENT && dash == "-"
+}
+
+/// Whether `line`, a prose line that holds something, is paragraph text at
+/// the margin: not a list item, an ATX heading, a quote or an indent.
+fn paragraph_text(line: &str) -> bool {
+    let hashes = line.len() - line.trim_start_matches('#').len();
+    let heading = (1..=6).contains(&hashes)
+        && line[hashes..]
+            .chars()
+            .next()
+            .is_none_or(|c| matches!(c, ' ' | '\t'));
+    let opens = line
+        .chars()
+        .next()
+        .is_some_and(|c| !matches!(c, ' ' | '\t' | '>'));
+    opens && !heading && !list_item(line)
 }
 
 /// Whether `content` reads as a setext underline or a thematic break once
@@ -577,10 +606,36 @@ fn safe_before_line_end(c: char) -> bool {
     c.is_alphanumeric() || SAFE_PUNCTUATION.contains(c)
 }
 
-/// Whether `line` may start an HTML block: a `<` after spaces, quote marks
-/// or list markers (read liberally: it only keeps more lines as written).
-fn may_start_html_block(line: &str) -> bool {
-    line.trim_start_matches(container_mark).starts_with('<')
+/// What ends an HTML block.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HtmlEnd {
+    /// A blank line (CommonMark's types 6 and 7).
+    BlankLine,
+    /// Its own close: a comment, a processing instruction, a declaration,
+    /// CDATA, `<pre>`, `<script>`, `<style>` or `<textarea>` (types 1 to 5).
+    OwnClose,
+}
+
+/// The HTML block `line` may open, read liberally (it only keeps more lines
+/// as written): a `<` then a letter, `/`, `!` or `?`, after at most
+/// spaces, quote marks and bullet markers. A `<` before a digit or a space
+/// (`< 5`, `1 < 2`, `- <200 ms`) opens none.
+fn html_block(line: &str) -> Option<HtmlEnd> {
+    let rest = line.trim_start_matches([' ', '\t', '>', '-', '*', '+']);
+    let opener = rest.strip_prefix('<')?;
+    let tag = opener
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || matches!(c, '/' | '!' | '?'));
+    let lower = opener.to_ascii_lowercase();
+    let lasting = ["!", "?", "pre", "script", "style", "textarea"]
+        .iter()
+        .any(|start| lower.starts_with(start));
+    match (tag, lasting) {
+        (true, true) => Some(HtmlEnd::OwnClose),
+        (true, false) => Some(HtmlEnd::BlankLine),
+        (false, _) => None,
+    }
 }
 
 /// Whether `line` holds a link or a reference definition (`](` or `]:`):
@@ -599,17 +654,17 @@ fn defines_footnote(line: &str) -> bool {
 
 /// `line` without its trailing spaces and tabs where nothing can change: a
 /// single trailing space or any run before a blank line or the end, after
-/// a safe character, on a line that cannot be indented code and is no bare
-/// list marker (`- ` is an empty item, or text, where `-` underlines the
-/// paragraph above as a heading).
-fn without_trailing(line: &str, before_blank: bool) -> String {
+/// a safe character, on a line that cannot be indented code, and that is
+/// no lone `-` `under_text` (paragraph text above, which `-` would
+/// underline as a heading where `- ` is text).
+fn without_trailing(line: &str, before_blank: bool, under_text: bool) -> String {
     let content = line.trim_end_matches(spacing);
     let run = &line[content.len()..];
     let breakless = run == " " || before_blank;
     let safe = content.chars().last().is_some_and(safe_before_line_end);
-    // Indented code, or a marker a space after makes an item, reads its
-    // trailing spacing.
-    let read = may_be_indented_code(line) || bare_marker(content);
+    // Indented code, or a `-` its space keeps from underlining the text
+    // above, reads its trailing spacing.
+    let read = may_be_indented_code(line) || (under_text && setext_dash(content));
     match (breakless && safe, read) {
         (true, false) => content.to_string(),
         (false, _) | (true, true) => line.to_string(),
