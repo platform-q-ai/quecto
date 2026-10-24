@@ -397,6 +397,8 @@ mod workspace_origin;
 #[path = "contracts/project_board_reader.rs"]
 mod project_board_reader;
 
+#[path = "contracts/declare_turn_outcome.rs"]
+mod declare_turn_outcome;
 #[cfg(feature = "test-support")]
 #[path = "contracts/project_board_sqlite_regression_red.rs"]
 mod project_board_sqlite_regression_red;
