@@ -142,5 +142,6 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
         self.writer.clone()
     }
 }
-#[cfg(all(test, feature = "test-support"))]
+#[cfg(test)]
+#[cfg(feature = "test-support")]
 mod project_board_sqlite_tests;
