@@ -5,13 +5,13 @@
 |---|---|
 | Task | board-2705-b3 |
 | Version | 2 |
-| State | accepted |
+| State | superseded |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
 | Edited by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted at | 2026-10-24T14:59:50Z |
 | Created | 2026-10-24T07:56:03Z |
-| Updated | 2026-10-24T14:59:50Z |
+| Updated | 2026-10-24T16:47:47Z |
 
 ## Approach
 Authorized complete B3 follows MERGED B2 PR2706 at774c78f1a7ce72efe59dc343266f4f063b86cab3 (reviewed7aa1/harness0.107.440). Full authoritative planning package /home/shane-pocket/.quecto/artifacts/b3-readonly-planning/{parent-report.md,proposed-plan.json,known-scope.md,architecture.md,source-map.md,sizing.md,red-plan.md,refutation.md,fresh-phase-handoff.md}; owner plan HEADER overrides older text, spike reference only. Reconcile actual merged B2/B4/T1/T2/T3 interfaces before compiling RED tests; no stale API invention/planning-worker rollover.
