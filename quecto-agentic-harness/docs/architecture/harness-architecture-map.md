@@ -217,8 +217,9 @@ encodes compact rows (`own`, `session`, `restored`, `config`,
 **Primary code:** session vocabulary in `src/domain/sessions/entities/session.rs`,
 `src/domain/sessions/entities/session_identity.rs`, `src/domain/conversation/services/conversation_view.rs` and
 `src/domain/conversation/services/conversation_edit.rs`; the sessions capability in
-`src/application/sessions/` (`use_cases/`, `ports.rs` + `ports/`, `dto/`,
-`active_session.rs`, `conversation_ledger.rs`, `session_home.rs`); persistence
+`src/application/sessions/` (`use_cases/`, `ports/`, `dto/`, and `services/`:
+`active_session.rs`, `conversation_ledger.rs`, `session_home.rs`,
+`history_paging.rs`); persistence
 adapters in `src/infrastructure/persistence/` and
 `src/infrastructure/persistence/file/session_export.rs`; workspace discovery adapters in
 `src/infrastructure/workspace/` (`git_scope_discovery.rs`,

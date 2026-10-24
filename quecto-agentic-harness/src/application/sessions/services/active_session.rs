@@ -12,8 +12,8 @@
 //! persistence state may appear beside it.
 use std::sync::Arc;
 
+use super::super::ports::ContextSpillStore;
 use super::conversation_ledger::{ConversationLedger, LedgerAdvance};
-use super::ports::ContextSpillStore;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 
@@ -285,5 +285,4 @@ impl RecoveryResolution {
 }
 
 #[cfg(test)]
-#[path = "active_session_tests.rs"]
 mod tests;

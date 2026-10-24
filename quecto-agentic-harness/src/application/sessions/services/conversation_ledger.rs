@@ -291,5 +291,4 @@ impl ConversationLedger {
 }
 
 #[cfg(test)]
-#[path = "conversation_ledger_tests.rs"]
 mod tests;

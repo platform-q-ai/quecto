@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::application::sessions::session_home::SessionHomeContext;
+use crate::application::sessions::services::session_home::SessionHomeContext;
 use crate::domain::sessions::entities::session_home::*;
 
 pub(super) fn seed_observations(

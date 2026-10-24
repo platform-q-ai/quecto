@@ -51,7 +51,7 @@ async fn the_composed_loop_exports_under_the_artifacts_directory_of_its_base() {
 #[tokio::test]
 async fn a_loop_composed_without_an_exporter_refuses_raw_exports() {
     let state = Arc::new(tokio::sync::RwLock::new(
-        crate::application::sessions::active_session::ActiveSessionState::new(
+        crate::application::sessions::services::active_session::ActiveSessionState::new(
             crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key("cli:none"),
         ),
     ));

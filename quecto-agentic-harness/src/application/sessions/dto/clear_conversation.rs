@@ -1,7 +1,7 @@
 //! Boundary values of Clear conversation history (#1864, D6 #1975): what
 //! the transaction did, and how it failed after the history was replaced.
 use super::SaveSessionError;
-use crate::application::sessions::conversation_ledger::LedgerAdvance;
+use crate::application::sessions::services::conversation_ledger::LedgerAdvance;
 
 /// The conversation was cleared: the live transcript holds at most the
 /// injected system prompt, the ledger opened a new epoch, the accounting

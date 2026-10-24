@@ -25,13 +25,13 @@
 //! current session whole; children the fleet already settled stay settled.
 use super::clear_conversation::visible_message_count;
 use super::{DepartingChildren, SaveSession};
-use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::dto::{
     ResumeOutcome, ResumeRequest, ResumeSavedSessionError, SaveTrigger, SavedSessionResumed,
     SessionTransition, StartupSessionOpened,
 };
 use crate::application::sessions::ports::{FleetSettlement, SessionStore, SessionSwitchRuntime};
-use crate::application::sessions::session_home::SessionHomeContext;
+use crate::application::sessions::services::active_session::ActiveSessionHandle;
+use crate::application::sessions::services::session_home::SessionHomeContext;
 use crate::domain::conversation::services::conversation_view::inject_system_prompt;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;

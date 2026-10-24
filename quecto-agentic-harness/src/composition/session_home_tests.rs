@@ -12,7 +12,9 @@ use crate::application::sessions::dto::{
 use crate::application::sessions::use_cases::{
     DepartingChildren, ListSessions, ResumeSavedSession, SaveSession,
 };
-use crate::application::sessions::{active_session::ActiveSessionState, ports::SessionStore};
+use crate::application::sessions::{
+    ports::SessionStore, services::active_session::ActiveSessionState,
+};
 use crate::domain::sessions::entities::session_home::SessionHomeScope;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::sessions::services::resume_decision::ResumeDecisionKind;
@@ -28,14 +30,14 @@ fn context(store: Arc<FileSessionStore>, execution_dir: PathBuf) -> SessionHomeC
 
 fn state_of(
     identity: &SessionIdentity,
-) -> crate::application::sessions::active_session::ActiveSessionHandle {
+) -> crate::application::sessions::services::active_session::ActiveSessionHandle {
     Arc::new(tokio::sync::RwLock::new(ActiveSessionState::new(
         identity.clone(),
     )))
 }
 
 fn save_over(
-    state: &crate::application::sessions::active_session::ActiveSessionHandle,
+    state: &crate::application::sessions::services::active_session::ActiveSessionHandle,
     store: Arc<FileSessionStore>,
     context: &SessionHomeContext,
 ) -> Arc<SaveSession> {
@@ -53,7 +55,7 @@ fn save_over(
 }
 
 fn resume_over(
-    state: &crate::application::sessions::active_session::ActiveSessionHandle,
+    state: &crate::application::sessions::services::active_session::ActiveSessionHandle,
     save: Arc<SaveSession>,
     store: Arc<FileSessionStore>,
     context: SessionHomeContext,

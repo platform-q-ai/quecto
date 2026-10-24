@@ -61,5 +61,4 @@ fn window(visible: &[Message], query: &HistoryQuery) -> HistoryPage {
 }
 
 #[cfg(test)]
-#[path = "history_paging_tests.rs"]
 mod tests;

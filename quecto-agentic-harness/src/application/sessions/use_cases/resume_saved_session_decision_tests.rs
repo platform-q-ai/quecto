@@ -5,7 +5,7 @@ use crate::application::sessions::dto::{ResumeOutcome, ResumeRequest, ResumeSave
 use crate::application::sessions::ports::session_home::{
     HomeCatalogueSnapshot, SessionHomeCatalogue, WorkspaceDiscovery,
 };
-use crate::application::sessions::session_home::SessionHomeContext;
+use crate::application::sessions::services::session_home::SessionHomeContext;
 use crate::application::sessions::use_cases::start_fresh_rig::{
     FreshOptions, FreshRig, OLD_KEY, build_fresh_rig,
 };

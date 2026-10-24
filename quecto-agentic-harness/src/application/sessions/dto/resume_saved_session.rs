@@ -2,7 +2,7 @@
 //! client named, admitted by affirmative rules; what a resumed session is;
 //! what a startup open yields; and why a resume was refused or failed.
 use super::{SaveSessionError, SessionTransitionRefused};
-use crate::application::sessions::conversation_ledger::LedgerAdvance;
+use crate::application::sessions::services::conversation_ledger::LedgerAdvance;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::shared::error::DomainError;
