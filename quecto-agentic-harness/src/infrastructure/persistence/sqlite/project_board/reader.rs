@@ -8,8 +8,19 @@ pub(super) struct SqlReader<'a> {
     pub connection: &'a Connection,
     #[cfg(feature = "test-support")]
     pub fetches: &'a Mutex<Vec<(String, String, usize)>>,
+    #[cfg(feature = "test-support")]
+    witnesses: std::cell::RefCell<BTreeMap<String, String>>,
 }
 impl Reader for SqlReader<'_> {
+    #[cfg(feature = "test-support")]
+    fn witness_artifacts(&self, paths: &[(String, String)]) {
+        let mut witnesses = self.witnesses.borrow_mut();
+        witnesses.clear();
+        for (path, id) in paths {
+            // One witness for one identity-deduplicated physical fetch.
+            witnesses.entry(id.clone()).or_insert_with(|| path.clone());
+        }
+    }
     fn metadata(&self, ids: &[&str]) -> Result<BTreeMap<String, Found>, BoardStoreError> {
         let mut found = BTreeMap::new();
         let mut query = self.connection.prepare("SELECT kind,CASE kind WHEN 'blob' THEN length(bytes) WHEN 'tree' THEN tree_size END FROM objects WHERE oid=?1").map_err(unavailable)?;
@@ -103,15 +114,11 @@ impl Reader for SqlReader<'_> {
                 .map_err(unavailable)?;
             #[cfg(feature = "test-support")]
             {
-                // Observe actual admitted artifact BLOB materialization. FORMAT
-                // is independently bounded by the shared reader, not an artifact.
-                let mut paths = self.connection.prepare("SELECT CAST(root.raw_name AS TEXT)||'/'||CAST(file.raw_name AS TEXT) FROM state JOIN revisions ON revisions.head=state.head JOIN tree_entries root ON root.tree=revisions.root JOIN tree_entries file ON file.tree=root.oid WHERE root.raw_name IN (CAST('tasks' AS BLOB),CAST('plans' AS BLOB),CAST('runs' AS BLOB),CAST('changes' AS BLOB),CAST('reviews' AS BLOB),CAST('discussions' AS BLOB)) AND file.oid=?1 ORDER BY root.ordinal,file.ordinal").map_err(unavailable)?;
-                for path in paths
-                    .query_map([id], |r| r.get::<_, String>(0))
-                    .map_err(unavailable)?
-                {
+                // Names are supplied by the shared interpreter, never decoded
+                // from raw aliases. Record only after the actual BLOB fetch.
+                if let Some(path) = self.witnesses.borrow().get(*id) {
                     self.fetches.lock().map_err(unavailable)?.push((
-                        path.map_err(unavailable)?,
+                        path.clone(),
                         (*id).into(),
                         bytes.len(),
                     ));
@@ -128,6 +135,8 @@ impl SqliteProjectBoardStore {
             connection: c,
             #[cfg(feature = "test-support")]
             fetches: &self.payload_fetches,
+            #[cfg(feature = "test-support")]
+            witnesses: std::cell::RefCell::default(),
         }
     }
     pub(super) fn board(&self, c: &Connection, root: &str) -> Result<Board, BoardStoreError> {

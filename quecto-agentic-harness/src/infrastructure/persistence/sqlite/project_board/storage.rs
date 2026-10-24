@@ -81,9 +81,24 @@ pub(super) fn open(path: &Path) -> Result<Connection, BoardStoreError> {
         }
     }
     tx.commit().map_err(unavailable)?;
-    c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")
+    // SQLite may successfully execute the request but retain another journal
+    // mode (notably for transient databases). Expose only durable WAL stores.
+    let journal: String = c
+        .query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))
         .map_err(unavailable)?;
-    Ok(c)
+    match journal.as_str() {
+        "wal" => {}
+        _ => return Err(unavailable("SQLite board requires WAL journal mode")),
+    }
+    c.pragma_update(None, "synchronous", "FULL")
+        .map_err(unavailable)?;
+    let synchronous: i64 = c
+        .query_row("PRAGMA synchronous", [], |r| r.get(0))
+        .map_err(unavailable)?;
+    match synchronous {
+        2 => Ok(c),
+        _ => Err(unavailable("SQLite board requires FULL synchronous mode")),
+    }
 }
 
 pub(super) fn current(c: &Connection) -> Result<(BoardHead, String), BoardStoreError> {

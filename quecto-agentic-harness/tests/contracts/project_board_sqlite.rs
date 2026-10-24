@@ -771,7 +771,16 @@ fn round2_nonutf8_same_object_alias_is_quarantined_not_fetched_independently() {
     let board = client.read().expect("observational witness must not reject canonical task sharing its object with a raw nonUTF8 alias");
     assert_eq!(board.tasks, [store::task("a", "A")]);
     assert_eq!(board.quarantined.len(), 1);
-    assert!(board.quarantined[0].carried);
+    assert_eq!(
+        (
+            board.quarantined[0].carried,
+            board.quarantined[0].key.clone()
+        ),
+        (false, None),
+        "opaque alias is a stray, not an admitted task"
+    );
+    assert_eq!(board.quarantined[0].path, "tasks/�");
+    assert_eq!(board.quarantined[0].object, oid);
     assert_eq!(
         client.fixture_fingerprint().unwrap(),
         before,

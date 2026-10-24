@@ -163,6 +163,13 @@ pub(super) fn load_tasks(git: &impl super::Reader, scan: TasksScan) -> Result<Bo
             (entry.oid.as_str(), size)
         })
         .collect();
+    #[cfg(feature = "test-support")]
+    git.witness_artifacts(
+        &to_read
+            .iter()
+            .map(|(_, entry)| (format!("tasks/{}", entry.name), entry.oid.clone()))
+            .collect::<Vec<_>>(),
+    );
     let contents = contents(git, &wanted)?;
     // Ids with a task file in the JSON form older quecto wrote, carried
     // forward: an `.md` beside one that is no task file is the summary it
