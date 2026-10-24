@@ -103,7 +103,9 @@ fn the_roster_source_maps_rows_as_history_without_pid_or_socket() {
     assert!(!json.contains("pid"), "{json}");
     assert!(!json.contains("socketPath"), "{json}");
     assert!(!json.contains("/tmp/"), "{json}");
-    assert!(!json.contains("4242"), "{json}");
+    // The pid as a JSON value (`:4242`), never the digits alone: a random
+    // agent uuid may hold "4242" as hex.
+    assert!(!json.contains(":4242"), "{json}");
 }
 
 #[test]
