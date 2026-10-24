@@ -600,10 +600,42 @@ fn a_title_spaced_with_another_space_is_refused_by_the_domain() {
     }
 }
 
+/// Rich-text paste (mail, documents, chat) writes empty paragraphs and
+/// indents as no-break or ideographic spaces: a chat space at a line's
+/// edge is removed, a line of nothing else becomes empty, so the
+/// description is held through the codec, fences included.
+#[test]
+fn a_pasted_description_with_chat_spaces_at_line_edges_is_held() {
+    for (raw, kept) in [
+        ("Notes\n\u{a0}\nMore", "Notes\n\nMore"),
+        ("\u{a0}Indented", "Indented"),
+        ("Hello\n\u{a0}world", "Hello\nworld"),
+        ("Steps:\n\u{a0}\u{a0}1. do", "Steps:\n1. do"),
+        // A gap between list items goes: the list stays one.
+        ("- a\n\u{a0}\n- b", "- a\n- b"),
+        ("\u{3000}\u{3000}本文です。", "本文です。"),
+        ("`x` end\u{a0}", "`x` end"),
+        ("a\u{a0}\u{a0}\nb", "a\nb"),
+        ("```\nx\u{a0}\n```", "```\nx\n```"),
+    ] {
+        let normal = board_text::text(raw);
+        assert_eq!(normal, kept, "{raw:?}");
+        let held = Task::entered(TaskFields {
+            description: normal,
+            ..example()
+        })
+        .unwrap_or_else(|error| panic!("{raw:?}: {error:?}"));
+        let file = encode::<TaskCodec>(&held).unwrap_or_else(|error| panic!("{raw:?}: {error:?}"));
+        assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(held), "{raw:?}");
+    }
+}
+
 /// A description typed on a French keyboard, its chat spaces before `!`
-/// and `?`, is held once normalised; a chat space beside a block marker,
-/// which the normaliser leaves, and an em space are refused by the domain
-/// with the description's field, never by the file at write time.
+/// and `?`, is held once normalised, and so is a chat space beside a block
+/// marker or in a code span (entry makes every one between words plain:
+/// one there is never meaningful, and refusing it blocks pasted text); an em space, which no keyboard puts between words, is
+/// refused by the domain with the description's field, never by the file
+/// at write time.
 #[test]
 fn a_description_with_chat_spaces_is_held_once_normalised() {
     let described = |description: &str| {
@@ -618,17 +650,20 @@ fn a_description_with_chat_spaces_is_held_once_normalised() {
     let held = described(&normal).unwrap();
     let file = encode::<TaskCodec>(&held).unwrap();
     assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(held));
-    for left in ["-\u{a0}x", "\u{a0}leading", "an em\u{2003}space"] {
-        let kept = board_text::text(left);
-        assert_eq!(
-            described(&kept).map(|_| ()),
-            Err(SchemaError::new(
-                "description",
-                format!("line 1: {PLAIN_SPACES_ONLY}")
-            )),
-            "{left:?}"
-        );
+    for (raw, kept) in [("-\u{a0}x", "- x"), ("x\u{a0}`a\u{a0}b`", "x `a b`")] {
+        let normal = board_text::text(raw);
+        assert_eq!(normal, kept, "{raw:?}");
+        let held = described(&normal).unwrap();
+        let file = encode::<TaskCodec>(&held).unwrap();
+        assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(held), "{raw:?}");
     }
+    assert_eq!(
+        described(&board_text::text("an em\u{2003}space")).map(|_| ()),
+        Err(SchemaError::new(
+            "description",
+            format!("line 1: {PLAIN_SPACES_ONLY}")
+        ))
+    );
 }
 
 /// #2668 review round 1: a task's title and description (a paragraph's

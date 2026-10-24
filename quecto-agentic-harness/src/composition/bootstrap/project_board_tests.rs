@@ -332,33 +332,36 @@ fn a_command_scope_identity_outranks_the_clones_own() {
 }
 
 /// quecto's own container scripts set the identity beside a credential
-/// helper (`create.sh`, `exec.sh`): the identity writes the board, the
-/// helper is skipped, and nothing is warned of.
+/// helper (`create.sh`, `exec.sh`), and the pocket relay sets it after 39
+/// guarded settings (#2703: 41 in all): either way the identity writes the
+/// board, the rest is skipped, and nothing is warned of.
 #[test]
-fn the_container_scripts_identity_writes_the_board() {
-    let (_dir, work) = repository();
-    let container = with_command_config(
-        environment(&work, Access::Write),
-        &[
-            ("user.name", "quecto pocket"),
-            ("user.email", "pocket@quecto.invalid"),
-            (
-                "credential.https://github.com.helper",
-                "!gh auth git-credential",
-            ),
-        ],
+fn the_container_scripts_and_relays_identity_writes_the_board() {
+    let identity = [
+        ("user.name", "quecto pocket"),
+        ("user.email", "pocket@quecto.invalid"),
+    ];
+    let helper = (
+        "credential.https://github.com.helper",
+        "!gh auth git-credential",
     );
-    let mut warnings: Vec<String> = Vec::new();
-    let handles = build_with_warnings(&container, &mut |line| warnings.push(line.into())).unwrap();
-    assert_eq!(warnings, Vec::<String>::new());
-    let ops = |request: Value| run(&*handles.operations, &request.to_string());
-    assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
-    let created = ops(json!({"op": "create", "task": "a", "title": "A"}));
-    assert_eq!(created["ok"], json!(true), "{created}");
-    assert_eq!(
-        board_commit_identities(&work),
-        "quecto pocket <pocket@quecto.invalid>|quecto pocket <pocket@quecto.invalid>"
-    );
+    let mut relay = vec![("core.pager", "cat"); 39];
+    relay.extend(identity);
+    for settings in [vec![identity[0], identity[1], helper], relay] {
+        let (_dir, work) = repository();
+        let scope = with_command_config(environment(&work, Access::Write), &settings);
+        let mut warnings: Vec<String> = Vec::new();
+        let handles = build_with_warnings(&scope, &mut |line| warnings.push(line.into())).unwrap();
+        assert_eq!(warnings, Vec::<String>::new());
+        let ops = |request: Value| run(&*handles.operations, &request.to_string());
+        assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
+        let created = ops(json!({"op": "create", "task": "a", "title": "A"}));
+        assert_eq!(created["ok"], json!(true), "{created}");
+        assert_eq!(
+            board_commit_identities(&work),
+            "quecto pocket <pocket@quecto.invalid>|quecto pocket <pocket@quecto.invalid>"
+        );
+    }
 }
 
 /// A malformed command-scope set (here a count of 2 with one setting) is

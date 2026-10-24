@@ -13,6 +13,7 @@ use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::review::Review;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::value_objects::board_moved::BoardMoved;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{
     BoardOpRecord, BoardStartRecord, FoldBackRecord,
@@ -284,6 +285,12 @@ pub enum BoardStoreError {
         path: String,
         object: String,
     },
+    /// The board moved to a board server (format 4, #2705 B13): this store
+    /// neither reads nor writes it; the server's URLs serve it.
+    Moved(BoardMoved),
+    /// A board fenced at format 4 whose `MOVED` file is not one quecto
+    /// writes: why. Neither read nor written.
+    MovedMalformed(String),
 }
 
 /// Where a project's board lives. Blocking: callers run it off the async

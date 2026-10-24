@@ -400,7 +400,7 @@ impl GitBoardStore {
         let base = object_id(&expected.0).map_err(|_| invalid())?;
         if let Some(tip) = self.local_tip()? {
             if self.on_board(&base, &tip)? {
-                return Ok(base);
+                return self.unmoved(base, &tip);
             }
         }
         if self.remote_head(BOARD_REF)?.is_none() {
@@ -408,9 +408,21 @@ impl GitBoardStore {
         }
         let tip = self.fetch()?;
         match self.on_board(&base, &tip)? {
-            true => Ok(base),
+            true => self.unmoved(base, &tip),
             false => Err(invalid()),
         }
+    }
+
+    /// `base`, when a write may go on from it: the board's `tip` past it,
+    /// if any, is judged by its format marker alone (#2705 B13). Only this
+    /// quecto's marker, or none, goes on; a fence (a write from a head
+    /// before it) and every other marker are refused as a read refuses
+    /// them, before any commit is made.
+    fn unmoved(&self, base: String, tip: &str) -> Result<String, BoardStoreError> {
+        if base != tip {
+            self.marker_fetching(tip)?;
+        }
+        Ok(base)
     }
 
     /// Whether `commit` is a commit here and `tip` or one of its ancestors.
@@ -703,6 +715,9 @@ mod clear;
 pub(crate) use clear::cleared;
 #[path = "store_committer.rs"]
 mod committer;
+#[path = "store_fence.rs"]
+mod fence;
+pub use fence::Fence;
 #[path = "store_fetch_state.rs"]
 mod fetch_state;
 #[path = "store_fetch.rs"]
