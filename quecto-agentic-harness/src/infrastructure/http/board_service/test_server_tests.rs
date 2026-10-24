@@ -12,10 +12,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// reader, never by the test's real uid.
 pub const SERVER_UID: u32 = 4242;
 
-/// Answers every request with its path and body length, counting calls.
+/// Answers every request with its path and body length, counting calls;
+/// each reply carries `pad` bytes of padding.
 #[derive(Default)]
 pub struct Counting {
     pub calls: AtomicUsize,
+    pub pad: usize,
 }
 
 impl ServiceHandler for Counting {
@@ -23,7 +25,11 @@ impl ServiceHandler for Counting {
         self.calls.fetch_add(1, Ordering::SeqCst);
         ServiceReply::json(
             200,
-            &serde_json::json!({ "path": request.path, "body": request.body.len() }),
+            &serde_json::json!({
+                "path": request.path,
+                "body": request.body.len(),
+                "pad": "x".repeat(self.pad),
+            }),
         )
     }
 }
@@ -55,14 +61,24 @@ impl Drop for Running {
 
 /// A listener whose peers all read as `peer_uid`.
 pub fn start(peer_uid: u32) -> Running {
+    start_with(peer_uid, 0, super::limits::WRITE_TIMEOUT)
+}
+
+/// A listener whose peers all read as `peer_uid`, its replies padded by
+/// `pad` bytes, its writes given up after `write_timeout`.
+pub fn start_with(peer_uid: u32, pad: usize, write_timeout: std::time::Duration) -> Running {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("board").join("board.sock");
     let listener = bind(&socket).unwrap();
-    let handler = Arc::new(Counting::default());
+    let handler = Arc::new(Counting {
+        calls: AtomicUsize::new(0),
+        pad,
+    });
     let parts = ServiceParts {
         handler: Arc::clone(&handler) as Arc<dyn ServiceHandler>,
         peers: Arc::new(FixedUid(peer_uid)),
         uid: SERVER_UID,
+        write_timeout,
     };
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let thread = std::thread::spawn(move || {

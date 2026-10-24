@@ -1,12 +1,28 @@
-//! The board service's limits (epic #2705 B4), each an allowlist: the
-//! methods taken, bodies only of a declared length up to 1 MiB, at most
-//! 32 headers in 8 KiB, 10 s to send a request's head or body, and 64
-//! connections open at once. hyper's parser enforces the header limits
-//! (431); [`admit`] judges a parsed head before any body is read.
+//! The board service's limits (epic #2705 B4), each an allowlist:
+//!
+//! - methods: `GET` and `POST` (else 405);
+//! - bodies only of a declared `Content-Length`, up to 1 MiB (else 411,
+//!   400 or 413);
+//! - at most 32 headers in 8 KiB (hyper's parser: 431);
+//! - 10 s for a request's head to arrive, which also closes a keep-alive
+//!   connection idle that long, and 10 s for its body (408);
+//! - 10 s for a peer to take any of a reply's bytes ([`WriteDeadline`]): a
+//!   peer that sends requests but never reads its replies loses its
+//!   connection, so it never holds a connection slot for good;
+//! - 64 connections served at once; a further peer waits to be accepted.
+//!
+//! No connection's whole lifetime is capped: a peer that keeps reading
+//! and sending within these deadlines is served as long as it likes.
+//! [`admit`] judges a parsed head before any body is read.
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use hyper::server::conn::http1;
 use hyper_util::rt::TokioTimer;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 /// The most headers a request may carry.
 pub const MAX_HEADERS: usize = 32;
@@ -16,6 +32,8 @@ pub const MAX_HEAD_BYTES: usize = 8 * 1024;
 pub const MAX_BODY_BYTES: u64 = 1024 * 1024;
 /// How long a request's head, and then its body, may take to arrive.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a write may wait for the peer to take any byte.
+pub const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// The most connections served at once; a further peer waits to be
 /// accepted.
 pub const MAX_CONNECTIONS: usize = 64;
@@ -117,6 +135,82 @@ pub fn http1_builder() -> http1::Builder {
         .max_buf_size(MAX_HEAD_BYTES)
         .keep_alive(true);
     builder
+}
+
+/// A connection whose writes fail with `TimedOut` once the peer has taken
+/// no byte for `limit`: each write or flush that cannot go on starts the
+/// clock, and any progress stops it. Reads pass through.
+pub struct WriteDeadline<S> {
+    io: S,
+    limit: Duration,
+    stalled: Option<Pin<Box<tokio::time::Sleep>>>,
+}
+
+impl<S> WriteDeadline<S> {
+    pub fn new(io: S, limit: Duration) -> Self {
+        Self {
+            io,
+            limit,
+            stalled: None,
+        }
+    }
+
+    /// `polled`, or `TimedOut` once it has been pending past the limit.
+    fn watched<T>(
+        &mut self,
+        cx: &mut Context<'_>,
+        polled: Poll<io::Result<T>>,
+    ) -> Poll<io::Result<T>> {
+        let Poll::Pending = polled else {
+            self.stalled = None;
+            return polled;
+        };
+        let limit = self.limit;
+        let clock = self
+            .stalled
+            .get_or_insert_with(|| Box::pin(tokio::time::sleep(limit)));
+        match clock.as_mut().poll(cx) {
+            Poll::Ready(()) => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the peer took no reply bytes in time",
+            ))),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for WriteDeadline<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().io).poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for WriteDeadline<S> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        let polled = Pin::new(&mut this.io).poll_write(cx, buf);
+        this.watched(cx, polled)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        let polled = Pin::new(&mut this.io).poll_flush(cx);
+        this.watched(cx, polled)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        let polled = Pin::new(&mut this.io).poll_shutdown(cx);
+        this.watched(cx, polled)
+    }
 }
 
 #[cfg(test)]

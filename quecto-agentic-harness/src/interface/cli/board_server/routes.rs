@@ -7,7 +7,9 @@
 //! |---|---|
 //! | `GET /v1/status` | `{role, board, head}` (`head` null while there is no board) |
 //! | `GET /v1/time` | `{time}`: the server's clock, the clock authority |
-//! | `GET /v1/boards/{id}/snapshot` | `{board, head, files: [{path, text}], set_aside}` |
+//! | `GET /v1/boards/{id}/snapshot` | `{board, head, files: [{path, encoding, content, set_aside}]}`: the stored bytes |
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde_json::{Value, json};
 
 use crate::application::project_board::dto::ProjectBoardError;
@@ -96,25 +98,30 @@ impl ServiceHandler for BoardRoutes {
     }
 }
 
-/// A snapshot's reply: each file's text (the board's markdown is UTF-8;
-/// a file that is not is a server fault, never sent lossily).
+/// A snapshot's reply: each stored file whole. A file of UTF-8 text with
+/// no control character but tab and newline is sent as that text
+/// (`"encoding": "utf-8"`), so a JSON string holds it in at most twice its
+/// bytes; any other as base64; an entry set aside with no bytes as none.
 fn snapshot_reply(snapshot: ServedSnapshot) -> ServiceReply {
-    let files: Result<Vec<Value>, String> = snapshot
+    let files: Vec<Value> = snapshot
         .files
         .into_iter()
-        .map(|file| match String::from_utf8(file.bytes) {
-            Ok(text) => Ok(json!({ "path": file.path, "text": text })),
-            Err(_) => Err(format!("{} is not UTF-8", file.path)),
+        .map(|file| {
+            let (encoding, content) = match file.bytes {
+                Some(bytes) => match String::from_utf8(bytes) {
+                    Ok(text) if text.chars().all(plain) => ("utf-8", Value::String(text)),
+                    Ok(text) => ("base64", Value::String(BASE64.encode(text.as_bytes()))),
+                    Err(error) => ("base64", Value::String(BASE64.encode(error.as_bytes()))),
+                },
+                None => ("none", Value::Null),
+            };
+            json!({
+                "path": file.path,
+                "encoding": encoding,
+                "content": content,
+                "set_aside": file.set_aside,
+            })
         })
-        .collect();
-    let files = match files {
-        Ok(files) => files,
-        Err(why) => return failed(&ServeError::Files(why)),
-    };
-    let set_aside: Vec<Value> = snapshot
-        .set_aside
-        .iter()
-        .map(|file| json!({ "path": file.path, "object": file.object, "reason": file.reason }))
         .collect();
     ServiceReply::json(
         200,
@@ -122,13 +129,19 @@ fn snapshot_reply(snapshot: ServedSnapshot) -> ServiceReply {
             "board": snapshot.board.as_str(),
             "head": snapshot.head.0,
             "files": files,
-            "set_aside": set_aside,
         }),
     )
 }
 
-/// What a failed read is answered with: 404 for no such board, 500 for a
-/// board no file holds, and 503 while the store or clock cannot answer.
+/// A character a JSON string holds as itself, or as two bytes (`\n`,
+/// `\t`, `\"`, `\\`).
+fn plain(c: char) -> bool {
+    !c.is_control() || c == '\n' || c == '\t'
+}
+
+/// What a failed read is answered with: 404 for no such board, 500 (and a
+/// log line) for files that cannot be given whole and true or past one
+/// answer's bound, and 503 while the store or clock cannot answer.
 fn failed(error: &ServeError) -> ServiceReply {
     let (status, why) = match error {
         ServeError::UnknownBoard => (404, "no such board on this server".to_string()),
@@ -136,10 +149,13 @@ fn failed(error: &ServeError) -> ServiceReply {
             (404, error.to_string())
         }
         ServeError::Board(error) => (503, error.to_string()),
-        ServeError::Files(why) => (500, why.clone()),
+        ServeError::Files(why) | ServeError::TooLarge(why) => (500, why.clone()),
     };
     // A store error may quote its remote: secrets and userinfo never leave.
     let why = redact_secrets(&redact_url_userinfo(&why));
+    if status == 500 {
+        tracing::error!(error = %why, "board server: a snapshot could not be served");
+    }
     ServiceReply::json(status, &json!({ "error": why }))
 }
 

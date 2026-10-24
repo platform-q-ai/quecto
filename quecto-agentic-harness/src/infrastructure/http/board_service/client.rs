@@ -13,8 +13,9 @@ use std::time::Duration;
 
 use super::limits::MAX_HEAD_BYTES;
 
-/// The most bytes a reply's body may be: a board snapshot's bound.
-pub const MAX_REPLY_BYTES: usize = 128 * 1024 * 1024;
+/// The most bytes a reply's body may be: a snapshot of 64 MiB stored bytes,
+/// each sent in at most twice its size (text or base64), with room.
+pub const MAX_REPLY_BYTES: usize = 160 * 1024 * 1024;
 /// How long a request may wait on the socket, each read and write.
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 

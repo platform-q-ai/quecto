@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use super::BoardServerHandles;
 use super::routes::BoardRoutes;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
+use crate::infrastructure::http::board_service::limits;
 use crate::infrastructure::http::board_service::listener::{self, ServiceParts};
 
 /// How the command is used.
@@ -101,6 +102,7 @@ where
         handler: Arc::new(BoardRoutes::new(handles.serve)),
         peers: handles.peers,
         uid: handles.uid,
+        write_timeout: limits::WRITE_TIMEOUT,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

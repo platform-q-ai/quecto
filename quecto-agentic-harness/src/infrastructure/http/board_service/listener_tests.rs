@@ -1,7 +1,49 @@
 use super::*;
-use crate::infrastructure::http::board_service::test_server::{SERVER_UID, raw, request, start};
+use crate::infrastructure::http::board_service::test_server::{
+    SERVER_UID, raw, request, start, start_with,
+};
+use std::io::Write;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::os::unix::net::UnixStream as StdStream;
 use std::sync::atomic::Ordering;
+use std::time::Instant;
+
+/// Review round 1: 64 peers that pipeline requests and never read their
+/// replies held every slot for good. Now each loses its connection once
+/// it takes no reply byte for the write timeout, and a fresh client is
+/// answered soon after.
+#[test]
+fn peers_that_never_read_free_their_slots_for_a_fresh_client() {
+    let deadline = Duration::from_millis(500);
+    let running = start_with(SERVER_UID, 64 * 1024, deadline);
+    let one = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\n\r\n";
+    let pipelined: Vec<u8> = one.repeat(200);
+    let mut held = Vec::new();
+    let mut writers = Vec::new();
+    for _ in 0..limits::MAX_CONNECTIONS {
+        let peer = StdStream::connect(&running.socket).unwrap();
+        let mut writer = peer.try_clone().unwrap();
+        let bytes = pipelined.clone();
+        writers.push(std::thread::spawn(move || {
+            let _ = writer.write_all(&bytes);
+        }));
+        held.push(peer);
+    }
+    let began = Instant::now();
+    let (status, body) = raw(&running.socket, &request("GET", 2, "", b""));
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        began.elapsed() < Duration::from_secs(5),
+        "answered in {:?}",
+        began.elapsed()
+    );
+    for peer in &held {
+        let _ = peer.shutdown(std::net::Shutdown::Both);
+    }
+    for writer in writers {
+        writer.join().unwrap();
+    }
+}
 
 #[test]
 fn the_same_uid_is_answered_by_the_handler() {

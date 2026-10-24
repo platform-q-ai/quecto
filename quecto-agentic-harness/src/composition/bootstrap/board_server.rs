@@ -1,7 +1,7 @@
 //! The board server's graph (epic #2705 B4): the repository's board
 //! through the git store, read as git's placeholder reader (the server
 //! writes nothing yet: B7), this machine's clock as the clock authority,
-//! the board's markdown codecs for its files, and the kernel's peer
+//! the stored blobs of its repository for its files, and the kernel's peer
 //! credentials letting in this process's own user only. The server reads
 //! its board through the `ProjectBoardStore` port alone, so a SQLite
 //! store (B2) slots in here with no server change.
@@ -13,7 +13,7 @@ use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::http::board_service::listener::{SocketPeerCredentials, this_uid};
 use crate::infrastructure::persistence::project_board::board_tree::told;
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
-use crate::infrastructure::persistence::project_board::snapshot_files::MarkdownSnapshotFiles;
+use crate::infrastructure::persistence::project_board::snapshot_files::GitSnapshotFiles;
 use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
 use crate::infrastructure::time::board_clock::SystemBoardClock;
 pub use crate::interface::cli::board_server::{BoardServerEnvironment, BoardServerHandles};
@@ -40,6 +40,8 @@ pub fn build_board_server(
             environment.repo.display()
         ))
     })?;
+    // The snapshot reads the very blobs the store reads, in its repository.
+    let files: Arc<dyn SnapshotFiles> = Arc::new(GitSnapshotFiles::new(git.clone()));
     let store = GitBoardStore::new(git, &environment.remote).map_err(|error| match error {
         StoreOpenError::NoSuchRemote(why) => refused(&why),
         StoreOpenError::Unavailable(error) => refused(&told(&error)),
@@ -58,7 +60,6 @@ pub fn build_board_server(
     })?;
     let store: Arc<dyn ProjectBoardStore> = Arc::new(store);
     let clock: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());
-    let files: Arc<dyn SnapshotFiles> = Arc::new(MarkdownSnapshotFiles);
     Ok(BoardServerHandles {
         serve: ServeBoard::new(store, clock, files, board),
         peers: Arc::new(SocketPeerCredentials),

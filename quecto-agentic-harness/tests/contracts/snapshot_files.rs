@@ -1,20 +1,24 @@
-//! Contract for [`SnapshotFiles`] (epic #2705 B4), proven on the markdown
-//! adapter: a snapshot's files are one per artifact, in path order, each
-//! at the path a read of the board spells for its key, and each reads
-//! back, by its kind's codec, as the very artifact it was made of.
-use quecto::application::project_board::ports::{BoardHead, BoardSnapshot, SnapshotFiles};
+//! Contract for [`SnapshotFiles`] (epic #2705 B4), proven on the git
+//! adapter: a snapshot's files are the bytes the store keeps, byte for
+//! byte, never a re-encoding. One per artifact read, at the path a read
+//! spells for its key; one per file set aside, with its reason; in path
+//! order; and a snapshot past the bound is refused as too large.
+use super::project_board_git_store::{Remote, sh};
+use quecto::application::project_board::ports::{
+    BoardArtifact, BoardWrite, ProjectBoardStore, SnapshotFiles, SnapshotFilesError,
+};
 use quecto::domain::project_board::entities::task::{Task, TaskFields};
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::timestamp::Timestamp;
 use quecto::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
-use quecto::infrastructure::persistence::project_board::artifacts::{
-    change::ChangeCodec, decode, discussion::DiscussionCodec, plan::PlanCodec, review::ReviewCodec,
-    run::RunCodec, task::TaskCodec,
-};
-use quecto::infrastructure::persistence::project_board::snapshot_files::MarkdownSnapshotFiles;
+use quecto::infrastructure::persistence::project_board::artifacts::file_of;
+use quecto::infrastructure::persistence::project_board::snapshot_files::GitSnapshotFiles;
 use quecto::infrastructure::test_support::board_artifacts::{
     change, discussion, plan, review, run,
 };
+
+/// A row the plan codec reads past and never writes (#2481).
+const LEGACY_ROW: &str = "| Budget tokens | 5000 |\n";
 
 fn task(id: &str) -> Task {
     let at = Timestamp::parse("2026-10-24T08:00:00Z").unwrap();
@@ -39,90 +43,94 @@ fn task(id: &str) -> Task {
     .unwrap()
 }
 
-/// A board of one artifact of each kind, and a second task.
-fn snapshot() -> BoardSnapshot {
-    BoardSnapshot {
-        head: BoardHead("0".repeat(40)),
-        tasks: vec![task("zeta"), task("alpha")],
-        plans: vec![plan("alpha", 2)],
-        runs: vec![run("alpha", 1)],
-        changes: vec![change("alpha", 3)],
-        reviews: vec![review("alpha", 3)],
-        discussions: vec![discussion("why")],
-        quarantined: vec![],
-    }
+/// A board of one artifact of each kind, whose plan a hand then gave a
+/// legacy row the codec reads past, and beside which it put a stray task
+/// file no codec reads. Gives the legacy plan's bytes.
+fn board(remote: &Remote) -> Vec<u8> {
+    let store = remote.client(0, "Alice");
+    store.bootstrap().unwrap();
+    let head = store.read().unwrap().head;
+    let artifacts = [
+        BoardArtifact::Task(task("a")),
+        BoardArtifact::Plan(plan("a", 1)),
+        BoardArtifact::Run(run("a", 1)),
+        BoardArtifact::Change(change("a", 3)),
+        BoardArtifact::Review(review("a", 3)),
+        BoardArtifact::Discussion(discussion("why")),
+    ];
+    let written = store.write(&head, &artifacts, "seed").unwrap();
+    assert!(matches!(written, BoardWrite::Written(_)), "{written:?}");
+    let plan = String::from_utf8(file_of(&artifacts[1]).unwrap()).unwrap();
+    let at = plan
+        .find("| Created |")
+        .expect("a plan has its Created row");
+    let legacy = format!("{}{LEGACY_ROW}{}", &plan[..at], &plan[at..]);
+    remote.put("plans", "a.1.md", legacy.as_bytes());
+    remote.put("tasks", "broken.md", b"not a task\n");
+    legacy.into_bytes()
 }
 
 #[test]
-fn each_artifact_is_one_file_at_its_path_in_path_order() {
-    let files = MarkdownSnapshotFiles.files(&snapshot()).unwrap();
+fn the_files_are_the_stored_bytes_set_aside_included() {
+    let remote = Remote::new();
+    let legacy = board(&remote);
+    let snapshot = remote.client(0, "Alice").read().unwrap();
+    assert_eq!(snapshot.plans.len(), 1, "the legacy plan reads");
+    assert_eq!(snapshot.quarantined.len(), 1, "the stray is set aside");
+    let files = GitSnapshotFiles::new(remote.git(0, "Alice"))
+        .files(&snapshot)
+        .unwrap();
     let paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
     assert_eq!(
         paths,
         [
-            "changes/alpha.3.md",
+            "changes/a.3.md",
             "discussions/why.md",
-            "plans/alpha.2.md",
-            "reviews/alpha.3.md",
-            "runs/alpha.1.md",
-            "tasks/alpha.md",
-            "tasks/zeta.md",
+            "plans/a.1.md",
+            "reviews/a.3.md",
+            "runs/a.1.md",
+            "tasks/a.md",
+            "tasks/broken.md",
         ]
     );
+    for file in &files {
+        let bytes = file.bytes.as_deref().expect("every file here is a blob");
+        let object = sh(remote.clone_dir(0), &["hash-object", "--stdin"], bytes);
+        assert_eq!(object, remote.object(&file.path), "{} as stored", file.path);
+        let set_aside = file.path == "tasks/broken.md";
+        assert_eq!(file.set_aside.is_some(), set_aside, "{}", file.path);
+    }
+    // The legacy plan as kept: never re-encoded without its row.
+    let plan = files
+        .iter()
+        .find(|file| file.path == "plans/a.1.md")
+        .unwrap();
+    assert_eq!(plan.bytes.as_deref(), Some(legacy.as_slice()));
 }
 
 #[test]
-fn each_file_reads_back_as_its_artifact() {
-    let board = snapshot();
-    let files = MarkdownSnapshotFiles.files(&board).unwrap();
-    let bytes = |path: &str| {
-        files
-            .iter()
-            .find(|file| file.path == path)
-            .map(|file| file.bytes.clone())
-            .unwrap_or_else(|| panic!("no file {path}"))
-    };
-    assert_eq!(
-        decode::<TaskCodec>(&bytes("tasks/alpha.md")).unwrap(),
-        board.tasks[1]
-    );
-    assert_eq!(
-        decode::<TaskCodec>(&bytes("tasks/zeta.md")).unwrap(),
-        board.tasks[0]
-    );
-    assert_eq!(
-        decode::<PlanCodec>(&bytes("plans/alpha.2.md")).unwrap(),
-        board.plans[0]
-    );
-    assert_eq!(
-        decode::<RunCodec>(&bytes("runs/alpha.1.md")).unwrap(),
-        board.runs[0]
-    );
-    assert_eq!(
-        decode::<ChangeCodec>(&bytes("changes/alpha.3.md")).unwrap(),
-        board.changes[0]
-    );
-    assert_eq!(
-        decode::<ReviewCodec>(&bytes("reviews/alpha.3.md")).unwrap(),
-        board.reviews[0]
-    );
-    assert_eq!(
-        decode::<DiscussionCodec>(&bytes("discussions/why.md")).unwrap(),
-        board.discussions[0]
+fn a_snapshot_past_the_bound_is_refused_as_too_large() {
+    let remote = Remote::new();
+    board(&remote);
+    let snapshot = remote.client(0, "Alice").read().unwrap();
+    let refused = GitSnapshotFiles::new(remote.git(0, "Alice"))
+        .bounded(10)
+        .files(&snapshot);
+    assert!(
+        matches!(refused, Err(SnapshotFilesError::TooLarge(_))),
+        "{refused:?}"
     );
 }
 
 #[test]
-fn an_empty_board_is_no_files() {
-    let empty = BoardSnapshot {
-        head: BoardHead("0".repeat(40)),
-        tasks: vec![],
-        plans: vec![],
-        runs: vec![],
-        changes: vec![],
-        reviews: vec![],
-        discussions: vec![],
-        quarantined: vec![],
-    };
-    assert!(MarkdownSnapshotFiles.files(&empty).unwrap().is_empty());
+fn a_snapshot_whose_head_the_repository_lacks_is_unreadable() {
+    let remote = Remote::new();
+    board(&remote);
+    let mut snapshot = remote.client(0, "Alice").read().unwrap();
+    snapshot.head.0 = "0".repeat(40);
+    let refused = GitSnapshotFiles::new(remote.git(0, "Alice")).files(&snapshot);
+    assert!(
+        matches!(refused, Err(SnapshotFilesError::Unreadable(_))),
+        "{refused:?}"
+    );
 }

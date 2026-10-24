@@ -2,13 +2,17 @@
 //! B4): its status, its time and its files at the head. Reads only, each
 //! through the board's store, clock and file codec as composition gave
 //! them, so the same server serves any store.
-use std::collections::BTreeSet;
+//!
+//! A panic here is fatal: the binary's panic hook aborts the process for
+//! any panic outside a tool call (ADR-0029), so the whole server would
+//! stop. Every breach of a port's contract is answered as a
+//! [`ServeError`] instead, and nothing indexes or unwraps board data.
 use std::sync::Arc;
 
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{
     BoardClock, BoardStoreError, ProjectBoardStore, ServeError, ServedSnapshot, ServedStatus,
-    ServerRole, SnapshotFiles,
+    ServerRole, SnapshotFiles, SnapshotFilesError,
 };
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -82,22 +86,30 @@ impl ServeBoard {
             .store
             .read()
             .map_err(|error| ServeError::Board(ProjectBoardError::Store(error)))?;
-        let files = self.files.files(&snapshot).map_err(ServeError::Files)?;
-        let artifacts = snapshot.tasks.len()
+        let files = self.files.files(&snapshot).map_err(|error| match error {
+            SnapshotFilesError::TooLarge(why) => ServeError::TooLarge(why),
+            SnapshotFilesError::Unreadable(why) => ServeError::Files(why),
+        })?;
+        let read = snapshot.tasks.len()
             + snapshot.plans.len()
             + snapshot.runs.len()
             + snapshot.changes.len()
             + snapshot.reviews.len()
             + snapshot.discussions.len();
-        let paths: BTreeSet<&str> = files.iter().map(|file| file.path.as_str()).collect();
-        // The codec's contract: one file per artifact, each at its own path.
-        assert_eq!(files.len(), artifacts, "one file per artifact");
-        assert_eq!(paths.len(), files.len(), "each file at its own path");
-        Ok(ServedSnapshot {
-            board: self.board.clone(),
-            head: snapshot.head,
-            files,
-            set_aside: snapshot.quarantined,
-        })
+        let set_aside = snapshot.quarantined.len();
+        let given = files.iter().filter(|file| file.set_aside.is_none()).count();
+        // The port's contract: one file per artifact read and one per file
+        // set aside. A breach is answered as a fault, never a panic.
+        match (given == read, files.len() - given == set_aside) {
+            (true, true) => Ok(ServedSnapshot {
+                board: self.board.clone(),
+                head: snapshot.head,
+                files,
+            }),
+            (false, _) | (_, false) => Err(ServeError::Files(format!(
+                "the store gave {} files for {read} artifacts and {set_aside} set aside",
+                files.len()
+            ))),
+        }
     }
 }

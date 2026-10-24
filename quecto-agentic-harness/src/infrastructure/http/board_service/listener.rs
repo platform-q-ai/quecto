@@ -3,7 +3,9 @@
 //! only when its peer's uid, read by the injected [`PeerCredentials`], is
 //! the one uid allowed; each request is held to the [`limits`] and then
 //! handed, whole, to the injected [`ServiceHandler`] on a blocking thread
-//! (a board's store blocks), whose reply is sent back as JSON.
+//! (a board's store blocks), whose reply is sent back as JSON. Its writes
+//! fail once the peer takes no byte for the write timeout, so a peer that
+//! never reads frees its connection slot.
 //!
 //! [`bind`] makes the socket safely: in a directory of mode 0700 (made so,
 //! or found so and owned by this user), never replacing a path that is
@@ -26,7 +28,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Semaphore;
 
-use super::limits::{self, Refusal};
+use super::limits::{self, Refusal, WriteDeadline};
 
 pub use super::limits::Method as ServiceMethod;
 
@@ -48,9 +50,13 @@ pub struct ServiceReply {
 
 impl ServiceReply {
     /// `value` as the body of a reply of `status` (a status code, 100 to
-    /// 599).
+    /// 599; any other is sent as 500).
     pub fn json(status: u16, value: &serde_json::Value) -> Self {
-        assert!((100..=599).contains(&status), "a status code: {status}");
+        // Never a panic on the data path: a code out of range is a fault.
+        let status = match (100..=599).contains(&status) {
+            true => status,
+            false => 500,
+        };
         Self {
             status,
             body: value.to_string().into_bytes(),
@@ -96,6 +102,9 @@ pub struct ServiceParts {
     pub handler: Arc<dyn ServiceHandler>,
     pub peers: Arc<dyn PeerCredentials>,
     pub uid: u32,
+    /// How long a write may wait for the peer to take any byte
+    /// ([`limits::WRITE_TIMEOUT`] in production).
+    pub write_timeout: Duration,
 }
 
 /// Why a socket was not bound.
@@ -163,7 +172,9 @@ pub fn bind(path: &Path) -> Result<std::os::unix::net::UnixListener, BindError> 
     let listener = std::os::unix::net::UnixListener::bind(path).map_err(io)?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(io)?;
     let mode = fs::symlink_metadata(path).map_err(io)?.permissions().mode();
-    assert_eq!(mode & 0o777, 0o600, "the socket is owner-only");
+    if mode & 0o777 != 0o600 {
+        return Err(io(io::Error::other("the socket did not take mode 0600")));
+    }
     Ok(listener)
 }
 
@@ -213,7 +224,11 @@ pub async fn serve(
     loop {
         let slot = tokio::select! {
             () = &mut stop => return Ok(()),
-            slot = Arc::clone(&slots).acquire_owned() => slot.expect("the slots are never closed"),
+            slot = Arc::clone(&slots).acquire_owned() => match slot {
+                Ok(slot) => slot,
+                // The slots are never closed; were they, nothing more is served.
+                Err(_) => return Ok(()),
+            },
         };
         let accepted = tokio::select! {
             () = &mut stop => return Ok(()),
@@ -248,7 +263,10 @@ async fn connection(stream: UnixStream, parts: &ServiceParts) {
     let service = hyper::service::service_fn(move |request| answer(Arc::clone(&handler), request));
     // A peer that goes, or is too slow, ends its own connection only.
     if let Err(error) = limits::http1_builder()
-        .serve_connection(TokioIo::new(stream), service)
+        .serve_connection(
+            TokioIo::new(WriteDeadline::new(stream, parts.write_timeout)),
+            service,
+        )
         .await
     {
         tracing::debug!(%error, "board service: connection ended");
@@ -310,16 +328,15 @@ async fn read_body(body: Incoming, declared: u64) -> Result<Vec<u8>, ServiceRepl
     if declared == 0 {
         return Ok(Vec::new());
     }
-    let most = usize::try_from(limits::MAX_BODY_BYTES).expect("1 MiB fits a usize");
+    let most = usize::try_from(limits::MAX_BODY_BYTES).unwrap_or(usize::MAX);
     match tokio::time::timeout(limits::READ_TIMEOUT, Limited::new(body, most).collect()).await {
         Ok(Ok(collected)) => {
             let bytes = collected.to_bytes().to_vec();
-            debug_assert_eq!(
-                bytes.len() as u64,
-                declared,
-                "hyper reads the declared length"
-            );
-            Ok(bytes)
+            // hyper reads the declared length; anything else is refused.
+            match u64::try_from(bytes.len()) == Ok(declared) {
+                true => Ok(bytes),
+                false => Err(error(400, "the body is not of its Content-Length")),
+            }
         }
         Ok(Err(_)) => Err(error(400, "the body could not be read")),
         Err(_) => Err(error(408, "the body did not arrive in time")),
