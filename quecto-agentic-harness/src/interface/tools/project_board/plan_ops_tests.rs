@@ -151,8 +151,8 @@ fn plan_text_past_the_most_reaches_the_agent_as_invalid_plan_text() {
         .collect();
     let refused = call(
         &ada,
-        json!({"op": "propose_plan", "task": "a", "approach": "\u{1f600}".repeat(65_536),
-               "items": items}),
+        json!({"op": "propose_plan", "task": "a", "approach": "",
+               "handoff": "\u{1f600}".repeat(65_536), "items": items}),
     );
     let rule = &refused["error"]["rule"];
     assert_eq!(
@@ -238,11 +238,13 @@ fn an_items_only_edit_past_the_most_beside_a_kept_approach_is_refused() {
     use crate::domain::audit::AuditEvent;
     use crate::domain::project_board::value_objects::telemetry::{Client, FrontEnd};
     let (store, ada, _bob) = drafted();
-    ok(
-        &ada,
-        json!({"op": "propose_plan", "task": "a", "approach": "\u{1f600}".repeat(65_536),
-               "items": []}),
-    );
+    // An approach this long enters only as before #2705 T3: from the CLI,
+    // with no handoff.
+    let long = json!({"op": "propose_plan", "task": "a", "approach": "\u{1f600}".repeat(65_536),
+                      "items": []});
+    let mut cli = BoardCall::arrived(None, FrontEnd::Cli, Client::Agent);
+    let proposed = run_recorded(&ada, &long.to_string(), &mut cli);
+    assert_eq!(proposed["ok"], json!(true), "{proposed}");
     let writes = store.writes();
     let criteria: Vec<String> = (b'a'..b'q')
         .map(|letter| char::from(letter).to_string().repeat(500))

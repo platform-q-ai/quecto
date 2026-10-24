@@ -74,14 +74,22 @@ impl PlanEntry {
     /// # Errors
     /// A capped approach past [`PlanEntryRules::max_approach_chars`].
     pub fn approach(self, approach: &str) -> Result<(), SchemaError> {
-        let _ = approach;
-        Ok(())
+        let chars = approach.chars().count();
+        let max = PLAN_ENTRY_RULES.max_approach_chars;
+        match (self, chars <= max) {
+            (Self::Legacy, _) | (Self::Capped, true) => Ok(()),
+            (Self::Capped, false) => Err(SchemaError::new(
+                "approach",
+                format!("is {chars} characters; the most is {max}: {MOVE_TO_HANDOFF}"),
+            )),
+        }
     }
 }
+
 /// The most versions a task's plan reaches.
 pub const MAX_PLAN_VERSION: u32 = 999;
-/// All of a plan's text together, in UTF-8 bytes: the approach, the
-/// task items' titles and criteria, the team's models and image. The field
+/// All of a plan's text together, in UTF-8 bytes: the approach and
+/// handoff, the task items' titles and criteria, the team's models and image. The field
 /// limits alone would add up to megabytes; this budget keeps every plan
 /// the domain admits inside the one file it is stored in, with room to
 /// spare (its codec, M2, proves the fit).
@@ -126,9 +134,9 @@ pub struct PlanFields {
 
 impl PlanFields {
     /// The UTF-8 bytes of every free text in the plan: the approach and
-    /// handoff, the items' titles and criteria, the team's models and image. Ids,
-    /// words, numbers, times and identities are bounded by the field
-    /// limits.
+    /// handoff, the items' titles and criteria, the team's models and
+    /// image. Ids, words, numbers, times and identities are bounded by the
+    /// field limits.
     pub fn text_bytes(&self) -> usize {
         let items: usize = self
             .items

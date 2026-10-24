@@ -126,8 +126,9 @@ fn a_handoff_past_the_briefs_room_is_cut_to_fit_with_a_marker() {
     let rendered = render(&brief);
     assert!(rendered.len() <= brief.bytes(), "{}", rendered.len());
     assert_eq!(data(&rendered)["handoff"], json!(shown));
-    // Hidden characters render escaped, six bytes each: counted so.
-    let hidden = format!("a{}", "\u{2060}".repeat(MAX_HANDOFF_CHARS - 1));
-    let brief = self::brief(Some(&hidden)).unwrap();
-    assert!(brief.bytes() <= MAX_BRIEF_BYTES && render(&brief).len() <= brief.bytes());
+    // Quotes and line breaks render escaped, two bytes each: counted so.
+    let escaped = format!("a{}", "\"\n".repeat(MAX_HANDOFF_CHARS / 2 - 1));
+    let brief = self::brief(Some(&escaped)).unwrap();
+    assert!(brief.handoff_cut && brief.bytes() <= MAX_BRIEF_BYTES);
+    assert!(render(&brief).len() <= brief.bytes());
 }

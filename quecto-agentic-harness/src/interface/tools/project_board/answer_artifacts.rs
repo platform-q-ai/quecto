@@ -111,11 +111,13 @@ fn skip_code(why: &SkipReason) -> &'static str {
 
 /// A plan in the board's own field names, as its file holds them, every
 /// field present (`null` or `[]` when unset), in a fixed order: who
-/// accepted it and when as `accepted_by` and `accepted_at`.
+/// accepted it and when as `accepted_by` and `accepted_at`; its
+/// `handoff` (#2705 T3) after its approach only when it has one, so a
+/// plan without one answers as before.
 pub(super) fn plan_json(plan: &Plan) -> Value {
     let plan = plan.fields();
     let items: Vec<Value> = plan.items.iter().map(item_json).collect();
-    json!({
+    let answer = json!({
         "task": slug_json(&plan.task),
         "version": plan.version,
         "state": plan.state.as_str(),
@@ -128,7 +130,21 @@ pub(super) fn plan_json(plan: &Plan) -> Value {
         "accepted_at": plan.accepted.as_ref().map(|(_, at)| at.as_str()),
         "created": plan.created.as_str(),
         "updated": plan.updated.as_str(),
-    })
+    });
+    match (&plan.handoff, answer) {
+        (Some(handoff), Value::Object(fields)) => {
+            let mut shown = Map::new();
+            for (key, value) in fields {
+                let after_approach = key == "approach";
+                shown.insert(key, value);
+                if after_approach {
+                    shown.insert("handoff".into(), json!(handoff));
+                }
+            }
+            Value::Object(shown)
+        }
+        (_, answer) => answer,
+    }
 }
 
 fn item_json(item: &PlanItem) -> Value {
@@ -145,7 +161,9 @@ fn item_json(item: &PlanItem) -> Value {
 /// `version` names, or of the accepted plan, and its `updated` (#2481
 /// M4b review round 2: a reader sees an edit land between its pages),
 /// with only the parts the page names: `approach_from` and the
-/// `approach` from that character, `items_from` and the task `items` from
+/// `approach` from that character, `handoff_from` and the `handoff` from
+/// that character (`null` for a plan with none, #2705 T3), `items_from`
+/// and the task `items` from
 /// that index (`null` while the task has no plan to page through); and
 /// `may_be_incomplete`, as `show` says it.
 pub(super) fn page_fields(
@@ -163,6 +181,14 @@ pub(super) fn page_fields(
             let approach: String = plan.approach.chars().skip(from).collect();
             part.insert("approach_from".into(), json!(from));
             part.insert("approach".into(), json!(approach));
+        }
+        if let Some(from) = page.handoff_from() {
+            let handoff = plan
+                .handoff
+                .as_ref()
+                .map(|handoff| handoff.chars().skip(from).collect::<String>());
+            part.insert("handoff_from".into(), json!(from));
+            part.insert("handoff".into(), json!(handoff));
         }
         if let Some(from) = page.items_from() {
             let items: Vec<Value> = plan.items.iter().skip(from).map(item_json).collect();

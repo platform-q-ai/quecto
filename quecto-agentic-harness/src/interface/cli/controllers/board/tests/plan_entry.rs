@@ -59,11 +59,14 @@ fn a_tool_approach_over_its_cap_is_refused_pointing_to_the_handoff() {
     let operations = board();
     let answer = run(&*operations, &propose(&long, None).to_string());
     assert_eq!(
-        (&answer["error"]["code"], &answer["error"]["field"]),
+        (
+            &answer["error"]["rule"]["code"],
+            &answer["error"]["rule"]["field"]
+        ),
         (&json!("invalid_plan"), &json!("approach")),
         "{answer}"
     );
-    let problem = answer["error"]["problem"].as_str().unwrap();
+    let problem = answer["error"]["rule"]["problem"].as_str().unwrap();
     assert_eq!(
         problem,
         format!(
@@ -87,7 +90,11 @@ fn a_cli_plan_without_a_handoff_keeps_masters_limits() {
     assert_eq!(answer["ok"], json!(true), "{answer}");
     // Given a handoff, the CLI caps the approach as the tool does.
     let answer = as_cli(&*operations, &propose(&long, Some("Detail.")));
-    assert_eq!(answer["error"]["field"], json!("approach"), "{answer}");
+    assert_eq!(
+        answer["error"]["rule"]["field"],
+        json!("approach"),
+        "{answer}"
+    );
 }
 
 /// An approach entered long before T3 (here by the CLI) is kept: an edit
@@ -106,7 +113,11 @@ fn a_tool_edit_keeps_a_long_approach_it_does_not_give() {
     let edit =
         json!({"op": "edit_plan", "task": "a", "version": 1, "approach": long.clone() + "!"});
     let answer = run(&*operations, &edit.to_string());
-    assert_eq!(answer["error"]["field"], json!("approach"), "{answer}");
+    assert_eq!(
+        answer["error"]["rule"]["field"],
+        json!("approach"),
+        "{answer}"
+    );
     let shown = run(&*operations, r#"{"op": "show", "task": "a", "version": 1}"#);
     assert_eq!(shown["plan"]["approach"], json!(long), "{shown}");
     assert_eq!(shown["plan"].get("handoff"), None, "{shown}");

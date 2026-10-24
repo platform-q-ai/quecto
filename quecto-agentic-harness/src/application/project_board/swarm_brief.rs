@@ -17,6 +17,10 @@
 //!   acceptance its criteria (or its title alone), its dependencies by slug.
 //! - **constraints:** the approach, trimmed, and cut to fit with a marker
 //!   where it was; then where the plan is in full.
+//! - **handoff** (#2705 T3): the plan's handoff verbatim, when it has
+//!   one, counted in the brief's size; one past the room the rest of the
+//!   brief leaves is cut to fit with the marker, never refused, so a long
+//!   handoff never stops a start. A plan without one briefs as before.
 //!
 //! A brief is only of a [`Started`] task, so of its accepted plan. The
 //! team is read field by field (a new field does not compile until it is
@@ -340,7 +344,9 @@ impl SwarmBrief {
                 .member_limit
                 .map_or(0, |limit| number(u64::from(limit)))
             + number(self.deadline_in_seconds);
+        let handoff = self.handoff.as_deref().map_or(0, handoff_bytes);
         TEMPLATE_BYTES
+            + handoff
             + line(self.task.as_str())
             + line(&self.goal)
             + self
@@ -422,10 +428,62 @@ pub fn brief_of(started: &Started) -> Result<SwarmBrief, BriefRefusal> {
         coordinator: terms.coordinator,
         not_applied: terms.not_applied,
     };
-    match brief.bytes() {
-        bytes if bytes <= MAX_BRIEF_BYTES => Ok(brief),
-        bytes => Err(BriefRefusal::BriefTooLarge { bytes }),
+    let bare = brief.bytes();
+    let too_large = |bytes| Err(BriefRefusal::BriefTooLarge { bytes });
+    let Some(handoff) = planned.handoff.as_deref() else {
+        return match bare <= MAX_BRIEF_BYTES {
+            true => Ok(brief),
+            false => too_large(bare),
+        };
+    };
+    // The handoff takes the room the rest leaves: whole, or cut to fit.
+    let room = MAX_BRIEF_BYTES.saturating_sub(bare);
+    let Some((handoff, handoff_cut)) = handoff_within(handoff, room) else {
+        return too_large(bare + handoff_bytes(handoff));
+    };
+    let brief = SwarmBrief {
+        handoff: Some(handoff),
+        handoff_cut,
+        ..brief
+    };
+    assert!(
+        brief.bytes() <= MAX_BRIEF_BYTES,
+        "a handoff is cut to the brief's room"
+    );
+    Ok(brief)
+}
+
+/// The bytes `handoff` adds to a brief: its key and its text as the
+/// rendered data spells it ([`text::shown_bytes`]), and a line.
+fn handoff_bytes(handoff: &str) -> usize {
+    json_text(HANDOFF_KEY).len() + 1 + text::shown_bytes(handoff) + 1
+}
+
+/// The data's key for the handoff.
+const HANDOFF_KEY: &str = "handoff";
+
+/// `handoff` within `room` bytes ([`handoff_bytes`]), with whether it was
+/// cut: whole when it fits, else as many of its leading characters as fit
+/// with [`CUT_MARKER`]; none when not even the marker fits.
+fn handoff_within(handoff: &str, room: usize) -> Option<(String, bool)> {
+    if handoff_bytes(handoff) <= room {
+        return Some((handoff.to_owned(), false));
     }
+    // What a cut handoff always takes: its key, quotes and line, and the
+    // marker as spelt; each kept character then its own spelling.
+    let fixed = handoff_bytes(CUT_MARKER);
+    let left = room.checked_sub(fixed)?;
+    let mut used = 0;
+    let kept: String = handoff
+        .chars()
+        .take_while(|c| {
+            used += text::shown_bytes(c.encode_utf8(&mut [0; 4])) - 2;
+            used <= left
+        })
+        .collect();
+    let cut = format!("{kept}{CUT_MARKER}");
+    debug_assert!(handoff_bytes(&cut) <= room, "the cut handoff fits");
+    Some((cut, true))
 }
 
 /// Whether `model` names its provider as spawn takes it,

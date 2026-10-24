@@ -288,6 +288,9 @@ const KNOWN_KINDS: &[&str] = &[
     "why",
     "done_when",
     "links",
+    // A plan's handoff and where show pages it from (#2705 T3).
+    "handoff",
+    "handoff_from",
 ];
 
 /// Whether every one of [`KNOWN_KINDS`] is shaped as a kind (checked as
