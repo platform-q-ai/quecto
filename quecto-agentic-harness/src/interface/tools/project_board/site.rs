@@ -13,8 +13,9 @@ use super::recording::BoardCall;
 use super::request::{RequestError, op_of, parse};
 use super::{read, run_recorded_with, summaries_refusal};
 use crate::application::project_board::operations::ListSummaries;
-use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness, StartedRuns};
-use crate::application::project_board::use_cases::RunBoardOperation;
+use crate::application::project_board::ports::{
+    BoardOperations, CoordinatorLaunch, RunLiveness, StartedRuns,
+};
 use crate::domain::project_board::value_objects::telemetry::{BoardId, FaultKind, FrontEnd};
 
 /// What a request does with the board.
@@ -59,9 +60,10 @@ impl<T: CoordinatorLaunch + RunLiveness + StartedRuns> SessionSwarms for T {}
 /// A front end's coordinator launcher (S4c).
 pub type Launcher = std::sync::Arc<dyn SessionSwarms>;
 
-/// The board's operations, built by composition.
+/// The board's operations, built by composition: the port the front ends
+/// hand each request to (#2705 B6).
 pub struct ProjectBoardHandles {
-    pub operations: RunBoardOperation,
+    pub operations: Box<dyn BoardOperations>,
     /// The board's id for its records (#2663): `None` where its remote
     /// gives none.
     pub board: Option<BoardId>,
@@ -191,7 +193,7 @@ pub fn answer_with(
         // The one entry point every front end's request goes through.
         Ok(handles) => {
             call.on_board(handles.board.as_ref());
-            run_recorded_with(&handles.operations, text, summaries, call)
+            run_recorded_with(&*handles.operations, text, summaries, call)
         }
         Err(BuildError::NoCommitter(why)) => {
             call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::NoCommitter, &why)

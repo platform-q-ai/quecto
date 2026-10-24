@@ -9,14 +9,14 @@ use std::sync::{Arc, OnceLock};
 use super::BoardSite;
 use super::tests::recorded_tool;
 use crate::application::project_board::operations::NoPullRequestHost;
-use crate::application::project_board::operations::query_listings::{
-    QueryListings, Swarms, assembled_reporting,
-};
 use crate::application::project_board::ports::{
     BoardArtifact, CoordinatorLaunch, CoordinatorRequest, LaunchRefused, LaunchedCoordinator,
     ProjectBoardStore, RunLiveness, StartedRuns,
 };
 use crate::application::project_board::use_cases::QueryBoard;
+use crate::composition::bootstrap::project_board_operations::fixtures::{
+    QueryListings, Swarms, assembled_reporting,
+};
 use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
 use crate::domain::project_board::services::starts::start;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -114,7 +114,7 @@ fn left_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHandl
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
     Ok(ProjectBoardHandles {
-        operations,
+        operations: Box::new(operations),
         board: None,
     })
 }
@@ -218,7 +218,7 @@ fn bobs(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, Bu
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
     Ok(ProjectBoardHandles {
-        operations,
+        operations: Box::new(operations),
         board: None,
     })
 }
