@@ -49,10 +49,7 @@ impl Refusal {
     /// The status it is answered with, and what its answer says.
     pub fn verdict(self) -> (u16, &'static str) {
         match self {
-            Self::Method => (
-                405,
-                "method not allowed: the board service takes GET and POST",
-            ),
+            Self::Method => (405, "method not allowed"),
             Self::LengthRequired => (411, "a body needs a Content-Length"),
             Self::BadLength => (400, "Content-Length is not a length"),
             Self::TooLarge => (413, "the body is past 1 MiB"),
