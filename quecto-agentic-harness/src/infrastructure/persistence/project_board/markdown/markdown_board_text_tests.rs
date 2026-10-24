@@ -426,10 +426,11 @@ fn what_a_reader_shows_differently_is_left_as_written() {
 /// Review round 2's pasted inputs through the codec: browsers' runs of
 /// spaces in a leading run go whole; empty paragraphs in a row, or beside
 /// a typed blank line, are one blank line (none in a tight list); a loose
-/// list stays loose; and a trailing chat space whose going would make
-/// markup (a hard break after a backslash, a setext underline, plain
-/// spacing) is made plain, so the codec refuses it with its line exactly
-/// as it refuses the text typed with plain spaces (the last rows).
+/// list stays loose; a trailing chat space whose going would make markup
+/// (a hard break after a backslash, plain spacing) is made plain, so the
+/// codec refuses it with its line exactly as it refuses the text typed
+/// with plain spaces (the last rows); one after a lone `-` goes, as a
+/// typed one does (`- ` under text is a setext underline already).
 #[test]
 fn pasted_runs_gaps_and_line_ends_round_trip_or_are_refused_with_their_line() {
     for (raw, kept, refused_at) in [
@@ -451,12 +452,24 @@ fn pasted_runs_gaps_and_line_ends_round_trip_or_are_refused_with_their_line() {
             "Path is C:\\dir\\ \nnext",
             Some(1),
         ),
-        ("a\n-\u{a0}\nb", "a\n- \nb", Some(2)),
+        ("a\n-\u{a0}\nb", "a\n-\nb", None),
+        ("a\n-\u{a0}\u{a0}\nb", "a\n-\nb", None),
         ("a  \u{a0}\nb", "a   \nb", Some(1)),
         ("a  \u{a0}", "a", None),
         // A bare marker's trailing space goes as it always has (an editor's
-        // auto-continued bullet), but for a lone `-` under paragraph text,
-        // which it would underline (refused above and below).
+        // auto-continued bullet; `- ` under text underlines it as `-` does).
+        ("Todo:\n- ", "Todo:\n-", None),
+        ("a\n- \nb", "a\n-\nb", None),
+        ("text\n-  ", "text\n-", None),
+        ("a\n*** \nb", "a\n***\nb", Some(2)),
+        ("a\n=== \nb", "a\n===\nb", None),
+        // A `<pre>` after an ordered list marker keeps its lines as
+        // written, trailing space and all, as on master.
+        (
+            "1. <pre>\n   a\n\n   b \n   c\n   </pre>",
+            "1. <pre>\n   a\n\n   b \n   c\n   </pre>",
+            Some(1),
+        ),
         (
             "Todo:\n\n- one\n- two\n- ",
             "Todo:\n\n- one\n- two\n-",
@@ -485,7 +498,6 @@ fn pasted_runs_gaps_and_line_ends_round_trip_or_are_refused_with_their_line() {
             "Path is C:\\dir\\ \nnext",
             Some(1),
         ),
-        ("a\n- \nb", "a\n- \nb", Some(2)),
         ("a   \nb", "a   \nb", Some(1)),
         ("< 5 is fine\n\n  Hello", "< 5 is fine\n\n  Hello", Some(3)),
         ("1 < 2\n  x", "1 < 2\n  x", Some(2)),

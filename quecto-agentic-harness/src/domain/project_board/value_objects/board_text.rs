@@ -17,9 +17,8 @@
 //!     kept as written, a chat space there becomes a plain space: an
 //!     indent);
 //!   - one at a line's end goes (fenced code included), unless going
-//!     would leave a prose line ending in a backslash, a setext underline
-//!     or thematic break, or plain spacing: then it becomes a plain space,
-//!     read as typed text is;
+//!     would leave a prose line ending in a backslash or plain spacing:
+//!     then it becomes a plain space, read as typed text is;
 //!   - outside a fence, a line of nothing but spacing, a chat space among
 //!     it, becomes empty, and each run of blank lines holding such a line
 //!     becomes one empty line, or none between two items of a list with
@@ -36,11 +35,9 @@
 //!   included;
 //! - trailing spaces and tabs go from a prose line only where nothing can
 //!   change: the run is a single space, or comes before a blank line or
-//!   the end (no hard break forms); the line is no lone `-` under
-//!   paragraph text (`- ` is text there, `-` a setext underline); the
-//!   character before
-//!   it is a safe one (a letter, a digit, or punctuation but a backslash,
-//!   which a line end would make a hard break); its paragraph so far holds no backtick or
+//!   the end (no hard break forms); the character before it is a safe one
+//!   (a letter, a digit, or punctuation but a backslash, which a line end
+//!   would make a hard break); its paragraph so far holds no backtick or
 //!   dollar (a code span or math may run on across lines, showing the
 //!   space), no `<` (inline HTML may span lines) and no link or
 //!   reference (`](`, `]:`: a title or label may span lines); and the line
@@ -145,10 +142,6 @@ fn kept_lines(raw: &str) -> Vec<Option<String>> {
     let mut gap: Vec<bool> = Vec::with_capacity(lines.len());
     let mut prose_blank: Vec<bool> = Vec::with_capacity(lines.len());
     let mut place = Place::Prose { marked: false };
-    // Whether the line before is paragraph text a `-` would underline as a
-    // setext heading (not an item, a heading, a quote or an indent, in a
-    // paragraph no list item opened).
-    let (mut under_text, mut item_in_paragraph) = (false, false);
     for (at, raw_line) in lines.iter().enumerate() {
         // A line of chat spaces is blank, wherever it stands.
         let before_blank = lines
@@ -190,16 +183,13 @@ fn kept_lines(raw: &str) -> Vec<Option<String>> {
                 (None, None) => {
                     let marked = marked || line.contains(['`', '$', '<']) || links(line);
                     let written = match marked {
-                        false => without_trailing(line, before_blank, under_text),
+                        false => without_trailing(line, before_blank),
                         true => line.to_string(),
                     };
                     (Place::Prose { marked }, written)
                 }
             },
         };
-        let paragraph = in_prose && matches!(next, Place::Prose { .. }) && !blank(&written);
-        item_in_paragraph = paragraph && (item_in_paragraph || list_item(&written));
-        under_text = paragraph && !item_in_paragraph && paragraph_text(&written);
         place = next;
         prose_blank.push(in_prose && blank(&written));
         kept.push(written);
@@ -337,9 +327,9 @@ enum Edge {
 ///   and a line of nothing but spacing, a chat space among it, is empty; in
 ///   code a chat space at the start becomes plain (an indent);
 /// - those at its end go, but in prose only where nothing forms: when going
-///   would leave the line ending in a backslash or plain spacing, or a
-///   setext underline or thematic break, the run becomes plain, read as a
-///   typed one is ([`without_trailing`] then decides);
+///   would leave the line ending in a backslash (a hard break) or plain
+///   spacing, the run becomes plain, read as a typed one is
+///   ([`without_trailing`] then decides);
 /// - every other one becomes plain.
 fn without_chat(line: &str, edge: Edge) -> String {
     let chat = |c: char| CHAT_SPACES.contains(&c);
@@ -362,8 +352,7 @@ fn without_chat(line: &str, edge: Edge) -> String {
         (Edge::Code, _) => plain_spaces(head),
     };
     let content = format!("{head}{}", plain_spaces(body));
-    let marks =
-        rule_line(&content) || content.ends_with('\\') || plain_only(tail).chars().next().is_some();
+    let marks = content.ends_with('\\') || plain_only(tail).chars().next().is_some();
     let tail = match (edge, tail.contains(CHAT_SPACES) && marks) {
         (Edge::Prose, true) => plain_spaces(tail),
         (Edge::Prose, false) | (Edge::Code, _) => plain_only(tail),
@@ -372,41 +361,6 @@ fn without_chat(line: &str, edge: Edge) -> String {
     debug_assert!(!normal.contains(CHAT_SPACES), "no chat space stays");
     debug_assert!(normal.len() <= line.len(), "only spacing changes");
     normal
-}
-
-/// Whether `content` is a lone `-` (at most three spaces in): under
-/// paragraph text it underlines a setext heading, which `- ` (an empty
-/// item, or text) does not.
-fn setext_dash(content: &str) -> bool {
-    let dash = content.trim_start_matches(' ');
-    content.len() - dash.len() <= CLOSING_INDENT && dash == "-"
-}
-
-/// Whether `line`, a prose line that holds something, is paragraph text at
-/// the margin: not a list item, an ATX heading, a quote or an indent.
-fn paragraph_text(line: &str) -> bool {
-    let hashes = line.len() - line.trim_start_matches('#').len();
-    let heading = (1..=6).contains(&hashes)
-        && line[hashes..]
-            .chars()
-            .next()
-            .is_none_or(|c| matches!(c, ' ' | '\t'));
-    let opens = line
-        .chars()
-        .next()
-        .is_some_and(|c| !matches!(c, ' ' | '\t' | '>'));
-    opens && !heading && !list_item(line)
-}
-
-/// Whether `content` reads as a setext underline or a thematic break once
-/// its end goes: only `-`, `=`, `*` and `_` (spaced or not), read
-/// liberally (taking a line for one only keeps a chat space as plain).
-fn rule_line(content: &str) -> bool {
-    let marks = content.trim_matches(' ');
-    marks.chars().next().is_some()
-        && marks
-            .chars()
-            .all(|c| matches!(c, '-' | '=' | '*' | '_' | ' '))
 }
 
 /// Markdown text field `field` holds as it enters the board: itself once
@@ -617,11 +571,11 @@ enum HtmlEnd {
 }
 
 /// The HTML block `line` may open, read liberally (it only keeps more lines
-/// as written): a `<` then a letter, `/`, `!` or `?`, after at most
-/// spaces, quote marks and bullet markers. A `<` before a digit or a space
-/// (`< 5`, `1 < 2`, `- <200 ms`) opens none.
+/// as written): a `<` then a letter, `/`, `!` or `?`, after any spaces,
+/// quote marks and list markers ([`container_mark`]). A `<` before a digit
+/// or a space (`< 5`, `1 < 2`, `- <200 ms`) opens none.
 fn html_block(line: &str) -> Option<HtmlEnd> {
-    let rest = line.trim_start_matches([' ', '\t', '>', '-', '*', '+']);
+    let rest = line.trim_start_matches(container_mark);
     let opener = rest.strip_prefix('<')?;
     let tag = opener
         .chars()
@@ -654,18 +608,15 @@ fn defines_footnote(line: &str) -> bool {
 
 /// `line` without its trailing spaces and tabs where nothing can change: a
 /// single trailing space or any run before a blank line or the end, after
-/// a safe character, on a line that cannot be indented code, and that is
-/// no lone `-` `under_text` (paragraph text above, which `-` would
-/// underline as a heading where `- ` is text).
-fn without_trailing(line: &str, before_blank: bool, under_text: bool) -> String {
+/// a safe character, on a line that cannot be indented code. (A reader
+/// takes `- ` under paragraph text as a setext underline, as it takes `-`.)
+fn without_trailing(line: &str, before_blank: bool) -> String {
     let content = line.trim_end_matches(spacing);
     let run = &line[content.len()..];
     let breakless = run == " " || before_blank;
     let safe = content.chars().last().is_some_and(safe_before_line_end);
-    // Indented code, or a `-` its space keeps from underlining the text
-    // above, reads its trailing spacing.
-    let read = may_be_indented_code(line) || (under_text && setext_dash(content));
-    match (breakless && safe, read) {
+    // Indented code reads its trailing spacing.
+    match (breakless && safe, may_be_indented_code(line)) {
         (true, false) => content.to_string(),
         (false, _) | (true, true) => line.to_string(),
     }

@@ -310,9 +310,10 @@ fn a_chat_space_between_words_is_made_plain_in_text() {
         // line makes loose stays loose.
         ("a\n\u{a0}\n \n\u{3000}\nb", "a\n\nb"),
         ("- a\n\n- b\n\u{a0}\n- c", "- a\n\n- b\n\n- c"),
-        // One whose going would make markup is made plain, read as typed.
+        // One whose going would make a hard break is made plain, read as
+        // typed; one after a rule line goes, as a typed one does.
         ("a\\\u{a0}\nb", "a\\ \nb"),
-        ("a\n-\u{a0}\nb", "a\n- \nb"),
+        ("a\n-\u{a0}\nb", "a\n-\nb"),
         ("a\n---\u{a0}\nb", "a\n---\nb"),
     ] {
         assert_eq!(settled(text, raw), kept, "{raw:?}");
