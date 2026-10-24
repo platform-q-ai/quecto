@@ -1,3 +1,4 @@
+pub mod board_moved;
 pub mod board_text;
 pub mod code_ref;
 mod commit_id;

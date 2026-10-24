@@ -32,11 +32,13 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         | C::InvalidWrite
         | C::StoreUnavailable
         | C::BoardTooLarge
+        | C::BoardMovedMalformed
         | C::PullRequestsUnavailable
         | C::Refused => &["reason"],
         C::NoBoard => &[],
         C::Rule => &["rule"],
         C::FolderSetAside => &["reason", "path", "object"],
+        C::BoardMoved => &["board", "urls"],
         C::SetAside => &["task", "path", "object"],
         C::NotFound | C::Exists | C::UnknownReference => &["task"],
         C::ClockUnreadable => &["read"],
@@ -124,6 +126,8 @@ board_errors! {
             object: "c".repeat(40),
         })
     },
+    E::Store(BoardStoreError::Moved(_)) => E::Store(BoardStoreError::Moved(super::moved_tests::moved())),
+    E::Store(BoardStoreError::MovedMalformed(_)) => E::Store(super::moved_tests::malformed()),
     E::Rule(_) => E::Rule(BoardRuleError::NotHolder),
     E::Invalid(_) => E::Invalid(SchemaError::new("title", "is empty")),
     E::NotFound(_) => E::NotFound(slug("a")),

@@ -84,6 +84,11 @@ pub enum ErrorCode {
     /// `reason`: the board is held outside `tasks/`: no listing while a
     /// file set aside there names another kind's key.
     FolderSetAside,
+    /// `board` (its id) and `urls`: the board moved to a board server
+    /// (#2705 B13), which serves it now.
+    BoardMoved,
+    /// `reason`: the board moved, but its `MOVED` file is malformed.
+    BoardMovedMalformed,
     /// `rule`: `{"code", …}`.
     Rule,
     /// `field`, `problem`.
@@ -166,6 +171,8 @@ impl ErrorCode {
             Self::StoreUnavailable => "store_unavailable",
             Self::BoardTooLarge => "board_too_large",
             Self::FolderSetAside => "folder_set_aside",
+            Self::BoardMoved => "board_moved",
+            Self::BoardMovedMalformed => "board_moved_malformed",
             Self::Rule => "rule",
             Self::InvalidTask => "invalid_task",
             Self::InvalidWriter => "invalid_writer",
@@ -572,6 +579,18 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             named.insert("reason".into(), shown_json(why));
             (C::FolderSetAside, named)
         }
+        E::Store(BoardStoreError::Moved(moved)) => {
+            let urls = moved.urls().iter().map(|url| shown_json(url)).collect();
+            let board = json!(moved.board().as_str());
+            (
+                C::BoardMoved,
+                fields([("board", board), ("urls", Value::Array(urls))]),
+            )
+        }
+        E::Store(BoardStoreError::MovedMalformed(why)) => (
+            C::BoardMovedMalformed,
+            fields([("reason", shown_json(why))]),
+        ),
         E::Rule(rule) => (C::Rule, fields([("rule", rule_json(rule))])),
         E::Invalid(schema) => (
             C::InvalidTask,
@@ -714,3 +733,7 @@ mod tests;
 #[cfg(test)]
 #[path = "answer_show_tests.rs"]
 mod show_tests;
+
+#[cfg(test)]
+#[path = "answer_moved_tests.rs"]
+mod moved_tests;

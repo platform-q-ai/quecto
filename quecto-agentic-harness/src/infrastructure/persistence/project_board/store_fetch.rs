@@ -32,7 +32,7 @@
 use super::fetch_state::FetchState;
 use super::*;
 use crate::infrastructure::persistence::project_board::board_tree::{
-    FILTER_BYTES, LeftOnRemote, Unread, Wanted, read_board,
+    FILTER_BYTES, LeftOnRemote, Unread, Wanted, read_board, read_marker,
 };
 
 /// Fetch rounds of what a partial clone misses, one per tree level: the
@@ -66,23 +66,48 @@ impl GitBoardStore {
             true => self.fetch_state(),
             false => FetchState::default(),
         };
+        let board = self.reading(commit, &before, |left| {
+            read_board(&self.git, commit, self.limits, left)
+        })?;
+        if promisor {
+            let read = FetchState {
+                read: Some(commit.to_string()),
+                omitted: board.omitted.clone(),
+            };
+            self.keep_fetch_state(&before, &read);
+        }
+        Ok(board)
+    }
+
+    /// Whether a write may go on past board commit `commit`, judged by its
+    /// format marker alone ([`read_marker`]), fetching what it misses.
+    pub(super) fn marker_fetching(&self, commit: &str) -> Result<(), BoardStoreError> {
+        let before = match self.partial()? {
+            Partial::Promisor { .. } => self.fetch_state(),
+            Partial::Full => FetchState::default(),
+        };
+        self.reading(commit, &before, |left| {
+            read_marker(&self.git, commit, self.limits, left)
+        })
+    }
+
+    /// What `read` makes of board commit `commit`, fetching in one round
+    /// at a time what this clone does not hold yet, from the blobs `before`
+    /// found left on the remote.
+    fn reading<T>(
+        &self,
+        commit: &str,
+        before: &FetchState,
+        read: impl Fn(&LeftOnRemote) -> Result<T, Unread>,
+    ) -> Result<T, BoardStoreError> {
         let mut fetched: BTreeSet<Wanted> = BTreeSet::new();
         let mut left = LeftOnRemote {
             trees: BTreeSet::new(),
             blobs: before.omitted.clone(),
         };
         for round in 0..=FETCH_ROUNDS {
-            let missing = match read_board(&self.git, commit, self.limits, &left) {
-                Ok(board) => {
-                    if promisor {
-                        let read = FetchState {
-                            read: Some(commit.to_string()),
-                            omitted: board.omitted.clone(),
-                        };
-                        self.keep_fetch_state(&before, &read);
-                    }
-                    return Ok(board);
-                }
+            let missing = match read(&left) {
+                Ok(read) => return Ok(read),
                 Err(Unread::Failed(BoardStoreError::Clash(why))) => {
                     return Err(BoardStoreError::Clash(format!(
                         "`quecto/board` on {} is a branch of its own: {why}; rename it",

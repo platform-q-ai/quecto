@@ -216,6 +216,8 @@ mod project_board_git_store;
 mod project_board_kinds;
 #[path = "contracts/project_board_op_log.rs"]
 mod project_board_op_log;
+#[path = "contracts/project_board_remote_revisions.rs"]
+mod project_board_remote_revisions;
 #[path = "contracts/project_board_store.rs"]
 mod project_board_store;
 #[path = "contracts/remote_revisions.rs"]
@@ -390,3 +392,6 @@ mod workspace_origin;
 
 #[path = "contracts/project_board_reader.rs"]
 mod project_board_reader;
+
+#[path = "contracts/declare_turn_outcome.rs"]
+mod declare_turn_outcome;

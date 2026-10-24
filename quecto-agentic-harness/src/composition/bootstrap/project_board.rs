@@ -29,6 +29,7 @@ use crate::application::project_board::use_cases::{
     RunBoardOperation, StartBoardTask, UpdateDraftTask,
 };
 use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::config::telemetry::globally_enabled;
 use crate::infrastructure::observability::audit_log::AuditLog;
@@ -39,14 +40,17 @@ use crate::infrastructure::persistence::project_board::gh_pull_requests::{
     GhPullRequestStates, github_repository,
 };
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment, GitError};
-use crate::infrastructure::persistence::project_board::index::BoardIndex;
+use crate::infrastructure::persistence::project_board::index::{
+    BoardIndex, BoardRevisions, IndexError,
+};
 use crate::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
+use crate::infrastructure::persistence::project_board::remote_revisions::GitRemoteRevisions;
 use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use crate::infrastructure::time::remote_time::ReferencedBoardClock;
 use crate::infrastructure::tools::agents::coordinator_launch::KeptRunReports;
 use crate::interface::cli::controllers::board::{
-    Access, BuildError, ProjectBoardEnvironment, ProjectBoardHandles,
+    Access, BuildError, KnownLocation, ProjectBoardEnvironment, ProjectBoardHandles,
 };
 
 /// # Errors
@@ -80,6 +84,15 @@ fn build_with_warnings(
         )))),
         (Access::Write | Access::Read, None) | (Access::Read, Some(_)) => {}
     }
+    // A write takes no location on trust: git names it, and checks the
+    // remote is one the clone configures (#2705 B1). A read on a location
+    // known whole asks git one thing only: whether the remote is one the
+    // clone configures, so git never takes its name for a path.
+    let known = match environment.access {
+        Access::Write => KnownLocation::default(),
+        Access::Read => environment.known.clone(),
+    };
+    let known_whole = located(&known);
     let git = match environment.access {
         Access::Write => {
             let committer = match board_committer(&environment.vars) {
@@ -90,8 +103,11 @@ fn build_with_warnings(
             };
             Git::new(&environment.repo, vars, committer).map_err(write_refusal)?
         }
-        Access::Read => Git::reader(&environment.repo, vars)
-            .map_err(|error| unavailable(format!("git cannot run here: {error}")))?,
+        Access::Read => match known_whole {
+            true => Git::reader_unasked(&environment.repo, vars),
+            false => Git::reader(&environment.repo, vars),
+        }
+        .map_err(|error| unavailable(format!("git cannot run here: {error}")))?,
     };
     let board = GitBoardStore::new(git, &environment.remote).map_err(|error| match error {
         StoreOpenError::NoSuchRemote(why) => BuildError::NoSuchRemote(why),
@@ -100,26 +116,14 @@ fn build_with_warnings(
     // A start's undo writes past the call's cancel, so no run is stranded.
     let undo_store: Arc<dyn ProjectBoardStore> = Arc::new(board.without_cancel());
     let store = Arc::new(board.with_cancel(environment.cancelled.clone()));
-    let url = store
-        .remote_url()
+    let location = BoardLocation::resolve(&known, &store, &environment.repo)
         .map_err(|error| unavailable(store_reason(&error)))?;
-    let clock: Arc<dyn BoardClock> = Arc::new(ReferencedBoardClock::for_remote(&url));
-    // A relative remote is the clone's top level's, as git resolves it.
-    let top_level = store
-        .top_level()
-        .unwrap_or_else(|_| environment.repo.clone());
-    let index = BoardIndex::of(&store).map_err(|error| {
-        unavailable(format!(
-            "the board index's directory cannot be named: {error}"
-        ))
-    })?;
-    let listings = Arc::new(IndexedBoardListings::new(
-        index,
-        Arc::clone(&store) as _,
-        Arc::clone(&store) as _,
-    ));
-    let prs = pull_request_states(&url, &environment.vars);
-    let revisions: Arc<dyn RemoteRevisions> = Arc::clone(&store) as _;
+    let clock: Arc<dyn BoardClock> = Arc::new(ReferencedBoardClock::for_remote(&location.url));
+    let listings = Arc::new(listings_of(&store, known_whole)?);
+    let prs = pull_request_states(&location.url, &environment.vars);
+    // A success is judged by the revisions the board's own remote holds
+    // (#2666), read by their own adapter on the store's remote.
+    let revisions: Arc<dyn RemoteRevisions> = Arc::new(GitRemoteRevisions::of_store(&store));
     let store: Arc<dyn ProjectBoardStore> = store;
     let built = |error: crate::application::project_board::dto::ProjectBoardError| {
         unavailable(error.to_string())
@@ -139,8 +143,6 @@ fn build_with_warnings(
             Arc::clone(&store),
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
-            // A success is judged by the revisions the board's own remote
-            // holds (#2666).
             Arc::clone(&revisions),
             environment
                 .launcher
@@ -189,8 +191,94 @@ fn build_with_warnings(
         operations: Box::new(super::project_board_operations::LocalBoardOperations::new(
             RunBoardOperation::new(parts),
         )),
-        board: GitBoardStore::board_id_of(&url, &top_level),
+        board: location.board,
     })
+}
+
+/// Whether a front end knows its board's whole location (its id and its
+/// remote's URL), so composition asks git only whether its remote is one.
+fn located(known: &KnownLocation) -> bool {
+    matches!(
+        known,
+        KnownLocation {
+            board_id: Some(_),
+            remote_url: Some(_),
+        }
+    )
+}
+
+/// Where a board is (#2705 B1): the id its records name it by (`None`
+/// where its remote gives none) and its remote's fetch URL. Resolved once
+/// per composition, each part from what the front end knows, and only
+/// what it does not from git.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BoardLocation {
+    board: Option<BoardId>,
+    url: String,
+}
+
+impl BoardLocation {
+    /// `known`, with what it leaves out read from `store`'s repository:
+    /// the remote's URL as git resolves it, and the id made from that URL
+    /// and the clone's top level (`repo` when git cannot name it), which a
+    /// relative remote is resolved from.
+    ///
+    /// # Errors
+    /// The remote's URL was not given and git could not read it.
+    fn resolve(
+        known: &KnownLocation,
+        store: &GitBoardStore,
+        repo: &Path,
+    ) -> Result<Self, BoardStoreError> {
+        let url = match &known.remote_url {
+            Some(url) => url.clone(),
+            None => store.remote_url()?,
+        };
+        let board = match &known.board_id {
+            Some(board) => Some(board.clone()),
+            None => {
+                let top_level = store.top_level().unwrap_or_else(|_| repo.to_path_buf());
+                GitBoardStore::board_id_of(&url, &top_level)
+            }
+        };
+        Ok(Self { board, url })
+    }
+}
+
+/// The board's listings from its index in `store`'s common git directory:
+/// named now, or, for a front end that knows its board's location
+/// (`deferred`), on the first listing, so building them asks git nothing.
+///
+/// # Errors
+/// The index's directory cannot be named now.
+fn listings_of(
+    store: &Arc<GitBoardStore>,
+    deferred: bool,
+) -> Result<IndexedBoardListings, BuildError> {
+    let unnamed =
+        |error: IndexError| format!("the board index's directory cannot be named: {error}");
+    let as_store: Arc<dyn ProjectBoardStore> = Arc::clone(store) as _;
+    let as_revisions: Arc<dyn BoardRevisions> = Arc::clone(store) as _;
+    match deferred {
+        true => {
+            let of = Arc::clone(store);
+            let name = move || {
+                BoardIndex::of(&of).map_err(|error| {
+                    IndexError::Store(BoardStoreError::Unavailable(unnamed(error)))
+                })
+            };
+            Ok(IndexedBoardListings::named_when_listed(
+                name,
+                as_store,
+                as_revisions,
+            ))
+        }
+        false => {
+            let index =
+                BoardIndex::of(store).map_err(|error| BuildError::Unavailable(unnamed(error)))?;
+            Ok(IndexedBoardListings::new(index, as_store, as_revisions))
+        }
+    }
 }
 
 /// How long one git call of a teardown's completion check may take: past
@@ -198,10 +286,10 @@ fn build_with_warnings(
 const TEARDOWN_READ: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// The revisions the board of the repository at `repo` holds on its
-/// `origin` (#2666), read as the board's own store reads them, each git
-/// call within [`TEARDOWN_READ`]: what the teardown asks of a succeeded
-/// board run's completion. Or why there are none here (no repository, no
-/// `origin`).
+/// `origin` (#2666), read by [`GitRemoteRevisions`] as the board's own
+/// composition reads them, each git call within [`TEARDOWN_READ`]: what
+/// the teardown asks of a succeeded board run's completion. Or why there
+/// are none here (no repository, no `origin`).
 ///
 /// # Errors
 /// git cannot run at `repo`, or it has no `origin`.
@@ -210,11 +298,11 @@ pub fn board_remote_revisions(repo: &Path) -> Result<Arc<dyn RemoteRevisions>, S
     let git = Git::reader(repo, vars)
         .map_err(|error| format!("git cannot run here: {error}"))?
         .bounded(TEARDOWN_READ);
-    let store = GitBoardStore::new(git, "origin").map_err(|error| match error {
+    let revisions = GitRemoteRevisions::new(git, "origin").map_err(|error| match error {
         StoreOpenError::NoSuchRemote(why) => why,
         StoreOpenError::Unavailable(error) => store_reason(&error),
     })?;
-    Ok(Arc::new(store))
+    Ok(Arc::new(revisions))
 }
 
 /// Pull request states of the remote at `url`, read with `gh` when it is
@@ -300,7 +388,9 @@ fn store_reason(error: &BoardStoreError) -> String {
         | BoardStoreError::WriteTooLarge(why)
         | BoardStoreError::Unavailable(why)
         | BoardStoreError::TooLarge(why)
-        | BoardStoreError::FolderSetAside { why, .. } => why.clone(),
+        | BoardStoreError::FolderSetAside { why, .. }
+        | BoardStoreError::MovedMalformed(why) => why.clone(),
+        BoardStoreError::Moved(moved) => moved.to_string(),
     }
 }
 
@@ -382,3 +472,7 @@ mod wiring_tests;
 #[cfg(test)]
 #[path = "project_board_telemetry_tests.rs"]
 mod telemetry_tests;
+
+#[cfg(test)]
+#[path = "project_board_location_tests.rs"]
+mod location_tests;

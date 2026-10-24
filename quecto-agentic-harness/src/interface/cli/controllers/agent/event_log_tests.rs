@@ -111,6 +111,7 @@ async fn the_board_tools_records_follow_the_session() {
     let site = BoardSite {
         repo: ".".into(),
         remote: "origin".into(),
+        known: Default::default(),
         build: None,
         launcher: None,
         swarm_session: None,

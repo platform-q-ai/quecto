@@ -523,3 +523,7 @@ mod left_runs_tests;
 #[cfg(test)]
 #[path = "tool_list_summary_tests.rs"]
 mod list_summary_tests;
+
+#[cfg(test)]
+#[path = "tool_moved_tests.rs"]
+mod moved_tests;

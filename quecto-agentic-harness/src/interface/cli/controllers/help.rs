@@ -66,7 +66,7 @@ pub(in crate::interface::cli) fn help_text(out: &mut String) {
     out.push_str(
         "              <op> [--<field> <value>]... [--input <json>|-] [--repo <path>] [--remote <name>]\n",
     );
-    out.push_str("                  [--json]\n");
+    out.push_str("                  [--board-id <hex>] [--remote-url <url>] [--json]\n");
     board_ops(out);
     out.push_str(
         "                  prints one JSON answer; a write needs git's user.name and user.email\n",
