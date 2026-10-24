@@ -673,3 +673,212 @@ mod remediation {
         assert_eq!(snapshot(), before);
     }
 }
+
+#[test]
+fn round2_memory_filename_is_refused_with_unavailable() {
+    assert!(
+        matches!(
+            SqliteProjectBoardStore::open(Path::new(":memory:"), identity("Transient")),
+            Err(BoardStoreError::Unavailable(_))
+        ),
+        "an in-memory connection must not expose an acknowledged durable board store"
+    );
+}
+
+#[test]
+fn round2_empty_filename_is_refused_with_unavailable() {
+    assert!(
+        matches!(
+            SqliteProjectBoardStore::open(Path::new(""), identity("Transient")),
+            Err(BoardStoreError::Unavailable(_))
+        ),
+        "a temporary empty-filename connection must not expose a durable board store"
+    );
+}
+
+#[test]
+fn round2_file_backed_wal_full_write_survives_reopen() {
+    let database = Database::new();
+    let head = {
+        let client = database.client();
+        assert_eq!(client.connection_settings().unwrap(), ("wal".into(), 2));
+        client.bootstrap().unwrap();
+        let head = client.read().unwrap().head;
+        match client.write_tasks(&head, &[store::task("a", "Durable")], "board: durable") {
+            Ok(BoardWrite::Written(head)) => head,
+            result => panic!("expected acknowledged write, got {result:?}"),
+        }
+    };
+    let reopened = database.client();
+    assert_eq!(reopened.connection_settings().unwrap(), ("wal".into(), 2));
+    let board = reopened.read().unwrap();
+    assert_eq!(board.head, head);
+    assert_eq!(board.tasks, [store::task("a", "Durable")]);
+}
+
+#[test]
+fn round2_nonutf8_same_object_alias_is_quarantined_not_fetched_independently() {
+    use quecto::infrastructure::persistence::sqlite::project_board::RawEntry;
+    let database = Database::new();
+    let client = database.client();
+    client.bootstrap().unwrap();
+    let head = client.read().unwrap().head;
+    client
+        .write_tasks(&head, &[store::task("a", "A")], "board: canonical")
+        .unwrap();
+    client.fixture_take_payload_fetches();
+    assert_eq!(client.read().unwrap().tasks, [store::task("a", "A")]);
+    let connected = client.fixture_take_payload_fetches();
+    assert_eq!(
+        connected.len(),
+        1,
+        "positive control observes actual admitted object"
+    );
+    assert_eq!(connected[0].0, "tasks/a.md");
+    assert!(connected[0].2 > 0);
+    let oid = connected[0].1.clone();
+    let raw_name = vec![0xff];
+    client
+        .fixture_edit(|editor| {
+            let (_, root) = editor.current()?;
+            let mut roots = editor.entries(&root)?;
+            let tasks = roots.iter().find(|entry| entry.name == b"tasks").unwrap();
+            let mut entries = editor.entries(&tasks.oid)?;
+            assert_eq!(
+                entries
+                    .iter()
+                    .find(|entry| entry.name == b"a.md")
+                    .unwrap()
+                    .oid,
+                oid
+            );
+            entries.push(RawEntry {
+                mode: "100644".into(),
+                name: raw_name.clone(),
+                oid: oid.clone(),
+            });
+            let tasks = editor.tree(&entries)?;
+            roots.retain(|entry| entry.name != b"tasks");
+            roots.push(RawEntry {
+                mode: "040000".into(),
+                name: b"tasks".to_vec(),
+                oid: tasks,
+            });
+            editor.tree(&roots)
+        })
+        .unwrap();
+    let before = client.fixture_fingerprint().unwrap();
+    let board = client.read().expect("observational witness must not reject canonical task sharing its object with a raw nonUTF8 alias");
+    assert_eq!(board.tasks, [store::task("a", "A")]);
+    assert_eq!(board.quarantined.len(), 1);
+    assert!(board.quarantined[0].carried);
+    assert_eq!(
+        client.fixture_fingerprint().unwrap(),
+        before,
+        "raw identity and every stored row remain untouched"
+    );
+    assert_eq!(
+        client.fixture_take_payload_fetches(),
+        connected,
+        "the canonical object is fetched once; opaque alias is not an independently admitted payload"
+    );
+    // Inspect structural metadata only: the alias retains its exact bytes/OID.
+    let raw = rusqlite::Connection::open(database.path()).unwrap();
+    let count: i64 = raw.query_row("SELECT count(*) FROM state JOIN revisions ON revisions.head=state.head JOIN tree_entries root ON root.tree=revisions.root JOIN tree_entries file ON file.tree=root.oid WHERE root.raw_name=CAST('tasks' AS BLOB) AND file.raw_name=?1 AND file.oid=?2", rusqlite::params![raw_name, oid], |r| r.get(0)).unwrap();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn round2_recognized_names_wrong_ddl_refused_before_any_mutation() {
+    use rusqlite::{Connection, types::Value};
+    fn rows(c: &Connection, sql: &str) -> Vec<Vec<Value>> {
+        let mut statement = c.prepare(sql).unwrap();
+        let columns = statement.column_count();
+        statement
+            .query_map([], |row| (0..columns).map(|i| row.get(i)).collect())
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+    // Typed SQLite values retain NULL, raw BLOBs, extra columns and unreachable
+    // rows; unlike a head-only snapshot this checks every cell in every table.
+    fn snapshot(c: &Connection) -> Vec<Vec<Vec<Value>>> {
+        [
+            "PRAGMA journal_mode",
+            "PRAGMA application_id",
+            "PRAGMA user_version",
+            "SELECT * FROM sqlite_schema ORDER BY name",
+            "SELECT * FROM objects ORDER BY rowid",
+            "SELECT * FROM tree_entries ORDER BY rowid",
+            "SELECT * FROM revisions ORDER BY rowid",
+            "SELECT * FROM state ORDER BY rowid",
+        ]
+        .iter()
+        .map(|sql| rows(c, sql))
+        .collect()
+    }
+    let database = Database::new();
+    {
+        let client = database.client();
+        client.bootstrap().unwrap();
+        let head = client.read().unwrap().head;
+        assert!(matches!(
+            client.write_tasks(&head, &[store::task("a", "A")], "board: populate"),
+            Ok(BoardWrite::Written(_))
+        ));
+    }
+    let raw = Connection::open(database.path()).unwrap();
+    raw.execute_batch("PRAGMA journal_mode=DELETE;
+        INSERT INTO objects VALUES ('unreachable-blob','blob',X'00FF',NULL);
+        INSERT INTO objects VALUES ('unreachable-tree','tree',NULL,19);
+        INSERT INTO tree_entries VALUES ('unreachable-tree',0,'100644',X'FF00','unreachable-blob');
+        INSERT INTO revisions VALUES ('unreachable-revision','unreachable-tree','Unreachable','unreachable@example.com');").unwrap();
+    let names = rows(
+        &raw,
+        "SELECT name,type,tbl_name FROM sqlite_schema ORDER BY name",
+    );
+    assert_eq!(
+        names.len(),
+        7,
+        "four original tables and three original indexes"
+    );
+    assert_eq!(
+        rows(&raw, "PRAGMA application_id"),
+        vec![vec![Value::Integer(0x51424f32)]]
+    );
+    assert_eq!(
+        rows(&raw, "PRAGMA user_version"),
+        vec![vec![Value::Integer(2)]]
+    );
+    // Only SQL text changes: all recognized names/indexes, count, ownership and
+    // usable original columns survive. name == n remains true; SQL == s is false.
+    raw.execute_batch("ALTER TABLE state ADD COLUMN unused BLOB; UPDATE state SET unused=X'FE00';")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &raw,
+            "SELECT name,type,tbl_name FROM sqlite_schema ORDER BY name"
+        ),
+        names
+    );
+    assert_eq!(
+        rows(&raw, "SELECT length(head),typeof(unused) FROM state")[0][1],
+        Value::Text("blob".into())
+    );
+    let before = snapshot(&raw);
+    // Unsupported schemas already use Clash on dd01. This is a deliberately
+    // passing strength regression, not a manufactured behavioral RED.
+    assert!(matches!(
+        SqliteProjectBoardStore::open(&database.path(), identity("Refused")),
+        Err(BoardStoreError::Clash(_))
+    ));
+    assert_eq!(
+        snapshot(&raw),
+        before,
+        "refusal precedes WAL/header/schema/all-table data mutation"
+    );
+    assert_eq!(
+        rows(&raw, "PRAGMA journal_mode"),
+        vec![vec![Value::Text("delete".into())]]
+    );
+}
