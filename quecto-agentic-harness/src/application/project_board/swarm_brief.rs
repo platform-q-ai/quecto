@@ -17,6 +17,12 @@
 //!   acceptance its criteria (or its title alone), its dependencies by slug.
 //! - **constraints:** the approach, trimmed, and cut to fit with a marker
 //!   where it was; then where the plan is in full.
+//! - **handoff** (#2705 T3): the plan's handoff verbatim, when it has
+//!   one, counted in the brief's size; one past the room the rest of the
+//!   brief leaves is cut to fit with the marker, never refused (where not
+//!   even the marker fits, it is left out, the constraints' pointer sending
+//!   the coordinator to the board), so a handoff never stops a start that
+//!   would go without it. A plan without one briefs as before.
 //!
 //! A brief is only of a [`Started`] task, so of its accepted plan. The
 //! team is read field by field (a new field does not compile until it is
@@ -126,6 +132,12 @@ pub struct SwarmBrief {
     pub constraints: Vec<String>,
     /// Whether the approach was cut to fit the constraints.
     pub approach_cut: bool,
+    /// The plan's handoff (#2705 T3), verbatim, or as much as the brief
+    /// has room for, ended by [`CUT_MARKER`]; `None` for none, or for one
+    /// left out whole (`handoff_cut`) where not even the marker fits.
+    pub handoff: Option<String>,
+    /// Whether the handoff was cut, or left out, to fit the brief.
+    pub handoff_cut: bool,
     pub criteria: Vec<RunCriterion>,
     /// `None`: the plan names no team, and the coordinator sizes its pool.
     pub member_limit: Option<u32>,
@@ -335,7 +347,9 @@ impl SwarmBrief {
                 .member_limit
                 .map_or(0, |limit| number(u64::from(limit)))
             + number(self.deadline_in_seconds);
+        let handoff = self.handoff.as_deref().map_or(0, handoff_bytes);
         TEMPLATE_BYTES
+            + handoff
             + line(self.task.as_str())
             + line(&self.goal)
             + self
@@ -408,6 +422,8 @@ pub fn brief_of(started: &Started) -> Result<SwarmBrief, BriefRefusal> {
         goal,
         constraints,
         approach_cut,
+        handoff: None,
+        handoff_cut: false,
         criteria: RUN_CRITERIA.to_vec(),
         member_limit: terms.member_limit,
         deadline_in_seconds,
@@ -415,10 +431,66 @@ pub fn brief_of(started: &Started) -> Result<SwarmBrief, BriefRefusal> {
         coordinator: terms.coordinator,
         not_applied: terms.not_applied,
     };
-    match brief.bytes() {
-        bytes if bytes <= MAX_BRIEF_BYTES => Ok(brief),
-        bytes => Err(BriefRefusal::BriefTooLarge { bytes }),
+    // Judged without the handoff: a plan that starts without one starts
+    // with one too.
+    let bare = brief.bytes();
+    if bare > MAX_BRIEF_BYTES {
+        return Err(BriefRefusal::BriefTooLarge { bytes: bare });
     }
+    let Some(handoff) = planned.handoff.as_deref() else {
+        return Ok(brief);
+    };
+    // The handoff takes the room the rest leaves: whole, or cut to fit;
+    // where not even the cut marker fits, it is left out whole (cut), and
+    // the constraints' pointer sends the coordinator to the board for it.
+    let room = MAX_BRIEF_BYTES - bare;
+    let (handoff, handoff_cut) = match handoff_within(handoff, room) {
+        Some((handoff, cut)) => (Some(handoff), cut),
+        None => (None, true),
+    };
+    let brief = SwarmBrief {
+        handoff,
+        handoff_cut,
+        ..brief
+    };
+    assert!(
+        brief.bytes() <= MAX_BRIEF_BYTES,
+        "a handoff is cut to the brief's room"
+    );
+    Ok(brief)
+}
+
+/// The bytes `handoff` adds to a brief: its key and its text as the
+/// rendered data spells it ([`text::shown_bytes`]), and a line.
+fn handoff_bytes(handoff: &str) -> usize {
+    json_text(HANDOFF_KEY).len() + 1 + text::shown_bytes(handoff) + 1
+}
+
+/// The data's key for the handoff.
+const HANDOFF_KEY: &str = "handoff";
+
+/// `handoff` within `room` bytes ([`handoff_bytes`]), with whether it was
+/// cut: whole when it fits, else as many of its leading characters as fit
+/// with [`CUT_MARKER`]; none when not even the marker fits.
+fn handoff_within(handoff: &str, room: usize) -> Option<(String, bool)> {
+    if handoff_bytes(handoff) <= room {
+        return Some((handoff.to_owned(), false));
+    }
+    // What a cut handoff always takes: its key, quotes and line, and the
+    // marker as spelt; each kept character then its own spelling.
+    let fixed = handoff_bytes(CUT_MARKER);
+    let left = room.checked_sub(fixed)?;
+    let mut used = 0;
+    let kept: String = handoff
+        .chars()
+        .take_while(|c| {
+            used += text::shown_bytes(c.encode_utf8(&mut [0; 4])) - 2;
+            used <= left
+        })
+        .collect();
+    let cut = format!("{kept}{CUT_MARKER}");
+    debug_assert!(handoff_bytes(&cut) <= room, "the cut handoff fits");
+    Some((cut, true))
 }
 
 /// Whether `model` names its provider as spawn takes it,
@@ -647,8 +719,12 @@ fn json_list_bytes<'a>(texts: impl IntoIterator<Item = &'a str>) -> usize {
 
 #[path = "swarm_brief_text.rs"]
 mod text;
-pub use text::render;
+pub use text::{HANDOFF_NOTE, render};
 
 #[cfg(test)]
 #[path = "swarm_brief_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "swarm_brief_handoff_tests.rs"]
+mod handoff_tests;

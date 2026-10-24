@@ -24,6 +24,8 @@ fn brief(items: Vec<BriefItem>) -> SwarmBrief {
                 .into(),
         ],
         approach_cut: false,
+        handoff: None,
+        handoff_cut: false,
         criteria: RUN_CRITERIA.to_vec(),
         member_limit: Some(3),
         deadline_in_seconds: 86_400,

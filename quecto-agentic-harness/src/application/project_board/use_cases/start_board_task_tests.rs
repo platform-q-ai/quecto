@@ -119,6 +119,7 @@ fn plan(version: u32, state: PlanState) -> Plan {
             deadline_seconds: None,
             image: None,
         }),
+        handoff: None,
         proposed_by: person("Ada"),
         edited_by: None,
         accepted,

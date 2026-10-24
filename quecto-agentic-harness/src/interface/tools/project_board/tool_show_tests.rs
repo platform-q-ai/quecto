@@ -85,6 +85,7 @@ fn plan(version: u32, state: PlanState, approach: String, items: Vec<PlanItem>) 
             deadline_seconds: None,
             image: None,
         }),
+        handoff: None,
         proposed_by: ada(),
         edited_by: None,
         accepted: accepted.then(|| (ada(), at())),

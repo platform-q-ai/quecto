@@ -372,9 +372,10 @@ A plan at the board's limits, with every run and version, is about 1.6 MB whole.
 
 ### Reading on through a plan
 
-`show` takes two optional fields that page through the task's accepted plan:
-`approach_from`, a character of its approach, and `items_from`, the index of one
-of its task items, each from 0 (`null` is the same as leaving it out). A
+`show` takes optional fields that page through the task's accepted plan:
+`approach_from`, a character of its approach, `handoff_from`, a character of
+its handoff (see "The handoff"), and `items_from`, the index of one of its task
+items, each from 0 (`null` is the same as leaving it out). A
 character here is a Unicode scalar value, not what a reader sees as one, so an
 agent passes back only the `approach_next` and `items_next` an answer gave,
 never an offset it counted itself. With `version`, they page through that
@@ -412,22 +413,24 @@ write holds either again. A running board run's deadline is extended as any
 swarm's is: `agent_cmd` `swarm_control` `extend` with `deadline_seconds` on its
 coordinator.
 
-- `propose_plan(task, approach, items, team)` adds a draft, numbered after the
-  task's last version, proposed by the committer. `approach` and `items` are
-  required (`""` and `[]` are allowed); `team` is optional, and `null` or
-  leaving it out means no team.
+- `propose_plan(task, approach, handoff, items, team)` adds a draft, numbered
+  after the task's last version, proposed by the committer. `approach` and
+  `items` are required (`""` and `[]` are allowed); `handoff` and `team` are
+  optional, and `null` or leaving `team` out means no team.
 - `show(task, version)` reads a draft whole before it is built on. An agent that
-  proposes from a plan it read must read all of its approach and task items
-  first, following `approach_next` with `approach_from` and `items_next` with
-  `items_from` until no `_next` is given: an approach or a list of items the
-  tool's 64 KiB cap cut must never be written back as if whole.
-- `edit_plan(task, version, approach, items, team, expected_updated)` edits a
-  draft as a patch. A field left out keeps what the draft holds, byte for byte.
-  A field given replaces the draft's whole: `items` is the whole list of task
-  items, `team` the whole team (`null` takes it away), and `approach` the whole
-  approach. So an agent changes the task items without sending the approach
-  again, which may be longer than one `show` answer gives. An edit names at
-  least one of `approach`, `items` and `team`. With `expected_updated`, the
+  proposes from a plan it read must read all of its approach, handoff and task
+  items first, following `approach_next` with `approach_from`, `handoff_next`
+  with `handoff_from` and `items_next` with `items_from` until no `_next` is
+  given: text or a list of items the tool's 64 KiB cap cut must never be
+  written back as if whole.
+- `edit_plan(task, version, approach, handoff, items, team, expected_updated)`
+  edits a draft as a patch. A field left out keeps what the draft holds, byte
+  for byte. A field given replaces the draft's whole: `items` is the whole list
+  of task items, `team` the whole team (`null` takes it away), `approach` the
+  whole approach, and `handoff` the whole handoff (`""` takes it away). So an
+  agent changes the task items without sending the approach again, which may
+  be longer than one `show` answer gives. An edit names at least one of
+  `approach`, `handoff`, `items` and `team`. With `expected_updated`, the
   draft's `updated` as it was read, a draft changed since is refused
   (`plan_changed`), never edited over. Without it, a write that loses a race to
   another writer applies the same patch to the draft as that writer left it.
@@ -459,6 +462,90 @@ past the most a plan holds (320 KiB, counted as it enters the board). Both ops
 answer `plan`: its `task`, `version`, `state`, `proposed_by`, `edited_by`,
 `created` and `updated`. They do not echo its text. The CLI takes `--items` and
 `--team` as JSON.
+
+### The handoff
+
+A plan's approach is its outline; its handoff holds the detail a coordinator is
+briefed with: scope rules, gate commands, what to read first (#2705 T3). The
+handoff is markdown, up to 65,536 characters, and optional: none is no handoff,
+and a handoff given empty (`""`) is none.
+
+The entry rules are one table (`PLAN_ENTRY_RULES` in
+`domain/project_board/entities/plan.rs`), as a task's are:
+
+| Rule | On entry |
+|---|---|
+| Approach | At most 600 characters when it enters capped; a longer one is refused (`invalid_plan`, field `approach`) with "is N characters; the most is 600: keep the approach to an outline and move the detail into handoff" |
+| Handoff | At most 65,536 characters, however it enters |
+
+Each front end resolves the approach's entry from its policy, as it resolves a
+task description's:
+
+| Front end | Entry |
+|---|---|
+| The agent `board` tool | Always capped |
+| `quecto board` (people, the Pocket relay) | Capped when the request gives a `handoff` that holds something once normalised (`""` is none, and caps nothing); otherwise as before T3: the schema's 65,536 characters |
+
+Only an approach that enters is checked: an edit that leaves the approach as
+the draft holds it (an items-only edit of a plan written before T3, say)
+keeps it, however long. Reading never checks the cap.
+
+`show` gives `handoff` after `approach`, and its length in characters as
+`handoff_chars` (the whole handoff's, even when the agent tool cuts it), only
+when the plan has one, so a plan without one answers exactly as before. The agent tool cuts a long handoff as it
+cuts the approach, after it: `handoff_more` characters left out, read on with
+`show(task, handoff_from: handoff_next)`. A page given `handoff_from` answers
+`handoff_from` and the handoff from that character (`null` for a plan with
+none).
+
+A started task's coordinator brief carries the handoff verbatim as the data's
+`handoff`, before its run, with one fixed sentence pointing to it; a plan
+without one briefs exactly as before. The handoff is counted in the brief's
+64 KiB, as the brief's data spells it. One past the room the rest of the brief
+leaves is cut to fit and ended with "… (cut here; the rest is in the plan on
+the board)"; where not even that marker fits, the handoff is left out of the
+brief (`handoff_cut`), so a plan that starts without a handoff starts with one
+too. The brief already says the full plan is on the board and tells the
+coordinator to ask its parent for any part cut.
+
+The handoff, never its text's shape, picks the plan file's layout. A plan with
+a handoff is written at `schema=2`, with a `## Handoff` prose section after
+`## Approach`. A plan without one stays at `schema=1`, the bytes earlier builds
+wrote, however its approach reads (a line that looks like `## Handoff` is
+written `\## Handoff`, as prose): every write that gives no handoff (an edit,
+an acceptance, a supersession) keeps a plan written before T3 at schema 1, byte
+for byte. A schema-1 file holding a Handoff section, or a schema-2 file without
+one, is refused. The file's line cap rose from 70,000 to 140,000, so an
+approach and a handoff at their most both fit.
+
+**Deploy order (strict).** Every quecto that reads the board (every Pocket
+relay host, every laptop, eccup) must be upgraded **before any agent writes a
+handoff**. A quecto from before T3 reads only schema-1 plans, and one plan with
+a handoff on the board breaks it:
+
+- its `list`, `list_ready` and `list_takeable` fail for the **whole board**,
+  not just that task, with `folder_set_aside` on `plans/…`, whose message
+  offers `clear_set_aside` and never says to upgrade. The Pocket relay sends
+  `list`, so an old relay shows no board at all;
+- its `show(task)` still answers, with `may_be_incomplete: true`; the reason
+  "schema 2, written by a newer quecto; this quecto reads schema 1: upgrade
+  quecto to read it" appears only in that answer's `quarantined[].reason`;
+- its `show(task, version)` of the schema-2 version, and `propose_plan`,
+  `edit_plan`, `accept_plan` and `discard_plan` on that task, are refused with
+  `artifact_set_aside`;
+- writes to other tasks still work.
+
+Those refusals offer `clear_set_aside`. **Never follow that advice for a
+schema-2 plan**: it deletes the plan, handoff and all, from a board whose file
+is sound. Upgrade quecto on that host instead. (Deploy every host together;
+there is no two-step release.)
+
+Upgraded, the Pocket relay is unaffected: it sends `show` and `accept_plan` for
+plans, reads a plan's keys by allowlist (so `handoff` and `handoff_chars` are
+not read), and its requests are unchanged. Its accept page shows only the
+approach, so a person can accept a plan without seeing its handoff (up to
+65,536 characters) until the task page (P8–P10) shows it; `handoff_chars` lets
+it say "has a handoff (N characters)" without reading the text.
 
 ## Accepting or discarding a plan
 
