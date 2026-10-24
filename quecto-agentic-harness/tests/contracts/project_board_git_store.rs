@@ -78,6 +78,12 @@ impl Remote {
     }
 
     pub fn client(&self, clone: usize, name: &str) -> Box<GitBoardStore> {
+        Box::new(GitBoardStore::new(self.git(clone, name), "origin").unwrap())
+    }
+
+    /// git for clone `clone`, writing as `name`, with only `PATH`, `HOME`
+    /// and no global or system configuration.
+    pub fn git(&self, clone: usize, name: &str) -> Git {
         let repo = &self.clones[clone];
         let vars: [(OsString, OsString); 4] = [
             ("PATH".into(), std::env::var_os("PATH").unwrap()),
@@ -89,8 +95,7 @@ impl Remote {
             name: name.into(),
             email: format!("{}@example.com", name.to_lowercase()),
         };
-        let git = Git::new(repo, GitEnvironment::allowlisted(vars), writer).unwrap();
-        Box::new(GitBoardStore::new(git, "origin").unwrap())
+        Git::new(repo, GitEnvironment::allowlisted(vars), writer).unwrap()
     }
 
     /// Clone `clone`'s working directory.

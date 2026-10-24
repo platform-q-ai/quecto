@@ -58,6 +58,7 @@ pub(super) fn environment(repo: &Path, access: Access) -> ProjectBoardEnvironmen
     ProjectBoardEnvironment {
         repo: repo.to_path_buf(),
         remote: "origin".into(),
+        known: Default::default(),
         access,
         vars,
         cancelled: None,
@@ -713,6 +714,7 @@ fn a_remote_the_clone_lacks_is_an_invalid_request() {
     let site = crate::interface::tools::project_board::site::BoardSite {
         repo: work.clone(),
         remote: "nope".into(),
+        known: Default::default(),
         build: Some(build_project_board_handles),
         launcher: None,
         swarm_session: None,
