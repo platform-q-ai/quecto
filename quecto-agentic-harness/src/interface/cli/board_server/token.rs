@@ -49,14 +49,6 @@ pub fn parse(args: &[String]) -> Result<TokenOptions, String> {
 
 /// Runs `options` against the server on its socket: 0 when it did, else 1.
 pub fn run(options: &TokenOptions, stdout: &mut String, stderr: &mut String) -> i32 {
-    // B5 red: a stub that does nothing.
-    if !stdout.is_empty() || stdout.is_empty() {
-        stderr.push_str(
-            "board-server: token commands are not built yet
-",
-        );
-        return 1;
-    }
     let (method, path, body) = match &options.action {
         TokenAction::Add(name) => (
             ServiceMethod::Post,

@@ -75,10 +75,6 @@ pub fn build_board_server(
 /// The addresses `board_server.listen` in the global config at `path`
 /// names; none when the file or the key is missing.
 fn configured_listen(path: &Path) -> Result<Vec<ListenAddress>, String> {
-    // B5 red: a stub that reads no config.
-    if path.exists() || !path.exists() {
-        return Ok(Vec::new());
-    }
     let shown = path.display();
     let text = path
         .to_str()

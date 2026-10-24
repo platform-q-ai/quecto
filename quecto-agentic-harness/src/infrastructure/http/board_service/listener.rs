@@ -241,7 +241,8 @@ fn private_dir(dir: &Path) -> Result<(), BindError> {
 }
 
 /// Serves `listeners` until `stop` completes, at most
-/// [`limits::MAX_CONNECTIONS`] connections at once across them all.
+/// [`limits::MAX_CONNECTIONS`] connections at once on each: TCP peers
+/// that hold every slot of theirs never lock out the Unix socket.
 /// # Errors
 /// A listener could not be handed to the runtime.
 pub async fn serve(
@@ -253,13 +254,12 @@ pub async fn serve(
         .into_iter()
         .map(Accepting::from_std)
         .collect::<io::Result<Vec<_>>>()?;
-    let slots = Arc::new(Semaphore::new(limits::MAX_CONNECTIONS));
     let parts = Arc::new(parts);
     let (stopping, stopped) = watch::channel(());
     let mut loops = tokio::task::JoinSet::new();
     for listener in accepting {
-        let (parts, slots) = (Arc::clone(&parts), Arc::clone(&slots));
-        loops.spawn(accept(listener, parts, slots, stopped.clone()));
+        let slots = Arc::new(Semaphore::new(limits::MAX_CONNECTIONS));
+        loops.spawn(accept(listener, Arc::clone(&parts), slots, stopped.clone()));
     }
     stop.await;
     // Each loop ends as it sees the stop, or the sender gone.

@@ -102,5 +102,5 @@ hold for the Unix socket and TCP alike:
 - 32 headers in 8 KiB;
 - 10 s for a head, which also ends an idle keep-alive connection, and 10 s for a body;
 - 10 s for a peer to take any reply byte;
-- 64 connections at once, across the socket and every TCP address;
+- 64 connections at once on the socket, and 64 on each TCP address (TCP peers never take the socket's);
 - each connection at most 60 s or 1,000 requests, then 15 s to finish what it is answering before it is dropped.

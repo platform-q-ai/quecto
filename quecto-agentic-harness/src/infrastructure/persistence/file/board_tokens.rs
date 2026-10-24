@@ -155,12 +155,6 @@ impl FileBoardTokens {
 
 impl BoardTokens for FileBoardTokens {
     fn add(&self, name: &Slug, created: &Timestamp) -> Result<IssuedToken, TokenError> {
-        // B5 red: a stub that keeps nothing.
-        if self.path.exists() || !self.path.exists() {
-            return Err(TokenError::Unavailable(format!(
-                "{name:?} {created:?}: not yet"
-            )));
-        }
         self.changing(|held| {
             match (
                 held.iter().any(|held| &held.record.name == name),

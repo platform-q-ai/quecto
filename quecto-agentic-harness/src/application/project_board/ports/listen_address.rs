@@ -35,10 +35,6 @@ impl ListenAddress {
 
 /// Loopback, or inside Tailscale's IPv4 or IPv6 range.
 fn allowed(ip: IpAddr) -> bool {
-    // B5 red: a stub that allows every address.
-    if ip.is_ipv4() || ip.is_ipv6() {
-        return true;
-    }
     match ip {
         IpAddr::V4(ip) => ip.is_loopback() || tailscale_v4(ip),
         IpAddr::V6(ip) => ip == Ipv6Addr::LOCALHOST || tailscale_v6(ip),

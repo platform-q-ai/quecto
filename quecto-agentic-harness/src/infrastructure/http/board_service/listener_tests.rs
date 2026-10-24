@@ -364,6 +364,27 @@ fn tcp_requests_reach_the_handler_as_tcp_with_their_authorization() {
     assert_eq!(running.handler.calls.load(Ordering::SeqCst), 2);
 }
 
+/// TCP peers that hold every TCP slot never lock out the Unix socket: each
+/// listener has its own slots.
+#[test]
+fn tcp_peers_holding_every_slot_leave_the_socket_served() {
+    let running = start_tcp(SERVER_UID);
+    let address = running.tcp.unwrap();
+    let held: Vec<_> = (0..limits::MAX_CONNECTIONS + 4)
+        .map(|_| std::net::TcpStream::connect(address).unwrap())
+        .collect();
+    std::thread::sleep(Duration::from_millis(200));
+    let began = Instant::now();
+    let (status, body) = raw(&running.socket, &request("GET", 2, "", b""));
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        began.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        began.elapsed()
+    );
+    drop(held);
+}
+
 #[test]
 fn unix_requests_reach_the_handler_as_local() {
     let running = start(SERVER_UID);

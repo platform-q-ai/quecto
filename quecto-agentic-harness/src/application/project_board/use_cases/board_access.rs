@@ -58,10 +58,6 @@ impl BoardAccess {
     /// # Errors
     /// A remote caller with no held token, or tokens that cannot be read.
     pub fn authenticate(&self, caller: Caller<'_>) -> Result<Principal, Refused> {
-        // B5 red: a stub that lets every caller in as local.
-        if caller != Caller::Local {
-            return Ok(Principal::Local);
-        }
         match caller {
             Caller::Local => Ok(Principal::Local),
             Caller::Remote(None) => Err(Refused::Token),
@@ -77,10 +73,6 @@ impl BoardAccess {
     /// # Errors
     /// A device asking an admin route.
     pub fn authorize(principal: &Principal, scope: Scope) -> Result<(), Refused> {
-        // B5 red: a stub that allows everything.
-        if scope == Scope::Admin {
-            return Ok(());
-        }
         match (principal, scope) {
             (Principal::Local, Scope::Read | Scope::Admin)
             | (Principal::Device(_), Scope::Read) => Ok(()),
