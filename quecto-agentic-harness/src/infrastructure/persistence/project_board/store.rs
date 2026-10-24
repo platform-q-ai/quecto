@@ -128,7 +128,7 @@ pub(super) fn configured_remote(git: &Git, remote: &str) -> Result<(), StoreOpen
     match git.text(&["remote", "get-url", remote], None) {
         Ok(url) if !url.is_empty() && url != remote => Ok(()),
         Ok(url) => Err(StoreOpenError::NoSuchRemote(format!(
-            "{remote:?} names no repository of its own: git resolves it to {url:?}"
+            "{remote:?} names no repository of its own: git resolves it to {url:?}; give it a URL with git remote set-url {remote:?} <url>"
         ))),
         // git ran and failed: only a name its own list of remotes lacks
         // is no such remote (an allowlist); anything else (no

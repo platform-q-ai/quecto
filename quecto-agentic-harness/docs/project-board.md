@@ -54,10 +54,13 @@ name it by and the remote's fetch URL. A read takes each as given, so git is not
 asked for it; with both, a read is composed with one git process, the check that
 `--remote` is a remote the clone configures (the request itself then reads the
 board with git). A remote counts only when git resolves it to a URL that is
-neither empty nor the name itself, so a folder of that name is never read. A
-write takes neither flag on trust: git names the location. A board id that is not 16 lower-case hex
-digits, or a URL with a control or invisible character or over 4096 bytes,
-answers `invalid_request` on field `board-id` or `remote-url`.
+neither empty nor the name itself, so a folder of that name is never read (a
+remote configured with its own name as a relative path, such as `git remote add
+backup backup`, is refused for every request for the same reason: give it a
+URL git cannot take for the name). A write takes neither flag on trust: git
+names the location. A board id that is not 16 lower-case hex digits, or a URL
+with a control or invisible character or over 4096 bytes, answers
+`invalid_request` on field `board-id` or `remote-url`.
 
 The board writes the marker `quecto-board 3` and reads `quecto-board 2` too. A
 build that reads only format 2 asks for an upgrade on a board this build has

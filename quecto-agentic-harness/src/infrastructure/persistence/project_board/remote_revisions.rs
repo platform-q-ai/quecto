@@ -58,8 +58,8 @@ impl GitRemoteRevisions {
     }
 
     /// The remote `store` is opened on, read with the store's own git: no
-    /// git is asked, since the store's remote was checked (or vouched for)
-    /// as it was opened.
+    /// git is asked, since the store's remote was checked as it was
+    /// opened.
     pub fn of_store(store: &GitBoardStore) -> Self {
         Self {
             git: store.git().clone(),
