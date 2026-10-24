@@ -5,10 +5,12 @@
 |---|---|
 | Task | board-2705-b3-b-history-import |
 | Version | 1 |
-| State | draft |
+| State | accepted |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-24T19:23:39Z |
 | Created | 2026-10-24T19:22:34Z |
-| Updated | 2026-10-24T19:22:34Z |
+| Updated | 2026-10-24T19:23:39Z |
 
 ## Approach
 Second B3 child ONLY after actual merged A. Adopt complete B child specification and exact49original+1appended allocation in /home/shane-pocket/.quecto/artifacts/b3-split-planning/{proposed-tasks.json,source-partition.md,red-handoffs.md,handoff.md,coordinator-disposition.md}. Full aggregate69original+2appended/B2/A assertions and source obligations remain mandatory. Forecast1000+120reserve=1120production additions+deletions,750target1500max/testsexcluded/sizedonceplanning; no golf/scope/test cuts or implicit exception. Parent B3 open until BOTH child merges/full aggregate proof.
