@@ -5,10 +5,12 @@
 |---|---|
 | Task | sessions-ordinary-test-ownership |
 | Version | 2 |
-| State | draft |
+| State | accepted |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-24T00:27:50Z |
 | Created | 2026-10-24T00:27:27Z |
-| Updated | 2026-10-24T00:27:27Z |
+| Updated | 2026-10-24T00:27:50Z |
 
 ## Approach
 Operator-approved ONE complete scanner PR for issue2710, then moves-only2650; no prerequisite PRs. The [full normalized plan](https://github.com/platform-q-ai/quecto/issues/2710#issuecomment-6377388305) is58182bytes SHA25679fb49b85f2d4cb79a45ea1a691e32a33d0a194d9cf86ee12df4682df4122603, with byte-exact receipt6377388662 and complete finder/refutation included. [Operator resumption](https://github.com/platform-q-ai/quecto/issues/2710#issuecomment-6377337077) supersedes former staging and500/900-all-lines rules. Approved PR2713 sizing: production additions+deletions target750/max1500, excluding and separately reporting tests/fixtures/snapshots/locks/generated. Once-planned estimate2–20production,1468–2158excluded substantial test/support,2excluded lock; no routine delivery sizing checkpoints or artificial split. Algorithm complexity still receives full review. Existing task-description budgets/final-fixture-byte prohibition are superseded: unchanged original R ancestry and every assertion/bound remain protected, minimal descendant factory-authority scaffolding is authorized. Single shared helper owns fresh genuine Cargo roots, complete canonical incoming corpus, rooted all-context proof, strict errors/global fallback, both current consumers, no suffix/name-only exemptions and always-validated controller Scan-OR composition. Rooted proof, mandatory guard-local inventory/needle fanout and bounded exact-byte AST reuse must make all unchanged54 children actually finish under30; no timeout increase. Preserve one owner/no shim/new dependency/feature/runtime/layout/owner-policy change, canonical identity only, bounded actual macro grammar/provenance not compiler expansion. Full details and exact targeted gate tables are in the complete plan. Planning is not execution evidence. Fresh supplemental RED preserves original R and merges actual master normally, then verified unpushed bundle; separate delivery imports unchanged new RED. Six new-reader tests are delivery green characterization, not fabricated missing-API RED. Existing source freshness/error-order controls may already pass and remain explicit baseline characterization. Independent exact-head PR review, separate fixes/re-review, real required CI and parent merge follow publication. Full suites run in CI, not locally. Actual built-in adversarial workflow obligations remain outside swarms. After scanner merge only, a fresh2650 role performs actual master merge, own version, all pending gates/review/CI without logic/test-blob changes.
