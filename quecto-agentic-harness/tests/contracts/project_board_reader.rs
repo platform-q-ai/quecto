@@ -44,10 +44,14 @@ trait ReaderFixture {
     fn head(&self) -> BoardHead;
     fn fingerprint(&self) -> String;
     fn observed_head(&self) -> Option<String>;
+    fn object_size(&self, oid: &str) -> usize;
 }
 impl ReaderFixture for Remote {
     fn store(&self) -> Box<dyn ProjectBoardStore> {
         self.client(0, "Reader")
+    }
+    fn object_size(&self, oid: &str) -> usize {
+        self.raw_object_size(oid)
     }
     fn head(&self) -> BoardHead {
         BoardHead(self.raw_head())
@@ -320,6 +324,21 @@ fn check_heads<F: ReaderFixture>(make: impl Fn() -> F) {
         let store = f.store();
         assert_eq!(f.observed_head(), Some(f.head().0));
         assert!(matches!(store.read(), Err(BoardStoreError::Unavailable(_))));
+        let before = f.fingerprint();
+        assert!(matches!(
+            store.write_tasks(&f.head(), &[task("a", "A")], "board: a"),
+            Err(BoardStoreError::Unavailable(_))
+        ));
+        unchanged(&f, &before);
+        assert!(matches!(
+            store.clear_set_aside(
+                &f.head(),
+                &clear("tasks/a.md", &"0".repeat(40)),
+                "board: clear"
+            ),
+            Err(BoardStoreError::Unavailable(_))
+        ));
+        unchanged(&f, &before);
     }
 }
 
@@ -423,7 +442,10 @@ fn project_board_reader_quarantine_legacy_opaque_and_repeated_copies() {
 
 #[test]
 fn project_board_reader_legacy_format_is_read_and_upgraded() {
-    let f = fresh();
+    check_legacy_format(fresh);
+}
+fn check_legacy_format<F: ReaderFixture>(make: impl Fn() -> F) {
+    let f = make();
     f.batch(&[(
         "format",
         vec![Raw::encoded("board".into(), b"quecto-board 2\n".to_vec())],
@@ -487,4 +509,329 @@ fn check_board_mutations<F: ReaderFixture>(make: impl Fn() -> F) {
 #[test]
 fn project_board_reader_whole_board_write_clear_counts() {
     check_board_mutations(fresh);
+}
+
+fn check_folder_writes<F: ReaderFixture>(make: impl Fn() -> F) {
+    for (folder, cap, _, _) in FOLDERS.into_iter().skip(1) {
+        for count in [cap - 1, cap] {
+            let f = make();
+            f.batch(&[(
+                folder,
+                (0..count).map(|i| Raw::file(name(folder, i), 1)).collect(),
+            )]);
+            let board = f.store().read().unwrap();
+            assert_eq!(board.quarantined.len(), count);
+            let before = f.fingerprint();
+            let result = f
+                .store()
+                .write(&board.head, &[artifact(folder)], "board: count");
+            match count == cap {
+                true => {
+                    assert!(
+                        matches!(result, Err(BoardStoreError::InvalidWrite(_))),
+                        "{folder}: {result:?}"
+                    );
+                    unchanged(&f, &before);
+                }
+                false => written(result),
+            }
+            let board = f.store().read().unwrap();
+            let file = &board.quarantined[0];
+            written(f.store().clear_set_aside(
+                &board.head,
+                &clear(&file.path, &file.object),
+                "board: clear",
+            ));
+            assert_eq!(f.store().read().unwrap().quarantined.len(), count - 1);
+        }
+    }
+}
+#[test]
+fn project_board_reader_folder_write_and_clear_counts() {
+    check_folder_writes(fresh);
+}
+
+/// An absent expected revision is invalid, not a known stale revision (Lost).
+fn check_unknown_heads<F: ReaderFixture>(make: impl Fn() -> F, absent: impl Fn(&F, &str) -> bool) {
+    let f = make();
+    let stale = f.head();
+    f.batch(&[("tasks", vec![Raw::file("broken.md".into(), 1)])]);
+    let board = f.store().read().unwrap();
+    assert_eq!(board.quarantined.len(), 1);
+    let file = aside(&board, "tasks/broken.md");
+    let clearing = clear(&file.path, &file.object);
+    let before = f.fingerprint();
+    for expected in ["a".repeat(40), "b".repeat(64), "not-a-head".into()] {
+        if [40, 64].contains(&expected.len()) {
+            assert!(absent(&f, &expected), "actual backend contains {expected}");
+        }
+        assert_ne!(expected, board.head.0);
+        assert_ne!(expected, stale.0);
+        let head = BoardHead(expected);
+        for writing in [true, false] {
+            let result = match writing {
+                true => f
+                    .store()
+                    .write(&head, &[artifact("tasks")], "board: valid write"),
+                false => f
+                    .store()
+                    .clear_set_aside(&head, &clearing, "board: valid clear"),
+            };
+            assert!(
+                matches!(result, Err(BoardStoreError::InvalidWrite(_))),
+                "{result:?}"
+            );
+            assert_eq!(f.observed_head(), Some(board.head.0.clone()));
+            unchanged(&f, &before);
+        }
+    }
+    // Positive controls: these same operations are valid at the actual current head.
+    written(
+        f.store()
+            .write(&board.head, &[artifact("tasks")], "board: valid write"),
+    );
+    let current = f.store().read().unwrap();
+    written(
+        f.store()
+            .clear_set_aside(&current.head, &clearing, "board: valid clear"),
+    );
+    assert!(f.store().read().unwrap().quarantined.is_empty());
+}
+#[test]
+fn project_board_reader_unknown_and_malformed_expected_heads() {
+    check_unknown_heads(fresh, Remote::object_absent);
+}
+
+/// Pad only admitted regular canonical paths; board scope leaves review room.
+fn prospective_rows(scope: usize, growth: usize, extra: usize) -> Vec<(&'static str, Vec<Raw>)> {
+    let (folder, _, budget, cap) = FOLDERS[scope.min(5)];
+    let (folder, budget, cap) = match scope {
+        0..=5 => (folder, budget, cap),
+        6 => ("reviews", 8 * MIB, MIB),
+        _ => panic!("unsupported byte scope"),
+    };
+    assert!(growth <= cap && growth <= budget);
+    let rows = bytes(folder, budget - growth + extra, cap);
+    assert_eq!(
+        rows.iter().map(|row| row.bytes.len()).sum::<usize>(),
+        budget - growth + extra
+    );
+    let mut folders = vec![(folder, rows)];
+    if scope == 6 {
+        folders.extend([
+            ("tasks", bytes("tasks", 16 * MIB, 512 * 1024)),
+            ("plans", bytes("plans", 24 * MIB, 1536 * 1024)),
+            ("runs", bytes("runs", 16 * MIB, 768 * 1024)),
+        ]);
+    }
+    folders
+}
+
+/// Existing admitted bytes fit; only this mutation activates the final bytes.
+fn check_prospective_bytes<F: ReaderFixture>(make: impl Fn() -> F, keeping: bool) {
+    use quecto::application::project_board::ports::KeepCopy;
+    use quecto::infrastructure::persistence::project_board::artifacts::file_of;
+    for (scope, folder) in FOLDERS
+        .iter()
+        .map(|row| row.0)
+        .chain(["reviews"])
+        .enumerate()
+    {
+        let new = artifact(folder);
+        let growth = if keeping {
+            4096
+        } else {
+            file_of(&new).unwrap().len()
+        };
+        for extra in [0, 1] {
+            let f = make();
+            let mut folders = prospective_rows(scope, growth, extra);
+            let repeated = name(folder, 9000);
+            let path = format!("{folder}/{repeated}");
+            if keeping {
+                // Both copies are regular, under the file cap, and distinct objects/sizes.
+                folders[0].1.extend([
+                    Raw::file(repeated.clone(), growth),
+                    Raw::file(repeated, growth - 1),
+                ]);
+            }
+            f.batch(&folders);
+            let board = f.store().read().unwrap();
+            let before = f.fingerprint();
+            let result = match keeping {
+                true => {
+                    let copies: Vec<_> = board
+                        .quarantined
+                        .iter()
+                        .filter(|q| q.path == path)
+                        .collect();
+                    assert_eq!(copies.len(), 2);
+                    assert!(copies.iter().all(|q| !q.carried));
+                    assert_ne!(copies[0].object, copies[1].object);
+                    let keep = copies
+                        .iter()
+                        .find(|q| f.object_size(&q.object) == growth)
+                        .unwrap()
+                        .object
+                        .clone();
+                    let mut clearing = clear(&path, &keep);
+                    clearing.repeated.insert(
+                        path.clone(),
+                        KeepCopy::Object {
+                            keep,
+                            seen: copies.iter().map(|q| q.object.clone()).collect(),
+                        },
+                    );
+                    f.store()
+                        .clear_set_aside(&board.head, &clearing, "board: keep copy")
+                }
+                false => f.store().write(
+                    &board.head,
+                    std::slice::from_ref(&new),
+                    "board: exact bytes",
+                ),
+            };
+            match extra {
+                0 => {
+                    written(result);
+                    let after = f.store().read().unwrap();
+                    assert_ne!(after.head, board.head);
+                    if keeping {
+                        assert_eq!(f.object_size(&aside(&after, &path).object), growth);
+                        assert!(
+                            board
+                                .quarantined
+                                .iter()
+                                .any(|q| q.path == path && q.object == aside(&after, &path).object)
+                        );
+                        assert_eq!(after.quarantined.len(), board.quarantined.len() - 1);
+                    }
+                }
+                1 => {
+                    let Err(BoardStoreError::WriteTooLarge(why)) = result else {
+                        panic!("scope {scope}, keeping {keeping}: {result:?}");
+                    };
+                    assert!(why.contains("bytes"), "{why}");
+                    if keeping {
+                        assert!(why.contains(&path), "{why}");
+                    }
+                    assert_eq!(f.observed_head(), Some(board.head.0));
+                    unchanged(&f, &before);
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+#[test]
+fn project_board_reader_prospective_write_bytes_exact_and_over() {
+    check_prospective_bytes(fresh, false);
+}
+#[test]
+fn project_board_reader_prospective_kept_copy_bytes_exact_and_over() {
+    check_prospective_bytes(fresh, true);
+}
+
+// The same full runtime bodies above, now on real normalized SQLite storage.
+// Raw setup carries every untouched root child, including FORMAT and archive.
+impl ReaderFixture for super::project_board_sqlite::Database {
+    fn store(&self) -> Box<dyn ProjectBoardStore> {
+        Box::new(self.client())
+    }
+    fn head(&self) -> BoardHead {
+        self.client().fixture_head().unwrap()
+    }
+    fn fingerprint(&self) -> String {
+        self.client().fixture_fingerprint().unwrap()
+    }
+    fn observed_head(&self) -> Option<String> {
+        self.client().fixture_head().ok().map(|head| head.0)
+    }
+    fn object_size(&self, oid: &str) -> usize {
+        self.client().fixture_object_size(oid).unwrap()
+    }
+    fn batch(&self, folders: &[(&str, Vec<Raw>)]) {
+        use quecto::infrastructure::persistence::sqlite::project_board::RawEntry;
+        self.client()
+            .fixture_edit(|editor| {
+                let (_, root) = editor.current()?;
+                let mut roots = editor.entries(&root)?;
+                for (folder, rows) in folders {
+                    let files = rows
+                        .iter()
+                        .map(|row| {
+                            Ok(RawEntry {
+                                mode: row.mode.into(),
+                                name: row.name.as_bytes().to_vec(),
+                                oid: editor.blob(&row.bytes)?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, BoardStoreError>>()?;
+                    let tree = editor.tree(&files)?;
+                    roots.retain(|row| row.name != folder.as_bytes());
+                    roots.push(RawEntry {
+                        mode: "040000".into(),
+                        name: folder.as_bytes().to_vec(),
+                        oid: tree,
+                    });
+                }
+                editor.tree(&roots)
+            })
+            .unwrap();
+    }
+}
+fn fresh_sqlite() -> super::project_board_sqlite::Database {
+    let fixture = super::project_board_sqlite::Database::new();
+    fixture.store().bootstrap().unwrap();
+    fixture
+}
+#[cfg(test)]
+mod sqlite {
+    use super::*;
+    #[test]
+    fn counts_exact_and_over() {
+        check_counts(fresh_sqlite);
+    }
+    #[test]
+    fn bytes_exact_over_and_admission() {
+        check_bytes(fresh_sqlite);
+    }
+    #[test]
+    fn task_read_write_clear_caps() {
+        check_task_mutations(fresh_sqlite);
+    }
+    #[test]
+    fn rejected_heads_preserve_raw_state() {
+        check_heads(fresh_sqlite);
+    }
+    #[test]
+    fn quarantine_legacy_opaque_and_repeated_copies() {
+        check_quarantine(fresh_sqlite);
+    }
+    #[test]
+    fn legacy_format_is_read_and_upgraded() {
+        check_legacy_format(fresh_sqlite);
+    }
+    #[test]
+    fn whole_board_write_clear_counts() {
+        check_board_mutations(fresh_sqlite);
+    }
+    #[test]
+    fn folder_write_and_clear_counts() {
+        check_folder_writes(fresh_sqlite);
+    }
+    #[test]
+    fn unknown_and_malformed_expected_heads() {
+        check_unknown_heads(fresh_sqlite, |f, head| {
+            f.client().fixture_object_absent(head).unwrap()
+        });
+    }
+    #[test]
+    fn prospective_write_bytes_exact_and_over() {
+        check_prospective_bytes(fresh_sqlite, false);
+    }
+    #[test]
+    fn prospective_kept_copy_bytes_exact_and_over() {
+        check_prospective_bytes(fresh_sqlite, true);
+    }
 }

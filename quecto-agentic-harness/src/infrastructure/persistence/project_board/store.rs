@@ -54,7 +54,7 @@ const MAX_REF_LISTING: usize = 16 * 1024 * 1024;
 /// The README every write leaves at the board's root (#2660): each write
 /// writes it again, so a board written before this text has it once it is
 /// next written.
-const README: &[u8] = b"# quecto board\n\nThis branch holds the project's board: one markdown file per artifact, each in\nits kind's folder: `tasks/<id>.md`, `plans/<task>.<n>.md`, `runs/<task>.<n>.md`,\n`changes/<task>.<n>.md`, `reviews/<task>.<change>.md` and `discussions/<id>.md`,\nwith `format/board` naming the format and `archive/` kept for archived work. It is\nwritten only by quecto's board operations; do not edit, merge or rebase it by hand.\nIf a hand edit breaks it, move `quecto/board` back to the commit before that edit.\n";
+pub(crate) const README: &[u8] = b"# quecto board\n\nThis branch holds the project's board: one markdown file per artifact, each in\nits kind's folder: `tasks/<id>.md`, `plans/<task>.<n>.md`, `runs/<task>.<n>.md`,\n`changes/<task>.<n>.md`, `reviews/<task>.<change>.md` and `discussions/<id>.md`,\nwith `format/board` naming the format and `archive/` kept for archived work. It is\nwritten only by quecto's board operations; do not edit, merge or rebase it by hand.\nIf a hand edit breaks it, move `quecto/board` back to the commit before that edit.\n";
 
 pub struct GitBoardStore {
     git: Git,
@@ -712,6 +712,7 @@ impl ProjectBoardStore for GitBoardStore {
 
 #[path = "store_clear.rs"]
 mod clear;
+pub(crate) use clear::cleared;
 #[path = "store_committer.rs"]
 mod committer;
 #[path = "store_fence.rs"]
@@ -739,3 +740,5 @@ mod open_tests;
 #[cfg(test)]
 #[path = "store_board_id_tests.rs"]
 mod board_id_tests;
+
+pub(crate) use writing::encoded;

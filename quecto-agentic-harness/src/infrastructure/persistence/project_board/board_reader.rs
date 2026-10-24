@@ -2,10 +2,14 @@
 use super::*;
 type Metadata = BTreeMap<String, Found>;
 type Content = BTreeMap<String, Vec<u8>>;
-pub(super) trait Reader {
+pub(crate) trait Reader {
     fn metadata(&self, ids: &[&str]) -> Result<Metadata, BoardStoreError>;
     fn listing(&self, tree: &str, cap: usize) -> Result<Vec<Entry>, Unread>;
     fn admitted(&self, wanted: &[(&str, usize)]) -> Result<Content, BoardStoreError>;
+    /// Observational names from the sole interpreter's already-admitted files.
+    /// Adapters must not infer admission by searching other object aliases.
+    #[cfg(feature = "test-support")]
+    fn witness_artifacts(&self, _paths: &[(String, String)]) {}
 }
 impl Reader for Git {
     fn metadata(&self, ids: &[&str]) -> Result<Metadata, BoardStoreError> {

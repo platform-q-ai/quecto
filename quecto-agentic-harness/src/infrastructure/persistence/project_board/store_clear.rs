@@ -142,7 +142,7 @@ fn repeated_names(board: &Board) -> BTreeMap<String, Repeated<'_>> {
 }
 
 /// `board` once `clear` is made, and what it keeps, or why it is refused.
-fn cleared(board: &Board, clear: &SetAsideClear) -> Result<(Board, ClearKeeps), String> {
+pub(crate) fn cleared(board: &Board, clear: &SetAsideClear) -> Result<(Board, ClearKeeps), String> {
     let shown = |text: &str| quoted(text.as_bytes());
     let objects = |copies: &[TreeCopy]| listed(copies.iter().map(|copy| copy.oid.clone()));
     let repeated = repeated_names(board);

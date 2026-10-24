@@ -397,6 +397,18 @@ pub(super) fn load_folder(
         .iter()
         .map(|(_, entry, size)| (entry.oid.as_str(), *size))
         .collect();
+    #[cfg(feature = "test-support")]
+    git.witness_artifacts(
+        &to_read
+            .iter()
+            .map(|(_, entry, _)| {
+                (
+                    format!("{}/{}", folder.naming.folder, entry.name),
+                    entry.oid.clone(),
+                )
+            })
+            .collect::<Vec<_>>(),
+    );
     let contents = contents(git, &wanted)?;
     let mut artifacts = vec![];
     for (key, entry, _) in to_read {
