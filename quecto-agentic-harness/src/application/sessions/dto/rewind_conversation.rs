@@ -3,7 +3,7 @@
 //! any change (a refused target) or after the history was replaced (a
 //! failed save).
 use super::SaveSessionError;
-use crate::application::sessions::conversation_ledger::LedgerAdvance;
+use crate::application::sessions::services::conversation_ledger::LedgerAdvance;
 use crate::domain::conversation::services::conversation_edit::{RewindTarget, RewindTargetError};
 
 /// Which user message to rewind to, and how long a conversation may be

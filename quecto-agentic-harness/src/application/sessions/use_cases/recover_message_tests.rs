@@ -1,9 +1,11 @@
 use super::RecoverMessage;
-use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSessionState};
 use crate::application::sessions::dto::{
     ContentSelector, RecoveredContent, RecoveryError, RecoveryRequest,
 };
 use crate::application::sessions::ports::ContextSpillStore;
+use crate::application::sessions::services::active_session::{
+    ActiveSessionHandle, ActiveSessionState,
+};
 use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 use crate::domain::identity::ids::MessageId;
 use crate::domain::sessions::entities::session::{SpillEntries, SpillEntry, SpillIndex};

@@ -16,10 +16,10 @@
 use std::sync::Arc;
 
 use super::SaveSession;
-use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::dto::{ClearConversationError, ClearedConversation, SaveTrigger};
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
+use crate::application::sessions::services::active_session::ActiveSessionHandle;
 use crate::domain::conversation::services::conversation_edit::clear_conversation;
 use crate::domain::conversation::services::conversation_view::is_injected_system_prompt;
 use crate::domain::conversation::value_objects::message::Message;
@@ -64,7 +64,7 @@ impl ClearConversation {
 pub(super) type Retention = Option<(Arc<dyn ContextSpillStore>, SessionIdentity)>;
 
 pub(super) fn retention_of(
-    state: &crate::application::sessions::active_session::ActiveSessionState,
+    state: &crate::application::sessions::services::active_session::ActiveSessionState,
 ) -> Retention {
     state
         .conversation()

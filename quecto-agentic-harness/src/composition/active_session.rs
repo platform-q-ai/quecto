@@ -10,13 +10,12 @@
 //! dirty latch is its own port; the fleet teardown is passed per call.
 use std::sync::Arc;
 
-use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSessionState};
 use crate::application::sessions::ports::export::SessionExportPort;
 use crate::application::sessions::ports::{
     DelegatedChildrenRoster, FreshSessionIdentityGenerator, HistoricalRosterSource, SessionStore,
     WorkflowRunSource,
 };
-use crate::application::sessions::session_home::SessionHomeContext;
+use crate::application::sessions::services::{active_session::*, session_home::SessionHomeContext};
 use crate::application::sessions::use_cases::{
     ClearConversation, DepartingChildren, ReadHistory, RecoverMessage, ResumeSavedSession,
     RewindConversation, SaveSession, StartFreshConversation, SynchronizeTranscript,

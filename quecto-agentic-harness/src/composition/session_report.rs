@@ -6,8 +6,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::ports::export::SessionExportPort;
+use crate::application::sessions::services::active_session::ActiveSessionHandle;
 use crate::application::sessions::use_cases::ExportSessionReport;
 use crate::infrastructure::persistence::file::session_export::FileSessionExport;
 use crate::interface::uds::controllers::export_report_controller::ExportSessionReportController;
