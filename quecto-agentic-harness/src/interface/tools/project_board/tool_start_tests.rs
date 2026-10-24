@@ -68,6 +68,7 @@ fn launching_board(
             deadline_seconds: None,
             image: None,
         }),
+        handoff: None,
         proposed_by: ada.clone(),
         edited_by: None,
         accepted: Some((ada, at.clone())),

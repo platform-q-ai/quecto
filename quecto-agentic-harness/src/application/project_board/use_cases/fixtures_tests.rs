@@ -236,6 +236,7 @@ pub fn plan_of(
         approach: "Spike, then build.".into(),
         items: vec![plan_item("schema", &[]), plan_item("api", &["schema"])],
         team: Some(plan_team()),
+        handoff: None,
         proposed_by: person("Bob"),
         edited_by: None,
         accepted,

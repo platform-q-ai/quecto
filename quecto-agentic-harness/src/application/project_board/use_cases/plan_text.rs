@@ -25,6 +25,12 @@ pub(super) fn entered_items(items: &[PlanItem]) -> Vec<PlanItem> {
         .collect()
 }
 
+/// A handoff (#2705 T3) as the board keeps it: normalised as markdown, or
+/// none when nothing is left.
+pub(super) fn handoff(raw: &str) -> Option<String> {
+    Some(board_text::text(raw)).filter(|text| !text.is_empty())
+}
+
 /// What the normaliser changes in the plan text a request gives: in its
 /// approach, and in any of its task items' titles and criteria (each kind
 /// once, in [`TextChange`]'s order). A field not given tells nothing.

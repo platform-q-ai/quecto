@@ -75,8 +75,10 @@ impl ProposePlan {
         }
         let content = PlanContent {
             approach: board_text::text(&proposal.approach),
+            handoff: proposal.handoff.as_deref().and_then(plan_text::handoff),
             items: plan_text::entered_items(&proposal.items),
             team: proposal.team.clone(),
+            entry: proposal.entry,
         };
         let id = &proposal.task;
         let message = format!("board: propose a plan for {}", id.as_str());

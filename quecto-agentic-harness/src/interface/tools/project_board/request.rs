@@ -199,6 +199,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("approach_from", Kind::Offset),
             optional("items_from", Kind::Offset),
             optional("version", Kind::Version),
+            optional("handoff_from", Kind::Offset),
         ],
     ),
     (
@@ -245,6 +246,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             required("approach", Kind::Text),
             required("items", Kind::PlanItems),
             optional("team", Kind::Team),
+            optional("handoff", Kind::Text),
         ],
     ),
     (
@@ -256,6 +258,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("items", Kind::PlanItems),
             optional("team", Kind::Team),
             optional("expected_updated", Kind::Timestamp),
+            optional("handoff", Kind::Text),
         ],
     ),
     (
@@ -497,7 +500,11 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
             read.task()?,
             PlanView {
                 version: read.value("version").map(plans::version).transpose()?,
-                page: PlanPage::of(read.offset("approach_from")?, read.offset("items_from")?),
+                page: PlanPage::paged(
+                    read.offset("approach_from")?,
+                    read.offset("handoff_from")?,
+                    read.offset("items_from")?,
+                ),
             },
         )),
         "create" => create(read),

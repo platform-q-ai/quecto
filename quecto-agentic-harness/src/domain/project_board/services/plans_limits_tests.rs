@@ -39,6 +39,8 @@ fn a_plans_text_is_held_to_the_most_a_plan_holds_exactly() {
     let approach = "\u{1f600}".repeat(MAX_APPROACH_CHARS);
     let rest = MAX_PLAN_TEXT_BYTES - approach.len();
     let content = |bytes| PlanContent {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         approach: approach.clone(),
         items: items_of(bytes),
         team: None,

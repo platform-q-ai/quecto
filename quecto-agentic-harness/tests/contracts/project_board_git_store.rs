@@ -334,7 +334,7 @@ fn the_git_store_takes_a_plan_proposed_then_patched() {
     use quecto::application::project_board::use_cases::{
         BootstrapProjectBoard, CreateBoardTask, EditPlan, ProposePlan,
     };
-    use quecto::domain::project_board::entities::plan::PlanItem;
+    use quecto::domain::project_board::entities::plan::{PlanEntry, PlanItem};
     use quecto::domain::project_board::value_objects::slug::Slug;
     use quecto::domain::project_board::value_objects::vocabulary::{PlanState, TaskKind};
     use quecto::infrastructure::time::board_clock::SystemBoardClock;
@@ -377,6 +377,8 @@ fn the_git_store_takes_a_plan_proposed_then_patched() {
     let proposed = ProposePlan::new(Arc::clone(&store), clock.clone())
         .unwrap()
         .execute(&PlanProposal {
+            handoff: None,
+            entry: PlanEntry::Legacy,
             task: id.clone(),
             approach: "Spike the store.\r\n\n```\n  keep  spaced\n```\n".into(),
             items: vec![item("schema")],
@@ -392,6 +394,8 @@ fn the_git_store_takes_a_plan_proposed_then_patched() {
     let edited = EditPlan::new(Arc::clone(&store), clock)
         .unwrap()
         .execute(&PlanEdit {
+            handoff: None,
+            entry: PlanEntry::Legacy,
             task: id.clone(),
             version: 1,
             approach: None,
@@ -458,7 +462,10 @@ fn the_git_store_takes_an_acceptance_of_three_files_in_one_commit() {
     .unwrap();
     let propose = ProposePlan::new(Arc::clone(&store), clock.clone()).unwrap();
     let accept = AcceptPlan::new(Arc::clone(&store), clock).unwrap();
+    use quecto::domain::project_board::entities::plan::PlanEntry;
     let proposal = |approach: &str| PlanProposal {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         task: id.clone(),
         approach: approach.into(),
         items: vec![],
@@ -582,6 +589,7 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
             })
             .to_vec(),
         team: None,
+        handoff: None,
         proposed_by: ada.clone(),
         edited_by: None,
         accepted: Some((ada.clone(), at.clone())),

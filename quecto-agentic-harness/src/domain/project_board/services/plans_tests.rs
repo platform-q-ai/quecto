@@ -16,6 +16,8 @@ fn when(now: &Timestamp) -> Moment {
 fn content() -> PlanContent {
     let draft = plan(1, PlanState::Draft).into_fields();
     PlanContent {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         approach: draft.approach,
         items: draft.items,
         team: draft.team,

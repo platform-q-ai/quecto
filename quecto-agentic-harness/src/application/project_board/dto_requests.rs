@@ -155,12 +155,14 @@ pub struct PlanView {
 }
 
 /// Where a `show` reads on in its task's accepted plan (#2481 M4a review
-/// round 2): the approach from its character `approach_from`, the task
-/// items from the index `items_from`. A part not named is not shown, so
-/// a page names at least one ([`Self::of`]).
+/// round 2): the approach from its character `approach_from`, the handoff
+/// from its character `handoff_from` (#2705 T3), the task items from the
+/// index `items_from`. A part not named is not shown, so a page names at
+/// least one ([`Self::paged`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlanPage {
     approach_from: Option<usize>,
+    handoff_from: Option<usize>,
     items_from: Option<usize>,
 }
 
@@ -168,10 +170,21 @@ impl PlanPage {
     /// The page from `approach_from` and `items_from`; none when neither
     /// is named.
     pub fn of(approach_from: Option<usize>, items_from: Option<usize>) -> Option<Self> {
-        match (approach_from, items_from) {
-            (None, None) => None,
-            (Some(_), _) | (_, Some(_)) => Some(Self {
+        Self::paged(approach_from, None, items_from)
+    }
+
+    /// The page from `approach_from`, `handoff_from` and `items_from`;
+    /// none when none is named.
+    pub fn paged(
+        approach_from: Option<usize>,
+        handoff_from: Option<usize>,
+        items_from: Option<usize>,
+    ) -> Option<Self> {
+        match (approach_from, handoff_from, items_from) {
+            (None, None, None) => None,
+            (Some(_), _, _) | (_, Some(_), _) | (_, _, Some(_)) => Some(Self {
                 approach_from,
+                handoff_from,
                 items_from,
             }),
         }
@@ -179,6 +192,10 @@ impl PlanPage {
 
     pub fn approach_from(&self) -> Option<usize> {
         self.approach_from
+    }
+
+    pub fn handoff_from(&self) -> Option<usize> {
+        self.handoff_from
     }
 
     pub fn items_from(&self) -> Option<usize> {

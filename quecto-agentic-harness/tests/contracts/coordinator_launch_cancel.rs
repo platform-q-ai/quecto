@@ -21,7 +21,7 @@ use quecto::application::project_board::use_cases::{
 };
 use quecto::application::tools::ports::Tool;
 use quecto::domain::project_board::entities::claim::Identity;
-use quecto::domain::project_board::entities::plan::PlanItem;
+use quecto::domain::project_board::entities::plan::{PlanEntry, PlanItem};
 use quecto::domain::project_board::entities::team::{Role, RoleLimits, Team};
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::vocabulary::{
@@ -185,6 +185,8 @@ fn ready_board(store: &MemoryBoardStore) {
     let plan = ProposePlan::new(Arc::clone(&ada), clock.clone())
         .unwrap()
         .execute(&PlanProposal {
+            handoff: None,
+            entry: PlanEntry::Legacy,
             task: id.clone(),
             approach: "Build it.".into(),
             items: vec![PlanItem {

@@ -2,6 +2,11 @@
 //! `Plan {version} of {task}`; its fields and tables hold the rest, every
 //! list in the plan's own order:
 //!
+//! - Approach, prose; then, at schema 2 alone, Handoff, prose (#2705 T3).
+//!   Whether the plan has a handoff picks the schema, never its text: a
+//!   plan without one stays at schema 1, the bytes earlier builds wrote,
+//!   and an earlier build reads schema 2 as a newer quecto's ("upgrade
+//!   quecto to read it"), never as a file it misreads;
 //! - Task items `[Task item | Title]`, in task item order;
 //! - Task item dependencies `[Task item | Depends on]`, one row per edge,
 //!   in task item order then dependency order;
@@ -45,6 +50,17 @@ const IMAGE: &str = "Image";
 const CREATED: &str = "Created";
 const UPDATED: &str = "Updated";
 const APPROACH: &str = "Approach";
+const HANDOFF: &str = "Handoff";
+/// The schema of a plan without a handoff: the one earlier builds wrote.
+const LEGACY_SCHEMA: u32 = 1;
+/// The schema of a plan with a handoff (#2705 T3).
+const HANDOFF_SCHEMA: u32 = 2;
+/// Why a handoff no file section shows is refused.
+const HANDOFF_SHOWN: &str = "holds nothing a file shows";
+/// Why a schema-2 file without its Handoff is refused.
+const HANDOFF_AT_SCHEMA_2: &str = "is required at schema 2";
+/// Why a schema-1 file holding a Handoff is refused: no build wrote one.
+const HANDOFF_ONLY_AT_SCHEMA_2: &str = "is written only at schema 2";
 const TASK_ITEMS: &str = "Task items";
 const DEPENDENCIES: &str = "Task item dependencies";
 const CRITERIA: &str = "Criteria";
@@ -94,6 +110,10 @@ const SECTIONS: &[SectionShape<'static>] = &[
         body: BodyShape::Prose,
     },
     SectionShape {
+        heading: HANDOFF,
+        body: BodyShape::Prose,
+    },
+    SectionShape {
         heading: TASK_ITEMS,
         body: BodyShape::Table(TASK_ITEM_COLUMNS),
     },
@@ -112,12 +132,14 @@ const SECTIONS: &[SectionShape<'static>] = &[
 ];
 
 /// A plan's file caps: the widest plan the domain admits fits
-/// (`the_widest_plan_fits_its_limits`). An approach of 65,536 characters
-/// may be that many lines inside a fence, so the line cap is the
-/// approach's lines and every table at its fullest.
+/// (`the_widest_plan_fits_its_limits`). An approach and a handoff of
+/// 65,536 characters each may be that many lines inside fences, so the
+/// line cap is both texts' lines and every table at its fullest (#2705 T3
+/// raised it from 70,000: an earlier build refuses a schema-2 file before
+/// its size).
 pub const PLAN_LIMITS: Limits = Limits {
     file_bytes: 1_536 * 1024,
-    lines: 70_000,
+    lines: 140_000,
     line_bytes: 264 * 1024,
 };
 
@@ -125,7 +147,8 @@ pub struct PlanCodec;
 
 impl ArtifactCodec for PlanCodec {
     type Value = Plan;
-    const SCHEMA: u32 = 1;
+    const SCHEMA: u32 = HANDOFF_SCHEMA;
+    const OLDEST_SCHEMA: u32 = LEGACY_SCHEMA;
     const SHAPE: Shape<'static> = Shape {
         kind: "plan",
         fields: FIELDS,
@@ -170,6 +193,17 @@ impl ArtifactCodec for PlanCodec {
         if let Some(approach) = held(approach) {
             sections.push(section(APPROACH, Body::Prose(approach)));
         }
+        // A handoff, and only a handoff, makes the file schema 2.
+        let schema = match &plan.handoff {
+            Some(handoff) => {
+                let blocks =
+                    blocks_of(handoff).map_err(|error| refused(HANDOFF, error.to_string()))?;
+                let blocks = held(blocks).ok_or_else(|| refused(HANDOFF, HANDOFF_SHOWN))?;
+                sections.push(section(HANDOFF, Body::Prose(blocks)));
+                HANDOFF_SCHEMA
+            }
+            None => Self::OLDEST_SCHEMA,
+        };
         let ids = |item: &PlanItem| cells::slug(&item.id);
         let items = plan
             .items
@@ -218,7 +252,7 @@ impl ArtifactCodec for PlanCodec {
             "a Roles section exactly when the plan names a team"
         );
         Ok(Document {
-            schema: Self::SCHEMA,
+            schema,
             title: title(plan),
             fields: fields
                 .into_iter()
@@ -292,6 +326,7 @@ impl ArtifactCodec for PlanCodec {
             version,
             state: cells::read_word(STATE, required(STATE)?, PlanState::parse)?,
             approach: read.approach,
+            handoff: handoff_at(document.schema, read.handoff)?,
             items: read.items,
             team,
             proposed_by: cells::read_identity(PROPOSED_BY, required(PROPOSED_BY)?)?,
@@ -304,6 +339,19 @@ impl ArtifactCodec for PlanCodec {
         };
         Plan::new(fields)
             .map_err(|error| refused("Plan", format!("{}: {}", error.field, error.problem)))
+    }
+}
+
+/// The handoff a file of `schema` holds, by its marker alone: at schema 2
+/// its Handoff section, which it must hold; at schema 1 none, so a
+/// Handoff section there (no build writes one) is refused.
+fn handoff_at(schema: u32, read: Option<String>) -> Result<Option<String>, CodecError> {
+    match (schema, read) {
+        (HANDOFF_SCHEMA, Some(handoff)) => Ok(Some(handoff)),
+        (HANDOFF_SCHEMA, None) => Err(refused(HANDOFF, HANDOFF_AT_SCHEMA_2)),
+        (LEGACY_SCHEMA, None) => Ok(None),
+        (LEGACY_SCHEMA, Some(_)) => Err(refused(HANDOFF, HANDOFF_ONLY_AT_SCHEMA_2)),
+        (_, _) => Err(CodecError::Schema),
     }
 }
 
@@ -340,6 +388,7 @@ fn section(heading: &str, body: Body) -> Section {
 #[derive(Default)]
 struct Read {
     approach: String,
+    handoff: Option<String>,
     items: Vec<PlanItem>,
     roles: Option<Vec<Role>>,
 }
@@ -348,6 +397,7 @@ impl Read {
     fn section(&mut self, section: &Section) -> Result<(), CodecError> {
         match (section.heading.as_str(), &section.body) {
             (APPROACH, Body::Prose(blocks)) => self.approach = text_of(blocks),
+            (HANDOFF, Body::Prose(blocks)) => self.handoff = Some(text_of(blocks)),
             (TASK_ITEMS, Body::Table(rows)) => {
                 for row in rows {
                     let [id, title] = row.as_slice() else {
@@ -435,3 +485,7 @@ fn role(row: &[String]) -> Result<Role, CodecError> {
 #[cfg(test)]
 #[path = "plan_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "plan_handoff_tests.rs"]
+mod handoff_tests;
