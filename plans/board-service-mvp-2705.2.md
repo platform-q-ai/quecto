@@ -5,12 +5,12 @@
 |---|---|
 | Task | board-service-mvp-2705 |
 | Version | 2 |
-| State | accepted |
+| State | superseded |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted at | 2026-10-24T00:11:14Z |
 | Created | 2026-10-24T00:10:59Z |
-| Updated | 2026-10-24T00:11:14Z |
+| Updated | 2026-10-24T03:02:07Z |
 
 ## Approach
 Operator coordination supersedes earlier owner-header order/sizing for this lane: agent delivers B2 then B3 then B4 ALONE then B7 then B5-lite then B8 then B13-lite then Pocket P1+P2. Operator independently owns B1(GitRemoteRevisions plus --board-id/--remote-url) and B6(BoardOperations), their branches/PRs are not agent work. Never start B1/B6. Before starting B7 establish primary evidence B6 merged; if not, report operator blocker rather than implementing it. Human-approved PR2713 sizing applies now even while documentation PR is open: target750/max1500 PRODUCTION changed lines, tests/fixtures/snapshots/lockfiles/generated excluded and separately reported; judge once at planning, rejudge only remediation checkpoint or exceedingmaximum. This is explicit human-approved exception to previous inclusive900cap, justified by avoidable split/review/CI overhead. Do not split only for target; preserve complete independently green behavior and reviewability. Fold unpushed characterization47890182409ebb23a88208f388414c4ea1d687ac into existing B2 PR2706 by merge, preserving SQL red43ed52f76340ab44bfe6e9288252e411b114609d and all new/existing assertions; no unnecessary standalone G PR. Source/refutation production462–646 conservative incltest-support fits750target, so six actual SQL fixes/all proof in ONE remaining B2 PR. Separate fresh regression-red, fix/delivery, two actual builtin adversarial workflow cycles outside swarms, fresh independent exact-head review and requiredCI before serial merge. Keep patch bump in ownLASTcommit, merge-requested label triggers/restartsCI. At most2building members, foregroundpush>=1500seconds. No agent playbook edits/deployment/cutover/live import/fence/server/unitinstall/start/relay/state/units/admission/credential/env exposure; operator performs cutover after all MVP merges. Preserve remaining original owner requirements and properlayers/affirmativeguards/test-first.

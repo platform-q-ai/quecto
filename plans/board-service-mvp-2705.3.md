@@ -5,10 +5,12 @@
 |---|---|
 | Task | board-service-mvp-2705 |
 | Version | 3 |
-| State | draft |
+| State | accepted |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-24T03:02:07Z |
 | Created | 2026-10-24T02:59:27Z |
-| Updated | 2026-10-24T02:59:27Z |
+| Updated | 2026-10-24T03:02:07Z |
 
 ## Approach
 Operator-updated lane is B2, B3, B4 ALONE, B7, B5-lite, B8, REDUCED B13-lite, Pocket P1+P2, serial complete independently green PRs. Operator owns B1(GitRemoteRevisions,--board-id/--remote-url), B6(BoardOperations), T1(NBSP normalization/command-scope identity over16entries,2703b), and git-store fence implementation(format4/MOVED typed board_moved reads+writes,pure idempotent fence-tree builder,allowlisted MOVED parser). Never start or duplicate those scopes. PrimaryGitHub confirms B6#2714MERGED02:30:59Zcommit5e2eca19285f040750d91ace51d6cfbb70b8b5cd; B7 externalgate satisfied, verify integrated interface whenreached. Operator reports B1#2715merging; latest primarywasOPEN, do notclaimmergeduntilverified; integrate latestmasterwithoutbackout. OurB13ONLYonlinebackup, quecto board-server fence command wiringtooperatorbuilder(push/idempotenceonSCRATCH),board_moved rehearsal. NEVERlivefence/cutover/import/install/start/deploy/relay/state/units/admission. Pocket has NO GitHubCI: mergegateis exact-headLOCAL Android DEBUG-variantunit tests plusrelaycargo tests, resultsrecordedonPR; pre-existingrelease-variantunitfailureonmaster is NOT gate. Fresh independentreview stillrequired, no inventedPocketGitHubCI/merge-requestedwait. Human-approved2713 target750/max1500PRODUCTION, tests/fixtures/snapshots/lock/generatedexcludedandreported, sizeonceplanning/rejudgeonlyremediationcheckpointormaxexceeded, no target-onlysplit. B2 remains existingPR2706 preserving originalred43+G4789+regressionR1e8414bymerge, allproof/sixfindings, currentlylocalimplementationtargetedgreenbutnormalhookpublicationfailed andfreshminimalgatingfixinprogress; nevercallpartial/timeoutpassed. Separate fresh red/fix/review, twoactualbuiltinworkflowcyclesoutside-swarm, exactheadindependentreview, appropriatehead-boundmergegates. HarnessPRownLASTversionpatch+normalforegroundpush>=1500seconds andmerge-requestedCI; Pocketusesitsdocumentedlocalgate. Atmost2builders. Protectedplaybooksourceeditsnotours. Preserve remaining ownerrequirements/CleanArchitecture/affirmativeguards/test-first; human/operatorcutoverafterMVPmerges.
