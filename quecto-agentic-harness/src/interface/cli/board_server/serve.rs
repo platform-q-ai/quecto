@@ -1,19 +1,22 @@
 //! `quecto board-server serve`: its options, and the one tokio runtime,
 //! confined to the command.
 use std::future::Future;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::BoardServerHandles;
 use super::routes::BoardRoutes;
+use crate::application::project_board::ports::ListenAddress;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::infrastructure::http::board_service::listener::{
-    ConnectionLimits, ServiceParts, bind, serve as listen,
+    ConnectionLimits, Listener, ServiceParts, bind, bind_tcp, serve as listen,
 };
 
-pub const USAGE: &str =
-    "usage: quecto board-server serve --socket <path> --repo <clone> [--remote <name>]";
+pub const USAGE: &str = "usage: quecto board-server serve --socket <path> --repo <clone> \
+     [--remote <name>] [--listen <ip:port>]... [--state <dir>]\n       \
+     quecto board-server token add <name> | revoke <name> | list --socket <path>";
 
 /// The blocking threads the server's reads may hold at once.
 const BLOCKING_THREADS: usize = 16;
@@ -23,32 +26,54 @@ pub struct ServeOptions {
     pub socket: PathBuf,
     pub repo: PathBuf,
     pub remote: String,
+    /// TCP addresses, each on the allowlist; none leaves the config's.
+    pub listen: Vec<ListenAddress>,
+    /// Where the server keeps its tokens; none is the default.
+    pub state: Option<PathBuf>,
 }
 
-/// `args` (after `board-server`) as `serve`'s options, each at most once.
+/// `args` (after `board-server`) as `serve`'s options (only `--listen`
+/// repeats).
 /// # Errors
-/// Another action or option, one without its value or twice, or one of
-/// `--socket` and `--repo` missing.
+/// Another action or option, one without its value or twice, an address
+/// off the allowlist, or no `--socket` or `--repo`.
 pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
     let refused = |why: String| Err(format!("board-server: {why}"));
     let Some((action, options)) = args.split_first() else {
-        return refused("an action is needed: serve".into());
+        return refused("an action is needed: serve or token".into());
     };
     match action.as_str() {
         "serve" => {}
-        other => return refused(format!("unknown action '{other}': the action is serve")),
+        other => {
+            return refused(format!(
+                "unknown action '{other}': the actions are serve and token"
+            ));
+        }
     }
-    let (mut socket, mut repo, mut remote) = (None, None, None);
+    let (mut socket, mut repo, mut remote, mut state) = (None, None, None, None);
+    let mut listen = Vec::new();
     let mut rest = options.iter();
     while let Some(option) = rest.next() {
+        let known = ["--socket", "--repo", "--remote", "--state", "--listen"];
+        let Some(value) = rest.next().filter(|_| known.contains(&option.as_str())) else {
+            return match known.contains(&option.as_str()) {
+                true => refused(format!("{option} needs a value")),
+                false => refused(format!("unknown option '{option}'")),
+            };
+        };
         let slot = match option.as_str() {
             "--socket" => &mut socket,
             "--repo" => &mut repo,
             "--remote" => &mut remote,
+            "--state" => &mut state,
+            "--listen" => match ListenAddress::parse(value) {
+                Ok(address) => {
+                    listen.push(address);
+                    continue;
+                }
+                Err(why) => return refused(format!("--listen {why}")),
+            },
             other => return refused(format!("unknown option '{other}'")),
-        };
-        let Some(value) = rest.next() else {
-            return refused(format!("{option} needs a value"));
         };
         match slot.replace(value.clone()) {
             None => {}
@@ -60,6 +85,8 @@ pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
             socket: PathBuf::from(socket),
             repo: PathBuf::from(repo),
             remote: remote.unwrap_or_else(|| "origin".into()),
+            listen,
+            state: state.map(PathBuf::from),
         }),
         (None, _) => refused("--socket <path> is required".into()),
         (Some(_), None) => refused("--repo <clone> is required".into()),
@@ -70,17 +97,20 @@ pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Started {
     pub socket: PathBuf,
+    /// The TCP addresses bound (a port 0 resolved).
+    pub tcp: Vec<SocketAddr>,
     pub board: BoardId,
     pub elapsed: Duration,
 }
 
-/// Binds `socket`, starts the runtime, tells `ready`, serves `handles`
+/// Binds `socket` and `tcp`, starts the runtime, tells `ready`, serves
 /// until the future `stop` makes completes, then removes the socket.
 /// # Errors
-/// The socket could not be bound, the runtime started, or it served.
+/// A bind, the runtime or the serving failed.
 pub fn serve<S, F>(
     handles: BoardServerHandles,
     socket: &Path,
+    tcp: &[ListenAddress],
     began: Instant,
     stop: S,
     ready: impl FnOnce(&Started),
@@ -93,8 +123,23 @@ where
     let bound = bind(socket).map_err(|error| format!("board-server: {error}"))?;
     // Only this socket is removed at the end, never a newer server's.
     let ours = identity(socket);
+    let gone = |why: String| {
+        let _ = remove_socket(socket, ours);
+        Err(format!("board-server: {why}"))
+    };
+    let mut listeners = vec![Listener::Unix(bound)];
+    let mut addresses = Vec::new();
+    for address in tcp {
+        match bind_tcp(address.socket_addr()) {
+            Ok((listener, bound)) => {
+                listeners.push(Listener::Tcp(listener));
+                addresses.push(bound);
+            }
+            Err(error) => return gone(error.to_string()),
+        }
+    }
     let parts = ServiceParts {
-        handler: Arc::new(BoardRoutes::new(handles.serve)),
+        handler: Arc::new(BoardRoutes::new(handles.serve, handles.access)),
         peers: handles.peers,
         uid: handles.uid,
         limits: ConnectionLimits::PRODUCTION,
@@ -106,20 +151,18 @@ where
         .build();
     let runtime = match runtime {
         Ok(runtime) => runtime,
-        Err(error) => {
-            let _ = remove_socket(socket, ours);
-            return Err(format!("board-server: the runtime did not start: {error}"));
-        }
+        Err(error) => return gone(format!("the runtime did not start: {error}")),
     };
     let served = runtime.block_on(async {
         // The stop is made inside the runtime (a signal watch needs it).
         let stop = stop();
         ready(&Started {
             socket: socket.to_path_buf(),
+            tcp: addresses,
             board,
             elapsed: began.elapsed(),
         });
-        listen(bound, parts, stop).await
+        listen(listeners, parts, stop).await
     });
     // Requests in flight have a moment to finish; then the server goes.
     runtime.shutdown_timeout(Duration::from_secs(1));

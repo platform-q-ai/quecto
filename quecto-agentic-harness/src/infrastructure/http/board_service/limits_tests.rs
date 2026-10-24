@@ -40,7 +40,7 @@ fn each_refusal_has_its_status_and_code() {
 async fn progress_restarts_the_write_clock() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let (near, mut far) = tokio::io::duplex(8);
-    let mut writer = WriteDeadline::new(near, Duration::from_millis(100));
+    let mut writer = WriteDeadline::new(near, Duration::from_millis(100), None);
     let writing = tokio::spawn(async move { writer.write_all(&[7; 48]).await });
     let mut taken = [0; 48];
     for chunk in taken.chunks_mut(8) {
@@ -56,7 +56,7 @@ async fn progress_restarts_the_write_clock() {
 async fn a_peer_that_takes_nothing_times_the_write_out() {
     use tokio::io::AsyncWriteExt;
     let (near, _far) = tokio::io::duplex(8);
-    let mut writer = WriteDeadline::new(near, Duration::from_millis(100));
+    let mut writer = WriteDeadline::new(near, Duration::from_millis(100), None);
     let error = writer.write_all(&[7; 16]).await.unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
 }

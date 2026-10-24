@@ -22,6 +22,8 @@ const TRANSPORT: &[&str] = &[
     "src/infrastructure/http/board_service/mod.rs",
     "src/infrastructure/http/board_service/listener.rs",
     "src/infrastructure/http/board_service/limits.rs",
+    "src/infrastructure/http/board_service/local_client.rs",
+    "src/infrastructure/http/board_service/sources.rs",
 ];
 
 /// The crate paths the transport may reach.
@@ -35,6 +37,7 @@ const FRONT_END: &[&str] = &[
     "src/interface/cli/board_server/mod.rs",
     "src/interface/cli/board_server/serve.rs",
     "src/interface/cli/board_server/routes.rs",
+    "src/interface/cli/board_server/token.rs",
 ];
 
 /// The crate paths the front end may reach: each a path, or the module
@@ -55,6 +58,10 @@ const FRONT_END_REACHES: &[&str] = &[
     "crate::infrastructure::http::board_service::listener::ConnectionLimits",
     "crate::infrastructure::http::board_service::listener::bind",
     "crate::infrastructure::http::board_service::listener::serve",
+    "crate::infrastructure::http::board_service::listener::Transport",
+    "crate::infrastructure::http::board_service::listener::Listener",
+    "crate::infrastructure::http::board_service::listener::bind_tcp",
+    "crate::infrastructure::http::board_service::local_client::local_request",
 ];
 
 /// The listener's module, for resolving a synthetic source's paths.

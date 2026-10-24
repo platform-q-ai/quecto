@@ -1,6 +1,6 @@
 use super::*;
 use crate::infrastructure::http::board_service::test_server::{
-    SERVER_UID, raw, request, start, start_with, whole,
+    SERVER_UID, raw, request, start, start_tcp, start_tcp_with, start_with, whole,
 };
 use std::io::Write;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
@@ -186,6 +186,7 @@ fn a_connection_past_its_life_is_dropped_after_its_grace() {
         write_timeout: Duration::from_secs(60),
         lifetime: Duration::from_millis(200),
         grace: Duration::from_millis(200),
+        ..ConnectionLimits::PRODUCTION
     };
     let pad = 4 * 1024 * 1024;
     let running = start_with(SERVER_UID, pad, limits);
@@ -324,4 +325,206 @@ fn a_live_socket_is_refused_and_a_stale_one_replaced() {
         Err(error) => Some(Err(error)),
     });
     assert!(matches!(rebound, Some(Ok(_))), "{rebound:?}");
+}
+
+/// Sends `request` over TCP to `address` and reads the answer to its end.
+fn over_tcp(address: std::net::SocketAddr, request: &[u8]) -> String {
+    use std::io::Read;
+    let mut stream = std::net::TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let _ = stream.write_all(request);
+    let mut answer = Vec::new();
+    let _ = stream.read_to_end(&mut answer);
+    String::from_utf8_lossy(&answer).to_string()
+}
+
+/// B5 red: peer credentials are the Unix socket's alone. A TCP peer is
+/// served (a Unix peer of the same uid is refused), each request handed on
+/// as TCP with its one `Authorization`; a Unix request is local.
+#[test]
+fn tcp_requests_reach_the_handler_as_tcp_with_their_authorization() {
+    let running = start_tcp(SERVER_UID + 1);
+    let address = running.tcp.unwrap();
+    assert!(address.ip().is_loopback());
+    let bearer = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer abc\r\n\
+                   Connection: close\r\n\r\n";
+    let answer = over_tcp(address, bearer);
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+    assert!(answer.contains(r#""tcp":true"#), "{answer}");
+    assert!(answer.contains(r#""principal":"Bearer abc""#), "{answer}");
+    let twice = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer a\r\n\
+                  Authorization: Bearer b\r\nConnection: close\r\n\r\n";
+    assert!(over_tcp(address, twice).contains(r#""principal":"""#));
+    let (status, body) = raw(&running.socket, &request("GET", 2, "", b""));
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(running.handler.calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn unix_requests_reach_the_handler_as_local() {
+    let running = start(SERVER_UID);
+    let (status, body) = raw(&running.socket, &request("GET", 2, "", b""));
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains(r#""tcp":false"#), "{body}");
+    assert!(body.contains(r#""principal":null"#), "{body}");
+}
+
+/// A TCP connection to `address` from the loopback source `source`
+/// (Linux routes all of 127.0.0.0/8 to loopback).
+fn from_source(source: &str, address: std::net::SocketAddr) -> std::net::TcpStream {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .build()
+        .unwrap();
+    let stream = runtime.block_on(async {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind(format!("{source}:0").parse().unwrap()).unwrap();
+        socket.connect(address).await.unwrap()
+    });
+    let stream = stream.into_std().unwrap();
+    stream.set_nonblocking(false).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    stream
+}
+
+/// Sends `request` on `stream` and reads the answer to its end.
+fn exchange(mut stream: std::net::TcpStream, request: &[u8]) -> String {
+    use std::io::Read;
+    let _ = stream.write_all(request);
+    let mut answer = Vec::new();
+    let _ = stream.read_to_end(&mut answer);
+    String::from_utf8_lossy(&answer).to_string()
+}
+
+/// Review round 1: over TCP the handler's gate is asked first. A refused
+/// caller is 401 whatever its method, path or body: no 405 or 404 says
+/// which routes exist, and no body (not even one past 1 MiB) is judged.
+#[test]
+fn an_unauthenticated_tcp_request_is_401_whatever_it_asks() {
+    let running = start_tcp(SERVER_UID);
+    let address = running.tcp.unwrap();
+    let refuse = "Authorization: Bearer refuse\r\n";
+    for sent in [
+        request("GET", 3, refuse, b""),
+        request("DELETE", 3, refuse, b""),
+        b"DELETE /zzz HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer refuse\r\nConnection: close\r\n\r\n".to_vec(),
+        request("POST", 4, &format!("{refuse}Content-Length: 1048577\r\n"), b""),
+        request("POST", 4, &format!("{refuse}Transfer-Encoding: chunked\r\n"), b"0\r\n\r\n"),
+    ] {
+        let answer = over_tcp(address, &sent);
+        assert!(answer.starts_with("HTTP/1.1 401"), "{answer}");
+    }
+    assert_eq!(running.handler.calls.load(Ordering::SeqCst), 0);
+    // The Unix socket has no gate: its peers are already let in.
+    let (status, _) = raw(&running.socket, &request("GET", 3, refuse, b""));
+    assert_eq!(status, 200);
+}
+
+/// Review round 2: a refused TCP request's connection ends with its 401
+/// (`Connection: close`, then shut), though the peer asked to keep it, so
+/// an unauthenticated peer holds no slot past its refusal; an admitted
+/// connection is kept alive.
+#[test]
+fn an_unauthenticated_connection_is_closed_after_its_401() {
+    let running = start_tcp(SERVER_UID);
+    let address = running.tcp.unwrap();
+    let kept = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer refuse\r\n\r\n";
+    let began = Instant::now();
+    let answer = exchange(from_source("127.0.0.1", address), kept);
+    assert!(answer.starts_with("HTTP/1.1 401"), "{answer}");
+    assert!(answer.contains("connection: close"), "{answer}");
+    assert!(
+        began.elapsed() < Duration::from_secs(5),
+        "closed at once: {:?}",
+        began.elapsed()
+    );
+    let close = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\nConnection: close\r\n\r\n";
+    let two = [KEPT_ALIVE, &close[..]].concat();
+    let answers = exchange(from_source("127.0.0.1", address), &two);
+    assert_eq!(answers.matches("HTTP/1.1 200").count(), 2, "{answers}");
+}
+
+/// Review rounds 2 and 3: TCP peers holding every TCP slot never lock out
+/// the Unix socket (each listener has its own slots). The per-source cap
+/// is raised here so one loopback source can fill all 64.
+#[test]
+fn tcp_peers_holding_every_slot_leave_the_socket_served() {
+    let limits = ConnectionLimits {
+        per_source: 100,
+        first_request: Duration::from_secs(30),
+        ..ConnectionLimits::PRODUCTION
+    };
+    let running = start_tcp_with(SERVER_UID, limits);
+    let address = running.tcp.unwrap();
+    let held: Vec<_> = (0..limits::MAX_CONNECTIONS + 6)
+        .map(|_| from_source("127.0.0.1", address))
+        .collect();
+    std::thread::sleep(Duration::from_millis(300));
+    let began = Instant::now();
+    let (status, body) = raw(&running.socket, &request("GET", 2, "", b""));
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        began.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        began.elapsed()
+    );
+    drop(held);
+}
+
+/// Review round 3: 8 idle unauthenticated loopback sockets (all of
+/// loopback is one source) never lock out a client that authenticates:
+/// each newcomer evicts the source's oldest unauthenticated connection,
+/// and an authenticated one leaves the count.
+#[test]
+fn idle_unauthenticated_sockets_never_lock_out_a_client() {
+    let running = start_tcp(SERVER_UID);
+    let address = running.tcp.unwrap();
+    let idle: Vec<_> = (2..2 + limits::MAX_UNPROVEN_PER_SOURCE)
+        .map(|n| from_source(&format!("127.0.0.{n}"), address))
+        .collect();
+    std::thread::sleep(Duration::from_millis(200));
+    let close = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer ok\r\nConnection: close\r\n\r\n";
+    let answer = exchange(from_source("127.0.0.20", address), close);
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+    let evicted = exchange(idle.into_iter().next().unwrap(), KEPT_ALIVE);
+    assert_eq!(evicted, "", "the oldest idle socket was closed");
+    // Authenticated connections leave the count: 9 kept alive all serve.
+    let kept = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer ok\r\n\r\n";
+    let mut authenticated = Vec::new();
+    for _ in 0..=limits::MAX_UNPROVEN_PER_SOURCE {
+        use std::io::Read;
+        let mut stream = from_source("127.0.0.1", address);
+        stream.write_all(kept).unwrap();
+        let mut head = [0u8; 12];
+        stream.read_exact(&mut head).unwrap();
+        assert_eq!(&head, b"HTTP/1.1 200");
+        authenticated.push(stream);
+    }
+    let last = authenticated.pop().unwrap();
+    assert!(
+        exchange(last, close).contains("HTTP/1.1 200"),
+        "still served"
+    );
+}
+
+/// Review round 3: a TCP connection that sends no request within its
+/// first-request time is closed; the Unix socket has no such deadline.
+#[test]
+fn a_tcp_connection_that_never_asks_is_closed_after_its_first_request_time() {
+    let limits = ConnectionLimits {
+        first_request: Duration::from_millis(300),
+        ..ConnectionLimits::PRODUCTION
+    };
+    let running = start_tcp_with(SERVER_UID, limits);
+    let mut idle = from_source("127.0.0.1", running.tcp.unwrap());
+    let began = Instant::now();
+    let mut answer = Vec::new();
+    let _ = std::io::Read::read_to_end(&mut idle, &mut answer);
+    assert!(answer.is_empty());
+    let waited = began.elapsed();
+    assert!(waited < Duration::from_secs(5), "closed after {waited:?}");
 }

@@ -1333,6 +1333,8 @@ fn sessions_graph_nodes_are_constructed_only_in_composition() {
 const OWN_FILE_STORES: &[&str] = &[
     "src/infrastructure/persistence/file/environment_registry_store.rs",
     "src/infrastructure/persistence/file/session_export.rs",
+    // The board server's device tokens (epic #2705 B5).
+    "src/infrastructure/persistence/file/board_tokens.rs",
 ];
 
 #[test]

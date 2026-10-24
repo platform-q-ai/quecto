@@ -1,12 +1,17 @@
-//! The board server's graph (epic #2705 B4): the git store, read only
-//! (writes are B7), this machine's clock, and peer credentials letting in
-//! this user only. A SQLite store (B2) slots in here with no server change.
+//! The board server's graph (epic #2705 B4, B5): the git store, read only
+//! (writes are B7), this machine's clock, peer credentials letting in this
+//! user only, the tokens file in the state directory, and the TCP addresses
+//! the global config names. A SQLite store (B2) slots in here unchanged.
+use std::path::Path;
 use std::sync::Arc;
 
-use crate::application::project_board::ports::{BoardClock, ProjectBoardStore};
-use crate::application::project_board::use_cases::ServeBoard;
+use crate::application::project_board::ports::ListenAddress;
+use crate::application::project_board::ports::{BoardClock, BoardTokens, ProjectBoardStore};
+use crate::application::project_board::use_cases::{BoardAccess, ServeBoard};
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
+use crate::infrastructure::config::Config;
 use crate::infrastructure::http::board_service::listener::{SocketPeerCredentials, this_uid};
+use crate::infrastructure::persistence::file::board_tokens::FileBoardTokens;
 use crate::infrastructure::persistence::project_board::board_tree::told;
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
 use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
@@ -15,13 +20,14 @@ pub use crate::interface::cli::board_server::{BoardServerEnvironment, BoardServe
 
 /// Builds the board server for `environment`'s clone and board remote.
 /// # Errors
-/// No git, no such remote, or one with no URL or board id: each said,
-/// secrets and URL userinfo redacted.
+/// No git, remote, URL or board id; a bad config or address; a state
+/// directory or tokens file refused (secrets and URL userinfo redacted).
 pub fn build_board_server(
     environment: &BoardServerEnvironment,
 ) -> Result<BoardServerHandles, String> {
     let redacted = |why: &str| redact_secrets(&redact_url_userinfo(why));
     let refused = |why: &str| format!("board-server: {}", redacted(why));
+    let listen = configured_listen(&environment.config).map_err(|why| refused(&why))?;
     let vars = GitEnvironment::allowlisted(environment.vars.iter().cloned());
     let git = Git::reader(&environment.repo, vars).map_err(|error| {
         refused(&format!(
@@ -45,13 +51,42 @@ pub fn build_board_server(
             environment.remote
         ))
     })?;
+    let state = environment.state.clone().unwrap_or_else(|| {
+        environment
+            .base_dir
+            .join("board-server")
+            .join(board.as_str())
+    });
+    let tokens: Arc<dyn BoardTokens> =
+        Arc::new(FileBoardTokens::open(&state).map_err(|why| refused(&why))?);
     let store: Arc<dyn ProjectBoardStore> = Arc::new(store);
     let clock: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());
     Ok(BoardServerHandles {
-        serve: ServeBoard::new(store, clock, board),
+        serve: ServeBoard::new(store, Arc::clone(&clock), board),
+        access: BoardAccess::new(tokens, clock),
         peers: Arc::new(SocketPeerCredentials),
         uid: this_uid(),
+        listen,
     })
+}
+
+/// The addresses `board_server.listen` names in the config at `path`.
+fn configured_listen(path: &Path) -> Result<Vec<ListenAddress>, String> {
+    let shown = path.display();
+    let text = path
+        .to_str()
+        .ok_or_else(|| format!("the config path {shown} is not UTF-8"))?;
+    let config = Config::load(text).map_err(|error| format!("the config {shown}: {error}"))?;
+    config
+        .board_server
+        .unwrap_or_default()
+        .listen
+        .iter()
+        .map(|address| {
+            ListenAddress::parse(address)
+                .map_err(|why| format!("board_server.listen in {shown}: {why}"))
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -1,8 +1,8 @@
 //! A board service listener on a temp socket, for the transport's tests:
 //! a handler that counts its calls and peers read by an injected uid.
 use super::listener::{
-    ConnectionLimits, PeerCredentials, ServiceHandler, ServiceParts, ServiceReply, ServiceRequest,
-    bind, serve,
+    ConnectionLimits, Listener, PeerCredentials, ServiceHandler, ServiceParts, ServiceReply,
+    ServiceRequest, Transport, bind, bind_tcp, serve,
 };
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream as StdStream;
@@ -22,6 +22,18 @@ pub struct Counting {
 }
 
 impl ServiceHandler for Counting {
+    /// A TCP request whose `Authorization` is `Bearer refuse` is 401;
+    /// any other's principal is its `Authorization`, as sent.
+    fn authenticate_remote(&self, authorization: Option<&str>) -> Result<String, ServiceReply> {
+        match authorization {
+            Some("Bearer refuse") => Err(ServiceReply::json(
+                401,
+                &serde_json::json!({"code": "token"}),
+            )),
+            other => Ok(other.unwrap_or_default().to_string()),
+        }
+    }
+
     fn answer(&self, request: &ServiceRequest) -> ServiceReply {
         self.calls.fetch_add(1, Ordering::SeqCst);
         ServiceReply::json(
@@ -29,6 +41,8 @@ impl ServiceHandler for Counting {
             &serde_json::json!({
                 "path": request.path,
                 "body": request.body.len(),
+                "tcp": request.transport == Transport::Tcp,
+                "principal": request.principal,
                 "pad": "x".repeat(self.pad),
             }),
         )
@@ -53,6 +67,8 @@ impl PeerCredentials for FixedUid {
 pub struct Running {
     _dir: tempfile::TempDir,
     pub socket: std::path::PathBuf,
+    /// The TCP address, when it listens on 127.0.0.1 too.
+    pub tcp: Option<std::net::SocketAddr>,
     pub handler: Arc<Counting>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -73,9 +89,29 @@ pub fn start(peer_uid: u32) -> Running {
 /// A listener whose peers all read as `peer_uid`, its replies padded by
 /// `pad` bytes, its connections held to `limits`.
 pub fn start_with(peer_uid: u32, pad: usize, limits: ConnectionLimits) -> Running {
+    started(peer_uid, pad, limits, false)
+}
+
+/// A listener on a temp socket and on 127.0.0.1 (a free port), whose
+/// Unix peers all read as `peer_uid`.
+pub fn start_tcp(peer_uid: u32) -> Running {
+    started(peer_uid, 0, ConnectionLimits::PRODUCTION, true)
+}
+
+/// As [`start_tcp`], its connections held to `limits`.
+pub fn start_tcp_with(peer_uid: u32, limits: ConnectionLimits) -> Running {
+    started(peer_uid, 0, limits, true)
+}
+
+fn started(peer_uid: u32, pad: usize, limits: ConnectionLimits, tcp: bool) -> Running {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("board").join("board.sock");
-    let listener = bind(&socket).unwrap();
+    let mut listeners = vec![Listener::Unix(bind(&socket).unwrap())];
+    let tcp = tcp.then(|| {
+        let (listener, bound) = bind_tcp("127.0.0.1:0".parse().unwrap()).unwrap();
+        listeners.push(Listener::Tcp(listener));
+        bound
+    });
     let handler = Arc::new(Counting {
         calls: AtomicUsize::new(0),
         pad,
@@ -93,7 +129,7 @@ pub fn start_with(peer_uid: u32, pad: usize, limits: ConnectionLimits) -> Runnin
             .build()
             .unwrap();
         runtime
-            .block_on(serve(listener, parts, async {
+            .block_on(serve(listeners, parts, async {
                 let _ = stopped.await;
             }))
             .unwrap();
@@ -101,6 +137,7 @@ pub fn start_with(peer_uid: u32, pad: usize, limits: ConnectionLimits) -> Runnin
     Running {
         _dir: dir,
         socket,
+        tcp,
         handler,
         stop: Some(stop),
         thread: Some(thread),
