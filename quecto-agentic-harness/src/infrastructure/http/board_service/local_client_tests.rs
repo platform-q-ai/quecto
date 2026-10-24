@@ -4,8 +4,8 @@ use crate::infrastructure::http::board_service::test_server::{SERVER_UID, start}
 #[test]
 fn an_answer_is_its_status_and_body() {
     let answer = parsed(b"HTTP/1.1 201 Created\r\ncontent-length: 2\r\n\r\n{}").unwrap();
-    assert_eq!(answer.status, 201);
-    assert_eq!(answer.body, b"{}");
+    assert_eq!(answer.0, 201);
+    assert_eq!(answer.1, b"{}");
     for refused in [
         &b""[..],
         b"HTTP/1.1 201 Created",
@@ -20,8 +20,8 @@ fn an_answer_is_its_status_and_body() {
 fn a_request_reaches_the_server_with_its_body() {
     let running = start(SERVER_UID);
     let answer = local_request(&running.socket, Method::Post, "/v1/thing", b"{\"a\":1}").unwrap();
-    assert_eq!(answer.status, 200);
-    let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+    assert_eq!(answer.0, 200);
+    let body: serde_json::Value = serde_json::from_slice(&answer.1).unwrap();
     assert_eq!(body["path"], "/v1/thing");
     assert_eq!(body["body"], 7);
 }

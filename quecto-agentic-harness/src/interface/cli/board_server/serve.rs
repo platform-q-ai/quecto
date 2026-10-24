@@ -54,12 +54,11 @@ pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
     let mut listen = Vec::new();
     let mut rest = options.iter();
     while let Some(option) = rest.next() {
-        let Some(value) = rest.next() else {
-            return match option.as_str() {
-                "--socket" | "--repo" | "--remote" | "--state" | "--listen" => {
-                    refused(format!("{option} needs a value"))
-                }
-                other => refused(format!("unknown option '{other}'")),
+        let known = ["--socket", "--repo", "--remote", "--state", "--listen"];
+        let Some(value) = rest.next().filter(|_| known.contains(&option.as_str())) else {
+            return match known.contains(&option.as_str()) {
+                true => refused(format!("{option} needs a value")),
+                false => refused(format!("unknown option '{option}'")),
             };
         };
         let slot = match option.as_str() {

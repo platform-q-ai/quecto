@@ -68,25 +68,22 @@ pub fn run(options: &TokenOptions, stdout: &mut String, stderr: &mut String) -> 
         TokenAction::Revoke(name) => (ServiceMethod::Post, "/v1/admin/tokens/revoke", named(name)),
         TokenAction::List => (ServiceMethod::Get, "/v1/admin/tokens", String::new()),
     };
-    let answer = match local_request(&options.socket, method, path, body.as_bytes()) {
+    let (status, reply) = match local_request(&options.socket, method, path, body.as_bytes()) {
         Ok(answer) => answer,
         Err(error) => {
             let socket = options.socket.display();
-            stderr.push_str(&format!(
-                "board-server: no answer from a server on {socket}: {error}\n"
-            ));
+            let why = format!("board-server: no answer from a server on {socket}: {error}\n");
+            stderr.push_str(&why);
             return 1;
         }
     };
-    let reply: Value = serde_json::from_slice(&answer.body).unwrap_or(Value::Null);
+    let reply: Value = serde_json::from_slice(&reply).unwrap_or(Value::Null);
     let text = |key: &str| reply[key].as_str().unwrap_or_default().to_string();
-    match (&options.action, answer.status) {
+    match (&options.action, status) {
         (TokenAction::Add(_), 201) => {
             stdout.push_str(&format!("{}\n", text("token")));
-            let name = text("name");
-            stderr.push_str(&format!(
-                "board-server: token '{name}' added; it is shown only this once\n"
-            ));
+            let added = format!("board-server: token '{}' added", text("name"));
+            stderr.push_str(&format!("{added}; it is shown only this once\n"));
             0
         }
         (TokenAction::Revoke(_), 200) => {

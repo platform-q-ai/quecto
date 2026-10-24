@@ -57,7 +57,10 @@ lock on the state directory itself for its whole life, so a second
 server on the same state directory (say, a second clone of the same
 remote) is refused at start; give it its own `--state <dir>`. If the
 directory is moved away and replaced while a server runs, that server
-refuses every token change. (After B2 the tokens move into the
+refuses every token change. Edit `tokens.json` by hand only while the
+server is stopped: the server reads it once, at start, and refuses to
+overwrite a file changed behind it (503 `unavailable`, saying to restart
+the server to pick up the edit). (After B2 the tokens move into the
 SQLite store as admin revisions.)
 
 ## Routes
@@ -97,6 +100,7 @@ Every error reply the server makes is JSON, `{"error": "<why>", "code":
 | 413 | `too_large` | a body past 1 MiB |
 | 500 | `handler` | the request's handler failed |
 | 503 | `unavailable` | the board's store, the clock or the tokens could not answer (over TCP a token failure says only `the token store is unavailable`) |
+| 503 | `busy` | over TCP, the caller already has 4 answers in flight, or all TCP callers together have 12 |
 
 Over TCP the token is checked first: an unauthenticated request is 401
 before any limit or route answers it (only the HTTP parser's own bodyless
@@ -119,6 +123,9 @@ hold for the Unix socket and TCP alike:
 - 10 s for a head, which also ends an idle keep-alive connection, and 10 s for a body;
 - 10 s for a peer to take any reply byte;
 - 64 connections at once on the socket, and 64 on each TCP address (TCP peers never take the socket's);
-- a TCP connection must authenticate its first request within 2 s, or it is closed (later requests on an authenticated connection have the usual 10 s);
-- at most 8 TCP connections from one source that have not yet authenticated: a 9th evicts the source's oldest, so idle sockets never lock out a client that authenticates at once. An authenticated connection leaves the count. All of loopback (`127.0.0.0/8` and `::1`) counts as one source, since any local user can bind any of it;
+- a TCP connection must authenticate its first request within 2 s on loopback, 5 s from a Tailscale address, or it is closed (later requests on an authenticated connection have the usual 10 s);
+- at most 8 TCP connections from one source that have not yet authenticated: a 9th evicts the source's oldest connection that has sent nothing (else its oldest), so idle sockets never lock out a client that authenticates at once. An authenticated connection leaves the count;
+- the token is checked without a blocking thread. Answers that need one (a store or clock read) are capped over TCP: 4 at once per token, 12 for all TCP callers together, out of the server's 16. So a slow remote can never take the threads the Unix socket needs (`token list`, `token revoke`);
+
+**The loopback trade-off.** All of loopback (`127.0.0.0/8` and `::1`) counts as one source, since any local user can bind any of it. So any user on the host can open 8 silent connections and evict a loopback client that is slow to send its first request. A client that sends its request at once is never evicted, and a Tailscale device has its own source. Listen on loopback only on a host whose users you trust, or have clients send their request as soon as they connect;
 - each connection at most 60 s or 1,000 requests, then 15 s to finish what it is answering before it is dropped.

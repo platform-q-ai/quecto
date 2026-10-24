@@ -437,3 +437,110 @@ fn an_address_in_use_is_refused_and_the_socket_removed() {
     assert!(error.starts_with("board-server: 127.0.0.1:"), "{error}");
     assert!(std::fs::symlink_metadata(&socket).is_err());
 }
+
+/// A clock whose `now` stalls until released (or 20 s pass), as a store
+/// reading a black-hole remote does.
+#[derive(Default)]
+struct Stalled {
+    released: std::sync::Mutex<bool>,
+    wake: std::sync::Condvar,
+}
+
+impl Stalled {
+    fn release(&self) {
+        *self.released.lock().unwrap() = true;
+        self.wake.notify_all();
+    }
+}
+
+impl crate::application::project_board::ports::BoardClock for Stalled {
+    fn now(
+        &self,
+    ) -> Result<
+        crate::domain::project_board::value_objects::timestamp::Timestamp,
+        crate::application::project_board::ports::BoardClockError,
+    > {
+        let released = self.released.lock().unwrap();
+        let wait = std::time::Duration::from_secs(20);
+        drop(
+            self.wake
+                .wait_timeout_while(released, wait, |released| !*released),
+        );
+        crate::application::project_board::ports::BoardClock::now(&SystemBoardClock::default())
+    }
+    fn reference(
+        &self,
+    ) -> Option<crate::domain::project_board::value_objects::timestamp::Timestamp> {
+        None
+    }
+    fn reference_status(&self) -> crate::application::project_board::ports::ReferenceStatus {
+        crate::application::project_board::ports::ReferenceStatus::NoReference("stalled".into())
+    }
+    fn pause(&self, _attempt: usize) {}
+    fn elapsed(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+}
+
+/// Review round 4: answers stalled on a slow store (here, a clock) never
+/// wedge the server. The TCP gate runs inline; one caller holds at most 4
+/// blocking answers (the rest are 503 `busy`); and the Unix socket keeps
+/// its own threads, so `token list` still answers, and a stolen token can
+/// still be revoked.
+#[test]
+fn stalled_answers_never_wedge_authentication_or_the_socket() {
+    use crate::application::project_board::ports::BoardTokens;
+    let (store, _) = written();
+    let stalled = Arc::new(Stalled::default());
+    let tokens = Arc::new(MemoryBoardTokens::default());
+    let at = crate::domain::project_board::value_objects::timestamp::Timestamp::parse(
+        "2026-10-24T12:00:00Z",
+    )
+    .unwrap();
+    let laptop = crate::domain::project_board::value_objects::slug::Slug::parse("laptop");
+    tokens.add(&laptop.unwrap(), &at).unwrap();
+    let serve = crate::application::project_board::use_cases::ServeBoard::new(
+        Arc::new(store.client()),
+        Arc::clone(&stalled) as Arc<dyn crate::application::project_board::ports::BoardClock>,
+        crate::domain::project_board::value_objects::telemetry::BoardId::of_hex(BOARD).unwrap(),
+    );
+    let handles = BoardServerHandles {
+        access: BoardAccess::new(tokens, Arc::new(SystemBoardClock::default())),
+        ..handles(serve)
+    };
+    let loopback = ListenAddress::parse("127.0.0.1:0").unwrap();
+    let (_dir, socket, tcp, stop, thread) = served_on(handles, &[loopback]);
+    let address = tcp[0];
+    let bearer = "Bearer token-laptop";
+    let stalls: Vec<_> = (0..6)
+        .map(|_| std::thread::spawn(move || tcp_get(address, "/v1/time", Some(bearer)).0))
+        .collect();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let began = std::time::Instant::now();
+    assert_eq!(
+        tcp_get(address, "/v1/time", None).0,
+        401,
+        "the gate answers"
+    );
+    let (status, body) = tcp_get(address, "/v1/time", Some(bearer));
+    assert_eq!(status, 503, "{body}");
+    assert!(body.contains(r#""code":"busy""#), "{body}");
+    let (code, out, err) = token(&socket, "list");
+    assert_eq!(
+        (code, out.as_str()),
+        (0, "laptop\t2026-10-24T12:00:00Z\n"),
+        "{err}"
+    );
+    assert_eq!(token(&socket, "revoke laptop").0, 0);
+    assert!(
+        began.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        began.elapsed()
+    );
+    stalled.release();
+    let mut answered: Vec<u16> = stalls.into_iter().map(|s| s.join().unwrap()).collect();
+    answered.sort_unstable();
+    assert_eq!(answered, [200, 200, 200, 200, 503, 503]);
+    stop.send(()).unwrap();
+    thread.join().unwrap().unwrap();
+}

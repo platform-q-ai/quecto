@@ -6,15 +6,8 @@ use std::path::Path;
 
 use super::limits::{self, Method};
 
-/// A server's answer: its status and body.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocalAnswer {
-    pub status: u16,
-    pub body: Vec<u8>,
-}
-
-/// Sends `method path` with the JSON `body` on `socket`; the answer, read
-/// whole within the limits.
+/// Sends `method path` with the JSON `body` on `socket`; the answer's
+/// status and body, read whole within the limits.
 /// # Errors
 /// No server answers, too slowly, or not in HTTP.
 pub fn local_request(
@@ -22,18 +15,14 @@ pub fn local_request(
     method: Method,
     path: &str,
     body: &[u8],
-) -> io::Result<LocalAnswer> {
+) -> io::Result<(u16, Vec<u8>)> {
     let mut stream = UnixStream::connect(socket)?;
     stream.set_read_timeout(Some(limits::READ_TIMEOUT))?;
     stream.set_write_timeout(Some(limits::WRITE_TIMEOUT))?;
-    let method = match method {
-        Method::Get => "GET",
-        Method::Post => "POST",
-    };
+    let (method, length) = (method.as_str(), body.len());
     let head = format!(
         "{method} {path} HTTP/1.1\r\nHost: board\r\nConnection: close\r\n\
-         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n",
-        body.len()
+         Content-Type: application/json\r\nContent-Length: {length}\r\n\r\n"
     );
     stream.write_all(head.as_bytes())?;
     stream.write_all(body)?;
@@ -44,16 +33,11 @@ pub fn local_request(
 }
 
 /// An answer's status and body, when it is HTTP/1.1.
-fn parsed(answer: &[u8]) -> Option<LocalAnswer> {
+fn parsed(answer: &[u8]) -> Option<(u16, Vec<u8>)> {
     let split = answer.windows(4).position(|window| window == b"\r\n\r\n")?;
     let head = std::str::from_utf8(answer.get(..split)?).ok()?;
-    let status = head
-        .strip_prefix("HTTP/1.1 ")?
-        .get(..3)?
-        .parse::<u16>()
-        .ok()?;
-    let body = answer.get(split + 4..)?.to_vec();
-    Some(LocalAnswer { status, body })
+    let status = head.strip_prefix("HTTP/1.1 ")?.get(..3)?.parse().ok()?;
+    Some((status, answer.get(split + 4..)?.to_vec()))
 }
 
 #[cfg(test)]

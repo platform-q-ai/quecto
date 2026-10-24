@@ -1,9 +1,7 @@
-//! [`BoardTokens`] in `tokens.json` (epic #2705 B5; SQLite admin revisions
-//! later): mode 0600, keeping each token's SHA-256 only, in the server's
-//! state directory (mode 0700, held locked). As the file's one writer the
-//! server reads it once, verifies from memory in constant time, and writes
-//! each change through relative to the locked directory, never by path. A
-//! file shared, foreign or not as written is refused, never read as empty.
+//! [`BoardTokens`] in `tokens.json` (epic #2705 B5; SQLite later), mode
+//! 0600, SHA-256 digests only, in the locked state directory (0700). Read
+//! once at open, verified from memory, each change written through
+//! relative to the directory; a file not as written is refused.
 use std::ffi::{CStr, CString};
 use std::fs;
 use std::io::{self, Read, Write};
@@ -11,7 +9,7 @@ use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use base64::Engine;
 use rand::RngCore;
@@ -28,6 +26,16 @@ use crate::domain::shared::secret_compare::constant_time_eq;
 /// The tokens file's name in the state directory.
 pub const TOKENS_FILE: &str = "tokens.json";
 const TOKENS_NAME: &CStr = c"tokens.json";
+
+/// A file's (inode, mtime, mtime ns, size), to tell a hand edit.
+type Stamp = (u64, i64, i64, u64);
+
+fn stamp(meta: &fs::Metadata) -> Stamp {
+    (meta.ino(), meta.mtime(), meta.mtime_nsec(), meta.len())
+}
+
+const CHANGED_BEHIND: &str =
+    "changed behind this server: restart it to pick up hand edits (edit only while it is stopped)";
 
 /// The most bytes a tokens file may hold (256 tokens take about 40 KiB).
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
@@ -51,8 +59,10 @@ struct Held {
 /// The device tokens in `<state>/tokens.json`.
 #[derive(Debug)]
 pub struct FileBoardTokens {
-    /// The tokens as written; a change is written through, then kept.
-    held: Mutex<Vec<Held>>,
+    /// The tokens as written: a snapshot `verify` takes without waiting.
+    held: RwLock<Arc<Vec<Held>>>,
+    /// Serialises changes, holding the file's stamp as last read or written.
+    writing: Mutex<Option<Stamp>>,
     /// The state directory, opened and locked for this adapter's life.
     state: PathBuf,
     lock: fs::File,
@@ -61,21 +71,24 @@ pub struct FileBoardTokens {
 impl FileBoardTokens {
     /// The tokens in `state` (made mode 0700, locked until this is dropped).
     /// # Errors
-    /// A relative, shared or foreign directory, a lock another server
-    /// holds, or a file refused.
+    /// A bad state directory, one another server holds, or a bad file.
     pub fn open(state: &Path) -> Result<Self, String> {
         private_dir(state)?;
-        let mut tokens = Self {
-            held: Mutex::default(),
-            state: state.to_path_buf(),
-            lock: locked(state)?,
+        let (state, lock) = (state.to_path_buf(), locked(state)?);
+        let (held, writing) = (RwLock::default(), Mutex::default());
+        let tokens = Self {
+            held,
+            writing,
+            state,
+            lock,
         };
-        *tokens
-            .held
-            .get_mut()
-            .unwrap_or_else(PoisonError::into_inner) =
-            tokens.read().map_err(|error| error.to_string())?;
-        Ok(tokens)
+        let (held, stamp) = tokens.read().map_err(|error| error.to_string())?;
+        let (held, writing) = (RwLock::new(Arc::new(held)), Mutex::new(stamp));
+        Ok(Self {
+            held,
+            writing,
+            ..tokens
+        })
     }
 
     fn unavailable(&self, why: impl std::fmt::Display) -> TokenError {
@@ -95,14 +108,27 @@ impl FileBoardTokens {
         }
     }
 
-    /// The tokens the file holds: none while it is missing.
-    fn read(&self) -> Result<Vec<Held>, TokenError> {
+    /// The file, opened to read; none while it is missing.
+    fn opened(&self) -> Result<Option<(fs::File, fs::Metadata)>, TokenError> {
         let file = match self.open_at(TOKENS_NAME, libc::O_RDONLY) {
             Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(self.unavailable(error)),
         };
         let meta = file.metadata().map_err(|error| self.unavailable(error))?;
+        Ok(Some((file, meta)))
+    }
+
+    /// The file's stamp: none while it is missing.
+    fn stamp(&self) -> Result<Option<Stamp>, TokenError> {
+        Ok(self.opened()?.map(|(_, meta)| stamp(&meta)))
+    }
+
+    /// The tokens the file holds and its stamp: none while it is missing.
+    fn read(&self) -> Result<(Vec<Held>, Option<Stamp>), TokenError> {
+        let Some((file, meta)) = self.opened()? else {
+            return Ok((Vec::new(), None));
+        };
         let mode = meta.permissions().mode() & 0o777;
         match meta.is_file() && meta.uid() == this_uid() && mode == 0o600 {
             true if meta.len() <= MAX_FILE_BYTES => {}
@@ -110,13 +136,15 @@ impl FileBoardTokens {
             false => return Err(self.unavailable("must be a file of this user's, mode 0600")),
         }
         let mut text = String::new();
-        let read = file.take(MAX_FILE_BYTES).read_to_string(&mut text);
-        read.map_err(|error| self.unavailable(error))?;
+        (file.take(MAX_FILE_BYTES).read_to_string(&mut text)).map_err(|e| self.unavailable(e))?;
         let stored: Vec<StoredToken> =
             serde_json::from_str(&text).map_err(|e| self.unavailable(e))?;
         let entry =
             |token| held(token).ok_or_else(|| self.unavailable("an entry is not as written"));
-        stored.into_iter().map(entry).collect()
+        Ok((
+            stored.into_iter().map(entry).collect::<Result<_, _>>()?,
+            Some(stamp(&meta)),
+        ))
     }
 
     /// Writes `held` as the file: a temporary file renamed over it, both
@@ -168,22 +196,27 @@ impl FileBoardTokens {
     }
 
     /// Runs `change` on a copy of the tokens, writes it through, then keeps
-    /// it: a change that fails to land changes nothing.
+    /// it; a hand edit behind the server is refused, never overwritten.
     fn changing<T>(
         &self,
         change: impl FnOnce(&mut Vec<Held>) -> Result<T, TokenError>,
     ) -> Result<T, TokenError> {
-        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut written = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         self.still_locked()?;
-        let mut next = held.clone();
+        match self.stamp()? == *written {
+            true => {}
+            false => return Err(self.unavailable(CHANGED_BEHIND)),
+        }
+        let mut next = Vec::clone(&self.held());
         let changed = change(&mut next)?;
         self.store(&next)?;
-        *held = next;
+        *self.held.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(next);
+        *written = self.stamp()?;
         Ok(changed)
     }
 
-    fn held(&self) -> std::sync::MutexGuard<'_, Vec<Held>> {
-        self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    fn held(&self) -> Arc<Vec<Held>> {
+        Arc::clone(&self.held.read().unwrap_or_else(PoisonError::into_inner))
     }
 }
 

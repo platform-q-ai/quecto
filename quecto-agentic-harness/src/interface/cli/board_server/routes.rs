@@ -55,12 +55,9 @@ impl Route {
     }
 
     fn takes(self, method: ServiceMethod) -> bool {
-        match (self, method) {
-            (Self::Status | Self::Time | Self::Tokens, ServiceMethod::Get)
-            | (Self::Tokens | Self::Revoke, ServiceMethod::Post) => true,
-            (Self::Status | Self::Time, ServiceMethod::Post)
-            | (Self::Revoke, ServiceMethod::Get) => false,
-        }
+        self.allow()
+            .split(", ")
+            .any(|allowed| allowed == method.as_str())
     }
 
     fn scope(self) -> Scope {

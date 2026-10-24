@@ -11,6 +11,8 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -30,9 +32,15 @@ pub const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// The most connections at once; each one's longest life and most requests.
 pub const MAX_CONNECTIONS: usize = 64;
 /// The unauthenticated TCP connections one source may hold (one more
-/// evicts the oldest), and the time a TCP connection has to authenticate.
+/// evicts the oldest silent one), and the time a TCP connection has to
+/// authenticate: 2 s on loopback, 5 s from Tailscale.
 pub const MAX_UNPROVEN_PER_SOURCE: usize = 8;
 pub const FIRST_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+pub const FIRST_REQUEST_REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
+/// The blocking answers TCP requests hold at once, in all and per caller:
+/// the server's 16 blocking threads always leave 4 for the Unix socket.
+pub const MAX_TCP_ANSWERS: usize = 12;
+pub const MAX_ANSWERS_PER_PRINCIPAL: usize = 4;
 pub const CONNECTION_LIFETIME: Duration = Duration::from_secs(60);
 pub const MAX_REQUESTS: usize = 1_000;
 /// How long a connection past its life may take to finish what it answers.
@@ -60,6 +68,15 @@ impl Refusal {
             Self::Method => (405, "method", "method not allowed"),
             Self::LengthRequired => (411, "length", "a body needs a Content-Length"),
             Self::TooLarge => (413, "too_large", "the body is past 1 MiB"),
+        }
+    }
+}
+
+impl Method {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Post => "POST",
         }
     }
 }
@@ -116,14 +133,18 @@ pub struct WriteDeadline<S> {
     io: S,
     limit: Duration,
     stalled: Option<Pin<Box<tokio::time::Sleep>>>,
+    /// Set once the peer has sent a byte.
+    heard: Option<Arc<AtomicBool>>,
 }
 
 impl<S> WriteDeadline<S> {
-    pub fn new(io: S, limit: Duration) -> Self {
+    pub fn new(io: S, limit: Duration, heard: Option<Arc<AtomicBool>>) -> Self {
+        let stalled = None;
         Self {
             io,
             limit,
-            stalled: None,
+            stalled,
+            heard,
         }
     }
 
@@ -157,7 +178,12 @@ impl<S: AsyncRead + Unpin> AsyncRead for WriteDeadline<S> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().io).poll_read(cx, buf)
+        let (this, before) = (self.get_mut(), buf.filled().len());
+        let polled = Pin::new(&mut this.io).poll_read(cx, buf);
+        if let (true, Some(heard)) = (buf.filled().len() > before, &this.heard) {
+            heard.store(true, Ordering::Relaxed);
+        }
+        polled
     }
 }
 

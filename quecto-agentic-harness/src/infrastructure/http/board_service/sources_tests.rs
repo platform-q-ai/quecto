@@ -17,7 +17,7 @@ fn loopback_is_one_source_and_other_addresses_their_own() {
 }
 
 fn told(unproven: &Unproven) -> bool {
-    let notified = unproven.evicted.notified();
+    let notified = unproven.signals.evicted.notified();
     futures_like_now(notified)
 }
 
@@ -51,4 +51,37 @@ fn one_more_evicts_the_oldest_of_its_source() {
     drop(second);
     let fourth = sources.enter(local, 2);
     assert!(!told(&third) && !told(&fourth), "a place given up is free");
+}
+
+/// Review round 4: eviction takes the oldest connection that has sent
+/// nothing, sparing an older one that is sending, slowly.
+#[test]
+fn eviction_spares_a_connection_that_is_sending() {
+    let sources = Sources::default();
+    let local = ip("127.0.0.1");
+    let sending = sources.enter(local, 2);
+    sending.signals.heard.store(true, Ordering::Relaxed);
+    let silent = sources.enter(local, 2);
+    let newcomer = sources.enter(local, 2);
+    assert!(told(&silent), "the oldest silent one is evicted");
+    assert!(!told(&sending) && !told(&newcomer));
+    assert!(sending.loopback() && !sources.enter(ip("100.64.1.2"), 2).loopback());
+}
+
+/// Review round 4: one principal holds at most `per` blocking answers,
+/// and every TCP caller together at most `all`; a permit given back frees
+/// its place.
+#[test]
+fn answers_are_bounded_per_principal_and_in_all() {
+    let answers = Answers::new(3, 2);
+    let first = answers.admit("laptop").unwrap();
+    let _second = answers.admit("laptop").unwrap();
+    assert!(answers.admit("laptop").is_none(), "laptop's share is full");
+    let _phone = answers.admit("phone").unwrap();
+    assert!(
+        answers.admit("tablet").is_none(),
+        "every caller's share is full"
+    );
+    drop(first);
+    assert!(answers.admit("laptop").is_some());
 }

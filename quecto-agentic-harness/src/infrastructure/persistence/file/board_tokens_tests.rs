@@ -192,21 +192,59 @@ fn a_file_not_as_written_is_refused() {
     );
 }
 
-/// Review round 3: the server is the file's one writer, so it reads the
-/// file once and verifies from memory: a file changed behind it changes
-/// nothing it answers, and its next write puts its own set back.
+/// Review rounds 3 and 4: the server reads the file once and verifies
+/// from memory. A hand edit behind it is never overwritten: its next
+/// change is refused (restart to pick the edit up), memory unchanged.
 #[test]
-fn tokens_are_verified_from_memory_and_written_through() {
+fn a_hand_edit_behind_the_server_is_refused_never_undone() {
     let (_dir, tokens) = opened();
     let laptop = tokens.add(&name("laptop"), &at()).unwrap();
-    std::fs::write(tokens_path(&tokens), "not json").unwrap();
+    tokens.add(&name("phone"), &at()).unwrap();
+    let edited = format!("[{}]", "");
+    std::fs::write(tokens_path(&tokens), &edited).unwrap();
+    assert_eq!(tokens.verify(&laptop.secret), Ok(Some(name("laptop"))));
+    for refused in [
+        tokens.add(&name("tablet"), &at()).map(|_| ()),
+        tokens.revoke(&name("laptop")),
+    ] {
+        let Err(TokenError::Unavailable(why)) = refused else {
+            panic!("{refused:?}")
+        };
+        assert!(why.contains("restart it to pick up hand edits"), "{why}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(tokens_path(&tokens)).unwrap(),
+        edited
+    );
+    assert_eq!(tokens.list().unwrap().len(), 2);
+    assert_eq!(tokens.verify(&laptop.secret), Ok(Some(name("laptop"))));
+}
+
+/// Review round 4: a write that fails changes nothing: with the state
+/// directory read-only, add and revoke fail, the list is unchanged and the
+/// token still verifies (keeping a change before it lands would fail this).
+#[test]
+fn a_failed_write_leaves_the_tokens_unchanged() {
+    let (dir, tokens) = opened();
+    let laptop = tokens.add(&name("laptop"), &at()).unwrap();
+    let state = dir.path().join("state").join("board");
+    let mode = |mode| std::fs::set_permissions(&state, std::fs::Permissions::from_mode(mode));
+    mode(0o500).unwrap();
+    let added = tokens.add(&name("phone"), &at());
+    let revoked = tokens.revoke(&name("laptop"));
+    mode(0o700).unwrap();
+    assert!(
+        matches!(added, Err(TokenError::Unavailable(_))),
+        "{added:?}"
+    );
+    assert!(
+        matches!(revoked, Err(TokenError::Unavailable(_))),
+        "{revoked:?}"
+    );
+    let names: Vec<_> = tokens.list().unwrap().into_iter().map(|t| t.name).collect();
+    assert_eq!(names, [name("laptop")]);
     assert_eq!(tokens.verify(&laptop.secret), Ok(Some(name("laptop"))));
     tokens.add(&name("phone"), &at()).unwrap();
-    let raw = std::fs::read_to_string(tokens_path(&tokens)).unwrap();
-    assert!(
-        raw.contains(&sha256_hex(&laptop.secret)) && raw.contains("phone"),
-        "{raw}"
-    );
 }
 
 /// Review round 3: a `--state` ending in `/` would follow a symlink, so it
