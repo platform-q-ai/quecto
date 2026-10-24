@@ -165,6 +165,103 @@ and a text cell such as a task item's title or criterion) holds every backslash 
 itself: one a reader would take for an escape (before ASCII punctuation, or at the
 end, outside code) is written doubled, and read back as one.
 
+## Task descriptions in sections
+
+A task's description is written for people in four fixed sections (#2705 T2),
+in this order, one blank line between them:
+
+```markdown
+## Goal
+Land L12 (#2652): move the UDS presenters, mapping
+and loop controllers into interface/uds roles.
+
+## Why
+Part of the layout epic #2357.
+
+## Done when
+- [ ] Current master merged in, moves only
+- [ ] CI green, merged with a merge commit
+
+## Links
+- [PR #2652](https://github.com/platform-q-ai/quecto/pull/2652)
+- [Planning handoff](https://example.com/handoff)
+```
+
+`create` and `update_draft` take the sections as fields: `goal` and `why`
+(text), `done_when` and `links` (lists of lines; on the command line, JSON:
+`--done-when '["Merged"]'`). The board composes the text above from them. A
+request gives either the sections or `description` text, never both. On
+`update_draft` the sections replace the whole description: give every section
+the task keeps. Agent briefs (scope rules, gate commands) go in the plan or a
+handoff, never in the description.
+
+The rules are one table (`ENTRY_RULES` and `PARTS` in
+`domain/project_board/entities/task_parts.rs`), so a rule change is a data
+edit:
+
+| Rule | On entry |
+|---|---|
+| Goal | Required: 1 to 3 sentences, one paragraph, no heading or blank line. Sentences are counted at a word ending in `.`, `!` or `?` before a capital, but never at an abbreviation (`Mr.`, `Mrs.`, `Ms.`, `Dr.`, `St.`, `Jr.`, `e.g.`, `i.e.`, `etc.`, `vs.`, `cf.`, `Inc.`, `Ltd.`, `Co.`), an initial (`X.`) or a word with a `.` inside (`U.S.`, `p.m.`): the count may fall short, and over-counts only at an abbreviation the table does not list. Its text must be prose a board file holds (no raw HTML, comments, character references, images, `http://` links or indented lines), kept as written and never rewritten: a bare `https://` or `http://` address is refused with "write the address as [text](https://…)" (one in `code` is kept) |
+| Why | Optional: one short paragraph, no heading, prose a board file holds (as the goal's) |
+| Done when | Required: 1 to 8 outcomes, each `- [ ] ` (or `- [x] `) and the outcome on one line, text a board file's table cell holds (plain words, `code`, `[text](https://…)` links) |
+| Links | Optional: each `- [text](https://…)`, shown as chips. Given as a field, a bare `https://` address is written `[address](https://…)` |
+| Description | At most 1,200 characters, headings included: a longer one is refused with "move details into the plan or a handoff" |
+| Title | At most 70 characters (Unicode scalar values, not graphemes), written as an outcome |
+
+An empty description still enters, for a draft not written yet. Reading never
+checks these rules: a description in any other shape is legacy text, read,
+shown and listed as it is and never rewritten (editing a legacy draft's other
+fields keeps it byte for byte), and a title reads back to 256 characters.
+
+Every task answer carries the sections beside `description`: `goal` and `why`
+(text or `null`), `done_when` (`[{"outcome", "done"}]`), `links` (lines), and
+`needs_goal`, `true` for legacy or empty text, which answers no sections. A
+listing's `summary` carries the goal on one line as its `subtitle`.
+
+Each field given as a section is checked on its own field before it is
+composed: a goal or why with a blank line or a heading, and an outcome or
+link that is empty or more than one line, are refused on `goal`, `why`,
+`done_when/{i}` or `links/{i}`. Sections given only empty (`links: []`, `goal: ""`)
+never clear a description: they are refused on `goal`. Only an explicit
+`description: ""` clears one.
+
+A task keeps the form its description entered in, and the form, never the
+text's shape, picks its file's layout. A description entered as sections is
+written at `schema=2`, a file section each: `## Goal`, `## Why` and
+`## Links` as prose, and `## Done when` as a `| Done | Outcome |` table (`yes`
+or `no`). Any other description (legacy text, text from the CLI's legacy
+entry, or none) stays `schema=1` with its `## Description`, the bytes earlier
+builds wrote, however its text reads; an existing task stays at schema 1 on
+every write until its description is given anew as sections. A file holding
+both layouts, sections at schema 1, or sections that make no description, is
+refused.
+
+**Deploy order (strict).** Upgrade every reader first: every host that runs
+quecto, the Pocket relay's host included. Only then let agents write sectioned
+tasks. A quecto from before T2 reads only schema 1 and never misreads a
+schema-2 task; it sets it aside:
+
+- its `list` leaves the task out of `tasks` and names its file under
+  `quarantined`, with the reason "schema 2, written by a newer quecto; this
+  quecto reads schema 1: upgrade quecto to read it";
+- its `show` of the task refuses it as set aside: "task <id> is set aside as
+  unreadable; mend its file, or discard it with clear_set_aside(path ...,
+  object ...)".
+
+That advice is wrong for a schema-2 task: the file is sound, only the reader
+is old. **Never `clear_set_aside` a schema-2 task from an old build** (it
+deletes a newer task); upgrade quecto there instead.
+
+### Entry policies by front end
+
+Each front end lets in what its policy allows, an allowlist resolved per
+request:
+
+| Front end | Policy | Entry |
+|---|---|---|
+| The agent `board` tool | Sections only | Every rule above. Free-text `description` is refused (`invalid_task`, field `description`): "is free text: give it as goal, why, done_when and links (move details into the plan or a handoff)" |
+| `quecto board` (people, the Pocket relay) | Sections or legacy | A request that gives `goal`, `why`, `done_when` or `links` keeps every rule above. One that gives only `description` text and a title enters as before T2: normalised board text within the schema's limits (65,536 characters, a 256-character title), held as legacy text with `needs_goal: true` |
+
 ## List
 
 `list`, `list_ready` and `list_takeable` answer the board's `head`, the
@@ -185,6 +282,7 @@ anything is built.
 
 ```json
 "summary": {
+  "subtitle": "Land L12: move the UDS presenters." | null,
   "plan": null | { "version": 2, "state": "draft" | "accepted" },
   "run": null | {
     "number": 2,
@@ -201,6 +299,7 @@ anything is built.
 
 | Field | Meaning |
 |---|---|
+| `subtitle` | The task's goal on one line (its paragraph's lines joined by a space); `null` for legacy text |
 | `plan` | The newest version of the task's plan that is a draft or accepted (superseded and discarded versions are skipped), so a draft newer than the accepted plan is the one named. `null` when there is none |
 | `run` | The task's latest readable run: `number`, `plan_version`, `state`, `started` and `ended` as `show` gives them; `deadline`; and `items`, how many of its task items stand in each state (`todo`, `doing`, `review`, `done`, `blocked`) and in all. `null` when it has none |
 | `items` of a running run | All `0`: a run records its task items on the board when it ends (folded back from its swarm, or ended by hand), so while it runs the board holds none. Its swarm's own board has them live |
@@ -273,9 +372,10 @@ A plan at the board's limits, with every run and version, is about 1.6 MB whole.
 
 ### Reading on through a plan
 
-`show` takes two optional fields that page through the task's accepted plan:
-`approach_from`, a character of its approach, and `items_from`, the index of one
-of its task items, each from 0 (`null` is the same as leaving it out). A
+`show` takes optional fields that page through the task's accepted plan:
+`approach_from`, a character of its approach, `handoff_from`, a character of
+its handoff (see "The handoff"), and `items_from`, the index of one of its task
+items, each from 0 (`null` is the same as leaving it out). A
 character here is a Unicode scalar value, not what a reader sees as one, so an
 agent passes back only the `approach_next` and `items_next` an answer gave,
 never an offset it counted itself. With `version`, they page through that
@@ -313,22 +413,24 @@ write holds either again. A running board run's deadline is extended as any
 swarm's is: `agent_cmd` `swarm_control` `extend` with `deadline_seconds` on its
 coordinator.
 
-- `propose_plan(task, approach, items, team)` adds a draft, numbered after the
-  task's last version, proposed by the committer. `approach` and `items` are
-  required (`""` and `[]` are allowed); `team` is optional, and `null` or
-  leaving it out means no team.
+- `propose_plan(task, approach, handoff, items, team)` adds a draft, numbered
+  after the task's last version, proposed by the committer. `approach` and
+  `items` are required (`""` and `[]` are allowed); `handoff` and `team` are
+  optional, and `null` or leaving `team` out means no team.
 - `show(task, version)` reads a draft whole before it is built on. An agent that
-  proposes from a plan it read must read all of its approach and task items
-  first, following `approach_next` with `approach_from` and `items_next` with
-  `items_from` until no `_next` is given: an approach or a list of items the
-  tool's 64 KiB cap cut must never be written back as if whole.
-- `edit_plan(task, version, approach, items, team, expected_updated)` edits a
-  draft as a patch. A field left out keeps what the draft holds, byte for byte.
-  A field given replaces the draft's whole: `items` is the whole list of task
-  items, `team` the whole team (`null` takes it away), and `approach` the whole
-  approach. So an agent changes the task items without sending the approach
-  again, which may be longer than one `show` answer gives. An edit names at
-  least one of `approach`, `items` and `team`. With `expected_updated`, the
+  proposes from a plan it read must read all of its approach, handoff and task
+  items first, following `approach_next` with `approach_from`, `handoff_next`
+  with `handoff_from` and `items_next` with `items_from` until no `_next` is
+  given: text or a list of items the tool's 64 KiB cap cut must never be
+  written back as if whole.
+- `edit_plan(task, version, approach, handoff, items, team, expected_updated)`
+  edits a draft as a patch. A field left out keeps what the draft holds, byte
+  for byte. A field given replaces the draft's whole: `items` is the whole list
+  of task items, `team` the whole team (`null` takes it away), `approach` the
+  whole approach, and `handoff` the whole handoff (`""` takes it away). So an
+  agent changes the task items without sending the approach again, which may
+  be longer than one `show` answer gives. An edit names at least one of
+  `approach`, `handoff`, `items` and `team`. With `expected_updated`, the
   draft's `updated` as it was read, a draft changed since is refused
   (`plan_changed`), never edited over. Without it, a write that loses a race to
   another writer applies the same patch to the draft as that writer left it.
@@ -360,6 +462,90 @@ past the most a plan holds (320 KiB, counted as it enters the board). Both ops
 answer `plan`: its `task`, `version`, `state`, `proposed_by`, `edited_by`,
 `created` and `updated`. They do not echo its text. The CLI takes `--items` and
 `--team` as JSON.
+
+### The handoff
+
+A plan's approach is its outline; its handoff holds the detail a coordinator is
+briefed with: scope rules, gate commands, what to read first (#2705 T3). The
+handoff is markdown, up to 65,536 characters, and optional: none is no handoff,
+and a handoff given empty (`""`) is none.
+
+The entry rules are one table (`PLAN_ENTRY_RULES` in
+`domain/project_board/entities/plan.rs`), as a task's are:
+
+| Rule | On entry |
+|---|---|
+| Approach | At most 600 characters when it enters capped; a longer one is refused (`invalid_plan`, field `approach`) with "is N characters; the most is 600: keep the approach to an outline and move the detail into handoff" |
+| Handoff | At most 65,536 characters, however it enters |
+
+Each front end resolves the approach's entry from its policy, as it resolves a
+task description's:
+
+| Front end | Entry |
+|---|---|
+| The agent `board` tool | Always capped |
+| `quecto board` (people, the Pocket relay) | Capped when the request gives a `handoff` that holds something once normalised (`""` is none, and caps nothing); otherwise as before T3: the schema's 65,536 characters |
+
+Only an approach that enters is checked: an edit that leaves the approach as
+the draft holds it (an items-only edit of a plan written before T3, say)
+keeps it, however long. Reading never checks the cap.
+
+`show` gives `handoff` after `approach`, and its length in characters as
+`handoff_chars` (the whole handoff's, even when the agent tool cuts it), only
+when the plan has one, so a plan without one answers exactly as before. The agent tool cuts a long handoff as it
+cuts the approach, after it: `handoff_more` characters left out, read on with
+`show(task, handoff_from: handoff_next)`. A page given `handoff_from` answers
+`handoff_from` and the handoff from that character (`null` for a plan with
+none).
+
+A started task's coordinator brief carries the handoff verbatim as the data's
+`handoff`, before its run, with one fixed sentence pointing to it; a plan
+without one briefs exactly as before. The handoff is counted in the brief's
+64 KiB, as the brief's data spells it. One past the room the rest of the brief
+leaves is cut to fit and ended with "… (cut here; the rest is in the plan on
+the board)"; where not even that marker fits, the handoff is left out of the
+brief (`handoff_cut`), so a plan that starts without a handoff starts with one
+too. The brief already says the full plan is on the board and tells the
+coordinator to ask its parent for any part cut.
+
+The handoff, never its text's shape, picks the plan file's layout. A plan with
+a handoff is written at `schema=2`, with a `## Handoff` prose section after
+`## Approach`. A plan without one stays at `schema=1`, the bytes earlier builds
+wrote, however its approach reads (a line that looks like `## Handoff` is
+written `\## Handoff`, as prose): every write that gives no handoff (an edit,
+an acceptance, a supersession) keeps a plan written before T3 at schema 1, byte
+for byte. A schema-1 file holding a Handoff section, or a schema-2 file without
+one, is refused. The file's line cap rose from 70,000 to 140,000, so an
+approach and a handoff at their most both fit.
+
+**Deploy order (strict).** Every quecto that reads the board (every Pocket
+relay host, every laptop, eccup) must be upgraded **before any agent writes a
+handoff**. A quecto from before T3 reads only schema-1 plans, and one plan with
+a handoff on the board breaks it:
+
+- its `list`, `list_ready` and `list_takeable` fail for the **whole board**,
+  not just that task, with `folder_set_aside` on `plans/…`, whose message
+  offers `clear_set_aside` and never says to upgrade. The Pocket relay sends
+  `list`, so an old relay shows no board at all;
+- its `show(task)` still answers, with `may_be_incomplete: true`; the reason
+  "schema 2, written by a newer quecto; this quecto reads schema 1: upgrade
+  quecto to read it" appears only in that answer's `quarantined[].reason`;
+- its `show(task, version)` of the schema-2 version, and `propose_plan`,
+  `edit_plan`, `accept_plan` and `discard_plan` on that task, are refused with
+  `artifact_set_aside`;
+- writes to other tasks still work.
+
+Those refusals offer `clear_set_aside`. **Never follow that advice for a
+schema-2 plan**: it deletes the plan, handoff and all, from a board whose file
+is sound. Upgrade quecto on that host instead. (Deploy every host together;
+there is no two-step release.)
+
+Upgraded, the Pocket relay is unaffected: it sends `show` and `accept_plan` for
+plans, reads a plan's keys by allowlist (so `handoff` and `handoff_chars` are
+not read), and its requests are unchanged. Its accept page shows only the
+approach, so a person can accept a plan without seeing its handoff (up to
+65,536 characters) until the task page (P8–P10) shows it; `handoff_chars` lets
+it say "has a handoff (N characters)" without reading the text.
 
 ## Accepting or discarding a plan
 

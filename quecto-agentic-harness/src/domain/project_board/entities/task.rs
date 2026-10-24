@@ -1,7 +1,6 @@
 //! A task: the overall job a project plans, readies and claims. A [`Task`]
 //! is only ever built from fields that pass [`Task::new`], so an invalid
 //! task cannot exist; change one by taking its fields and building anew.
-use super::super::value_objects::board_text;
 use super::super::value_objects::reference::{IssueNumber, Points, Reference};
 use super::super::value_objects::schema_error::{SchemaError, distinct, line, markdown};
 use super::super::value_objects::slug::Slug;
@@ -9,6 +8,7 @@ use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{Resolution, TaskKind, TaskStatus};
 use super::claim::Claim;
 use super::plan::MAX_PLAN_VERSION;
+use super::task_parts::{Description, DescriptionForm, Entry};
 
 /// GitHub's issue title limit.
 pub const MAX_TITLE_CHARS: usize = 256;
@@ -36,6 +36,9 @@ pub struct TaskFields {
     pub kind: TaskKind,
     /// Markdown.
     pub description: String,
+    /// How the description is kept: as written, or in its sections
+    /// (#2705 T2). Only an entry sets it; every other change carries it.
+    pub description_form: DescriptionForm,
     pub status: TaskStatus,
     /// Children are not stored: they are the tasks naming this one.
     pub parent: Option<Slug>,
@@ -90,14 +93,23 @@ impl Task {
 
     /// A task built from text as it enters the board (the write path):
     /// its title and description must be normalised board text, so no
-    /// entry point skips normalising. Reading a task back (`new`) takes
-    /// what earlier builds stored.
+    /// entry point skips normalising, and keep the rules of `entry` (#2705
+    /// T2): sectioned, a short title and a description in its sections
+    /// or none yet; legacy, the schema's own limits. Reading a task back
+    /// (`new`) takes what earlier builds stored, legacy text included.
     ///
     /// # Errors
-    /// Text that was never normalised, or what `new` refuses.
-    pub fn entered(fields: TaskFields) -> Result<Self, SchemaError> {
-        board_text::entered_line("title", &fields.title)?;
-        board_text::entered_text("description", &fields.description)?;
+    /// What `new` refuses (first, so a field's own rule names it), or
+    /// text that was never normalised or breaks an entry rule.
+    pub fn entered(mut fields: TaskFields, entry: Entry) -> Result<Self, SchemaError> {
+        // The form follows the entry, once its rules pass: never the
+        // caller's to set.
+        fields.description_form = DescriptionForm::Legacy;
+        let task = Self::new(fields)?;
+        entry.title("title", &task.0.title)?;
+        entry.description(&task.0.description)?;
+        let mut fields = task.0;
+        fields.description_form = entry.form(&fields.description);
         Self::new(fields)
     }
 
@@ -124,6 +136,15 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
     }
     line("title", &task.title, MAX_TITLE_CHARS)?;
     markdown("description", &task.description, MAX_DESCRIPTION_CHARS)?;
+    match (task.description_form, Description::read(&task.description)) {
+        (DescriptionForm::Legacy, _) | (DescriptionForm::Sectioned, Some(_)) => {}
+        (DescriptionForm::Sectioned, None) => {
+            return Err(SchemaError::new(
+                "description",
+                "is kept in its sections, so must be in them",
+            ));
+        }
+    }
     if task.parent.as_ref() == Some(&task.id) {
         return Err(SchemaError::new("parent", "a task is not its own parent"));
     }

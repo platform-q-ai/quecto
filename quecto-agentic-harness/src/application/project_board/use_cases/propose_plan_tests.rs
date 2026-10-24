@@ -8,6 +8,7 @@ use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, coordinated_team, holding_plans, person, plan_item, plan_of, plan_team, slug,
     unqualified_coordinator,
 };
+use crate::domain::project_board::entities::plan::PlanEntry;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::telemetry::{Normalised, TextChange};
 use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskStatus};
@@ -20,6 +21,8 @@ fn propose(store: &MemoryBoardStore) -> ProposePlan {
 
 fn proposal(task: &str) -> PlanProposal {
     PlanProposal {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         task: slug(task),
         approach: "Build it.".into(),
         items: vec![plan_item("schema", &[]), plan_item("api", &["schema"])],
@@ -208,6 +211,8 @@ fn a_coordinator_model_without_its_provider_is_refused_at_proposal() {
         let writes = store.writes();
         let mut facts = OpFacts::default();
         let unqualified = PlanProposal {
+            handoff: None,
+            entry: PlanEntry::Legacy,
             team: Some(coordinated_team(bare)),
             ..proposal("a")
         };
@@ -226,6 +231,8 @@ fn a_coordinator_model_without_its_provider_is_refused_at_proposal() {
     ] {
         let store = holding_plans("a", TaskStatus::Ready, vec![]);
         let named = PlanProposal {
+            handoff: None,
+            entry: PlanEntry::Legacy,
             team: team.clone(),
             ..proposal("a")
         };
@@ -243,6 +250,8 @@ fn a_bare_coordinator_model_is_refused_whatever_its_members() {
     let mut team = coordinated_team("claude-opus");
     team.roles[0].limits.members = 2;
     let pair = PlanProposal {
+        handoff: None,
+        entry: PlanEntry::Legacy,
         team: Some(team),
         ..proposal("a")
     };

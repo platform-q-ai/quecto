@@ -11,7 +11,7 @@
 //! plans (and its open run) as they are on the board, and refuse plans
 //! that contradict each other rather than build on them.
 use super::super::entities::claim::Identity;
-use super::super::entities::plan::{MAX_PLAN_VERSION, Plan, PlanFields, PlanItem};
+use super::super::entities::plan::{MAX_PLAN_VERSION, Plan, PlanEntry, PlanFields, PlanItem};
 use super::super::entities::run::Run;
 use super::super::entities::task::Task;
 use super::super::entities::team::Team;
@@ -23,13 +23,19 @@ use super::super::value_objects::vocabulary::{PlanState, TaskStatus};
 use super::claims::{after_last, held_live_by, not_before, settle, stamp, within_slack};
 use super::runs::open_of;
 
-/// What a plan says: its approach, task items and team.
+/// What a plan says: its approach, handoff, task items and team; and how
+/// its approach enters (#2705 T3).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlanContent {
     /// Markdown.
     pub approach: String,
+    /// Markdown; `None` for none.
+    pub handoff: Option<String>,
     pub items: Vec<PlanItem>,
     pub team: Option<Team>,
+    /// How a new approach enters: one an edit leaves as the draft holds
+    /// it enters nothing.
+    pub entry: PlanEntry,
 }
 
 /// When a change happens: the caller's `now`, and the latest time it may
@@ -118,7 +124,7 @@ pub fn propose_at(
         .map(|plan| plan.fields().version)
         .max()
         .unwrap_or(0);
-    entered(&content)?;
+    entered(&content, None)?;
     match last < MAX_PLAN_VERSION {
         true => {}
         false => {
@@ -133,6 +139,7 @@ pub fn propose_at(
         version: last + 1,
         state: PlanState::Draft,
         approach: content.approach,
+        handoff: content.handoff,
         items: content.items,
         team: content.team,
         proposed_by: actor.clone(),
@@ -177,9 +184,10 @@ pub fn edit_draft(
     draft(plan)?;
     as_read(plan, expected)?;
     when.may_build_on(plan)?;
-    entered(&content)?;
     let fields = plan.fields();
+    entered(&content, Some(&fields.approach))?;
     let changes = fields.approach != content.approach
+        || fields.handoff != content.handoff
         || fields.items != content.items
         || fields.team != content.team;
     match changes {
@@ -188,6 +196,7 @@ pub fn edit_draft(
     }
     let mut next = fields.clone();
     next.approach = content.approach;
+    next.handoff = content.handoff;
     next.items = content.items;
     next.team = content.team;
     // Drafts are anyone's: the last editor is recorded, the proposer kept.
@@ -200,10 +209,19 @@ pub fn edit_draft(
 }
 
 /// `content`'s text is as it enters the board, normalised: its approach
-/// as markdown, each task item's title and criteria as lines.
-fn entered(content: &PlanContent) -> Result<(), BoardRuleError> {
+/// and handoff as markdown, each task item's title and criteria as lines;
+/// and its approach within its entry's cap (#2705 T3) unless it is the
+/// approach `held` (an edit's draft holds it already: a legacy approach
+/// is kept, never forced to be rewritten).
+fn entered(content: &PlanContent, held: Option<&str>) -> Result<(), BoardRuleError> {
     let invalid = BoardRuleError::InvalidPlan;
     entered_text("approach", &content.approach).map_err(invalid)?;
+    if held != Some(content.approach.as_str()) {
+        content.entry.approach(&content.approach).map_err(invalid)?;
+    }
+    if let Some(handoff) = &content.handoff {
+        entered_text("handoff", handoff).map_err(invalid)?;
+    }
     for (index, item) in content.items.iter().enumerate() {
         entered_line(&format!("items/{index}/title"), &item.title).map_err(invalid)?;
         for (at, criterion) in item.criteria.iter().enumerate() {

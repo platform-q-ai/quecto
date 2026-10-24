@@ -132,6 +132,7 @@ fn task(id: &str) -> Task {
         references: vec![],
         created: at.clone(),
         updated: at,
+        description_form: Default::default(),
     })
     .unwrap()
 }

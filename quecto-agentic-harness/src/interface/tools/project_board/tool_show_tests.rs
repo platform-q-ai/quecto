@@ -57,6 +57,7 @@ fn task(description: String, accepted: u32) -> Task {
         references: vec![],
         created: at(),
         updated: at(),
+        description_form: Default::default(),
     })
     .unwrap()
 }
@@ -84,6 +85,7 @@ fn plan(version: u32, state: PlanState, approach: String, items: Vec<PlanItem>) 
             deadline_seconds: None,
             image: None,
         }),
+        handoff: None,
         proposed_by: ada(),
         edited_by: None,
         accepted: accepted.then(|| (ada(), at())),

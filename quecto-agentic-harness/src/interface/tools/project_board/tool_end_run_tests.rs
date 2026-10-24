@@ -79,6 +79,7 @@ pub(super) fn ready_with_plan() -> (Task, Plan) {
             item("api", "Serve the api"),
         ],
         team: None,
+        handoff: None,
         proposed_by: ada(),
         edited_by: None,
         accepted: Some((ada(), at.clone())),
@@ -103,6 +104,7 @@ pub(super) fn ready_with_plan() -> (Task, Plan) {
         references: vec![],
         created: at.clone(),
         updated: at,
+        description_form: Default::default(),
     })
     .unwrap();
     (task, plan)

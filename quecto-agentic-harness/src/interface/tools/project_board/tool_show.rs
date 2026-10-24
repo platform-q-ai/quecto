@@ -26,6 +26,11 @@
 //! A page of the plan (`show` given `approach_from` or `items_from`) is
 //! cut the same way: its approach, then its items, with their counts and
 //! where to read on. Every list stays in its own order.
+//!
+//! A plan's handoff (#2705 T3), when it shows one, is cut after its
+//! approach as the approach is (`handoff_more`, `handoff_next`, read on
+//! with `handoff_from`), the approach keeping at most half the room; a
+//! plan without one is cut exactly as before.
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -75,7 +80,7 @@ fn capped_show(mut answer: Value) -> Value {
         .and_then(|run| run["items"].as_array())
         .map_or(0, Vec::len);
     // The markers at their widest: every count at most its whole.
-    let markers = json!({
+    let mut markers = json!({
         "plan_truncated": true,
         "approach_more": approach_chars, "approach_next": approach_chars,
         "items_more": items, "items_next": items,
@@ -84,6 +89,7 @@ fn capped_show(mut answer: Value) -> Value {
         "plans_more": plans.len(),
         "quarantined_more": files.len(),
     });
+    handoff_markers(&mut markers, &plan, 0);
     // What is always shown: the task, the answer's own fields, and room
     // for the markers.
     let used = bytes(&answer) + bytes(&markers);
@@ -101,7 +107,7 @@ fn capped_show(mut answer: Value) -> Value {
         }
         plan => {
             answer["plan_truncated"] = json!(true);
-            cut_plan(plan, &mut room, after, (0, 0), &mut answer)
+            cut_plan(plan, &mut room, after, PageStart::default(), &mut answer)
         }
     };
     let (runs, more, latest_more) = fitted_runs(runs, &mut room);
@@ -132,13 +138,18 @@ fn capped_page(mut answer: Value) -> Value {
             .and_then(|at| usize::try_from(at).ok())
             .unwrap_or(0)
     };
-    let at = (from("approach_from"), from("items_from"));
-    let markers = json!({
+    let at = PageStart {
+        approach: from("approach_from"),
+        handoff: from("handoff_from"),
+        items: from("items_from"),
+    };
+    let mut markers = json!({
         "approach_more": approach_chars,
-        "approach_next": at.0.saturating_add(approach_chars),
+        "approach_next": at.approach.saturating_add(approach_chars),
         "items_more": items,
-        "items_next": at.1.saturating_add(items),
+        "items_next": at.items.saturating_add(items),
     });
+    handoff_markers(&mut markers, &plan, at.handoff);
     let used = bytes(&answer) + bytes(&markers);
     let mut room = MAX_SHOW_BYTES.saturating_sub(used);
     answer["plan"] = match plan {
@@ -147,6 +158,26 @@ fn capped_page(mut answer: Value) -> Value {
     };
     within_cap(&answer, used);
     answer
+}
+
+/// Where a plan's parts begin on a page: a character of its approach and
+/// of its handoff, and an index of its task items (all 0 on a whole show).
+#[derive(Debug, Clone, Copy, Default)]
+struct PageStart {
+    approach: usize,
+    handoff: usize,
+    items: usize,
+}
+
+/// `markers` with room for the handoff's at their widest, when `plan`
+/// shows a handoff (#2705 T3): none otherwise, so a plan without one is
+/// cut as before.
+fn handoff_markers(markers: &mut Value, plan: &Value, at: usize) {
+    if let Some(handoff) = plan["handoff"].as_str() {
+        let chars = handoff.chars().count();
+        markers["handoff_more"] = json!(chars);
+        markers["handoff_next"] = json!(at.saturating_add(chars));
+    }
 }
 
 /// The characters of `plan`'s approach and its task items, whichever it
@@ -168,21 +199,32 @@ fn cut_plan(
     mut plan: Value,
     room: &mut usize,
     after: usize,
-    from: (usize, usize),
+    from: PageStart,
     answer: &mut Value,
 ) -> Value {
-    let approach = match plan.get_mut("approach").map(Value::take) {
-        Some(Value::String(text)) => Some(text),
-        Some(other) => unreachable!("a plan's approach is text: {other}"),
-        None => None,
-    };
+    // The plan's texts in order, each taken out (an empty one left in its
+    // place, so its key is counted): the approach, then the handoff
+    // (#2705 T3; `null` on a page of a plan with none, left as it is).
+    let texts: Vec<(&str, usize, String)> =
+        [("approach", from.approach), ("handoff", from.handoff)]
+            .into_iter()
+            .filter_map(|(key, at)| match plan.get_mut(key).map(Value::take) {
+                Some(Value::String(text)) => {
+                    plan[key] = json!("");
+                    Some((key, at, text))
+                }
+                Some(Value::Null) => {
+                    plan[key] = Value::Null;
+                    None
+                }
+                Some(other) => unreachable!("a plan's {key} is text: {other}"),
+                None => None,
+            })
+            .collect();
     let items = plan
         .get("items")
         .is_some()
         .then(|| taken(&mut plan, "items"));
-    if approach.is_some() {
-        plan["approach"] = json!("");
-    }
     let bare = bytes(&plan);
     let fits = bare <= *room;
     if fits {
@@ -191,24 +233,28 @@ fn cut_plan(
     let items_bytes = items.as_ref().map_or(0, |items| {
         items.iter().map(|item| bytes(item) + 1).sum::<usize>()
     });
-    if let Some(approach) = approach {
+    for (index, (key, at, text)) in texts.iter().enumerate() {
+        let later: usize = texts[index + 1..]
+            .iter()
+            .map(|(_, _, text)| bytes(&json!(text)))
+            .sum();
         let shown = match fits {
             true => {
-                // What follows keeps its room, up to half; the approach
-                // takes the rest.
-                let keep = (items_bytes + after).min(*room / 2);
-                let prefix = prefix_within(&approach, *room - keep);
+                // What follows keeps its room, up to half; the text takes
+                // the rest.
+                let keep = (later + items_bytes + after).min(*room / 2);
+                let prefix = prefix_within(text, *room - keep);
                 *room -= bytes(&json!(prefix)) - 2;
                 prefix
             }
             false => String::new(),
         };
-        let (all, kept) = (approach.chars().count(), shown.chars().count());
+        let (all, kept) = (text.chars().count(), shown.chars().count());
         if kept < all {
-            answer["approach_more"] = json!(all - kept);
-            answer["approach_next"] = json!(from.0.saturating_add(kept));
+            answer[format!("{key}_more")] = json!(all - kept);
+            answer[format!("{key}_next")] = json!(at.saturating_add(kept));
         }
-        plan["approach"] = json!(shown);
+        plan[*key] = json!(shown);
     }
     if let Some(items) = items {
         let all = items.len();
@@ -218,7 +264,7 @@ fn cut_plan(
         };
         if kept.len() < all {
             answer["items_more"] = json!(all - kept.len());
-            answer["items_next"] = json!(from.1.saturating_add(kept.len()));
+            answer["items_next"] = json!(from.items.saturating_add(kept.len()));
         }
         plan["items"] = Value::Array(kept);
     }
@@ -347,3 +393,7 @@ fn within_cap(answer: &Value, used: usize) {
 #[cfg(test)]
 #[path = "tool_show_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tool_show_handoff_tests.rs"]
+mod handoff_tests;

@@ -139,6 +139,7 @@ fn example() -> PlanFields {
             deadline_seconds: Some(345_600),
             image: Some("ghcr.io/platform-q-ai/quecto_dev:1.2".into()),
         }),
+        handoff: None,
         proposed_by: person("Ada Lovelace", "ada@example.com"),
         edited_by: Some(person("Bo", "bo@example.com")),
         accepted: Some((
@@ -429,6 +430,7 @@ fn widest(approach: String, criterion: impl Fn(usize, usize) -> String) -> PlanF
             deadline_seconds: Some(MAX_DEADLINE_SECONDS),
             image: Some(image),
         }),
+        handoff: None,
         proposed_by: person(&name, &email),
         edited_by: Some(person(&name, &email)),
         accepted: Some((person(&name, &email), at("2026-10-11T12:00:00Z"))),
@@ -484,9 +486,7 @@ fn the_widest_plan_fits_its_limits() {
     }
     let (bytes, lines, longest) = seen;
     // The whole budget spent on cells that write it twice: at least
-    // 1,077,113 bytes (a lower bound; no search proves it the domain's most;
-    // 43 fewer than when a team held a token budget and an absolute
-    // deadline, whose rows a deadline in seconds replaced).
+    // 1,077,113 bytes (a lower bound; no search proves it the most).
     assert!(
         (1_077_113..=PLAN_LIMITS.file_bytes).contains(&bytes),
         "{bytes}"

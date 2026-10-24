@@ -21,6 +21,9 @@ use crate::domain::project_board::value_objects::telemetry::{
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{Effort, TaskStatus};
 
+mod served;
+pub use served::{ServeError, ServedStatus, ServerRole};
+
 /// The board's head: the store's revision a write must start from (the
 /// git store's commit id).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -512,6 +515,10 @@ pub trait PullRequestStates: Send + Sync {
 pub trait BoardTextCells: Send + Sync {
     /// Whether a text cell holds `line` as it is.
     fn holds(&self, line: &str) -> bool;
+
+    /// Whether a prose section holds `text` (a description's goal or why,
+    /// #2705 T2) as it is: written and read back to the same text.
+    fn holds_prose(&self, text: &str) -> bool;
 }
 
 /// What one fold-back came to, as its recorder is given it.

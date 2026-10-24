@@ -9,7 +9,8 @@ use super::request::{Kind, RequestError, fields_of};
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
 
 /// The request `op` and `flags` name. A list of ids is comma-separated (an
-/// empty value is the empty list); `--repeated`, `--items` and `--team`
+/// empty value is the empty list); `--repeated`, `--items`, `--team`,
+/// `--done-when` and `--links`
 /// are JSON (`--team null` takes a draft's team away); `--parent ""`
 /// takes a draft's parent away; `--expected-accepted ""` (or `null`) says
 /// the task named no accepted plan.
@@ -65,9 +66,11 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
             | Kind::RunEnd
             | Kind::Path
             | Kind::ObjectId => Value::String(text.clone()),
-            Kind::Repeated | Kind::PlanItems | Kind::Team => strict(text).map_err(|error| {
-                refused(&name, &format!("must be JSON: {error}"), error.fault())
-            })?,
+            Kind::Repeated | Kind::PlanItems | Kind::Team | Kind::Lines => {
+                strict(text).map_err(|error| {
+                    refused(&name, &format!("must be JSON: {error}"), error.fault())
+                })?
+            }
         };
         if object.insert(name.clone(), value).is_some() {
             return Err(refused(&name, "is given twice", FaultKind::DuplicateKey));

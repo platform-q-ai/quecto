@@ -9,6 +9,7 @@ use crate::application::project_board::dto::{
 };
 use crate::application::project_board::operations::{BoardRequest, ListFilter, PlanPage, PlanView};
 use crate::application::project_board::ports::KeepCopy;
+use crate::domain::project_board::entities::task_parts::EntryPolicy;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{FaultKind, RequestFault, StaticKind};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -113,6 +114,8 @@ pub enum Kind {
     Slugs,
     /// Text.
     Text,
+    /// A list of lines: a description's done-when outcomes or links.
+    Lines,
     /// A time as the board spells it (RFC 3339, UTC, to the second).
     Timestamp,
     /// A task status.
@@ -196,6 +199,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("approach_from", Kind::Offset),
             optional("items_from", Kind::Offset),
             optional("version", Kind::Version),
+            optional("handoff_from", Kind::Offset),
         ],
     ),
     (
@@ -205,6 +209,10 @@ pub const OPS: &[(&str, &[Field])] = &[
             required("title", Kind::Text),
             optional("kind", Kind::TaskKind),
             optional("description", Kind::Text),
+            optional("goal", Kind::Text),
+            optional("why", Kind::Text),
+            optional("done_when", Kind::Lines),
+            optional("links", Kind::Lines),
             optional("status", Kind::NewStatus),
             optional("parent", Kind::Slug),
             optional("depends_on", Kind::Slugs),
@@ -216,6 +224,10 @@ pub const OPS: &[(&str, &[Field])] = &[
             TASK,
             optional("title", Kind::Text),
             optional("description", Kind::Text),
+            optional("goal", Kind::Text),
+            optional("why", Kind::Text),
+            optional("done_when", Kind::Lines),
+            optional("links", Kind::Lines),
             optional("parent", Kind::OptionalSlug),
             optional("depends_on", Kind::Slugs),
             optional("expected_updated", Kind::Timestamp),
@@ -234,6 +246,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             required("approach", Kind::Text),
             required("items", Kind::PlanItems),
             optional("team", Kind::Team),
+            optional("handoff", Kind::Text),
         ],
     ),
     (
@@ -245,6 +258,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("items", Kind::PlanItems),
             optional("team", Kind::Team),
             optional("expected_updated", Kind::Timestamp),
+            optional("handoff", Kind::Text),
         ],
     ),
     (
@@ -300,12 +314,13 @@ pub fn fields_of(op: &str) -> Option<&'static [Field]> {
         .map(|(_, fields)| *fields)
 }
 
-/// The request `value` names.
+/// The request `value` names, its title and description to enter as
+/// `policy` (its front end's, #2705 T2) resolves them.
 ///
 /// # Errors
 /// Not an object, no or an unknown `op`, a field the op does not take, a
 /// required field missing, or a value of the wrong type.
-pub fn parse(value: &Value) -> Result<BoardRequest, RequestError> {
+pub fn parse(value: &Value, policy: EntryPolicy) -> Result<BoardRequest, RequestError> {
     let object = value.as_object().ok_or_else(|| {
         RequestError::whole("op", "a request is a JSON object", FaultKind::WrongType)
     })?;
@@ -337,13 +352,15 @@ pub fn parse(value: &Value) -> Result<BoardRequest, RequestError> {
             FaultKind::Missing,
         ));
     }
-    let read = Read { object };
+    let read = Read { object, policy };
     build(op, &read)
 }
 
 /// An op's fields, read by name and type.
 struct Read<'a> {
     object: &'a Map<String, Value>,
+    /// How its front end lets a title and description enter.
+    policy: EntryPolicy,
 }
 
 impl Read<'_> {
@@ -483,7 +500,11 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
             read.task()?,
             PlanView {
                 version: read.value("version").map(plans::version).transpose()?,
-                page: PlanPage::of(read.offset("approach_from")?, read.offset("items_from")?),
+                page: PlanPage::paged(
+                    read.offset("approach_from")?,
+                    read.offset("handoff_from")?,
+                    read.offset("items_from")?,
+                ),
             },
         )),
         "create" => create(read),
@@ -658,16 +679,18 @@ fn create(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         },
         &["draft", "ready"],
     )?;
+    let (described, entry) = description::description(read)?;
     Ok(BoardRequest::Create(NewBoardTask {
         id: read.task()?,
         title: read.text("title")?.expect("a required field is present"),
         kind: read
             .word("kind", TaskKind::parse, &kinds)?
             .unwrap_or(TaskKind::Task),
-        description: read.text("description")?.unwrap_or_default(),
+        description: described.unwrap_or_default(),
         status: status.unwrap_or(NewBoardTaskStatus::Draft),
         parent: read.slug("parent")?,
         depends_on: read.slugs("depends_on")?.unwrap_or_default(),
+        entry,
     }))
 }
 
@@ -678,13 +701,15 @@ fn update_draft(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         Some(value) => Some(Some(slug("parent", value)?)),
     };
     let expected_updated = read.timestamp("expected_updated")?;
+    let (described, entry) = description::description(read)?;
     let update = DraftUpdate {
         id: read.task()?,
         title: read.text("title")?,
-        description: read.text("description")?,
+        description: described,
         parent,
         depends_on: read.slugs("depends_on")?,
         expected_updated,
+        entry,
     };
     let sets_something = update.title.is_some()
         || update.description.is_some()
@@ -703,6 +728,10 @@ fn update_draft(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
 
 #[path = "request_plans.rs"]
 mod plans;
+
+#[path = "request_description.rs"]
+mod description;
+pub use description::entry_policy;
 
 #[cfg(test)]
 #[path = "request_tests.rs"]

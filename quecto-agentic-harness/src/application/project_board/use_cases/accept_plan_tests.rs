@@ -8,7 +8,7 @@ use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, person, plan_of, slug,
 };
 use crate::domain::project_board::entities::claim::Claim;
-use crate::domain::project_board::entities::plan::Plan;
+use crate::domain::project_board::entities::plan::{Plan, PlanEntry};
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
@@ -259,6 +259,8 @@ fn an_acceptance_that_loses_to_an_edit_of_its_draft_is_refused() {
     let other = store.client();
     store.after_next_read(move |_| {
         let edit = PlanEdit {
+            handoff: None,
+            entry: PlanEntry::Legacy,
             task: slug("a"),
             version: 1,
             approach: Some("Edited.".into()),

@@ -46,6 +46,7 @@ fn task() -> Task {
         references: vec![],
         created: at("08:00:00"),
         updated: at("08:30:00"),
+        description_form: Default::default(),
     })
     .unwrap()
 }
@@ -78,6 +79,7 @@ fn plan(version: u32, state: PlanState) -> Plan {
             depends_on: vec![],
         }],
         team,
+        handoff: None,
         proposed_by: ada(),
         edited_by: None,
         accepted: Some((ada(), at("08:30:00"))),

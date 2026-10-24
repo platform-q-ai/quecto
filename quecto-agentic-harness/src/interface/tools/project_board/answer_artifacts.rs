@@ -16,6 +16,7 @@ use crate::application::project_board::task_summary::{
 };
 use crate::domain::project_board::entities::plan::{Plan, PlanItem};
 use crate::domain::project_board::entities::run::Run;
+use crate::domain::project_board::entities::task_parts::Description;
 use crate::domain::project_board::entities::team::Team;
 use crate::domain::project_board::value_objects::shown_text::{
     shown_artifact_path, shown_board_path, shown_path,
@@ -110,11 +111,15 @@ fn skip_code(why: &SkipReason) -> &'static str {
 
 /// A plan in the board's own field names, as its file holds them, every
 /// field present (`null` or `[]` when unset), in a fixed order: who
-/// accepted it and when as `accepted_by` and `accepted_at`.
+/// accepted it and when as `accepted_by` and `accepted_at`; its
+/// `handoff` (#2705 T3) after its approach, with its length in characters
+/// as `handoff_chars` (so a front end can say "has a handoff, N
+/// characters" without reading it), only when it has one, so a plan
+/// without one answers as before.
 pub(super) fn plan_json(plan: &Plan) -> Value {
     let plan = plan.fields();
     let items: Vec<Value> = plan.items.iter().map(item_json).collect();
-    json!({
+    let answer = json!({
         "task": slug_json(&plan.task),
         "version": plan.version,
         "state": plan.state.as_str(),
@@ -127,7 +132,22 @@ pub(super) fn plan_json(plan: &Plan) -> Value {
         "accepted_at": plan.accepted.as_ref().map(|(_, at)| at.as_str()),
         "created": plan.created.as_str(),
         "updated": plan.updated.as_str(),
-    })
+    });
+    match (&plan.handoff, answer) {
+        (Some(handoff), Value::Object(fields)) => {
+            let mut shown = Map::new();
+            for (key, value) in fields {
+                let after_approach = key == "approach";
+                shown.insert(key, value);
+                if after_approach {
+                    shown.insert("handoff".into(), json!(handoff));
+                    shown.insert("handoff_chars".into(), json!(handoff.chars().count()));
+                }
+            }
+            Value::Object(shown)
+        }
+        (_, answer) => answer,
+    }
 }
 
 fn item_json(item: &PlanItem) -> Value {
@@ -144,7 +164,9 @@ fn item_json(item: &PlanItem) -> Value {
 /// `version` names, or of the accepted plan, and its `updated` (#2481
 /// M4b review round 2: a reader sees an edit land between its pages),
 /// with only the parts the page names: `approach_from` and the
-/// `approach` from that character, `items_from` and the task `items` from
+/// `approach` from that character, `handoff_from` and the `handoff` from
+/// that character (`null` for a plan with none, #2705 T3), `items_from`
+/// and the task `items` from
 /// that index (`null` while the task has no plan to page through); and
 /// `may_be_incomplete`, as `show` says it.
 pub(super) fn page_fields(
@@ -162,6 +184,14 @@ pub(super) fn page_fields(
             let approach: String = plan.approach.chars().skip(from).collect();
             part.insert("approach_from".into(), json!(from));
             part.insert("approach".into(), json!(approach));
+        }
+        if let Some(from) = page.handoff_from() {
+            let handoff = plan
+                .handoff
+                .as_ref()
+                .map(|handoff| handoff.chars().skip(from).collect::<String>());
+            part.insert("handoff_from".into(), json!(from));
+            part.insert("handoff".into(), json!(handoff));
         }
         if let Some(from) = page.items_from() {
             let items: Vec<Value> = plan.items.iter().skip(from).map(item_json).collect();
@@ -285,7 +315,8 @@ fn run_state(outcome: Option<RunOutcome>) -> &'static str {
     outcome.map_or("running", RunOutcome::as_str)
 }
 
-/// A listed task's `summary` (`TaskSummary`): its current `plan`'s
+/// A listed task's `summary` (`TaskSummary`): its `subtitle` (its goal
+/// on one line, `null` for legacy text, #2705 T2), its current `plan`'s
 /// `version` and `state` (`draft` or `accepted`), its latest readable
 /// `run` (`number`, `plan_version`, `state`, `started` and `ended` as
 /// `show` gives them, its `deadline`, and its task `items` counted by
@@ -319,6 +350,7 @@ fn summary_json(summary: &TaskSummary) -> Value {
         })
     });
     json!({
+        "subtitle": summary.subtitle,
         "plan": plan,
         "run": run,
         "may_be_incomplete": summary.may_be_incomplete,
@@ -361,6 +393,37 @@ pub(super) fn quarantined_json(file: &QuarantinedFile) -> Value {
     Value::Object(entry)
 }
 
+/// A task description's sections, as a task's answer carries them beside
+/// its text (#2705 T2, additive): its `goal`, `why`, `done_when`
+/// (`[{"outcome", "done"}]`) and `links`, and `needs_goal`, true for
+/// legacy text (any other shape, or none yet), which answers no sections
+/// and is shown as it is.
+pub(super) fn description_fields(text: &str) -> Map<String, Value> {
+    let description = Description::read(text);
+    let outcomes = description.as_ref().map_or(vec![], |description| {
+        let outcomes = description.done_when().iter();
+        outcomes
+            .map(|outcome| json!({"outcome": outcome.text, "done": outcome.done}))
+            .collect()
+    });
+    Map::from_iter([
+        (
+            "goal".to_string(),
+            json!(description.as_ref().map(Description::goal)),
+        ),
+        (
+            "why".to_string(),
+            json!(description.as_ref().and_then(Description::why)),
+        ),
+        ("done_when".to_string(), Value::Array(outcomes)),
+        (
+            "links".to_string(),
+            json!(description.as_ref().map_or(&[][..], Description::links)),
+        ),
+        ("needs_goal".to_string(), json!(description.is_none())),
+    ])
+}
+
 /// The folder the file of `key` lies in, for an artifact other than a
 /// task (whose folder, `tasks/`, [`shown_path`] knows).
 pub(super) fn artifact_folder(key: &ArtifactKey) -> Option<&'static str> {
@@ -373,3 +436,7 @@ pub(super) fn artifact_folder(key: &ArtifactKey) -> Option<&'static str> {
         ArtifactKey::Discussion(_) => Some("discussions"),
     }
 }
+
+#[cfg(test)]
+#[path = "answer_description_tests.rs"]
+mod description_tests;

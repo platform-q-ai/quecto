@@ -1,6 +1,7 @@
 //! A plan's ops as a request names them (#2481 M4b): `propose_plan` and
 //! `edit_plan`, with a plan's task items and team nested as `show` gives
-//! them. Each nested value is read by an allowlist of its keys, every key
+//! them, and its approach entering as its front end's policy resolves it
+//! by whether the request gives a `handoff` (#2705 T3). Each nested value is read by an allowlist of its keys, every key
 //! by checked access, and a fault names its path (`items/3/criteria/0`,
 //! `team/roles/0/members`), which a record holds as its schema field
 //! (`items`, `team`). A number's range is checked here against the
@@ -15,11 +16,12 @@ use crate::application::project_board::dto::{
     PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal, RunEnd, RunEndOutcome, TaskStart,
 };
 use crate::application::project_board::operations::BoardRequest;
-use crate::domain::project_board::entities::plan::{MAX_PLAN_VERSION, PlanItem};
+use crate::domain::project_board::entities::plan::{MAX_PLAN_VERSION, PlanEntry, PlanItem};
 use crate::domain::project_board::entities::run::MAX_RUN_NUMBER;
 use crate::domain::project_board::entities::team::{
     MAX_DEADLINE_SECONDS, MAX_MEMBERS, MIN_DEADLINE_SECONDS, Role, RoleLimits, Team,
 };
+use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
 use crate::domain::project_board::value_objects::vocabulary::Effort;
@@ -29,9 +31,12 @@ use super::RequestError;
 /// A new draft: its approach, its task items, and its team, if any.
 pub(super) fn propose_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     let present = "a required field is present";
+    let handoff = read.text("handoff")?;
     Ok(BoardRequest::ProposePlan(PlanProposal {
         task: read.task()?,
         approach: read.text("approach")?.expect(present),
+        entry: PlanEntry::of(read.policy, holds_handoff(handoff.as_deref())),
+        handoff,
         items: items(read.value("items").expect(present))?,
         team: read.value("team").map(team).transpose()?.flatten(),
     }))
@@ -40,10 +45,13 @@ pub(super) fn propose_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError
 /// An edit of a draft: only the fields it gives change, so it names at
 /// least one.
 pub(super) fn edit_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
+    let handoff = read.text("handoff")?;
     let edit = PlanEdit {
         task: read.task()?,
         version: version(read.value("version").expect("a required field is present"))?,
         approach: read.text("approach")?,
+        entry: PlanEntry::of(read.policy, holds_handoff(handoff.as_deref())),
+        handoff,
         items: read.value("items").map(items).transpose()?,
         team: read.value("team").map(team).transpose()?,
         expected_updated: read.timestamp("expected_updated")?,
@@ -100,6 +108,12 @@ pub(super) fn end_run(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
             .expect(present),
         expected_updated: read.timestamp("expected_updated")?,
     }))
+}
+
+/// Whether `handoff` gives a handoff once normalised as the board keeps
+/// it: `""` (or blank lines alone) is none, so it caps no approach.
+fn holds_handoff(handoff: Option<&str>) -> bool {
+    handoff.is_some_and(|text| !board_text::text(text).is_empty())
 }
 
 /// A plan's version, from 1, as `version` names it.

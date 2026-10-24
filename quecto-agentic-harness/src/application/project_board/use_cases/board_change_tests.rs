@@ -19,6 +19,7 @@ fn plan(task: &str, version: u32) -> BoardArtifact {
             approach: String::new(),
             items: vec![],
             team: None,
+            handoff: None,
             proposed_by: person("Ada"),
             edited_by: None,
             accepted: None,

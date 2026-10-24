@@ -2,10 +2,16 @@
 //! allowlist, and a fault names its path, recorded as its schema field.
 use serde_json::{Value, json};
 
-use super::super::{RequestError, parse};
+use super::super::RequestError;
+use crate::domain::project_board::entities::task_parts::EntryPolicy;
+
+/// A request as the agent tool reads it.
+fn parse(value: &Value) -> Result<BoardRequest, RequestError> {
+    super::super::parse(value, EntryPolicy::Sectioned)
+}
 use crate::application::project_board::dto::{PlanEdit, PlanProposal};
 use crate::application::project_board::operations::BoardRequest;
-use crate::domain::project_board::entities::plan::PlanItem;
+use crate::domain::project_board::entities::plan::{PlanEntry, PlanItem};
 use crate::domain::project_board::entities::team::{Role, RoleLimits, Team};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -78,6 +84,8 @@ fn a_proposal_reads_its_items_and_team_as_show_gives_them() {
     assert_eq!(
         parse(&request),
         Ok(BoardRequest::ProposePlan(PlanProposal {
+            handoff: None,
+            entry: PlanEntry::Capped,
             task: slug("a"),
             approach: "Spike.\r\n".into(),
             items: vec![
@@ -109,6 +117,8 @@ fn an_edit_reads_only_the_fields_it_gives() {
         parse(&request)
     };
     let none = PlanEdit {
+        handoff: None,
+        entry: PlanEntry::Capped,
         task: slug("a"),
         version: 2,
         approach: None,
@@ -119,6 +129,8 @@ fn an_edit_reads_only_the_fields_it_gives() {
     assert_eq!(
         edit(json!({"items": [], "expected_updated": "2026-10-10T09:00:00Z"})),
         Ok(BoardRequest::EditPlan(PlanEdit {
+            handoff: None,
+            entry: PlanEntry::Capped,
             items: Some(vec![]),
             expected_updated: Some(Timestamp::parse("2026-10-10T09:00:00Z").unwrap()),
             ..none.clone()
@@ -127,6 +139,8 @@ fn an_edit_reads_only_the_fields_it_gives() {
     assert_eq!(
         edit(json!({"team": null})),
         Ok(BoardRequest::EditPlan(PlanEdit {
+            handoff: None,
+            entry: PlanEntry::Capped,
             team: Some(None),
             ..none.clone()
         }))
@@ -134,6 +148,8 @@ fn an_edit_reads_only_the_fields_it_gives() {
     assert_eq!(
         edit(json!({"approach": "New"})),
         Ok(BoardRequest::EditPlan(PlanEdit {
+            handoff: None,
+            entry: PlanEntry::Capped,
             approach: Some("New".into()),
             ..none
         }))
@@ -409,5 +425,57 @@ fn a_start_names_the_plan_version_it_confirmed() {
     assert_eq!(
         (zero.field.as_str(), zero.fault.fault.as_str()),
         ("plan_version", "invalid_value")
+    );
+}
+
+/// #2705 T3: a handoff is read as text, and the approach's entry is the
+/// front end's policy resolved by whether the request gives one: the tool
+/// always caps it; the CLI caps it only beside a handoff.
+#[test]
+fn a_handoff_is_read_and_resolves_the_approachs_entry() {
+    let proposal = |value: &Value, policy| match super::super::parse(value, policy) {
+        Ok(BoardRequest::ProposePlan(proposal)) => (proposal.handoff, proposal.entry),
+        other => panic!("{other:?}"),
+    };
+    let bare = json!({"op": "propose_plan", "task": "a", "approach": "A", "items": []});
+    let mut given = bare.clone();
+    given["handoff"] = json!("Detail.\r\n");
+    let cli = EntryPolicy::SectionedOrLegacy;
+    assert_eq!(
+        proposal(&bare, EntryPolicy::Sectioned),
+        (None, PlanEntry::Capped)
+    );
+    assert_eq!(proposal(&bare, cli), (None, PlanEntry::Legacy));
+    let detail = Some("Detail.\r\n".to_string());
+    assert_eq!(proposal(&given, cli), (detail, PlanEntry::Capped));
+    given["handoff"] = json!("\r\n\r\n");
+    let blank = Some("\r\n\r\n".to_string());
+    assert_eq!(proposal(&given, cli), (blank, PlanEntry::Legacy));
+    let edit = json!({"op": "edit_plan", "task": "a", "version": 1, "handoff": ""});
+    let Ok(BoardRequest::EditPlan(edit)) = super::super::parse(&edit, cli) else {
+        panic!("an edit giving only a handoff reads");
+    };
+    assert_eq!(
+        (edit.handoff, edit.entry),
+        (Some(String::new()), PlanEntry::Legacy),
+        "an empty handoff is none, so the CLI caps no approach (review round 1)"
+    );
+    let refused = refused(json!({"op": "edit_plan", "task": "a", "version": 1, "handoff": 7}));
+    assert_eq!(refused.field, "handoff");
+}
+
+#[test]
+fn show_pages_the_handoff_from_a_character() {
+    use crate::application::project_board::operations::{PlanPage, PlanView};
+    let request = json!({"op": "show", "task": "a", "handoff_from": 3});
+    assert_eq!(
+        parse(&request),
+        Ok(BoardRequest::Show(
+            slug("a"),
+            PlanView {
+                version: None,
+                page: PlanPage::paged(None, Some(3), None),
+            }
+        ))
     );
 }

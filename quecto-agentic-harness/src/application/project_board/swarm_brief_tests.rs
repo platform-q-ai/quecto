@@ -42,6 +42,7 @@ fn task() -> Task {
         references: vec![],
         created: at("08:00:00"),
         updated: at("09:00:00"),
+        description_form: Default::default(),
     })
     .unwrap()
 }
@@ -76,6 +77,7 @@ fn plan_with(items: Vec<PlanItem>, team: Option<Team>, approach: &str) -> Plan {
         approach: approach.into(),
         items,
         team,
+        handoff: None,
         proposed_by: person("Ada"),
         edited_by: None,
         accepted: Some((person("Ada"), at("08:30:00"))),
@@ -145,6 +147,8 @@ fn a_plan_maps_onto_the_swarms_inputs() {
         goal: "Board task board-store, plan v1: Board store".into(),
         constraints: vec!["Spike, then build.".into(), POINTER.into()],
         approach_cut: false,
+        handoff: None,
+        handoff_cut: false,
         criteria: RUN_CRITERIA.to_vec(),
         member_limit: Some(4),
         deadline_in_seconds: 6 * 3600,
