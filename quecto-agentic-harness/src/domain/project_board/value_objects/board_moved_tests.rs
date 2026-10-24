@@ -82,6 +82,22 @@ fn a_malformed_moved_file_is_refused() {
         ),
         ("no host", format!("{board}url https://\n").into_bytes()),
         (
+            "a hex IPv4 part",
+            format!("{board}url http://0x7f.1\n").into_bytes(),
+        ),
+        (
+            "a hex IPv4",
+            format!("{board}url http://0x7f000001\n").into_bytes(),
+        ),
+        (
+            "a hex octet",
+            format!("{board}url http://1.0x2.3.4\n").into_bytes(),
+        ),
+        (
+            "a number last",
+            format!("{board}url http://foo.1\n").into_bytes(),
+        ),
+        (
             "userinfo",
             format!("{board}url https://u:p@a.example\n").into_bytes(),
         ),

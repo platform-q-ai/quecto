@@ -174,7 +174,7 @@ fn served_authority(authority: &str) -> bool {
             let numeric = host.bytes().all(|b| b.is_ascii_digit() || b == b'.');
             let host_ok = match numeric {
                 true => ipv4(host),
-                false => host.len() <= 253 && host.split('.').all(dns_label),
+                false => host.len() <= 253 && host.split('.').all(dns_label) && named(host),
             };
             (host_ok, port)
         }
@@ -191,6 +191,23 @@ fn served_authority(authority: &str) -> bool {
         }
     };
     host_ok && port_ok
+}
+
+/// Whether a DNS-label `host` reads as a name to every URL parser: its
+/// last label holds a letter, and no label is written `0x…`. A WHATWG
+/// parser (the one HTTP clients use) takes a host ending in a number, or
+/// one with a hex part, as an IPv4 address (`0x7f.1` is 127.0.0.1), so such
+/// a host is never taken for a name here.
+fn named(host: &str) -> bool {
+    let hex_written = |label: &str| {
+        label
+            .get(..2)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("0x"))
+    };
+    host.rsplit('.')
+        .next()
+        .is_some_and(|last| last.bytes().any(|b| b.is_ascii_alphabetic()))
+        && !host.split('.').any(hex_written)
 }
 
 /// Whether `host` is a dotted IPv4 address: four numbers of 0 to 255,
