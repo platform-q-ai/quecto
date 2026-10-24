@@ -22,19 +22,31 @@
 //! never the reason a set is dropped, so git never gets to quote it in an
 //! error of its own.
 //!
-//! The set is read more strictly than git reads it: its count must be
-//! plain ASCII decimal from 0 to [`MAX_COMMAND_CONFIG`] (quecto's own cap;
-//! git has none) or empty (no set, as git reads it), and every setting up
-//! to the count must have its key and its value. A set read otherwise is
-//! dropped whole, and why ([`CommandScopeWarning`], which names only a
-//! variable) is the front end's to warn of; the board carries on as it
-//! would with no set.
+//! The set is read as git reads it, its count a little more strictly:
+//! - the count must be empty (no set) or plain ASCII decimal (git's
+//!   `strtoul` also takes leading spaces and a sign, which drop the set
+//!   here);
+//! - a count above [`MAX_COUNT`] (`INT_MAX`), which git refuses ("too many
+//!   entries"), drops the set;
+//! - every setting below the count must have its key and its value, as git
+//!   dies otherwise.
+//!
+//! A set read otherwise is dropped whole, and why ([`CommandScopeWarning`],
+//! which names only a variable) is the front end's to warn of. The board
+//! carries on as it would with no set; git itself would refuse to run.
+//!
+//! However many settings a set carries, its identity is read (#2703: the
+//! pocket relay's scope carries 41, its bot committer among them), in index
+//! order, so the last of a key wins as in git. The work is bounded by the
+//! environment's own size, whatever the count: each setting is looked up
+//! once, and a count past the settings present stops at the first missing
+//! one, which is never past the number of keys set.
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 
-/// The most settings a command-scope set may carry: quecto's own cap, not
-/// git's.
-pub const MAX_COMMAND_CONFIG: usize = 16;
+/// The largest count git takes (`INT_MAX`): a larger one it refuses.
+pub const MAX_COUNT: usize = 2_147_483_647;
 
 /// The keys whose settings pass, in the lower case they pass in: the
 /// committer the board writes as. The board names a commit's author and
@@ -51,7 +63,7 @@ const COUNT: &str = "GIT_CONFIG_COUNT";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandScopeWarning {
     /// Dropped: `GIT_CONFIG_COUNT` is neither empty nor plain decimal 0 to
-    /// [`MAX_COMMAND_CONFIG`].
+    /// [`MAX_COUNT`].
     Count,
     /// Dropped: a setting's key or value variable is not set.
     Missing { variable: String },
@@ -69,7 +81,7 @@ impl fmt::Display for CommandScopeWarning {
         match self {
             Self::Count => write!(
                 f,
-                "ignoring {scope}: {COUNT} is not plain decimal 0 to {MAX_COMMAND_CONFIG}"
+                "ignoring {scope}: {COUNT} is not plain decimal 0 to {MAX_COUNT}"
             ),
             Self::Missing { variable } => write!(f, "ignoring {scope}: {variable} is not set"),
             Self::HalfIdentity { named, unnamed } => write!(
@@ -88,26 +100,40 @@ pub(super) struct CommandScope {
 }
 
 /// The command-scope variables of `vars` to pass to git: the set's
-/// identity settings, renumbered from 0 under a count of their own; none
-/// when there is no set, none of its settings is an identity's, or it is
-/// dropped (with why).
+/// identity settings in index order, renumbered from 0 under a count of
+/// their own; none when there is no set, none of its settings is an
+/// identity's, or it is dropped (with why).
 pub(super) fn command_config(vars: &[(OsString, OsString)]) -> CommandScope {
     let dropped = |why| CommandScope {
         vars: Vec::new(),
         warning: Some(why),
     };
-    let get = |name: &str| {
-        vars.iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value.as_os_str())
-    };
+    // The scope's variables by name, each looked up once; the first of a
+    // name wins, as a linear search would find it.
+    let mut scope: HashMap<&OsStr, &OsStr> = HashMap::new();
+    for (key, value) in vars {
+        if key.as_encoded_bytes().starts_with(b"GIT_CONFIG_") {
+            scope.entry(key.as_os_str()).or_insert(value.as_os_str());
+        }
+    }
+    let get = |name: &str| scope.get(OsStr::new(name)).copied();
     let count = match get(COUNT).map(count_of) {
         Some(Some(count)) => count,
         Some(None) => return dropped(CommandScopeWarning::Count),
         None => 0,
     };
+    // The keys present bound the walk: setting `n` can be whole only when
+    // `n` keys before it are set, so the first missing one comes by then.
+    let keys = scope
+        .keys()
+        .filter(|name| name.as_encoded_bytes().starts_with(b"GIT_CONFIG_KEY_"))
+        .count();
     let mut identity: Vec<(&'static str, &OsStr)> = Vec::new();
     for n in 0..count {
+        assert!(
+            n <= keys,
+            "a walk past the keys present has met a missing one"
+        );
         let setting = Setting::numbered(n, get);
         match (setting.key.map(identity_key), setting.value) {
             (Some(Some(key)), Some(value)) => identity.push((key, value)),
@@ -149,7 +175,7 @@ pub(super) fn command_config(vars: &[(OsString, OsString)]) -> CommandScope {
             .chain(renumbered)
             .collect(),
     };
-    debug_assert!(identity.len() <= count && count <= MAX_COMMAND_CONFIG);
+    debug_assert!(identity.len() <= count && count <= keys && count <= MAX_COUNT);
     debug_assert!(passed.len() == 2 * identity.len() + usize::from(!identity.is_empty()));
     CommandScope {
         vars: passed,
@@ -181,7 +207,7 @@ impl<'a> Setting<'a> {
 }
 
 /// A count: empty (no set, as git reads it), or plain ASCII decimal
-/// digits at most [`MAX_COMMAND_CONFIG`].
+/// digits at most [`MAX_COUNT`].
 fn count_of(text: &OsStr) -> Option<usize> {
     let text = text.to_str()?;
     let count = match text {
@@ -192,7 +218,7 @@ fn count_of(text: &OsStr) -> Option<usize> {
             .then(|| digits.parse::<usize>().ok())
             .flatten()?,
     };
-    (count <= MAX_COMMAND_CONFIG).then_some(count)
+    (count <= MAX_COUNT).then_some(count)
 }
 
 /// The one of [`COMMAND_CONFIG_KEYS`] that `key` names, matched in any
