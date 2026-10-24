@@ -7,9 +7,9 @@
 //! lowercase hex digits, [`BoardId`]); then 1 to [`MAX_MOVED_URLS`] lines
 //! `url <url>`, each distinct, in the order a client tries them. Each line
 //! is its key, one space and its value; no other key, line, space or byte
-//! is taken. A URL is `http://` or `https://`, a host (ASCII letters,
-//! digits, `.`, `-`, `:` and `[]` for a port or an IPv6 address: no
-//! userinfo, so no credential), and an optional path of
+//! is taken. A URL is `http://` or `https://`, a host (DNS labels, a
+//! dotted IPv4 address or a bracketed IPv6 address: no userinfo, so no
+//! credential), an optional port from 1 to 65535, and an optional path of
 //! [`URL_PATH_PUNCTUATION`], letters and digits, at most [`MAX_URL_BYTES`]
 //! in all. Parsing is an allowlist: anything else is malformed.
 use std::fmt;
@@ -147,18 +147,94 @@ fn served_url(url: &str) -> Result<(), String> {
     else {
         return refused("it is not http:// or https://");
     };
-    let (host, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
-    let host_byte = |b: u8| b.is_ascii_alphanumeric() || b".-:[]".contains(&b);
+    let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
     let path_byte =
         |b: u8| b.is_ascii_alphanumeric() || URL_PATH_PUNCTUATION.as_bytes().contains(&b);
-    match (
-        host.bytes().next().is_some() && host.bytes().all(host_byte),
-        path.bytes().all(path_byte),
-    ) {
+    match (served_authority(authority), path.bytes().all(path_byte)) {
         (true, true) => Ok(()),
-        (false, _) => refused("its host is empty or holds a character a host does not"),
+        (false, _) => refused(
+            "its host is not a DNS name, an IPv4 or a bracketed IPv6 address, with an optional port from 1 to 65535",
+        ),
         (true, false) => refused("its path holds a character this file does not take"),
     }
+}
+
+/// Whether `authority` is a host and an optional `:port`: DNS labels
+/// (ASCII letters and digits with inner hyphens, 1 to 63 bytes each, at
+/// most 253 in all), a dotted IPv4 address, or an IPv6 address in
+/// brackets; a port of 1 to 65535, written without a leading zero.
+fn served_authority(authority: &str) -> bool {
+    let (host_ok, port) = match authority.strip_prefix('[') {
+        Some(bracketed) => match bracketed.split_once(']') {
+            Some((v6, port)) => (ipv6(v6), port),
+            None => return false,
+        },
+        None => {
+            let (host, port) = authority.split_at(authority.find(':').unwrap_or(authority.len()));
+            let numeric = host.bytes().all(|b| b.is_ascii_digit() || b == b'.');
+            let host_ok = match numeric {
+                true => ipv4(host),
+                false => host.len() <= 253 && host.split('.').all(dns_label),
+            };
+            (host_ok, port)
+        }
+    };
+    let port_ok = match port.strip_prefix(':') {
+        None => port.is_empty(),
+        Some(digits) => {
+            digits
+                .bytes()
+                .next()
+                .is_some_and(|b| (b'1'..=b'9').contains(&b))
+                && digits.bytes().all(|b| b.is_ascii_digit())
+                && digits.parse::<u16>().is_ok()
+        }
+    };
+    host_ok && port_ok
+}
+
+/// Whether `host` is a dotted IPv4 address: four numbers of 0 to 255,
+/// each with no leading zero.
+fn ipv4(host: &str) -> bool {
+    let parts: Vec<&str> = host.split('.').collect();
+    parts.len() == 4
+        && parts.iter().all(|part| {
+            let digits =
+                !part.is_empty() && part.len() <= 3 && part.bytes().all(|b| b.is_ascii_digit());
+            digits && (part.len() == 1 || !part.starts_with('0')) && part.parse::<u8>().is_ok()
+        })
+}
+
+/// Whether `host` is an IPv6 address in hex groups: eight groups of 1 to
+/// 4 hex digits, or fewer around one `::`. The dotted IPv4 tail is not
+/// taken.
+fn ipv6(host: &str) -> bool {
+    let group =
+        |text: &str| (1..=4).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_hexdigit());
+    let groups = |text: &str| match text {
+        "" => Some(0),
+        _ => text.split(':').all(group).then(|| text.split(':').count()),
+    };
+    match host.split_once("::") {
+        Some((head, tail)) => match (groups(head), groups(tail)) {
+            (Some(head), Some(tail)) => head + tail <= 7,
+            _ => false,
+        },
+        None => !host.is_empty() && groups(host) == Some(8),
+    }
+}
+
+/// Whether `label` is a DNS label: 1 to 63 ASCII letters, digits and
+/// inner hyphens.
+fn dns_label(label: &str) -> bool {
+    let bytes = label.as_bytes();
+    let edge = |b: Option<&u8>| b.is_some_and(u8::is_ascii_alphanumeric);
+    (1..=63).contains(&bytes.len())
+        && edge(bytes.first())
+        && edge(bytes.last())
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'-')
 }
 
 #[cfg(test)]

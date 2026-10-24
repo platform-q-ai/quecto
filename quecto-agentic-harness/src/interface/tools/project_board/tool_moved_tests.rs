@@ -44,6 +44,9 @@ async fn every_op_on_a_moved_board_answers_board_moved() {
     for request in [
         r#"{"op":"show","task":"a"}"#,
         r#"{"op":"create","task":"a","title":"A","status":"ready"}"#,
+        r#"{"op":"list"}"#,
+        r#"{"op":"list_ready"}"#,
+        r#"{"op":"clear_set_aside","path":"tasks/a.md","object":"0000000000000000000000000000000000000000"}"#,
     ] {
         let result = tool.execute(request).await.unwrap();
         let answer: Value = serde_json::from_str(&result.content).unwrap();

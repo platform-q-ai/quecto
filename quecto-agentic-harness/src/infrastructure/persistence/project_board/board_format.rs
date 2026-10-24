@@ -5,7 +5,8 @@
 //! would not see. Format 3 (#2481 S9) adds the other kinds' folders and the
 //! archive to the root: a quecto of format 2 asks for an upgrade, never
 //! takes them for a clash, and this one reads a board of format 2 as it is.
-use super::{Found, contents};
+use super::{Entry, Found, RECOVERY, Wanted, contents, damage, is_file, is_tree, objects};
+use super::{Git, looked_up, tree_of};
 use super::{LeftOnRemote, Limits, REGULAR_FILE, Unread, kinds_in, listed};
 use crate::application::project_board::ports::BoardStoreError;
 use crate::domain::project_board::value_objects::board_moved::{BoardMoved, MAX_MOVED_BYTES};
@@ -207,7 +208,7 @@ fn moved(
 
 /// The refusal of a board fenced at format 4 whose `MOVED` is malformed:
 /// `why`.
-pub(super) fn moved_malformed(why: &str) -> BoardStoreError {
+fn moved_malformed(why: &str) -> BoardStoreError {
     BoardStoreError::MovedMalformed(format!(
         "the board moved to a board server, but its fence is not one quecto writes ({why}); \
          this build neither reads nor writes the board: mend format/{MOVED_FILE} on \
@@ -216,10 +217,94 @@ pub(super) fn moved_malformed(why: &str) -> BoardStoreError {
 }
 
 /// The refusal of a board in a newer format.
-pub(super) fn newer(version: &str) -> BoardStoreError {
+fn newer(version: &str) -> BoardStoreError {
     BoardStoreError::Unavailable(format!(
         "the board is in format {version}, written by a newer quecto; this quecto reads \
          formats {}: upgrade quecto to read it",
         READ_FORMATS.map(|(read, _)| read).join(" and ")
     ))
+}
+
+/// The format marker at a board's root (`root`, its entries, of real
+/// `kinds`), at the same depth as the folders. A file of its name is a
+/// stray, as on a board before the marker; none is a board before it.
+pub(super) fn root_marker(
+    git: &impl super::Reader,
+    root: &[Entry],
+    kinds: &BTreeMap<String, Found>,
+    limits: Limits,
+    left: &LeftOnRemote,
+) -> Option<Result<Marker, Unread>> {
+    let named: Vec<&Entry> = root
+        .iter()
+        .filter(|entry| entry.name == FORMAT_TREE)
+        .collect();
+    match named.as_slice() {
+        [] => None,
+        [entry] if is_tree(entry, kinds) => Some(read_format(git, &entry.oid, limits, left)),
+        [entry] if is_file(entry, kinds) => None,
+        [entry] => Some(Ok(Marker::Damaged(format!(
+            "format at the root is mode {} over a {}",
+            entry.mode,
+            match kinds.get(&entry.oid) {
+                Some(Found::Present(object)) => object.kind.as_str(),
+                Some(Found::Missing) | None => "missing object",
+            }
+        )))),
+        [_, _, ..] => Some(Ok(Marker::Damaged(
+            "format is named more than once at the root".into(),
+        ))),
+    }
+}
+
+/// The refusals a marker gives before anything else of a board is judged:
+/// a fence's (the board moved, #2705 B13), a newer format's, or one past
+/// what is read.
+pub(super) fn refuse_first(marker: &Option<Result<Marker, Unread>>) -> Result<(), Unread> {
+    let refused = |error: BoardStoreError| Err(Unread::Failed(error));
+    match marker {
+        Some(Ok(Marker::Moved(moved))) => refused(BoardStoreError::Moved(moved.clone())),
+        Some(Ok(Marker::MovedMalformed(why))) => refused(moved_malformed(why)),
+        Some(Ok(Marker::Newer(version))) => refused(newer(version)),
+        Some(Ok(Marker::Oversized(size))) => refused(BoardStoreError::Unavailable(format!(
+            "its format marker (format/board) is {size}, more than this quecto reads: if a newer \
+             quecto wrote the board, upgrade quecto; if a hand edit did, mend the board: {RECOVERY}"
+        ))),
+        Some(Ok(Marker::Current | Marker::Damaged(_)) | Err(_)) | None => Ok(()),
+    }
+}
+
+/// Whether a write may go on past board commit `commit`, judged by its
+/// format marker alone (#2705 B13): only on this quecto's marker or none.
+/// A fence, a newer format or one past what is read is refused as a read
+/// refuses it, and a damaged marker as damage.
+///
+/// # Errors
+/// Those refusals; objects this clone does not hold, or git fails.
+pub fn read_marker(
+    git: &Git,
+    commit: &str,
+    limits: Limits,
+    left: &LeftOnRemote,
+) -> Result<(), Unread> {
+    let root = listed(git, &tree_of(git, commit)?, limits.tree_bytes)?;
+    let kinds = objects(git, looked_up(&root))?;
+    let missing: Vec<Wanted> = root
+        .iter()
+        .filter(|entry| entry.name == FORMAT_TREE)
+        .filter(|entry| matches!(kinds.get(&entry.oid), Some(Found::Missing)))
+        .map(|entry| Wanted::Filtered(entry.oid.clone()))
+        .collect();
+    if !missing.is_empty() {
+        return Err(Unread::Missing(missing));
+    }
+    let marker = root_marker(git, &root, &kinds, limits, left);
+    refuse_first(&marker)?;
+    match marker.transpose()? {
+        Some(Marker::Current) | None => Ok(()),
+        Some(Marker::Damaged(why)) => Err(damage(&format!("its format marker is damaged ({why})"))),
+        Some(
+            Marker::Newer(_) | Marker::Oversized(_) | Marker::Moved(_) | Marker::MovedMalformed(_),
+        ) => unreachable!("refused first"),
+    }
 }

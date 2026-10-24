@@ -37,7 +37,8 @@ impl GitBoardStore {
         }
         let format = self.tree(&format)?;
         let root = root_entries(&self.git, commit, self.limits)?;
-        let tree = self.tree(&fenced_root(&root, &format))?;
+        let readme = self.blob(README)?;
+        let tree = self.tree(&fenced_root(&root, &readme, &format))?;
         Ok(Fence::Tree(tree))
     }
 }

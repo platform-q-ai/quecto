@@ -40,13 +40,18 @@ fn commits(repo: &Path) -> usize {
 /// The board fenced by hand in alice's clone on top of `before`, as the
 /// cut-over's fence commit leaves it, and pushed.
 fn fenced_by_hand(repos: &Repos, before: &BoardHead) -> String {
+    marked_by_hand(repos, before, &[("MOVED", MOVED), ("board", MOVED_FORMAT)])
+}
+
+/// The board in alice's clone on top of `before`, its `format` tree made
+/// of `files` (name, bytes, in git's order), and pushed.
+fn marked_by_hand(repos: &Repos, before: &BoardHead, files: &[(&str, &[u8])]) -> String {
     let alice = &repos.alice;
-    let marker = blob_in(alice, MOVED_FORMAT);
-    let file = blob_in(alice, MOVED);
-    let format = raw_rows(
-        alice,
-        &[("100644", "MOVED", file), ("100644", "board", marker)],
-    );
+    let rows: Vec<(&str, &str, String)> = files
+        .iter()
+        .map(|(name, bytes)| ("100644", *name, blob_in(alice, bytes)))
+        .collect();
+    let format = raw_rows(alice, &rows);
     let root: String = sh(alice, &["ls-tree", &before.0])
         .lines()
         .filter(|row| !row.ends_with("\tformat"))
@@ -187,6 +192,111 @@ fn a_malformed_moved_is_refused_and_never_written() {
             "{case}"
         );
     }
+}
+
+/// A `MOVED` past 4096 bytes is refused by its size, before its bytes are
+/// read, naming its size.
+#[test]
+fn a_moved_past_its_bytes_is_refused_by_its_size() {
+    let mut huge = MOVED.to_vec();
+    huge.resize(MAX_MOVED_BYTES + 1, b'\n');
+    let repos = Repos::new();
+    created(&store(&repos.alice));
+    let entries = vec![
+        ("100644", "MOVED", Object::Blob(huge)),
+        ("100644", "board", Object::Blob(MOVED_FORMAT.to_vec())),
+    ];
+    board_with(&repos, true, &[marker(entries)]);
+    let read = store(&repos.bob).read();
+    assert!(
+        matches!(&read, Err(BoardStoreError::MovedMalformed(why))
+            if why.contains("(format/MOVED is 4097 bytes; the most read is 4096)")),
+        "{read:?}"
+    );
+}
+
+/// A client that read the board before the fence, and has not fetched
+/// since, writes from its old head: the push loses (the remote moved), the
+/// board stays at the fence, and its next read answers that it moved.
+#[test]
+fn a_write_from_a_stale_head_loses_to_the_fence() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    let head = created(&alice);
+    let before = written(alice.write_tasks(&head, &[task("a")], "board: add a"));
+    let bob = store(&repos.bob);
+    assert_eq!(bob.read().unwrap().head, before);
+    let fence = fenced_by_hand(&repos, &before);
+    let write = bob.write_tasks(&before, &[task("b")], "board: add b");
+    assert_eq!(write, Ok(BoardWrite::Lost));
+    assert_eq!(sh(&repos.remote(), &["rev-parse", BOARD_REF]), fence);
+    assert_eq!(bob.read(), Err(BoardStoreError::Moved(moved())));
+}
+
+/// A write from a head before a tip this quecto does not read is refused
+/// as a read of that tip is, judged by the tip's marker alone, and makes
+/// no commit: a newer format asks for an upgrade, a damaged marker for a
+/// mend.
+#[test]
+fn a_write_past_a_tip_this_quecto_does_not_read_is_refused_by_its_marker() {
+    let cases: [(&str, &[u8]); 2] = [
+        ("upgrade quecto", b"quecto-board 5\n"),
+        ("hand edit", b"quecto-board 1\n"),
+    ];
+    for (told, marker) in cases {
+        let repos = Repos::new();
+        let alice = store(&repos.alice);
+        let head = created(&alice);
+        let before = written(alice.write_tasks(&head, &[task("a")], "board: add a"));
+        let tip = marked_by_hand(&repos, &before, &[("board", marker)]);
+        let bob = store(&repos.bob);
+        assert!(bob.read().is_err(), "{told}");
+        let made = commits(&repos.bob);
+        let write = bob.write_tasks(&before, &[task("b")], "board: add b");
+        assert!(
+            matches!(&write, Err(BoardStoreError::Unavailable(why)) if why.contains(told)),
+            "{told}: {write:?}"
+        );
+        assert_eq!(commits(&repos.bob), made, "{told}: no commit");
+        assert_eq!(sh(&repos.remote(), &["rev-parse", BOARD_REF]), tip);
+    }
+}
+
+/// A fence's README is the one every write leaves, whatever the board
+/// held there (a link, say), so a fence's root is a write's.
+#[test]
+fn a_fence_writes_the_standard_readme() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    let head = created(&alice);
+    let before = written(alice.write_tasks(&head, &[task("a")], "board: add a"));
+    let link = blob_in(&repos.alice, b"elsewhere");
+    let root: String = sh(&repos.alice, &["ls-tree", &before.0])
+        .lines()
+        .map(|row| match row.ends_with("\tREADME.md") {
+            true => format!("120000 blob {link}\tREADME.md\n"),
+            false => format!("{row}\n"),
+        })
+        .collect();
+    let tree = sh_with(&repos.alice, &["mktree"], root.as_bytes());
+    let edited = sh(
+        &repos.alice,
+        &["commit-tree", &tree, "-p", &before.0, "-m", "edit"],
+    );
+    sh(
+        &repos.alice,
+        &["push", "-q", "origin", &format!("{edited}:{BOARD_REF}")],
+    );
+    let bob = store(&repos.bob);
+    assert_eq!(bob.read().unwrap().head.0, edited);
+    let Ok(Fence::Tree(fenced)) = bob.fence_tree(&edited, &moved()) else {
+        panic!("no fence tree")
+    };
+    let readme = blob_in(&repos.bob, README);
+    assert_eq!(
+        sh(&repos.bob, &["ls-tree", &fenced, "README.md"]),
+        format!("100644 blob {readme}\tREADME.md")
+    );
 }
 
 /// Fencing builds the fence's tree (the board's root, its format tree

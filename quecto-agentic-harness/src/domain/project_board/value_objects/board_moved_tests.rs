@@ -116,6 +116,53 @@ fn a_malformed_moved_file_is_refused() {
         let parsed = BoardMoved::parse(&bytes);
         assert!(parsed.is_err(), "{case}: {parsed:?}");
     }
+    // A host is DNS labels, a dotted IPv4 or a bracketed IPv6 address, and
+    // a port is 1 to 65535.
+    for bad in [
+        "http://:",
+        "http://[",
+        "http://...",
+        "http://-",
+        "http://a:b:c",
+        "http://a.example:99999",
+        "http://a.example:0",
+        "http://a.example:08",
+        "http://a.example:",
+        "http://-a.example",
+        "http://a-.example",
+        "http://a..example",
+        "http://a.example.",
+        "http://256.1.1.1",
+        "http://1.2.3",
+        "http://[::1",
+        "http://[::1]x",
+        "http://[nope]",
+        "http://[::1]:65536",
+        "http://[1:2:3:4:5:6:7:8:9]",
+        "http://[1::2::3]",
+        "http://[12345::1]",
+        "http://[:::]",
+        "http://01.2.3.4",
+        "http://1.2.3.4.5",
+        &format!("http://{}.example", "a".repeat(64)),
+    ] {
+        let refused = BoardMoved::new(id(), urls(&[bad]));
+        assert!(refused.is_err(), "{bad}: {refused:?}");
+    }
+    for good in [
+        "http://a",
+        "https://board-1.example.com:65535/q",
+        "http://100.64.0.2:1",
+        "http://[::1]:7443",
+        "https://[fd7a:115c:a1e0::1]",
+        "http://[::]",
+        "http://[1:2:3:4:5:6:7:8]",
+        "http://0.0.0.0",
+        &format!("http://{}.example", "a".repeat(63)),
+    ] {
+        let taken = BoardMoved::new(id(), urls(&[good]));
+        assert!(taken.is_ok(), "{good}: {taken:?}");
+    }
     assert!(BoardMoved::new(id(), vec![]).is_err());
     assert!(BoardMoved::new(id(), urls(&["ssh://a.example"])).is_err());
     // The bounds themselves are taken.

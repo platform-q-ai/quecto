@@ -413,25 +413,16 @@ impl GitBoardStore {
         }
     }
 
-    /// `base`, unless the board's `tip` past it is fenced (#2705 B13): a
-    /// write from a head before the fence is refused as a read of the
-    /// fence is, before any commit is made. Any other refusal of the tip's
-    /// read is left to the write's own read of `base` and its push.
+    /// `base`, when a write may go on from it: the board's `tip` past it,
+    /// if any, is judged by its format marker alone (#2705 B13). Only this
+    /// quecto's marker, or none, goes on; a fence (a write from a head
+    /// before it) and every other marker are refused as a read refuses
+    /// them, before any commit is made.
     fn unmoved(&self, base: String, tip: &str) -> Result<String, BoardStoreError> {
-        if base == tip {
-            return Ok(base);
+        if base != tip {
+            self.marker_fetching(tip)?;
         }
-        match self.board_at(tip) {
-            Err(error)
-                if matches!(
-                    error,
-                    BoardStoreError::Moved(_) | BoardStoreError::MovedMalformed(_)
-                ) =>
-            {
-                Err(error)
-            }
-            Ok(_) | Err(_) => Ok(base),
-        }
+        Ok(base)
     }
 
     /// Whether `commit` is a commit here and `tip` or one of its ancestors.
