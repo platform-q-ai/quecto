@@ -37,7 +37,7 @@ pub struct HistoryRevision {
     pub original: Option<HistoryObject>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum HistoryError {
+pub enum BoardHistoryError {
     #[error("history unavailable: {0}")]
     Unavailable(String),
     #[error("malformed history: {0}")]
@@ -51,6 +51,7 @@ pub enum HistoryError {
     #[error("history publication unknown: {0}")]
     PublicationUnknown(String),
 }
+pub use BoardHistoryError as HistoryError;
 pub type HistoryResult<T> = Result<T, HistoryError>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HistoryExportReport {

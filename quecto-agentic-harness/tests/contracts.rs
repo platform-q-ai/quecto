@@ -432,3 +432,13 @@ mod project_board_history_native;
 #[cfg(feature = "test-support")]
 #[path = "contracts/project_board_history_lineage.rs"]
 mod project_board_history_lineage;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/board_history_read.rs"]
+mod board_history_read;
+#[cfg(feature = "test-support")]
+#[path = "contracts/board_history_sink.rs"]
+mod board_history_sink;
+#[cfg(feature = "test-support")]
+#[path = "contracts/board_history_snapshot.rs"]
+mod board_history_snapshot;
