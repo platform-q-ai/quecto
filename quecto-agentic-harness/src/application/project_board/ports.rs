@@ -21,6 +21,9 @@ use crate::domain::project_board::value_objects::telemetry::{
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{Effort, TaskStatus};
 
+mod served;
+pub use served::{BoardFile, ServeError, ServedSnapshot, ServedStatus, ServerRole, SnapshotFiles};
+
 /// The board's head: the store's revision a write must start from (the
 /// git store's commit id).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

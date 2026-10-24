@@ -1,3 +1,4 @@
+pub mod board_server;
 pub mod controllers;
 /// Drive an in-process harness through the termination-signal path (#1938)
 /// without signalling the test process.

@@ -11,5 +11,6 @@ pub mod markdown;
 mod own_group;
 mod push_report;
 pub mod remote_revisions;
+pub mod snapshot_files;
 pub mod store;
 pub mod text_cells;
