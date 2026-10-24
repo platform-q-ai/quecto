@@ -127,9 +127,14 @@ fn a_file_mixing_a_description_with_sections_or_misshaping_one_is_refused() {
 }
 
 #[test]
-fn an_outcome_a_cell_holds_round_trips() {
-    let description = "## Goal\nShip.\n\n## Done when\n- [ ] A `code | pipe` and \\ backslash";
-    let task = Task::new(fields(description)).unwrap();
-    let file = encode::<TaskCodec>(&task).unwrap();
-    assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(task));
+fn awkward_sections_round_trip() {
+    for description in [
+        "## Goal\nShip.\n\n## Done when\n- [ ] A `code | pipe` and \\ backslash",
+        "## Goal\nLand it.\n#2652 goes first.\n\n## Done when\n- [ ] Done\n\n## Links\n- #2652",
+        "## Goal\nShip.\n#######\n\n## Why\n- a list\n- of reasons\n\n## Done when\n- [x] Done",
+    ] {
+        let task = Task::new(fields(description)).unwrap();
+        let file = encode::<TaskCodec>(&task).unwrap();
+        assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(task), "{file}");
+    }
 }

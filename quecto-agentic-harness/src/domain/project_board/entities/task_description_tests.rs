@@ -102,9 +102,32 @@ fn a_misshapen_line_is_refused_at_its_place() {
             "description",
         ),
         ("## Goal\nShip.\n## Done when\n- [ ] One", "goal"),
+        (
+            "## Goal\nShip.\n# Heading\n\n## Done when\n- [ ] One",
+            "goal",
+        ),
+        (
+            "## Goal\nShip.\n\n## Why\n   ###\n\n## Done when\n- [ ] One",
+            "why",
+        ),
+        ("## Goal\nShip.\n\n## Done when\n- [ ]  One", "done_when/0"),
     ];
     for (text, field) in cases {
         assert_eq!(refused_field(text), field, "{text}");
+    }
+}
+
+/// A line opening with a reference, or a `#` a reader never takes for a
+/// heading, is prose.
+#[test]
+fn a_line_opening_with_a_reference_is_prose() {
+    for goal in [
+        "Land it.\n#2652 goes first.",
+        "Ship.\n    # indented code",
+        "Ship.\n#######",
+    ] {
+        let text = format!("## Goal\n{goal}\n\n## Done when\n- [ ] Done");
+        assert!(Description::entered(&text).unwrap().is_some(), "{goal}");
     }
 }
 

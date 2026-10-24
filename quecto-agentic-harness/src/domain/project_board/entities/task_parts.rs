@@ -401,7 +401,7 @@ fn sectioned(text: &str) -> Result<Description, SchemaError> {
 /// Each line of `body` is written as `rule` says.
 fn shaped_lines(rule: &PartRule, body: &str) -> Result<(), SchemaError> {
     let misshapen = body.split('\n').position(|line| match rule.shape {
-        Shape::Paragraph => line.trim().is_empty() || line.starts_with('#'),
+        Shape::Paragraph => line.trim().is_empty() || heading(line),
         Shape::Checklist => item(line, &[OPEN, DONE]).is_none(),
         Shape::List => item(line, &[ITEM]).is_none(),
     });
@@ -413,6 +413,16 @@ fn shaped_lines(rule: &PartRule, body: &str) -> Result<(), SchemaError> {
             rule.misshapen,
         )),
     }
+}
+
+/// Whether `line` is a markdown heading: at most three spaces, one to six
+/// `#`, then a space, a tab or the line's end (`#2652` is a reference).
+fn heading(line: &str) -> bool {
+    let unindented = line.trim_start_matches(' ');
+    let marks = unindented.len() - unindented.trim_start_matches('#').len();
+    let indent = line.len() - unindented.len();
+    let after = unindented[marks..].chars().next();
+    indent <= 3 && (1..=6).contains(&marks) && after.is_none_or(|c| c == ' ' || c == '\t')
 }
 
 /// `line` after the first of `prefixes` it starts with (whether that was
