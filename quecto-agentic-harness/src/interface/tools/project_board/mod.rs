@@ -77,7 +77,7 @@ pub fn run_recorded_with(
     };
     let op = request::op_of(&value);
     call.named(op.as_deref());
-    let request = match request::parse(&value) {
+    let request = match request::parse(&value, request::entry_policy(call.front_end())) {
         Ok(request) => request,
         Err(error) => return call.refuse_request(op.as_deref(), &error),
     };

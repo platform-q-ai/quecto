@@ -164,6 +164,7 @@ fn create_against(
         status: NewBoardTaskStatus::Ready,
         parent: None,
         depends_on: vec![],
+        entry: quecto::domain::project_board::entities::task_parts::Entry::Sectioned,
     })
 }
 

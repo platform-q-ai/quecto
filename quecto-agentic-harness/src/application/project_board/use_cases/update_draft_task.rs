@@ -81,6 +81,7 @@ impl UpdateDraftTask {
             description: update.description.as_deref().map(board_text::text),
             parent: update.parent.clone(),
             depends_on: update.depends_on.clone(),
+            entry: update.entry,
         };
         let message = format!("board: edit draft {}", id.as_str());
         let noted = facts.as_deref_mut();

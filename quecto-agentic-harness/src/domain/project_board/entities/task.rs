@@ -8,7 +8,7 @@ use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{Resolution, TaskKind, TaskStatus};
 use super::claim::Claim;
 use super::plan::MAX_PLAN_VERSION;
-use super::task_parts::{Description, entered_title};
+use super::task_parts::Entry;
 
 /// GitHub's issue title limit.
 pub const MAX_TITLE_CHARS: usize = 256;
@@ -90,18 +90,18 @@ impl Task {
 
     /// A task built from text as it enters the board (the write path):
     /// its title and description must be normalised board text, so no
-    /// entry point skips normalising, and keep the entry rules (#2705
-    /// T2): a short title, and a description in its sections
-    /// ([`Description::entered`]) or none yet. Reading a task back (`new`)
-    /// takes what earlier builds stored, legacy text included.
+    /// entry point skips normalising, and keep the rules of `entry` (#2705
+    /// T2): sectioned, a short title and a description in its sections
+    /// or none yet; legacy, the schema's own limits. Reading a task back
+    /// (`new`) takes what earlier builds stored, legacy text included.
     ///
     /// # Errors
     /// What `new` refuses (first, so a field's own rule names it), or
     /// text that was never normalised or breaks an entry rule.
-    pub fn entered(fields: TaskFields) -> Result<Self, SchemaError> {
+    pub fn entered(fields: TaskFields, entry: Entry) -> Result<Self, SchemaError> {
         let task = Self::new(fields)?;
-        entered_title("title", &task.0.title)?;
-        Description::entered(&task.0.description)?;
+        entry.title("title", &task.0.title)?;
+        entry.description(&task.0.description)?;
         Ok(task)
     }
 

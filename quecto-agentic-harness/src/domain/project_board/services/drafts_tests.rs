@@ -14,6 +14,7 @@ fn a_draft_takes_a_new_title_description_and_references() {
         description: Some("## Goal\nWhy.\n\n## Done when\n- [ ] Done".into()),
         parent: Some(Some(slug("epic"))),
         depends_on: Some(vec![slug("schema")]),
+        entry: Default::default(),
     };
     let edited = edit_draft(&draft, &edit, &at("10:00:00")).unwrap();
     let mut expected = draft.fields().clone();
@@ -112,6 +113,7 @@ fn an_edit_whose_text_was_never_normalised_is_refused() {
                 description: None,
                 parent: None,
                 depends_on: None,
+                entry: Default::default(),
             },
         ),
         (
@@ -121,6 +123,7 @@ fn an_edit_whose_text_was_never_normalised_is_refused() {
                 description: Some("ends\n".into()),
                 parent: None,
                 depends_on: None,
+                entry: Default::default(),
             },
         ),
     ] {

@@ -358,6 +358,7 @@ fn the_git_store_takes_a_plan_proposed_then_patched() {
             status: NewBoardTaskStatus::Ready,
             parent: None,
             depends_on: vec![],
+            entry: quecto::domain::project_board::entities::task_parts::Entry::Sectioned,
         })
         .unwrap();
     let task_file = remote.object("tasks/board-store.md");
@@ -440,6 +441,7 @@ fn the_git_store_takes_an_acceptance_of_three_files_in_one_commit() {
             status: NewBoardTaskStatus::Ready,
             parent: None,
             depends_on: vec![],
+            entry: quecto::domain::project_board::entities::task_parts::Entry::Sectioned,
         })
         .unwrap();
     let propose = ProposePlan::new(Arc::clone(&store), clock.clone()).unwrap();

@@ -470,7 +470,7 @@ fn board_text_is_normalised_before_the_schema_reads_it() {
     );
 }
 
-/// #2705 T2: every create enters through the description's entry rules:
+/// #2705 T2: a sectioned create enters through the description's entry rules:
 /// free text is refused with the field it lacks, and a long title too.
 #[test]
 fn free_text_or_a_long_title_never_enters() {
@@ -481,7 +481,7 @@ fn free_text_or_a_long_title_never_enters() {
         ..new_task("a")
     });
     assert!(
-        matches!(&free, Err(ProjectBoardError::Invalid(error)) if error.field == "goal"),
+        matches!(&free, Err(ProjectBoardError::Invalid(error)) if error.field == "description"),
         "{free:?}"
     );
     let long = made(NewBoardTask {
@@ -493,6 +493,14 @@ fn free_text_or_a_long_title_never_enters() {
         "{long:?}"
     );
     assert_eq!(store.read().unwrap().tasks, vec![]);
+    // A legacy entry (the CLI's free text) takes both, as before T2.
+    let legacy = made(NewBoardTask {
+        title: "t".repeat(120),
+        description: "Why and how.".into(),
+        entry: crate::domain::project_board::entities::task_parts::Entry::Legacy,
+        ..new_task("a")
+    });
+    assert_eq!(legacy.unwrap().fields().description, "Why and how.");
 }
 
 /// An id the board's other artifacts already name (a plan, run, change or

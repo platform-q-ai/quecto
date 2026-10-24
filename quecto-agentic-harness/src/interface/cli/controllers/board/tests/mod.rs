@@ -654,5 +654,6 @@ fn summary_is_refused_beside_another_op_or_twice() {
     );
 }
 
+mod entry;
 mod location;
 mod moved;

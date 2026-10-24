@@ -1,6 +1,12 @@
 use super::*;
+use crate::domain::project_board::entities::task_parts::Entry;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// A request as the agent tool reads it.
+fn parse(value: &Value) -> Result<BoardRequest, RequestError> {
+    super::parse(value, EntryPolicy::Sectioned)
+}
 
 fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
@@ -208,6 +214,7 @@ fn update_draft_sets_only_what_it_names_and_null_takes_the_parent_away() {
             parent: Some(None),
             depends_on: None,
             expected_updated: Some(Timestamp::parse("2026-10-10T08:00:00Z").unwrap()),
+            entry: Entry::Sectioned,
         }
     );
     assert_eq!(
@@ -633,4 +640,27 @@ fn create_and_update_draft_take_the_descriptions_sections() {
         let not_line = json!({"op": op, "task": "a", "title": "T", "links": ["a", 1]});
         assert_eq!(refused(not_line).field, "links/1", "{op}");
     }
+}
+
+/// #2705 T2: each front end's policy resolves how a request's title and
+/// description enter: the tool's always sectioned, the CLI's sectioned
+/// only when the request gives the sections.
+#[test]
+fn a_front_ends_policy_resolves_each_requests_entry() {
+    use crate::domain::project_board::value_objects::telemetry::FrontEnd;
+    let entry =
+        |front_end: FrontEnd, value: Value| match super::parse(&value, entry_policy(front_end)) {
+            Ok(BoardRequest::Create(new)) => new.entry,
+            Ok(BoardRequest::UpdateDraft(update)) => update.entry,
+            other => panic!("{other:?}"),
+        };
+    let free = json!({"op": "create", "task": "a", "title": "T", "description": "Why."});
+    let sections = json!({"op": "create", "task": "a", "title": "T", "goal": "Ship."});
+    let retitle = json!({"op": "update_draft", "task": "a", "title": "T"});
+    for value in [&free, &sections, &retitle] {
+        assert_eq!(entry(FrontEnd::Tool, value.clone()), Entry::Sectioned);
+    }
+    assert_eq!(entry(FrontEnd::Cli, free), Entry::Legacy);
+    assert_eq!(entry(FrontEnd::Cli, retitle), Entry::Legacy);
+    assert_eq!(entry(FrontEnd::Cli, sections), Entry::Sectioned);
 }

@@ -84,6 +84,9 @@ pub const ENTRY_RULES: EntryRules = EntryRules {
 pub const MOVE_DETAILS: &str = "move details into the plan or a handoff";
 /// Why a title over [`EntryRules::max_title_chars`] is refused.
 const SHORT_TITLE: &str = "write the outcome, with no instructions";
+/// Why free text is refused where only sections enter: where to put it.
+pub const FREE_TEXT: &str = "is free text: give it as goal, why, done_when and links (move \
+     details into the plan or a handoff)";
 /// Why text that is not its sections is refused.
 const NOT_SECTIONED: &str = "must be its sections in order (## Goal, ## Why, ## Done when, \
      ## Links), one blank line between them";
@@ -351,9 +354,13 @@ fn sectioned(text: &str) -> Result<Description, SchemaError> {
             .strip_prefix(HEADING)
             .and_then(|name| rest.iter().position(|rule| rule.heading == name));
         let Some(offset) = found else {
-            return Err(match next {
-                0 => wanted(&PARTS[0]),
-                _ => SchemaError::new("description", NOT_SECTIONED),
+            // Text opening with no heading at all is free text: the
+            // sections are pointed to; one opening with another heading
+            // lacks its goal.
+            return Err(match (next, head.starts_with(HEADING)) {
+                (0, false) => SchemaError::new("description", FREE_TEXT),
+                (0, true) => wanted(&PARTS[0]),
+                (_, true | false) => SchemaError::new("description", NOT_SECTIONED),
             });
         };
         if let Some(skipped) = rest[..offset].iter().find(|rule| rule.required) {
@@ -470,6 +477,67 @@ pub fn entered_title(field: &str, title: &str) -> Result<(), SchemaError> {
             field,
             format!("is {chars} characters; the most is {max}: {SHORT_TITLE}"),
         )),
+    }
+}
+
+/// How one write's title and description enter the board (#2705 T2).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Entry {
+    /// Every entry rule: a description in its sections ([`Description::entered`])
+    /// or none yet, and a title within [`EntryRules::max_title_chars`].
+    #[default]
+    Sectioned,
+    /// As before T2, for a front end still writing free text: normalised
+    /// board text within the schema's own limits, read back as legacy
+    /// text that needs a goal.
+    Legacy,
+}
+
+impl Entry {
+    /// `title` as it enters under this entry.
+    ///
+    /// # Errors
+    /// A title never normalised, or one past the entry's cap.
+    pub fn title(self, field: &str, title: &str) -> Result<(), SchemaError> {
+        match self {
+            Self::Sectioned => entered_title(field, title),
+            Self::Legacy => board_text::entered_line(field, title),
+        }
+    }
+
+    /// `text`, a description, as it enters under this entry.
+    ///
+    /// # Errors
+    /// Text never normalised, or (sectioned) not its sections or past an
+    /// entry rule.
+    pub fn description(self, text: &str) -> Result<(), SchemaError> {
+        match self {
+            Self::Sectioned => Description::entered(text).map(|_| ()),
+            Self::Legacy => board_text::entered_text("description", text),
+        }
+    }
+}
+
+/// The entries a front end lets in (#2705 T2), an allowlist resolved per
+/// request by [`Self::entry`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryPolicy {
+    /// Sections only (the agent tool).
+    Sectioned,
+    /// Sections when a request gives them, else legacy text (the CLI, which
+    /// the Pocket relay writes free text through until its task page
+    /// sends sections).
+    SectionedOrLegacy,
+}
+
+impl EntryPolicy {
+    /// The entry of a request that gives the description's sections, or
+    /// not (`sections_given`).
+    pub fn entry(self, sections_given: bool) -> Entry {
+        match (self, sections_given) {
+            (Self::Sectioned, _) | (Self::SectionedOrLegacy, true) => Entry::Sectioned,
+            (Self::SectionedOrLegacy, false) => Entry::Legacy,
+        }
     }
 }
 

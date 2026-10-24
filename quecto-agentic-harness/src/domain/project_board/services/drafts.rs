@@ -3,7 +3,7 @@
 //! after it is ready), so anyone with access to the board edits it; a task
 //! past its draft changes only through its moves.
 use super::super::entities::task::Task;
-use super::super::entities::task_parts::{Description, entered_title};
+use super::super::entities::task_parts::Entry;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
@@ -18,6 +18,8 @@ pub struct DraftEdit {
     pub description: Option<String>,
     pub parent: Option<Option<Slug>>,
     pub depends_on: Option<Vec<Slug>>,
+    /// How its new title and description enter (#2705 T2).
+    pub entry: Entry,
 }
 
 /// The draft with `edit` applied, stamped `now`.
@@ -32,16 +34,20 @@ pub fn edit_draft(task: &Task, edit: &DraftEdit, now: &Timestamp) -> Result<Task
         status => return Err(BoardRuleError::NotDraft(status)),
     }
     // The edit's new text as it enters the board: normalised by whoever
-    // took it in and within the entry rules (#2705 T2), or refused. Text
-    // it leaves as the draft holds it enters nothing: a legacy title or
-    // description is kept, never forced to be rewritten.
+    // took it in and within the rules of its entry (#2705 T2), or
+    // refused. Text it leaves as the draft holds it enters nothing: a
+    // legacy title or description is kept, never forced to be rewritten.
     let fields = task.fields();
     if let Some(title) = edit.title.as_ref().filter(|title| **title != fields.title) {
-        entered_title("title", title).map_err(BoardRuleError::Invalid)?;
+        edit.entry
+            .title("title", title)
+            .map_err(BoardRuleError::Invalid)?;
     }
     let new_description = edit.description.as_ref();
     if let Some(description) = new_description.filter(|text| **text != fields.description) {
-        Description::entered(description).map_err(BoardRuleError::Invalid)?;
+        edit.entry
+            .description(description)
+            .map_err(BoardRuleError::Invalid)?;
     }
     let mut next = task.fields().clone();
     if let Some(title) = &edit.title {

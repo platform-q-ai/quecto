@@ -164,6 +164,7 @@ fn ready_board(store: &MemoryBoardStore) {
             status: NewBoardTaskStatus::Ready,
             parent: None,
             depends_on: vec![],
+            entry: quecto::domain::project_board::entities::task_parts::Entry::Sectioned,
         })
         .unwrap();
     let role = |name: &str, model: &str| Role {

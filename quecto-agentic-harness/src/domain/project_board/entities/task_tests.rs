@@ -277,7 +277,7 @@ fn a_task_entered_holds_only_normalised_text_and_one_read_back_more() {
         // A description enters in its sections (#2705 T2).
         fields.description = "## Goal\nStore tasks.\n\n## Done when\n- [ ] Stored".into();
         edit(&mut fields);
-        Task::entered(fields)
+        Task::entered(fields, Entry::Sectioned)
     };
     assert!(entered(|_| {}).is_ok());
     for (field, edit) in [

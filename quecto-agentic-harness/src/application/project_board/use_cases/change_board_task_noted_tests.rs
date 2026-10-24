@@ -190,6 +190,7 @@ mod a_task_gone_on_retry {
             parent: None,
             depends_on: None,
             expected_updated: None,
+            entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
         };
         let edit =
             UpdateDraftTask::new(Arc::new(store.client()), SetClock::at("10:20:00")).unwrap();

@@ -34,12 +34,16 @@ fn a_description_without_a_goal_is_refused_with_its_field() {
     for text in [
         "## Why\nBecause.\n\n## Done when\n- [ ] Shipped",
         "## Done when\n- [ ] Shipped",
-        LEGACY,
         "## Goal\n\n## Done when\n- [ ] Shipped",
     ] {
         assert_eq!(refused_field(text), "goal", "{text}");
     }
     assert_eq!(refused_field("## Goal\nShip it."), "done_when");
+    // Free text, opening with no heading, is pointed to the sections.
+    assert_eq!(
+        Description::entered(LEGACY),
+        Err(SchemaError::new("description", FREE_TEXT))
+    );
 }
 
 #[test]
@@ -229,14 +233,44 @@ fn draft(description: &str, title: &str) -> TaskFields {
 
 #[test]
 fn a_task_enters_only_with_a_sectioned_or_empty_description_and_a_short_title() {
-    assert!(Task::entered(draft(SECTIONED, "Land L12")).is_ok());
-    assert!(Task::entered(draft("", "Land L12")).is_ok());
-    let legacy = Task::entered(draft(LEGACY, "Land L12")).unwrap_err();
-    assert_eq!(legacy.field, "goal");
-    let long = Task::entered(draft(SECTIONED, &"t".repeat(71))).unwrap_err();
+    let sectioned = |fields: TaskFields| Task::entered(fields, Entry::Sectioned);
+    assert!(sectioned(draft(SECTIONED, "Land L12")).is_ok());
+    assert!(sectioned(draft("", "Land L12")).is_ok());
+    let legacy = sectioned(draft(LEGACY, "Land L12")).unwrap_err();
+    assert_eq!(legacy, SchemaError::new("description", FREE_TEXT));
+    let long = sectioned(draft(SECTIONED, &"t".repeat(71))).unwrap_err();
     assert_eq!(long.field, "title");
     // Reading back stays lenient: legacy text and a long title still read.
     assert!(Task::new(draft(LEGACY, &"t".repeat(200))).is_ok());
+}
+
+/// A legacy entry (a front end still writing free text) takes what the
+/// board took before T2: free text and a title to the schema's limit,
+/// normalised; it never checks the sections.
+#[test]
+fn a_legacy_entry_takes_free_text_and_a_long_title() {
+    let legacy = |fields: TaskFields| Task::entered(fields, Entry::Legacy);
+    assert!(legacy(draft(LEGACY, &"t".repeat(120))).is_ok());
+    assert!(legacy(draft(SECTIONED, "Land L12")).is_ok());
+    assert_eq!(
+        legacy(draft(&format!("{LEGACY}\n"), "Land L12"))
+            .unwrap_err()
+            .field,
+        "description"
+    );
+    assert_eq!(legacy(draft(LEGACY, " padded")).unwrap_err().field, "title");
+    let edit = DraftEdit {
+        title: Some("t".repeat(200)),
+        description: Some("Other free text.".into()),
+        entry: Entry::Legacy,
+        ..DraftEdit::default()
+    };
+    let draft = Task::new(draft(SECTIONED, "Land L12")).unwrap();
+    assert!(edit_draft(&draft, &edit, &at("10:00:00")).is_ok());
+    // Each front end's policy resolves the entry of its requests.
+    assert_eq!(EntryPolicy::Sectioned.entry(false), Entry::Sectioned);
+    assert_eq!(EntryPolicy::SectionedOrLegacy.entry(true), Entry::Sectioned);
+    assert_eq!(EntryPolicy::SectionedOrLegacy.entry(false), Entry::Legacy);
 }
 
 #[test]
@@ -266,8 +300,8 @@ fn editing_a_legacy_drafts_other_fields_never_rewrites_its_description() {
     assert_eq!(
         edit_draft(&legacy, &describe("Other free text."), &at("10:00:00")),
         Err(BoardRuleError::Invalid(SchemaError::new(
-            "goal",
-            PARTS[0].wanted
+            "description",
+            FREE_TEXT
         )))
     );
     let sectioned = edit_draft(&legacy, &describe(SECTIONED), &at("10:00:00")).unwrap();

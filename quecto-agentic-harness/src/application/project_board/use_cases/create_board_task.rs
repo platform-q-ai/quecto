@@ -79,8 +79,8 @@ impl CreateBoardTask {
         let noted = facts.as_deref_mut();
         let written = commit(store, clock, &message, noted, |board, when| {
             free(board, new)?;
-            let task =
-                Task::entered(created_at(new, &when.now)).map_err(ProjectBoardError::Invalid)?;
+            let task = Task::entered(created_at(new, &when.now), new.entry)
+                .map_err(ProjectBoardError::Invalid)?;
             Ok(vec![BoardArtifact::Task(task)])
         });
         let written = written.map(written_task);

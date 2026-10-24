@@ -376,6 +376,7 @@ mod noted {
             parent: None,
             depends_on: None,
             expected_updated: None,
+            entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
         });
         let (edited, facts) = noted(&ops, &edit);
         assert!(edited.is_ok(), "{edited:?}");
@@ -398,6 +399,7 @@ mod noted {
             parent: Some(None),
             depends_on: None,
             expected_updated: None,
+            entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
         });
         let (_, facts) = noted(&ops, &untitled);
         assert_eq!(facts.normalised, None, "no text given, none told");

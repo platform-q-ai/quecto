@@ -2,7 +2,13 @@
 //! allowlist, and a fault names its path, recorded as its schema field.
 use serde_json::{Value, json};
 
-use super::super::{RequestError, parse};
+use super::super::RequestError;
+use crate::domain::project_board::entities::task_parts::EntryPolicy;
+
+/// A request as the agent tool reads it.
+fn parse(value: &Value) -> Result<BoardRequest, RequestError> {
+    super::super::parse(value, EntryPolicy::Sectioned)
+}
 use crate::application::project_board::dto::{PlanEdit, PlanProposal};
 use crate::application::project_board::operations::BoardRequest;
 use crate::domain::project_board::entities::plan::PlanItem;

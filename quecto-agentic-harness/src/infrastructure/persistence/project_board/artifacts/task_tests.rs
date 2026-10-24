@@ -643,10 +643,13 @@ fn a_pasted_description_with_chat_spaces_at_line_edges_is_held() {
 fn a_description_with_chat_spaces_is_held_once_normalised() {
     // Free text no longer enters (#2705 T2): as a goal it does.
     let described = |description: &str| {
-        Task::entered(TaskFields {
-            description: format!("## Goal\n{description}\n\n## Done when\n- [ ] Held"),
-            ..example()
-        })
+        Task::entered(
+            TaskFields {
+                description: format!("## Goal\n{description}\n\n## Done when\n- [ ] Held"),
+                ..example()
+            },
+            crate::domain::project_board::entities::task_parts::Entry::Sectioned,
+        )
     };
     let probe = "Bonjour\u{202f}! On commence\u{a0}?";
     let normal = board_text::text(probe);

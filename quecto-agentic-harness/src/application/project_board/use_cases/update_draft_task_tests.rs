@@ -45,6 +45,7 @@ fn of(id: &str) -> DraftUpdate {
         parent: None,
         depends_on: None,
         expected_updated: None,
+        entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
     }
 }
 

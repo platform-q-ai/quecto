@@ -107,6 +107,7 @@ fn every_request() -> Vec<BoardRequest> {
             status: NewBoardTaskStatus::Draft,
             parent: None,
             depends_on: vec![],
+            entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
         }),
         BoardRequest::UpdateDraft(DraftUpdate {
             id: a.clone(),
@@ -115,6 +116,7 @@ fn every_request() -> Vec<BoardRequest> {
             parent: None,
             depends_on: None,
             expected_updated: None,
+            entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
         }),
         change(BoardOp::Move(TaskStatus::Ready)),
         change(BoardOp::Renew),
