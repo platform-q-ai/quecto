@@ -98,3 +98,32 @@ pub trait BoardHistorySink: Send + Sync {
     fn publish(&self, expected: Option<&str>, new_head: &str) -> HistoryResult<()>;
     fn finish_dry_run(&self) -> HistoryResult<()>;
 }
+
+/// Complete local linear source value; raw original bodies remain authoritative.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinearHistory {
+    pub algorithm: HistoryAlgorithm,
+    pub source_ref: String,
+    pub source_remote: String,
+    pub source_head: String,
+    pub revisions: Vec<HistoryRevision>,
+    pub objects: Vec<HistoryObject>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryImportReport {
+    pub revisions: u64,
+    pub head: BoardHead,
+    pub source_head: String,
+}
+pub trait BoardHistorySource: Send + Sync {
+    fn capture(&self) -> HistoryResult<LinearHistory>;
+}
+pub trait PreparedHistoryImport: BoardHistorySnapshot {
+    fn commit(self: Box<Self>) -> HistoryResult<HistoryImportReport>;
+}
+pub trait BoardHistoryStore: BoardHistoryRead {
+    fn prepare_import(
+        &self,
+        history: &LinearHistory,
+    ) -> HistoryResult<Box<dyn PreparedHistoryImport>>;
+}

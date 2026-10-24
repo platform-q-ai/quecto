@@ -298,3 +298,18 @@ impl BoardHistorySink for GitBoardHistorySink {
         Ok(())
     }
 }
+
+// RED-only callable seam; no Git capture or successful acceptance behavior.
+pub struct GitBoardHistorySource;
+impl GitBoardHistorySource {
+    pub fn new(_: PathBuf, _: String) -> Self {
+        Self
+    }
+}
+impl BoardHistorySource for GitBoardHistorySource {
+    fn capture(&self) -> HistoryResult<LinearHistory> {
+        Err(HistoryError::Unavailable(
+            "B source capture not implemented".into(),
+        ))
+    }
+}

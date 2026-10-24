@@ -88,3 +88,29 @@ pub fn build_history_cli(
         expected,
     })
 }
+
+/// Additive RED-only graph, leaving the working export graph unchanged.
+pub struct BoardHistoryImportHandles {
+    pub source: Arc<dyn BoardHistorySource>,
+    pub store: Arc<dyn BoardHistoryStore>,
+    pub sink: Arc<dyn BoardHistorySink>,
+    pub import: crate::application::project_board::use_cases::ImportBoardHistory,
+    pub export: ExportBoardHistory,
+}
+pub fn build_board_history_import_from_ports(
+    source: Arc<dyn BoardHistorySource>,
+    store: Arc<dyn BoardHistoryStore>,
+    sink: Arc<dyn BoardHistorySink>,
+) -> BoardHistoryImportHandles {
+    BoardHistoryImportHandles {
+        import: crate::application::project_board::use_cases::ImportBoardHistory::new(
+            source.clone(),
+            store.clone(),
+            sink.clone(),
+        ),
+        export: ExportBoardHistory::new(store.clone(), sink.clone()),
+        source,
+        store,
+        sink,
+    }
+}

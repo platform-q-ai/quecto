@@ -319,3 +319,12 @@ pub(super) fn classify(c: &Connection, head: &BoardHead) -> Result<BoardWrite, B
     }
     Err(invalid("impossible epoch/revision"))
 }
+
+// RED-only callable seam. GREEN must replace this shell with owned preparation.
+impl BoardHistoryStore for SqliteBoardHistoryStore {
+    fn prepare_import(&self, _: &LinearHistory) -> HistoryResult<Box<dyn PreparedHistoryImport>> {
+        Err(HistoryError::Unavailable(
+            "B prepared import not implemented".into(),
+        ))
+    }
+}
