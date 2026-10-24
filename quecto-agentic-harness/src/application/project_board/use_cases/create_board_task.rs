@@ -162,3 +162,7 @@ fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardErr
 #[cfg(test)]
 #[path = "create_board_task_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "create_board_task_entry_tests.rs"]
+mod entry_tests;

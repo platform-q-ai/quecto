@@ -370,9 +370,6 @@ struct Read {
 }
 
 impl Read {
-    /// The task's description: its Description as written, or the text
-    /// its own sections make (one of the two, never both), which must be
-    /// a description in its sections.
     /// The task's description and its form, by the file's `schema`: at
     /// schema 1 its Description as written (legacy); at schema 2 the text
     /// its own sections make, which must be a description in its sections.

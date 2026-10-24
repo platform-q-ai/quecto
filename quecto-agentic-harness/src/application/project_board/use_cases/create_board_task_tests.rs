@@ -16,7 +16,7 @@ use crate::infrastructure::test_support::board_artifacts;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use std::sync::Arc;
 
-fn create(store: &MemoryBoardStore, clock: Arc<SetClock>) -> CreateBoardTask {
+pub(super) fn create(store: &MemoryBoardStore, clock: Arc<SetClock>) -> CreateBoardTask {
     CreateBoardTask::new(
         Arc::new(store.client()),
         clock,
@@ -478,78 +478,6 @@ fn board_text_is_normalised_before_the_schema_reads_it() {
         created.fields().description,
         "## Goal\nWhy.\nHow so.\n\n## Done when\n- [ ] Done"
     );
-}
-
-/// #2705 T2: a sectioned create enters through the description's entry rules:
-/// free text is refused with the field it lacks, and a long title too.
-#[test]
-fn free_text_or_a_long_title_never_enters() {
-    let store = board();
-    let made = |new: NewBoardTask| create(&store, SetClock::at("10:00:00")).execute(&new);
-    let free = made(NewBoardTask {
-        description: "Why and how.".into(),
-        ..new_task("a")
-    });
-    assert!(
-        matches!(&free, Err(ProjectBoardError::Invalid(error)) if error.field == "description"),
-        "{free:?}"
-    );
-    let long = made(NewBoardTask {
-        title: "t".repeat(71),
-        ..new_task("a")
-    });
-    assert!(
-        matches!(&long, Err(ProjectBoardError::Invalid(error)) if error.field == "title"),
-        "{long:?}"
-    );
-    assert_eq!(store.read().unwrap().tasks, vec![]);
-    // A legacy entry (the CLI's free text) takes both, as before T2.
-    let legacy = made(NewBoardTask {
-        title: "t".repeat(120),
-        description: "Why and how.".into(),
-        entry: crate::domain::project_board::entities::task_parts::Entry::Legacy,
-        ..new_task("a")
-    });
-    assert_eq!(legacy.unwrap().fields().description, "Why and how.");
-}
-
-/// Review round 1: an outcome or link a board file cannot hold is refused
-/// as it enters, on its own field, never at write.
-#[test]
-fn an_outcome_or_link_the_file_cannot_hold_is_refused_on_entry() {
-    let store = board();
-    let made = |description: &str| {
-        create(&store, SetClock::at("10:00:00")).execute(&NewBoardTask {
-            description: description.into(),
-            ..new_task("a")
-        })
-    };
-    for (description, field) in [
-        (
-            "## Goal\nShip.\n\n## Done when\n- [ ] Done\n- [ ] see <b>x</b>",
-            "done_when/1",
-        ),
-        (
-            "## Goal\nShip.\n\n## Done when\n- [ ] see https://x.io",
-            "done_when/0",
-        ),
-        (
-            "## Goal\nShip.\n\n## Done when\n- [ ] Done\n\n## Links\n- [www.x.io](https://x.io)",
-            "links/0",
-        ),
-    ] {
-        let refused = made(description);
-        assert!(
-            matches!(&refused, Err(ProjectBoardError::Invalid(error)) if error.field == field),
-            "{description}: {refused:?}"
-        );
-    }
-    assert_eq!(store.read().unwrap().tasks, vec![]);
-    let held = made(
-        "## Goal\nShip.\n\n## Done when\n- [ ] `cargo test` passes\n\n## Links\n- \
-                     [PR 1](https://github.com/o/r/pull/1)",
-    );
-    assert!(held.is_ok(), "{held:?}");
 }
 
 /// An id the board's other artifacts already name (a plan, run, change or

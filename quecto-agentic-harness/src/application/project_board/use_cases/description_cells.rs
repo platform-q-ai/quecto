@@ -1,4 +1,4 @@
-//! A sectioned description's outcomes and links as a board file holds
+//! A sectioned description's goal, why, outcomes and links as a board file holds
 //! them (#2705 T2): checked as they enter, through the file format's own
 //! port ([`BoardTextCells`]), so one the codec would refuse is refused on
 //! its own field (`done_when/{i}`, `links/{i}`) instead of failing the
@@ -28,7 +28,16 @@ pub(super) fn held(
     let Some(sectioned) = sectioned else {
         return Ok(());
     };
-    let [_, _, done_when, links] = &PARTS;
+    let [goal, why, done_when, links] = &PARTS;
+    let prose = [
+        (goal.field, Some(sectioned.goal())),
+        (why.field, sectioned.why()),
+    ];
+    for (field, text) in prose {
+        if text.is_some_and(|text| !cells.holds_prose(text)) {
+            return Err(SchemaError::new(field, NOT_HELD));
+        }
+    }
     let outcomes = sectioned.done_when().iter().map(|outcome| &outcome.text);
     let lines = [
         (done_when.field, outcomes.collect::<Vec<_>>()),

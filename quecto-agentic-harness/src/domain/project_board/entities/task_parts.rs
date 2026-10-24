@@ -72,7 +72,8 @@ pub struct EntryRules {
     /// Characters (Unicode scalar values) of a title.
     pub max_title_chars: usize,
     /// Words ending in `.` that end no sentence (matched ignoring case);
-    /// a single capital and `.` (an initial) ends none either.
+    /// a single capital and `.` (an initial), or a word with a `.` inside
+    /// (`U.S.`, `p.m.`), ends none either.
     pub abbreviations: &'static [&'static str],
 }
 
@@ -82,7 +83,8 @@ pub const ENTRY_RULES: EntryRules = EntryRules {
     done_when: 1..=8,
     max_title_chars: 70,
     abbreviations: &[
-        "mr.", "mrs.", "ms.", "dr.", "st.", "e.g.", "i.e.", "etc.", "vs.", "cf.",
+        "mr.", "mrs.", "ms.", "dr.", "st.", "jr.", "e.g.", "i.e.", "etc.", "vs.", "cf.", "inc.",
+        "ltd.", "co.",
     ],
 };
 
@@ -190,6 +192,27 @@ fn linked(shape: Shape, item: String) -> String {
     }
 }
 
+/// A bare https address in prose: at a line's start or after a space (so
+/// never inside a link's `](…)` or a code span's backticks).
+static PROSE_ADDRESS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r"(^|\s)({ADDRESS})")).expect("prose address"));
+
+/// `text`, a paragraph, with each bare https address written as a link
+/// ([`linked`]), its trailing punctuation kept outside it.
+fn linked_prose(text: &str) -> String {
+    let linked_address = |found: &regex::Captures<'_>| {
+        let address = &found[2];
+        let kept = address.trim_end_matches(['.', ',', ';', ':', '!', '?', '\'']);
+        let after = &address[kept.len()..];
+        format!(
+            "{}{}{after}",
+            &found[1],
+            linked(Shape::List, kept.to_string())
+        )
+    };
+    PROSE_ADDRESS.replace_all(text, linked_address).into_owned()
+}
+
 /// One outcome of the done-when checklist.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
@@ -252,6 +275,8 @@ impl Description {
         let [goal_rule, why_rule, done_rule, links_rule] = &PARTS;
         let paragraph = |rule: &PartRule, text: Option<&str>| {
             let text = text.map(board_text::text).filter(|text| !text.is_empty());
+            // A bare https address in prose is written as a link, as Links are.
+            let text = text.map(|text| linked_prose(&text));
             text.map(|text| shaped_lines(rule, &text).map(|()| text))
                 .transpose()
         };
@@ -281,9 +306,18 @@ impl Description {
             listed(done_rule, OPEN, done_when)?,
             listed(links_rule, ITEM, links)?,
         ];
-        Ok(Self::assemble(PARTS.iter().zip(&bodies).filter_map(
-            |(rule, body)| body.as_deref().map(|body| (rule.heading, body)),
-        )))
+        let text = Self::assemble(
+            PARTS
+                .iter()
+                .zip(&bodies)
+                .filter_map(|(rule, body)| body.as_deref().map(|body| (rule.heading, body))),
+        );
+        // Sections given empty never clear a description (only an explicit
+        // empty `description` does): the goal is wanted.
+        match text.is_empty() {
+            true => Err(SchemaError::new(goal_rule.field, goal_rule.wanted)),
+            false => Ok(text),
+        }
     }
 
     /// The text `sections` make, each a heading and its body, in order.
@@ -502,8 +536,9 @@ fn item(line: &str, prefixes: &[&str]) -> Option<(bool, String)> {
 /// The sentences of `goal`: one, and one more after each word that ends
 /// with `.`, `!` or `?` (past closing quotes and brackets) and comes
 /// before a word starting with a capital (so "e.g. the" is one sentence).
-/// An abbreviation of [`EntryRules::abbreviations`] or an initial (`X.`)
-/// ends none, so the count may fall short, never over.
+/// An abbreviation of [`EntryRules::abbreviations`], an initial (`X.`) or a
+/// word with a `.` inside (`U.S.`) ends none, so the count may fall short;
+/// it over-counts only at an abbreviation the table does not list.
 fn sentences(goal: &str) -> usize {
     let words: Vec<&str> = goal.split_whitespace().collect();
     let ends = |word: &str| {
@@ -515,7 +550,10 @@ fn sentences(goal: &str) -> usize {
             (chars.next(), chars.next(), chars.next()),
             (Some(letter), Some('.'), None) if letter.is_uppercase()
         );
-        word.ends_with(['.', '!', '?']) && !abbreviated && !initial
+        let dotted = word
+            .get(..word.len().saturating_sub(1))
+            .is_some_and(|head| head.contains('.'));
+        word.ends_with(['.', '!', '?']) && !abbreviated && !initial && !dotted
     };
     let starts = |word: &str| word.chars().next().is_some_and(char::is_uppercase);
     let boundaries = words
@@ -582,11 +620,6 @@ impl Entry {
         }
     }
 
-    /// `text`, a description, as it enters under this entry.
-    ///
-    /// # Errors
-    /// Text never normalised, or (sectioned) not its sections or past an
-    /// entry rule.
     /// The form a description `text` entered this way is kept in:
     /// sectioned only when it entered as sections and holds some.
     pub fn form(self, text: &str) -> DescriptionForm {
@@ -596,6 +629,11 @@ impl Entry {
         }
     }
 
+    /// `text`, a description, as it enters under this entry.
+    ///
+    /// # Errors
+    /// Text never normalised, or (sectioned) not its sections or past an
+    /// entry rule.
     pub fn description(self, text: &str) -> Result<(), SchemaError> {
         match self {
             Self::Sectioned => Description::entered(text).map(|_| ()),

@@ -91,3 +91,32 @@ fn a_tool_create_with_free_text_is_pointed_to_the_sections() {
     assert_eq!(code, 0, "{answer}");
     assert_eq!(answer["task"]["needs_goal"], json!(true), "{answer}");
 }
+
+/// Review round 2: sections given only empty never clear a description,
+/// from either front end: the goal is wanted.
+#[test]
+fn empty_sections_alone_are_refused_on_goal_from_both_front_ends() {
+    for sections in [
+        json!({"links": []}),
+        json!({"goal": ""}),
+        json!({"done_when": []}),
+    ] {
+        let mut request = json!({"op": "update_draft", "task": "a"});
+        let mut input = json!({"task": "a"});
+        for (key, value) in sections.as_object().unwrap() {
+            request[key] = value.clone();
+            input[key] = value.clone();
+        }
+        let (code, answer, _) = cli(
+            Some(memory_board),
+            &["update_draft", "--input", &input.to_string()],
+        );
+        assert_eq!(code, 1, "{answer}");
+        assert_eq!(answer["error"]["field"], json!("goal"), "{answer}");
+        let request = crate::interface::tools::project_board::request::parse(
+            &request,
+            crate::domain::project_board::entities::task_parts::EntryPolicy::Sectioned,
+        );
+        assert_eq!(request.unwrap_err().field, "goal");
+    }
+}

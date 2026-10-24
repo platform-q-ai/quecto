@@ -201,8 +201,8 @@ edit:
 
 | Rule | On entry |
 |---|---|
-| Goal | Required: 1 to 3 sentences, one paragraph, no heading or blank line. Sentences are counted at a word ending in `.`, `!` or `?` before a capital, but never at an abbreviation (`Mr.`, `Mrs.`, `Ms.`, `Dr.`, `St.`, `e.g.`, `i.e.`, `etc.`, `vs.`, `cf.`) or an initial (`X.`) |
-| Why | Optional: one short paragraph, no heading |
+| Goal | Required: 1 to 3 sentences, one paragraph, no heading or blank line. Sentences are counted at a word ending in `.`, `!` or `?` before a capital, but never at an abbreviation (`Mr.`, `Mrs.`, `Ms.`, `Dr.`, `St.`, `Jr.`, `e.g.`, `i.e.`, `etc.`, `vs.`, `cf.`, `Inc.`, `Ltd.`, `Co.`), an initial (`X.`) or a word with a `.` inside (`U.S.`, `p.m.`): the count may fall short, and over-counts only at an abbreviation the table does not list. Its text must be prose a board file holds (no raw HTML, comments, character references, images, `http://` links or indented lines); given as a field, a bare `https://` address is written `[address](https://…)` |
+| Why | Optional: one short paragraph, no heading, prose a board file holds (as the goal's) |
 | Done when | Required: 1 to 8 outcomes, each `- [ ] ` (or `- [x] `) and the outcome on one line, text a board file's table cell holds (plain words, `code`, `[text](https://…)` links) |
 | Links | Optional: each `- [text](https://…)`, shown as chips. Given as a field, a bare `https://` address is written `[address](https://…)` |
 | Description | At most 1,200 characters, headings included: a longer one is refused with "move details into the plan or a handoff" |
@@ -221,7 +221,9 @@ listing's `summary` carries the goal on one line as its `subtitle`.
 Each field given as a section is checked on its own field before it is
 composed: a goal or why with a blank line or a heading, and an outcome or
 link that is empty or more than one line, are refused on `goal`, `why`,
-`done_when/{i}` or `links/{i}`.
+`done_when/{i}` or `links/{i}`. Sections given only empty (`links: []`, `goal: ""`)
+never clear a description: they are refused on `goal`. Only an explicit
+`description: ""` clears one.
 
 A task keeps the form its description entered in, and the form, never the
 text's shape, picks its file's layout. A description entered as sections is
@@ -234,11 +236,21 @@ every write until its description is given anew as sections. A file holding
 both layouts, sections at schema 1, or sections that make no description, is
 refused.
 
-**Deploy order.** A quecto from before T2 reads only schema 1: it sets a
-schema-2 task aside with "schema 2, written by a newer quecto; ... upgrade
-quecto to read it", never misreading it. Upgrade every reader first (every
-host that runs quecto, the Pocket relay's host included), then let agents
-write sectioned tasks.
+**Deploy order (strict).** Upgrade every reader first: every host that runs
+quecto, the Pocket relay's host included. Only then let agents write sectioned
+tasks. A quecto from before T2 reads only schema 1 and never misreads a
+schema-2 task; it sets it aside:
+
+- its `list` leaves the task out of `tasks` and names its file under
+  `quarantined`, with the reason "schema 2, written by a newer quecto; this
+  quecto reads schema 1: upgrade quecto to read it";
+- its `show` of the task refuses it as set aside: "task <id> is set aside as
+  unreadable; mend its file, or discard it with clear_set_aside(path ...,
+  object ...)".
+
+That advice is wrong for a schema-2 task: the file is sound, only the reader
+is old. **Never `clear_set_aside` a schema-2 task from an old build** (it
+deletes a newer task); upgrade quecto there instead.
 
 ### Entry policies by front end
 

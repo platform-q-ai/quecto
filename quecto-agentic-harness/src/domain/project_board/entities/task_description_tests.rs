@@ -219,6 +219,29 @@ fn composed_sections_are_normalised_and_enter() {
         Description::compose(Some("Ship."), Some(" "), Some(&[]), None),
         Ok("## Goal\nShip.".into())
     );
+    // Review round 2: sections given only empty never clear a description.
+    let empty: &[String] = &[];
+    for (goal, done_when, links) in [
+        (None, None, Some(empty)),
+        (Some(""), None, None),
+        (None, Some(empty), None),
+        (Some(" "), Some(empty), Some(empty)),
+    ] {
+        assert_eq!(
+            Description::compose(goal, None, done_when, links),
+            Err(SchemaError::new("goal", PARTS[0].wanted))
+        );
+    }
+    // A bare https address in a goal is written as a link, its trailing
+    // punctuation outside; one in a link or code is left alone.
+    let goal = "See https://www.x.io/a. Or [y](https://y.io) and `https://z.io`.";
+    let done = ["Done".to_string()];
+    let text = Description::compose(Some(goal), None, Some(&done), None).unwrap();
+    assert_eq!(
+        text,
+        "## Goal\nSee [x.io/a](https://www.x.io/a). Or [y](https://y.io) and \
+         `https://z.io`.\n\n## Done when\n- [ ] Done"
+    );
 }
 
 /// #2705 T2 review round 1: each section is checked on its own field
@@ -263,6 +286,9 @@ fn abbreviations_and_initials_end_no_sentence() {
         "Fix Dr. Who. Fix Mr. X. Done.",
         "Use e.g. The parser, i.e. The codec, etc. Then stop.",
         "Cf. St. James vs. Ms. Lee and Mrs. Doe. Ship.",
+        "Fix the U.S. Bank export. Ship it. Tell ops.",
+        "Run it at 5 p.m. Monday. Then stop.",
+        "Pay Acme Inc. Payroll and Bob Jr. Smith. Done.",
     ] {
         let text = format!("## Goal\n{goal}\n\n## Done when\n- [ ] Done");
         assert!(Description::entered(&text).unwrap().is_some(), "{goal}");
