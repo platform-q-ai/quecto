@@ -23,6 +23,7 @@ impl BoardOperations for Factless {
 /// #2705 B6 review: a noted request that gives back no facts is flagged,
 /// never filled in as a request that saw nothing.
 #[test]
+#[cfg(debug_assertions)]
 #[should_panic(expected = "a noted board request gave back no facts")]
 fn a_recorded_call_flags_an_adapter_that_gives_back_no_facts() {
     let records = Arc::new(Records::default());

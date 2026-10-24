@@ -135,7 +135,9 @@ pub fn check_summaries(fixture: Fixture) {
             assert_eq!(rows.len(), 1, "one summary per listed task");
             assert!(matches!(rows[0], RowSummary::Summary(_)), "{rows:?}");
         }
-        RowSummaries::Skipped(_) => {}
+        RowSummaries::Skipped(why) => {
+            panic!("a quiet one-writer board is summarised, not skipped: {why:?}")
+        }
         RowSummaries::Omitted => panic!("summaries were asked for"),
     }
     let show = request(json!({"op": "show", "task": "a"}));

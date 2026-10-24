@@ -102,15 +102,11 @@ pub fn summaries_refusal(request: &BoardRequest, summaries: ListSummaries) -> Op
         (ListSummaries::Omitted, _) | (ListSummaries::Wanted, true) => None,
         (ListSummaries::Wanted, false) => Some(RequestError::of(
             "summary",
-            SUMMARY_LISTINGS_ONLY,
+            crate::application::project_board::dto::SUMMARIES_LISTINGS_ONLY,
             FaultKind::InvalidValue,
         )),
     }
 }
-
-/// Why a summary is refused of a request that lists nothing.
-pub const SUMMARY_LISTINGS_ONLY: &str =
-    crate::application::project_board::dto::SUMMARIES_LISTINGS_ONLY;
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]
