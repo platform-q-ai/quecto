@@ -309,6 +309,7 @@ fn samples(kind: Kind) -> (Value, Value, Value) {
         Kind::Slug => (json!("a"), json!("b"), json!(7)),
         Kind::OptionalSlug => (json!("a"), Value::Null, json!(7)),
         Kind::Slugs => (json!(["a"]), json!(["b"]), json!("a")),
+        Kind::Lines => (json!(["a"]), json!(["b"]), json!("a")),
         Kind::Text => (json!("x"), json!("y"), json!(7)),
         Kind::Timestamp => (
             json!("2026-10-10T08:00:00Z"),
@@ -358,12 +359,12 @@ fn every_field_in_the_table_is_read_by_its_kind() {
             }
             // An edit must set something besides the field under test.
             if *op == "update_draft" {
-                let other = if except == "description" {
-                    "title"
-                } else {
-                    "description"
+                // Not a description field: it is given one way only.
+                let (other, value) = match except {
+                    "title" => ("parent", json!("d")),
+                    _ => ("title", json!("D")),
                 };
-                object.insert(other.into(), json!("D"));
+                object.insert(other.into(), value);
             }
             if *op == "edit_plan" {
                 let (other, value) = match except {
@@ -399,7 +400,7 @@ fn sample(kind: Kind) -> Value {
     match kind {
         Kind::Slug => json!("a"),
         Kind::OptionalSlug => Value::Null,
-        Kind::Slugs => json!([]),
+        Kind::Slugs | Kind::Lines => json!([]),
         Kind::Text => json!("t"),
         Kind::Timestamp => json!("2026-10-10T08:00:00Z"),
         Kind::Status => json!("review"),

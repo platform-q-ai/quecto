@@ -274,6 +274,8 @@ fn an_email_holds_only_what_a_board_file_shows() {
 fn a_task_entered_holds_only_normalised_text_and_one_read_back_more() {
     let entered = |edit: fn(&mut TaskFields)| {
         let mut fields = fields();
+        // A description enters in its sections (#2705 T2).
+        fields.description = "## Goal\nStore tasks.\n\n## Done when\n- [ ] Stored".into();
         edit(&mut fields);
         Task::entered(fields)
     };

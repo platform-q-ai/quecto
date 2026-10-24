@@ -113,6 +113,8 @@ pub enum Kind {
     Slugs,
     /// Text.
     Text,
+    /// A list of lines: a description's done-when outcomes or links.
+    Lines,
     /// A time as the board spells it (RFC 3339, UTC, to the second).
     Timestamp,
     /// A task status.
@@ -205,6 +207,10 @@ pub const OPS: &[(&str, &[Field])] = &[
             required("title", Kind::Text),
             optional("kind", Kind::TaskKind),
             optional("description", Kind::Text),
+            optional("goal", Kind::Text),
+            optional("why", Kind::Text),
+            optional("done_when", Kind::Lines),
+            optional("links", Kind::Lines),
             optional("status", Kind::NewStatus),
             optional("parent", Kind::Slug),
             optional("depends_on", Kind::Slugs),
@@ -216,6 +222,10 @@ pub const OPS: &[(&str, &[Field])] = &[
             TASK,
             optional("title", Kind::Text),
             optional("description", Kind::Text),
+            optional("goal", Kind::Text),
+            optional("why", Kind::Text),
+            optional("done_when", Kind::Lines),
+            optional("links", Kind::Lines),
             optional("parent", Kind::OptionalSlug),
             optional("depends_on", Kind::Slugs),
             optional("expected_updated", Kind::Timestamp),
@@ -664,7 +674,7 @@ fn create(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         kind: read
             .word("kind", TaskKind::parse, &kinds)?
             .unwrap_or(TaskKind::Task),
-        description: read.text("description")?.unwrap_or_default(),
+        description: description::description(read)?.unwrap_or_default(),
         status: status.unwrap_or(NewBoardTaskStatus::Draft),
         parent: read.slug("parent")?,
         depends_on: read.slugs("depends_on")?.unwrap_or_default(),
@@ -681,7 +691,7 @@ fn update_draft(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     let update = DraftUpdate {
         id: read.task()?,
         title: read.text("title")?,
-        description: read.text("description")?,
+        description: description::description(read)?,
         parent,
         depends_on: read.slugs("depends_on")?,
         expected_updated,
@@ -703,6 +713,9 @@ fn update_draft(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
 
 #[path = "request_plans.rs"]
 mod plans;
+
+#[path = "request_description.rs"]
+mod description;
 
 #[cfg(test)]
 #[path = "request_tests.rs"]

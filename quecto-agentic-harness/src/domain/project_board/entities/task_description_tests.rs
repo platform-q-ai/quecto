@@ -73,8 +73,8 @@ fn nine_outcomes_are_refused_and_eight_enter() {
 #[test]
 fn a_goal_of_four_sentences_is_refused_and_three_enter() {
     let goal = |goal: &str| format!("## Goal\n{goal}\n\n## Done when\n- [ ] Done");
-    let three = goal("Move it. See #2652, e.g. the presenters. Then merge. ");
-    assert!(Description::entered(three.trim_end()).unwrap().is_some());
+    let three = goal("Move it. See #2652, e.g. the presenters. Then merge.");
+    assert!(Description::entered(&three).unwrap().is_some());
     assert_eq!(
         refused_field(&goal("One. Two. Three. Four.")),
         "goal",
@@ -229,8 +229,19 @@ fn editing_a_legacy_drafts_other_fields_never_rewrites_its_description() {
         description: Some(text.into()),
         ..DraftEdit::default()
     };
+    // Sent again as it is held, legacy text enters nothing: a resend of
+    // the draft's own title and description changes nothing.
+    let resent = DraftEdit {
+        title: Some(legacy.fields().title.clone()),
+        description: Some(LEGACY.into()),
+        ..DraftEdit::default()
+    };
     assert_eq!(
-        edit_draft(&legacy, &describe(LEGACY), &at("10:00:00")),
+        edit_draft(&legacy, &resent, &at("10:00:00")),
+        Err(BoardRuleError::NoEdit)
+    );
+    assert_eq!(
+        edit_draft(&legacy, &describe("Other free text."), &at("10:00:00")),
         Err(BoardRuleError::Invalid(SchemaError::new(
             "goal",
             PARTS[0].wanted

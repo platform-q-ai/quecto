@@ -3,12 +3,12 @@
 //! after it is ready), so anyone with access to the board edits it; a task
 //! past its draft changes only through its moves.
 use super::super::entities::task::Task;
+use super::super::entities::task_parts::{Description, entered_title};
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::TaskStatus;
 use super::claims::{settle, stamp};
-use crate::domain::project_board::value_objects::board_text;
 
 /// What an edit sets; `None` keeps the field as it is. `parent:
 /// Some(None)` takes the parent away.
@@ -31,13 +31,17 @@ pub fn edit_draft(task: &Task, edit: &DraftEdit, now: &Timestamp) -> Result<Task
         TaskStatus::Draft => {}
         status => return Err(BoardRuleError::NotDraft(status)),
     }
-    // The edit's text as it enters the board: normalised by whoever took
-    // it in, or refused.
-    if let Some(title) = &edit.title {
-        board_text::entered_line("title", title).map_err(BoardRuleError::Invalid)?;
+    // The edit's new text as it enters the board: normalised by whoever
+    // took it in and within the entry rules (#2705 T2), or refused. Text
+    // it leaves as the draft holds it enters nothing: a legacy title or
+    // description is kept, never forced to be rewritten.
+    let fields = task.fields();
+    if let Some(title) = edit.title.as_ref().filter(|title| **title != fields.title) {
+        entered_title("title", title).map_err(BoardRuleError::Invalid)?;
     }
-    if let Some(description) = &edit.description {
-        board_text::entered_text("description", description).map_err(BoardRuleError::Invalid)?;
+    let new_description = edit.description.as_ref();
+    if let Some(description) = new_description.filter(|text| **text != fields.description) {
+        Description::entered(description).map_err(BoardRuleError::Invalid)?;
     }
     let mut next = task.fields().clone();
     if let Some(title) = &edit.title {

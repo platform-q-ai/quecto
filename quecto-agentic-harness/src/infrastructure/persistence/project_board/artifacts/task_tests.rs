@@ -620,7 +620,10 @@ fn a_pasted_description_with_chat_spaces_at_line_edges_is_held() {
     ] {
         let normal = board_text::text(raw);
         assert_eq!(normal, kept, "{raw:?}");
-        let held = Task::entered(TaskFields {
+        // Free text no longer enters (#2705 T2), but a legacy one like it
+        // still reads, and is held through the codec.
+        assert_eq!(board_text::entered_text("description", &normal), Ok(()));
+        let held = Task::new(TaskFields {
             description: normal,
             ..example()
         })
@@ -638,9 +641,10 @@ fn a_pasted_description_with_chat_spaces_at_line_edges_is_held() {
 /// at write time.
 #[test]
 fn a_description_with_chat_spaces_is_held_once_normalised() {
+    // Free text no longer enters (#2705 T2): as a goal it does.
     let described = |description: &str| {
         Task::entered(TaskFields {
-            description: description.into(),
+            description: format!("## Goal\n{description}\n\n## Done when\n- [ ] Held"),
             ..example()
         })
     };
@@ -661,7 +665,7 @@ fn a_description_with_chat_spaces_is_held_once_normalised() {
         described(&board_text::text("an em\u{2003}space")).map(|_| ()),
         Err(SchemaError::new(
             "description",
-            format!("line 1: {PLAIN_SPACES_ONLY}")
+            format!("line 2: {PLAIN_SPACES_ONLY}")
         ))
     );
 }

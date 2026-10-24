@@ -201,6 +201,7 @@ fn a_listing_carries_each_tasks_summary() {
             (
                 "a".to_string(),
                 json!({
+                    "subtitle": null,
                     "plan": {"version": 1, "state": "accepted"},
                     "run": {
                         "number": 2,
@@ -217,6 +218,7 @@ fn a_listing_carries_each_tasks_summary() {
             (
                 "b".to_string(),
                 json!({
+                    "subtitle": null,
                     "plan": {"version": 2, "state": "draft"},
                     "run": {
                         "number": 1,
@@ -232,7 +234,7 @@ fn a_listing_carries_each_tasks_summary() {
             ),
             (
                 "c".to_string(),
-                json!({"plan": null, "run": null, "may_be_incomplete": true})
+                json!({"subtitle": null, "plan": null, "run": null, "may_be_incomplete": true})
             ),
         ]
     );
@@ -425,6 +427,7 @@ fn a_duplicate_artifact_skips_its_own_rows_summary() {
             key: ArtifactKey::Plan(slug("a"), 1),
         })),
         RowSummary::Summary(TaskSummary {
+            subtitle: None,
             plan: None,
             run: None,
             may_be_incomplete: false,
@@ -439,7 +442,7 @@ fn a_duplicate_artifact_skips_its_own_rows_summary() {
     assert_eq!(tasks[1]["id"], json!("b"));
     assert_eq!(
         tasks[1]["summary"],
-        json!({"plan": null, "run": null, "may_be_incomplete": false})
+        json!({"subtitle": null, "plan": null, "run": null, "may_be_incomplete": false})
     );
     assert_eq!(tasks[1].get("summary_skipped"), None, "{answer}");
 }

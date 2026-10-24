@@ -16,6 +16,7 @@ use crate::application::project_board::task_summary::{
 };
 use crate::domain::project_board::entities::plan::{Plan, PlanItem};
 use crate::domain::project_board::entities::run::Run;
+use crate::domain::project_board::entities::task_parts::Description;
 use crate::domain::project_board::entities::team::Team;
 use crate::domain::project_board::value_objects::shown_text::{
     shown_artifact_path, shown_board_path, shown_path,
@@ -285,7 +286,8 @@ fn run_state(outcome: Option<RunOutcome>) -> &'static str {
     outcome.map_or("running", RunOutcome::as_str)
 }
 
-/// A listed task's `summary` (`TaskSummary`): its current `plan`'s
+/// A listed task's `summary` (`TaskSummary`): its `subtitle` (its goal
+/// on one line, `null` for legacy text, #2705 T2), its current `plan`'s
 /// `version` and `state` (`draft` or `accepted`), its latest readable
 /// `run` (`number`, `plan_version`, `state`, `started` and `ended` as
 /// `show` gives them, its `deadline`, and its task `items` counted by
@@ -319,6 +321,7 @@ fn summary_json(summary: &TaskSummary) -> Value {
         })
     });
     json!({
+        "subtitle": summary.subtitle,
         "plan": plan,
         "run": run,
         "may_be_incomplete": summary.may_be_incomplete,
@@ -359,6 +362,37 @@ pub(super) fn quarantined_json(file: &QuarantinedFile) -> Value {
     entry.insert("reason".into(), shown_json(&file.reason));
     entry.insert("object".into(), json!(file.object));
     Value::Object(entry)
+}
+
+/// A task description's sections, as a task's answer carries them beside
+/// its text (#2705 T2, additive): its `goal`, `why`, `done_when`
+/// (`[{"outcome", "done"}]`) and `links`, and `needs_goal`, true for
+/// legacy text (any other shape, or none yet), which answers no sections
+/// and is shown as it is.
+pub(super) fn description_fields(text: &str) -> Map<String, Value> {
+    let description = Description::read(text);
+    let outcomes = description.as_ref().map_or(vec![], |description| {
+        let outcomes = description.done_when().iter();
+        outcomes
+            .map(|outcome| json!({"outcome": outcome.text, "done": outcome.done}))
+            .collect()
+    });
+    Map::from_iter([
+        (
+            "goal".to_string(),
+            json!(description.as_ref().map(Description::goal)),
+        ),
+        (
+            "why".to_string(),
+            json!(description.as_ref().and_then(Description::why)),
+        ),
+        ("done_when".to_string(), Value::Array(outcomes)),
+        (
+            "links".to_string(),
+            json!(description.as_ref().map_or(&[][..], Description::links)),
+        ),
+        ("needs_goal".to_string(), json!(description.is_none())),
+    ])
 }
 
 /// The folder the file of `key` lies in, for an artifact other than a

@@ -54,7 +54,7 @@ fn a_new_task_holds_only_its_own_fields() {
     let draft = create(&store, SetClock::at("10:00:00"))
         .execute(&NewBoardTask {
             status: NewBoardTaskStatus::Draft,
-            description: "Why and how.".into(),
+            description: "## Goal\nWhy and how.\n\n## Done when\n- [ ] Done".into(),
             ..new_task("a")
         })
         .unwrap();
@@ -62,7 +62,7 @@ fn a_new_task_holds_only_its_own_fields() {
         draft.into_fields(),
         TaskFields {
             status: TaskStatus::Draft,
-            description: "Why and how.".into(),
+            description: "## Goal\nWhy and how.\n\n## Done when\n- [ ] Done".into(),
             created: at("10:00:00"),
             updated: at("10:00:00"),
             ..fields("a")
@@ -458,12 +458,41 @@ fn board_text_is_normalised_before_the_schema_reads_it() {
     let created = create(&store, SetClock::at("10:00:00"))
         .execute(&NewBoardTask {
             title: "\tShip it ".into(),
-            description: "Why. \r\nHow so.\r\n".into(),
+            description: "## Goal \r\nWhy. \r\nHow so.\r\n\r\n## Done when\r\n- [ ] Done\r\n"
+                .into(),
             ..new_task("a")
         })
         .unwrap();
     assert_eq!(created.fields().title, "Ship it");
-    assert_eq!(created.fields().description, "Why.\nHow so.");
+    assert_eq!(
+        created.fields().description,
+        "## Goal\nWhy.\nHow so.\n\n## Done when\n- [ ] Done"
+    );
+}
+
+/// #2705 T2: every create enters through the description's entry rules:
+/// free text is refused with the field it lacks, and a long title too.
+#[test]
+fn free_text_or_a_long_title_never_enters() {
+    let store = board();
+    let made = |new: NewBoardTask| create(&store, SetClock::at("10:00:00")).execute(&new);
+    let free = made(NewBoardTask {
+        description: "Why and how.".into(),
+        ..new_task("a")
+    });
+    assert!(
+        matches!(&free, Err(ProjectBoardError::Invalid(error)) if error.field == "goal"),
+        "{free:?}"
+    );
+    let long = made(NewBoardTask {
+        title: "t".repeat(71),
+        ..new_task("a")
+    });
+    assert!(
+        matches!(&long, Err(ProjectBoardError::Invalid(error)) if error.field == "title"),
+        "{long:?}"
+    );
+    assert_eq!(store.read().unwrap().tasks, vec![]);
 }
 
 /// An id the board's other artifacts already name (a plan, run, change or
