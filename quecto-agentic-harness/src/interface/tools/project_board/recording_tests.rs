@@ -9,10 +9,11 @@ use serde_json::json;
 
 use super::*;
 use crate::application::project_board::operations::NoPullRequestHost;
-use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
 use crate::application::project_board::ports::{BoardHead, ProjectBoardOpLog, ProjectBoardStore};
 use crate::application::project_board::telemetry::RecordingSwitch;
-use crate::application::project_board::use_cases::{QueryBoard, RunBoardOperation};
+use crate::application::project_board::use_cases::QueryBoard;
+use crate::composition::bootstrap::project_board_operations::LocalBoardOperations;
+use crate::composition::bootstrap::project_board_operations::fixtures::{QueryListings, assembled};
 use crate::domain::audit::AuditEvent;
 use crate::domain::project_board::value_objects::telemetry::FoldBackRecord;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
@@ -76,7 +77,7 @@ pub(crate) fn recording(records: &Arc<Records>) -> Arc<BoardRecording> {
 }
 
 /// The operations over a bootstrapped board in memory.
-pub(super) fn board() -> RunBoardOperation {
+pub(super) fn board() -> LocalBoardOperations {
     let store = MemoryBoardStore::default();
     store.bootstrap().unwrap();
     assembled(
@@ -90,7 +91,7 @@ pub(super) fn board() -> RunBoardOperation {
 
 /// Runs each request on `operations`, one call each, and gives each
 /// call's records as their `board_op` lines.
-pub(super) fn recorded(operations: &RunBoardOperation, requests: &[String]) -> Vec<Value> {
+pub(super) fn recorded(operations: &LocalBoardOperations, requests: &[String]) -> Vec<Value> {
     let records = Arc::new(Records::default());
     let mut lines = Vec::new();
     for text in requests {
@@ -105,7 +106,7 @@ pub(super) fn recorded(operations: &RunBoardOperation, requests: &[String]) -> V
     lines
 }
 
-fn one(operations: &RunBoardOperation, request: Value) -> Value {
+fn one(operations: &LocalBoardOperations, request: Value) -> Value {
     recorded(operations, &[request.to_string()]).remove(0)
 }
 
@@ -648,11 +649,17 @@ fn a_rule_failed_completion_records_its_rule() {
     let created = json!({"op": "create", "task": "a", "title": "A", "status": "ready"});
     run_recorded(&board, &created.to_string(), &mut BoardCall::unrecorded());
     let BoardOutcome::Shown(shown, _) = board
-        .execute(&BoardRequest::Show(
-            crate::domain::project_board::value_objects::slug::Slug::parse("a").unwrap(),
-            crate::application::project_board::operations::PlanView::default(),
-        ))
+        .execute(
+            &BoardRequest::Show(
+                crate::domain::project_board::value_objects::slug::Slug::parse("a").unwrap(),
+                crate::application::project_board::operations::PlanView::default(),
+            ),
+            ListSummaries::Omitted,
+            crate::application::project_board::dto::OpNoting::Unnoted,
+        )
+        .result
         .unwrap()
+        .outcome
     else {
         panic!("shown")
     };

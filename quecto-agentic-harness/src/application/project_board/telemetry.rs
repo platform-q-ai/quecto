@@ -3,8 +3,7 @@
 //! ([`BoardRecording`]); T4: what the use cases saw of it ([`OpFacts`]).
 use std::sync::Arc;
 
-use super::dto::BoardOp;
-use super::operations::{BoardRequest, Completion};
+use super::dto::{BoardOp, BoardRequest, Completion};
 use super::ports::{BoardHead, ProjectBoardOpLog};
 use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::slug::Slug;

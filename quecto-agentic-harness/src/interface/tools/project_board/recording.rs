@@ -18,16 +18,17 @@ use serde_json::Value;
 
 use super::answer::{self, FrontEndRefusal, rule_code};
 use super::request::{RequestError, schema_field};
-use crate::application::project_board::dto::ProjectBoardError;
-use crate::application::project_board::operations::{
-    BoardOutcome, BoardRequest, Completion, ListSummaries,
+use crate::application::project_board::dto::{
+    BoardAnswered, BoardExecution, BoardOutcome, BoardRequest, Completion, ListSummaries, OpNoting,
+    ProjectBoardError,
 };
-use crate::application::project_board::ports::{FoldBackOutcome, FoldBackRecorder};
+use crate::application::project_board::ports::{
+    BoardOperations, FoldBackOutcome, FoldBackRecorder,
+};
 use crate::application::project_board::start::{NotedFoldBack, StartFacts};
 use crate::application::project_board::telemetry::{
-    BoardRecording, OpFacts, access_of, op_kind, pr_of, task_of,
+    BoardRecording, access_of, op_kind, pr_of, task_of,
 };
-use crate::application::project_board::use_cases::RunBoardOperation;
 use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
@@ -187,21 +188,30 @@ impl BoardCall {
     /// (T4) noted while recorded; unrecorded, nothing is noted or timed.
     ///
     /// # Errors
-    /// As [`RunBoardOperation::execute`].
+    /// As [`BoardOperations::execute`].
     pub fn executed(
         &mut self,
-        operations: &RunBoardOperation,
+        operations: &dyn BoardOperations,
         request: &BoardRequest,
         summaries: ListSummaries,
-    ) -> Result<BoardOutcome, ProjectBoardError> {
+    ) -> Result<BoardAnswered, ProjectBoardError> {
         let Some(open) = &mut self.open else {
-            return operations.execute_noted_with(request, None, summaries);
+            return operations
+                .execute(request, summaries, OpNoting::Unnoted)
+                .result;
         };
-        let mut facts = OpFacts::default();
-        let result = operations.execute_noted_with(request, Some(&mut facts), summaries);
-        facts.fill(&mut open.record);
-        open.start = facts.start.take();
-        open.fold_back = facts.fold_back.take();
+        let BoardExecution { result, facts } =
+            operations.execute(request, summaries, OpNoting::Noted);
+        // Every noted request gives back what it saw, answered or refused
+        // (the port's contract): an adapter that breaks it fails here in
+        // a debug build. A release build notes no facts, so the record
+        // reads as a request that saw nothing, never as invented ones.
+        debug_assert!(facts.is_some(), "a noted board request gave back no facts");
+        if let Some(mut facts) = facts {
+            facts.fill(&mut open.record);
+            open.start = facts.start.take();
+            open.fold_back = facts.fold_back.take();
+        }
         result
     }
 
