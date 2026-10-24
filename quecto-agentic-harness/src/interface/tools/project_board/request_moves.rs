@@ -1,0 +1,38 @@
+//! A status move and `done_without_run` as both front ends take them
+//! (#2705 T4): a move's `reason` is the one given or, given none, what its
+//! front end's policy makes of none; `done_without_run` requires one.
+use super::{Read, RequestError};
+use crate::application::project_board::dto::BoardOp;
+use crate::domain::project_board::entities::task_parts::EntryPolicy;
+use crate::domain::project_board::services::transitions::MoveReason;
+
+/// The move the request names: its status, and its reason.
+///
+/// # Errors
+/// A status or reason of the wrong type.
+pub(super) fn moved(read: &Read<'_>) -> Result<BoardOp, RequestError> {
+    let to = read.status("to")?.expect("a required field is present");
+    Ok(BoardOp::Move(to, move_reason(read)?))
+}
+
+/// The task done without a run, for the reason the request gives.
+///
+/// # Errors
+/// A reason of the wrong type.
+pub(super) fn done_without_run(read: &Read<'_>) -> Result<BoardOp, RequestError> {
+    let reason = read.text("reason")?.expect("a required field is present");
+    Ok(BoardOp::DoneWithoutRun(reason))
+}
+
+/// A move's reason: the one given, or, given none, as its front end's
+/// policy lets a move be made without one (an allowlist): the agent tool's
+/// is absent, so back to ready from review is refused without one; the
+/// CLI's is unasked, as the Pocket relay moves a task back through it with
+/// no reason until its task page sends one.
+fn move_reason(read: &Read<'_>) -> Result<MoveReason, RequestError> {
+    Ok(match (read.text("reason")?, read.policy) {
+        (Some(reason), _) => MoveReason::Given(reason),
+        (None, EntryPolicy::Sectioned) => MoveReason::Absent,
+        (None, EntryPolicy::SectionedOrLegacy) => MoveReason::Unasked,
+    })
+}

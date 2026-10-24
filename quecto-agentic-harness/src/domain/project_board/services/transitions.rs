@@ -3,11 +3,13 @@ use super::super::entities::change::Change;
 use super::super::entities::claim::Identity;
 use super::super::entities::run::Run;
 use super::super::entities::task::Task;
+use super::super::value_objects::board_text::entered_line;
 use super::super::value_objects::rule_error::BoardRuleError;
+use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
-use super::super::value_objects::vocabulary::Resolution;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
+use super::super::value_objects::vocabulary::{LifecycleAction, Resolution};
 use super::claims::{held_by, held_live_by, held_or_lapsed_by, is_live, new_claim, settle, stamp};
 use super::runs::{holds_moves_to, lost_at, may_move_with, open_of};
 use std::collections::BTreeSet;
@@ -36,37 +38,78 @@ enum ClaimEffect {
     Clear,
 }
 
-/// Every move a person may make; any pair not listed is refused. The one
-/// other move, to done when the task's pull requests merge, is the
-/// system's ([`complete_merged`]).
+/// What a move takes beside its actor (#2705 T4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Takes {
+    Nothing,
+    /// The mover's reason, kept on the task ([`MoveReason`]).
+    Reason,
+}
+
+/// Every move `move` makes (#2705 T4 narrowed it to the moves people
+/// make); a pair not listed is the lifecycle's ([`LIFECYCLE`]) or no move
+/// at all. The other moves to done are the system's when the task's pull
+/// requests merge ([`complete_merged`]) and [`done_without_run`].
 #[rustfmt::skip] // One readable rule per row.
-const TRANSITIONS: &[(TaskStatus, TaskStatus, Actor, ClaimEffect)] = &[
-    (Draft,      Ready,      Actor::Anyone,          ClaimEffect::Keep),
-    (Draft,      Archived,   Actor::Anyone,          ClaimEffect::Keep),
-    (Ready,      Draft,      Actor::Anyone,          ClaimEffect::Keep),
-    (Ready,      Claimed,    Actor::Anyone,          ClaimEffect::Take),
-    (Ready,      Archived,   Actor::Anyone,          ClaimEffect::Keep),
-    (Claimed,    InProgress, Actor::Holder,          ClaimEffect::Keep),
-    (Claimed,    Blocked,    Actor::Holder,          ClaimEffect::Keep),
-    (InProgress, Review,     Actor::Holder,          ClaimEffect::Keep),
-    (InProgress, Blocked,    Actor::Holder,          ClaimEffect::Keep),
-    (Review,     Done,       Actor::Holder,          ClaimEffect::Clear),
-    (Review,     InProgress, Actor::Holder,          ClaimEffect::Keep),
-    (Blocked,    InProgress, Actor::Holder,          ClaimEffect::Keep),
-    (Done,       Archived,   Actor::Anyone,          ClaimEffect::Keep),
+const TRANSITIONS: &[(TaskStatus, TaskStatus, Actor, ClaimEffect, Takes)] = &[
+    (Draft,      Ready,      Actor::Anyone,          ClaimEffect::Keep,  Takes::Nothing),
+    (Draft,      Archived,   Actor::Anyone,          ClaimEffect::Keep,  Takes::Nothing),
+    (Ready,      Draft,      Actor::Anyone,          ClaimEffect::Keep,  Takes::Nothing),
+    (Ready,      Claimed,    Actor::Anyone,          ClaimEffect::Take,  Takes::Nothing),
+    (Ready,      Archived,   Actor::Anyone,          ClaimEffect::Keep,  Takes::Nothing),
+    // Mark done: the holder finishes a reviewed task linking nothing.
+    (Review,     Done,       Actor::Holder,          ClaimEffect::Clear, Takes::Nothing),
+    (Done,       Archived,   Actor::Anyone,          ClaimEffect::Keep,  Takes::Nothing),
     // Archive a reviewed task: its holder's while the claim is live,
     // anyone's once nobody holds it. A run going holds it back
     // (`may_move_with`), so it never races a live run; a pull request or
     // change linked holds it as it holds review to done
     // ([`held_by_links`], as it holds a draft's or a ready one's
     // archive); the claim goes with it.
-    (Review,     Archived,   Actor::HolderWhileLive, ClaimEffect::Clear),
-    // Release: the task goes back to the board.
-    (Claimed,    Ready,      Actor::Releaser,        ClaimEffect::Clear),
-    (InProgress, Ready,      Actor::Releaser,        ClaimEffect::Clear),
-    (Review,     Ready,      Actor::HolderWhileLive, ClaimEffect::Clear),
-    (Blocked,    Ready,      Actor::HolderWhileLive, ClaimEffect::Clear),
+    (Review,     Archived,   Actor::HolderWhileLive, ClaimEffect::Clear, Takes::Nothing),
+    // Release: the task goes back to the board. From progress only once
+    // its run has ended (`may_move_with`): the Pocket relay's Stop
+    // releases a stopped run's task so, until a run's end moves its task
+    // itself (#2705 T5).
+    (Claimed,    Ready,      Actor::Releaser,        ClaimEffect::Clear, Takes::Nothing),
+    (InProgress, Ready,      Actor::Releaser,        ClaimEffect::Clear, Takes::Nothing),
+    // Back to ready from review says why.
+    (Review,     Ready,      Actor::HolderWhileLive, ClaimEffect::Clear, Takes::Reason),
+    (Blocked,    Ready,      Actor::HolderWhileLive, ClaimEffect::Clear, Takes::Nothing),
 ];
+
+/// Every move the task's lifecycle makes, never `move` (#2705 T4), and the
+/// action that makes it or is the way on, which `move`'s refusal names:
+/// `start` is the only way to in progress; a run's end decides where a
+/// task in progress goes; work without a run is released, never blocked
+/// (blocking is a run's outcome); and work done without a run is finished
+/// by `done_without_run`. A pair in neither table is no move at all.
+#[rustfmt::skip] // One readable rule per row.
+const LIFECYCLE: &[(TaskStatus, TaskStatus, LifecycleAction)] = &[
+    (Ready,      InProgress, LifecycleAction::Start),
+    (Claimed,    InProgress, LifecycleAction::Start),
+    (Review,     InProgress, LifecycleAction::Start),
+    (Blocked,    InProgress, LifecycleAction::Start),
+    (InProgress, Review,     LifecycleAction::EndRun),
+    (InProgress, Blocked,    LifecycleAction::EndRun),
+    (Claimed,    Blocked,    LifecycleAction::Release),
+    (Ready,      Done,       LifecycleAction::DoneWithoutRun),
+    (Claimed,    Done,       LifecycleAction::DoneWithoutRun),
+];
+
+/// The lifecycle action that makes the move `from` -> `to`, if the
+/// lifecycle makes it ([`LIFECYCLE`]).
+pub fn lifecycle_action(from: TaskStatus, to: TaskStatus) -> Option<LifecycleAction> {
+    LIFECYCLE
+        .iter()
+        .find(|(row_from, row_to, _)| (*row_from, *row_to) == (from, to))
+        .map(|(_, _, action)| *action)
+}
+
+/// Why a reason given to a move that takes none is refused.
+const REASON_NOT_TAKEN: &str = "is taken only by a move from review back to ready";
+/// Why an empty reason is refused.
+const REASON_EMPTY: &str = "must say why";
 
 /// Why a move is made (#2705 T4), as its front end lets a mover say.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,23 +125,43 @@ pub enum MoveReason {
     Unasked,
 }
 
-/// `task` moved to `to` as [`move_task`] moves it, for `reason` (#2705
-/// T4).
-pub fn move_with_reason(
-    task: &Task,
-    to: TaskStatus,
-    reason: &MoveReason,
-    actor: &Identity,
-    works: (&[Run], &[Change]),
-    tasks: &[Task],
-    now: &Timestamp,
-) -> Result<Task, BoardRuleError> {
-    let _ = reason;
-    move_task(task, to, actor, works, tasks, now)
+/// The reason a move keeps, when it takes one (`takes`), from what its
+/// mover gave (`given`): a move back to ready from review keeps the reason
+/// given, refuses none (but for the CLI's unasked one, which keeps none),
+/// and any other move refuses one, as it would never keep it.
+fn reason_kept(
+    (from, to): (TaskStatus, TaskStatus),
+    takes: Takes,
+    given: &MoveReason,
+) -> Result<Option<String>, BoardRuleError> {
+    match (takes, given) {
+        (Takes::Reason, MoveReason::Given(text)) => entered_reason(text).map(Some),
+        (Takes::Reason, MoveReason::Unasked)
+        | (Takes::Nothing, MoveReason::Absent | MoveReason::Unasked) => Ok(None),
+        (Takes::Reason, MoveReason::Absent) => Err(BoardRuleError::ReasonRequired { from, to }),
+        (Takes::Nothing, MoveReason::Given(_)) => Err(BoardRuleError::Invalid(SchemaError::new(
+            "reason",
+            REASON_NOT_TAKEN,
+        ))),
+    }
+}
+
+/// `text`, a reason as it enters the board: one normalised line that says
+/// something (its length is the task's schema's to judge).
+fn entered_reason(text: &str) -> Result<String, BoardRuleError> {
+    entered_line("reason", text).map_err(BoardRuleError::Invalid)?;
+    match text.is_empty() {
+        false => Ok(text.to_string()),
+        true => Err(BoardRuleError::Invalid(SchemaError::new(
+            "reason",
+            REASON_EMPTY,
+        ))),
+    }
 }
 
 /// What [`done_without_run`] reads of the task's work, once its rule
-/// allows the actor to finish it so.
+/// allows `actor` to finish it so at `now`: its runs (one going holds it)
+/// and its changes (one linked holds it, as a pull request linked does).
 ///
 /// # Errors
 /// What [`done_without_run`] refuses before it looks at runs or changes.
@@ -107,24 +170,64 @@ pub fn done_without_run_reads(
     actor: &Identity,
     now: &Timestamp,
 ) -> Result<MoveReads, BoardRuleError> {
-    let _ = (actor, now);
-    Err(BoardRuleError::NotAllowed {
-        from: task.fields().status,
-        to: Done,
-    })
+    let from = task.fields().status;
+    match from {
+        Ready => {}
+        Claimed => {
+            held_live_by(task, actor, now)?;
+        }
+        Draft | InProgress | Review | Blocked | Done | Archived => {
+            return Err(BoardRuleError::NotAllowed { from, to: Done });
+        }
+    }
+    not_superseded(task)?;
+    match task.fields().prs.as_slice() {
+        [] => Ok(MoveReads {
+            runs: true,
+            changes: true,
+        }),
+        prs => Err(BoardRuleError::PrsLinked(prs.to_vec())),
+    }
 }
 
-/// `task` done without a run (#2705 T4) by `actor` at `now`, for
-/// `reason`.
+/// `task` done without a run (#2705 T4): work finished with no run of its
+/// plan (an answer, a fix made by hand), for `reason`, by `actor` at `now`.
+/// A ready task is anyone's to finish so, a claimed one its holder's while
+/// the claim is live. It is resolved `done_without_run`, keeps the reason
+/// and leaves its claim; its `runs` and `changes` (all of them, as the
+/// board holds them) must hold no run going and no change linked.
+///
+/// # Errors
+/// Any other status (`not_allowed`); not the holder of a live claim; a
+/// task others took over; pull requests or changes linked; a run going;
+/// a reason that is empty or never normalised as one line.
 pub fn done_without_run(
     task: &Task,
     reason: &str,
     actor: &Identity,
-    works: (&[Run], &[Change]),
+    (runs, changes): (&[Run], &[Change]),
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
-    let _ = (reason, works);
-    done_without_run_reads(task, actor, now).map(|_| task.clone())
+    done_without_run_reads(task, actor, now)?;
+    let reason = entered_reason(reason)?;
+    let linked = numbers(task, changes, Change::is_linked)?;
+    match linked.as_slice() {
+        [] => {}
+        [_, ..] => return Err(BoardRuleError::ChangesLinked(linked)),
+    }
+    may_move_with(task, runs, Done)?;
+    let at = stamp(task, now)?;
+    let mut next = task.fields().clone();
+    next.status = Done;
+    next.resolution = Some(Resolution::DoneWithoutRun);
+    next.reason = Some(reason);
+    next.claim = None;
+    let done = settle(next, &at)?;
+    assert!(
+        done.fields().reason.is_some() && done.fields().claim.is_none(),
+        "a task done without a run says why and is held by nobody"
+    );
+    Ok(done)
 }
 
 /// What a move reads of the task's work: its runs, its changes.
@@ -164,6 +267,8 @@ pub fn move_reads(
 ) -> Result<MoveReads, BoardRuleError> {
     allowed(task, to, actor, now)?;
     let from = task.fields().status;
+    // Only a move with a row (and so no lifecycle action) gets here.
+    debug_assert_eq!(lifecycle_action(from, to), None);
     Ok(MoveReads {
         runs: holds_moves_to(to),
         changes: held_by_links(from, to),
@@ -174,17 +279,40 @@ pub fn move_reads(
 /// `runs` and `changes` (all of them, as the board holds them) let it
 /// leave, and the `tasks` it relates to (every task the board holds) let
 /// it move ([`relations_allow`], #2661). Only the runs and changes
-/// [`move_reads`] names count: a caller may leave the rest empty.
+/// [`move_reads`] names count: a caller may leave the rest empty. No
+/// reason is given ([`move_with_reason`]).
 pub fn move_task(
     task: &Task,
     to: TaskStatus,
+    actor: &Identity,
+    works: (&[Run], &[Change]),
+    tasks: &[Task],
+    now: &Timestamp,
+) -> Result<Task, BoardRuleError> {
+    move_with_reason(task, (to, &MoveReason::Absent), actor, works, tasks, now)
+}
+
+/// [`move_task`], for the `reason` its mover gives (#2705 T4): a move back
+/// to ready from review keeps it on the task, and any other move clears
+/// the one the task had, but for an archive of a task done without a run,
+/// which keeps it with its resolution.
+///
+/// # Errors
+/// As [`move_task`]; a move the lifecycle makes (`use_lifecycle`, naming
+/// its action); a move back to ready from review given no reason
+/// (`reason_required`); a reason given to any other move, or one empty or
+/// never normalised as one line (`invalid`, field `reason`).
+pub fn move_with_reason(
+    task: &Task,
+    (to, reason): (TaskStatus, &MoveReason),
     actor: &Identity,
     (runs, changes): (&[Run], &[Change]),
     tasks: &[Task],
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
-    let effect = allowed(task, to, actor, now)?;
+    let (effect, takes) = allowed(task, to, actor, now)?;
     let from = task.fields().status;
+    let kept = reason_kept((from, to), takes, reason)?;
     let linked = numbers(task, changes, Change::is_linked)?;
     // Only review to done, and draft, ready or review to archived, are
     // held by a change linked.
@@ -197,6 +325,13 @@ pub fn move_task(
     let mut next = task.fields().clone();
     next.status = to;
     next.resolution = resolved(to, next.resolution, !next.superseded_by.is_empty());
+    // A task done without a run is archived with its reason, as with its
+    // resolution; every other move keeps only the reason it takes.
+    next.reason = match (kept, to, next.resolution) {
+        (Some(reason), _, _) => Some(reason),
+        (None, Archived, Some(Resolution::DoneWithoutRun)) => next.reason,
+        (None, _, _) => None,
+    };
     next.claim = match effect {
         ClaimEffect::Keep => next.claim,
         ClaimEffect::Take => Some(new_claim(actor, &at)?),
@@ -265,20 +400,28 @@ pub fn relations_allow(task: &Task, to: TaskStatus, tasks: &[Task]) -> Result<()
     }
 }
 
-/// What a move does to the claim, when the table and its actor allow it,
-/// a task others took over is not finished, and a task that links pull
-/// requests is not finished by its holder.
+/// What a move does to the claim and what it takes, when the table and its
+/// actor allow it, a task others took over is not finished, and a task
+/// that links pull requests is not finished by its holder. A move the
+/// lifecycle makes is refused naming its action, whoever asks.
 fn allowed(
     task: &Task,
     to: TaskStatus,
     actor: &Identity,
     now: &Timestamp,
-) -> Result<ClaimEffect, BoardRuleError> {
+) -> Result<(ClaimEffect, Takes), BoardRuleError> {
     let from = task.fields().status;
-    let (_, _, who, effect) = TRANSITIONS
+    let row = TRANSITIONS
         .iter()
-        .find(|(row_from, row_to, _, _)| (*row_from, *row_to) == (from, to))
-        .ok_or(BoardRuleError::NotAllowed { from, to })?;
+        .find(|(row_from, row_to, ..)| (*row_from, *row_to) == (from, to));
+    let (_, _, who, effect, takes) = match (row, lifecycle_action(from, to)) {
+        (Some(row), None) => row,
+        (None, Some(action)) => return Err(BoardRuleError::UseLifecycle { from, to, action }),
+        (None, None) => return Err(BoardRuleError::NotAllowed { from, to }),
+        (Some(_), Some(action)) => {
+            unreachable!("{from:?} -> {to:?} is both a move and the lifecycle's {action:?}")
+        }
+    };
     match who {
         Actor::Anyone => {}
         Actor::Holder => {
@@ -312,13 +455,12 @@ fn allowed(
     // are `move_task`'s to judge.
     match (held_by_links(from, to), &task.fields().prs[..]) {
         (true, [_, ..]) => Err(BoardRuleError::PrsLinked(task.fields().prs.clone())),
-        (true, []) | (false, _) => Ok(*effect),
+        (true, []) | (false, _) => Ok((*effect, *takes)),
     }
 }
 
 /// The system move behind "a merged PR moves its task to done": a task
-/// that is ready (released with its pull requests linked) or held
-/// (claimed, in progress, in review or blocked), whose linked pull
+/// in review (the only status it completes, #2705 T4), whose linked pull
 /// requests are all in `merged`, and which links no change still open
 /// (`changes` is the task's, as the board holds them), is done, whoever
 /// holds it and whoever merged them. Its claim is cleared, and its run
@@ -373,17 +515,19 @@ fn numbers(
     }
 }
 
-/// A task that is ready (released with what delivers it linked) or held
-/// may be completed; any other may not. A use case asks before it reads
-/// the task's runs and changes, so a completion refused anyway reads
-/// nothing.
+/// A task in review may be completed; any other may not (#2705 T4: a
+/// merged pull request completes a task only from review, where its run
+/// moves it). A use case asks before it reads the task's runs and
+/// changes, so a completion refused anyway reads nothing.
 ///
 /// # Errors
-/// A draft, done or archived task, or one others took over.
+/// A task in any other status, or one others took over.
 pub fn completable(task: &Task) -> Result<(), BoardRuleError> {
     match task.fields().status {
-        Ready | Claimed | InProgress | Review | Blocked => not_superseded(task),
-        from @ (Draft | Done | Archived) => Err(BoardRuleError::NotAllowed { from, to: Done }),
+        Review => not_superseded(task),
+        from @ (Draft | Ready | Claimed | InProgress | Blocked | Done | Archived) => {
+            Err(BoardRuleError::NotAllowed { from, to: Done })
+        }
     }
 }
 

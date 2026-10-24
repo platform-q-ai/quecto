@@ -225,6 +225,7 @@ fn no_kind_is_ever_renamed_or_removed() {
         "edit_plan",
         "accept_plan",
         "discard_plan",
+        "done_without_run",
     ];
     frozen(OpKind::ALL, OpKind::as_str, &ops);
     frozen(FrontEnd::ALL, FrontEnd::as_str, &["tool", "cli"]);

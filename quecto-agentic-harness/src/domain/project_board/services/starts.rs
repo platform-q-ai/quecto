@@ -4,19 +4,23 @@
 //! its accepted plan begins, all at one stamp, so the task and the run are
 //! written by one commit, and the run begins with a whole claim window.
 //!
-//! The transition table stays the authority on who may move a task: a start
-//! asks it about each move it makes ([`move_reads`]) and composes them, as
-//! two moves in a row would stamp the task twice.
+//! The transition table stays the authority on who claims a ready task: a
+//! start asks it about that move ([`move_reads`]) and composes it with the
+//! move to in progress, as two moves in a row would stamp the task twice.
+//! The move to in progress is the lifecycle's own (#2705 T4): `move` never
+//! makes it, a start is the only way there, and [`unstart`] its only way
+//! back to review or blocked.
 use super::super::entities::claim::Identity;
 use super::super::entities::plan::Plan;
 use super::super::entities::run::Run;
 use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::timestamp::Timestamp;
+use super::super::value_objects::vocabulary::LifecycleAction;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
-use super::claims::{new_claim, renew, settle, stamp};
-use super::runs::begin_run;
-use super::transitions::{move_reads, relations_allow};
+use super::claims::{held_live_by, new_claim, renew, settle, stamp};
+use super::runs::{begin_run, open_of};
+use super::transitions::{lifecycle_action, move_reads, relations_allow};
 
 /// A task started: in progress, held by its starter, and a run of its
 /// accepted plan begun. Only [`start`] builds one, so holding one proves
@@ -99,11 +103,15 @@ pub fn start(
             next
         }
         Claimed | Review | Blocked => {
-            let renewed = renew(task, actor, now)?;
-            // Guards the table's row: a held status moves to in progress
-            // only by its holder's row, never by this rule's say-so.
-            move_reads(&renewed, InProgress, actor, &at)?;
-            renewed.into_fields()
+            // The move to in progress is the lifecycle's, made only here
+            // (#2705 T4), and its holder's: `renew` refuses anyone else,
+            // and the run begins only under a live claim (`begin_run`).
+            assert_eq!(
+                lifecycle_action(from, InProgress),
+                Some(LifecycleAction::Start),
+                "a start makes {from:?} -> in_progress, as the lifecycle says"
+            );
+            renew(task, actor, now)?.into_fields()
         }
         InProgress => renew(task, actor, now)?.into_fields(),
         Draft | Done | Archived => {
@@ -119,6 +127,8 @@ pub fn start(
         (Some(_), Some(plan)) => plan,
     };
     next.status = TaskStatus::InProgress;
+    // A reason is kept only beside the move that took it (#2705 T4).
+    next.reason = None;
     let started = settle(next, &at)?;
     let run = begin_run(&started, runs, plan, actor, &at)?;
     let fields = started.fields();
@@ -142,7 +152,15 @@ pub fn start(
 }
 
 /// A start undone (#2705 T4): `task`, in progress, back in the review or
-/// blocked status its start moved it from, by `actor` at `now`.
+/// blocked status its start moved it from (`from`), by `actor`, the holder
+/// of a live claim, at `now`, once none of its `runs` is going. Its claim
+/// stays, as review and blocked keep one. A task the start claimed goes
+/// back to ready by a release (`move`), as any claimed one does.
+///
+/// # Errors
+/// A task not in progress, or `from` neither review nor blocked
+/// (`not_allowed`); not the holder of a live claim; a run going, or runs
+/// that contradict each other.
 pub fn unstart(
     task: &Task,
     from: TaskStatus,
@@ -150,11 +168,27 @@ pub fn unstart(
     actor: &Identity,
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
-    let _ = (runs, actor, now);
-    Err(BoardRuleError::NotAllowed {
-        from: task.fields().status,
-        to: from,
-    })
+    let status = task.fields().status;
+    match (status, from) {
+        (InProgress, Review | Blocked) => {}
+        (Draft | Ready | Claimed | InProgress | Review | Blocked | Done | Archived, to) => {
+            return Err(BoardRuleError::NotAllowed { from: status, to });
+        }
+    }
+    held_live_by(task, actor, now)?;
+    match open_of(task, runs)? {
+        None => {}
+        Some(going) => return Err(BoardRuleError::RunOpen(going.fields().number)),
+    }
+    let at = stamp(task, now)?;
+    let mut next = task.fields().clone();
+    next.status = from;
+    let undone = settle(next, &at)?;
+    assert!(
+        undone.fields().claim.is_some(),
+        "an undone start keeps its holder's claim"
+    );
+    Ok(undone)
 }
 
 #[cfg(test)]

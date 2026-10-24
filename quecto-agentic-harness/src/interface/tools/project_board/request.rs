@@ -10,7 +10,6 @@ use crate::application::project_board::dto::{
 use crate::application::project_board::operations::{BoardRequest, ListFilter, PlanPage, PlanView};
 use crate::application::project_board::ports::KeepCopy;
 use crate::domain::project_board::entities::task_parts::EntryPolicy;
-use crate::domain::project_board::services::transitions::MoveReason;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{FaultKind, RequestFault, StaticKind};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -179,6 +178,9 @@ const fn optional(name: &'static str, kind: Kind) -> Field {
 }
 
 const TASK: Field = required("task", Kind::Slug);
+/// A move's target, and its reason (#2705 T4).
+const TO: Field = required("to", Kind::Status);
+const REASON: Field = optional("reason", Kind::Text);
 
 /// Every op and the fields it takes: the one table both front ends read.
 pub const OPS: &[(&str, &[Field])] = &[
@@ -234,14 +236,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("expected_updated", Kind::Timestamp),
         ],
     ),
-    (
-        "move",
-        &[
-            TASK,
-            required("to", Kind::Status),
-            optional("reason", Kind::Text),
-        ],
-    ),
+    ("move", &[TASK, TO, REASON]),
     ("done_without_run", &[TASK, required("reason", Kind::Text)]),
     ("renew", &[TASK]),
     ("take_over", &[TASK]),
@@ -518,14 +513,8 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         )),
         "create" => create(read),
         "update_draft" => update_draft(read),
-        "move" => {
-            let to = read.status("to")?.expect("a required field is present");
-            change(BoardOp::Move(to, move_reason(read)?))
-        }
-        "done_without_run" => {
-            let reason = read.text("reason")?.expect("a required field is present");
-            change(BoardOp::DoneWithoutRun(reason))
-        }
+        "move" => change(moves::moved(read)?),
+        "done_without_run" => change(moves::done_without_run(read)?),
         "renew" => change(BoardOp::Renew),
         "take_over" => change(BoardOp::TakeOver),
         "link_pr" => change(BoardOp::AddPr(read.pr()?)),
@@ -540,19 +529,6 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "clear_set_aside" => clear(read),
         other => unreachable!("op {other} is in OPS but not built"),
     }
-}
-
-/// A move's reason (#2705 T4): the one given, or, given none, as its
-/// front end's policy lets a move be made without one (an allowlist): the
-/// agent tool's is absent, so back to ready from review is refused
-/// without one; the CLI's is unasked, as the Pocket relay moves a task
-/// back through it with no reason until its task page sends one.
-fn move_reason(read: &Read<'_>) -> Result<MoveReason, RequestError> {
-    Ok(match (read.text("reason")?, read.policy) {
-        (Some(reason), _) => MoveReason::Given(reason),
-        (None, EntryPolicy::Sectioned) => MoveReason::Absent,
-        (None, EntryPolicy::SectionedOrLegacy) => MoveReason::Unasked,
-    })
 }
 
 /// A full SHA-1 or SHA-256 object name in lowercase hex.
@@ -757,6 +733,9 @@ mod plans;
 
 #[path = "request_description.rs"]
 mod description;
+
+#[path = "request_moves.rs"]
+mod moves;
 pub use description::entry_policy;
 
 #[cfg(test)]

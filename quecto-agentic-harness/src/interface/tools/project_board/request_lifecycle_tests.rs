@@ -3,6 +3,7 @@
 //! ready from review is refused; the CLI's is unasked, as the Pocket relay
 //! sends its moves with none.
 use super::*;
+use crate::domain::project_board::services::transitions::MoveReason;
 use serde_json::json;
 
 fn slug(text: &str) -> Slug {

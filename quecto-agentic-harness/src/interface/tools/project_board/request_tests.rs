@@ -154,6 +154,7 @@ fn each_op_reads_its_own_fields() {
             "create",
             "update_draft",
             "move",
+            "done_without_run",
             "renew",
             "take_over",
             "link_pr",
@@ -167,7 +168,7 @@ fn each_op_reads_its_own_fields() {
             "end_run",
             "clear_set_aside"
         ],
-        "no op is named plain ready; status changes are moves"
+        "no op is named plain ready; status changes are moves, or the lifecycle's"
     );
 }
 

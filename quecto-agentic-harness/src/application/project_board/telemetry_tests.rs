@@ -174,6 +174,7 @@ fn every_request() -> Vec<BoardRequest> {
             task: a.clone(),
             plan_version: 1,
         }),
+        change(BoardOp::DoneWithoutRun("By hand".into())),
     ]
 }
 
@@ -239,6 +240,7 @@ fn a_request_names_its_task_and_pull_request() {
             task(OpKind::DiscardPlan),
             task(OpKind::EndRun),
             task(OpKind::Start),
+            task(OpKind::DoneWithoutRun),
         ]
     );
 }

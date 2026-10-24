@@ -6,7 +6,8 @@
 //!   schema 2 (a description kept in its sections, #2705 T2), a section
 //!   each in its order: Goal and Why, prose; Done when `[Done | Outcome]`,
 //!   `yes` or `no`; Links, prose (`- [text](https://…)` lines). The task's
-//!   description form picks the schema, never its text;
+//!   description form picks the schema, never its text; a file holding a
+//!   Reason (a status move's, #2705 T4) is at schema 3, either layout;
 //! - Depends on `[Task]`, Superseded by `[Task]`;
 //! - Pull requests `[Pull request]`, `#n`: the links made the old way,
 //!   until S2c retires them;
@@ -42,6 +43,7 @@ const CLAIMED_SINCE: &str = "Claimed since";
 const CLAIM_EXPIRES: &str = "Claim expires";
 const GITHUB_ISSUE: &str = "GitHub issue";
 const RESOLUTION: &str = "Resolution";
+const REASON: &str = "Reason";
 const CREATED: &str = "Created";
 const UPDATED: &str = "Updated";
 const DESCRIPTION: &str = "Description";
@@ -71,6 +73,7 @@ const FIELDS: &[Column<'static>] = &[
     column(CLAIM_EXPIRES, CellKind::Ascii),
     column(GITHUB_ISSUE, CellKind::Ascii),
     column(RESOLUTION, CellKind::Ascii),
+    column(REASON, CellKind::Text),
     column(CREATED, CellKind::Ascii),
     column(UPDATED, CellKind::Ascii),
 ];
@@ -92,6 +95,10 @@ const OPEN: &str = "no";
 /// wrote; an earlier build reads schema 2 as a newer quecto's ("upgrade
 /// quecto to read it"), never as a file it misreads.
 const SECTIONED_SCHEMA: u32 = 2;
+/// The schema of a file holding a status move's reason (#2705 T4), its
+/// description kept either way (its sections, or legacy text as its
+/// Description): an earlier build reads it as a newer quecto's.
+const REASONED_SCHEMA: u32 = 3;
 
 const SECTIONS: &[SectionShape<'static>] = &[
     SectionShape {
@@ -151,7 +158,7 @@ pub struct TaskCodec;
 
 impl ArtifactCodec for TaskCodec {
     type Value = Task;
-    const SCHEMA: u32 = SECTIONED_SCHEMA;
+    const SCHEMA: u32 = REASONED_SCHEMA;
     const OLDEST_SCHEMA: u32 = 1;
     const SHAPE: Shape<'static> = Shape {
         kind: "task",
@@ -186,6 +193,9 @@ impl ArtifactCodec for TaskCodec {
         if let Some(resolution) = task.resolution {
             fields.push((RESOLUTION, cells::word(resolution.as_str())));
         }
+        if let Some(reason) = &task.reason {
+            fields.push((REASON, reason.clone()));
+        }
         fields.push((CREATED, cells::time(&task.created)));
         fields.push((UPDATED, cells::time(&task.updated)));
         let mut sections = vec![];
@@ -210,6 +220,12 @@ impl ArtifactCodec for TaskCodec {
                 sections.extend(prose(DESCRIPTION, &task.description)?);
                 Self::OLDEST_SCHEMA
             }
+        };
+        // A reason (#2705 T4) is written at schema 3, whatever the form, so
+        // an earlier build reads the file as a newer quecto's.
+        let schema = match task.reason {
+            Some(_) => REASONED_SCHEMA,
+            None => schema,
         };
         let slugs = |slugs: &[Slug]| slugs.iter().map(|slug| vec![cells::slug(slug)]).collect();
         let prs = task
@@ -308,7 +324,7 @@ impl ArtifactCodec for TaskCodec {
             references: read.references,
             created: cells::read_time(CREATED, required(CREATED)?)?,
             updated: cells::read_time(UPDATED, required(UPDATED)?)?,
-            reason: None,
+            reason: field(REASON).map(str::to_string),
         };
         Task::new(fields)
             .map_err(|error| refused("Task", format!("{}: {}", error.field, error.problem)))
@@ -371,13 +387,24 @@ struct Read {
 }
 
 impl Read {
+    /// The schema a legacy description is read at.
+    const LEGACY_SCHEMA: u32 = <TaskCodec as ArtifactCodec>::OLDEST_SCHEMA;
+
     /// The task's description and its form, by the file's `schema`: at
     /// schema 1 its Description as written (legacy); at schema 2 the text
-    /// its own sections make, which must be a description in its sections.
+    /// its own sections make, which must be a description in its sections;
+    /// at schema 3 (a reason, #2705 T4) either, by the layout it holds.
     /// Never both, and never the other schema's layout.
     fn description(&mut self, schema: u32) -> Result<(String, DescriptionForm), CodecError> {
         let parts = std::mem::take(&mut self.parts);
         let text = std::mem::take(&mut self.description);
+        // A schema-3 file is read as the layout it holds: sections, or a
+        // Description (or none, legacy text left empty).
+        let schema = match (schema, parts.as_slice()) {
+            (REASONED_SCHEMA, [_, ..]) => SECTIONED_SCHEMA,
+            (REASONED_SCHEMA, []) => Self::LEGACY_SCHEMA,
+            (schema, _) => schema,
+        };
         match (schema, text.is_empty(), parts.as_slice()) {
             (SECTIONED_SCHEMA, true, [_, ..]) => {
                 let pairs = parts

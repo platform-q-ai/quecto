@@ -224,6 +224,10 @@ const KNOWN_KINDS : & [
 "links" ,
 "handoff" ,
 "handoff_from" ,
+"use_lifecycle" ,
+"reason_required" ,
+"done_without_run" ,
+"reason" ,
 ] ;
 const fn all_shaped (  ) -> bool { let mut at = 0 ; while at < KNOWN_KINDS . len (  ) { if ! kind_shaped ( KNOWN_KINDS [
 at

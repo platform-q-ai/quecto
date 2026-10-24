@@ -213,7 +213,7 @@ fn apply(
             // The tasks it relates to may hold the move back (#2661).
             let reason = entered(reason);
             let works = (runs.as_slice(), changes.as_slice());
-            let moved = move_with_reason(task, *to, &reason, actor, works, &board.tasks, now)?;
+            let moved = move_with_reason(task, (*to, &reason), actor, works, &board.tasks, now)?;
             // Once the rules allow it, a task file set aside may still be a
             // child an archive waits for.
             if *to == TaskStatus::Archived {

@@ -357,8 +357,7 @@ fn bootstrap_read_and_write_agree_on_what_a_board_is() {
     assert_eq!(sh(&remote, &["rev-parse", BOARD_REF]), code);
 }
 
-/// A bootstrap that loses the race to a branch that is not a board clashes;
-/// it never answers that branch as the existing board.
+/// A bootstrap losing the race to a branch that is no board clashes, never taking it as the board.
 #[test]
 fn a_bootstrap_lost_to_a_branch_that_is_not_a_board_clashes() {
     let repos = Repos::new();

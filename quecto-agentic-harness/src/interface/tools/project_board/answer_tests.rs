@@ -520,8 +520,7 @@ fn a_set_aside_file_is_named_by_its_raw_path_and_object() {
     assert_eq!(error_json(&named)["message"], json!(named.to_string()));
 }
 
-/// The board's two read-time refusals answer their own codes, each with
-/// its reason.
+/// The board's two read-time refusals answer their own codes, each with its reason.
 #[test]
 fn a_board_too_large_or_held_answers_its_own_code() {
     let (big, held) = ("16385 entries", "plans/a.1.md is set aside");

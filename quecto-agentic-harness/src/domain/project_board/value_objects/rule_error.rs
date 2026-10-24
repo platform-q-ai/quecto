@@ -237,7 +237,7 @@ impl fmt::Display for BoardRuleError {
             Self::UseLifecycle { from, to, action } => {
                 let way = match action {
                     LifecycleAction::Start => {
-                        "start(task, plan_version) is the only way to in_progress: it runs the \
+                        "start(task, plan_version) is the only way there, and it runs the task's \
                          accepted plan"
                     }
                     LifecycleAction::EndRun => {
@@ -253,7 +253,7 @@ impl fmt::Display for BoardRuleError {
                 };
                 write!(
                     f,
-                    "move does not take a task from {} to {}: {way}",
+                    "move does not take a task from {} to {}; {way}",
                     from.as_str(),
                     to.as_str()
                 )

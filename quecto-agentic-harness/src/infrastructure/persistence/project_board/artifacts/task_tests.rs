@@ -202,12 +202,15 @@ fn every_task_shape_round_trips() {
     for resolution in Resolution::ALL.iter().copied() {
         // A superseded or duplicate task names what took it over.
         let named = matches!(resolution, Resolution::Superseded | Resolution::Duplicate);
+        // A task done without a run says why (#2705 T4).
+        let reason = (resolution == Resolution::DoneWithoutRun).then(|| "By hand".to_string());
         shapes.push(TaskFields {
             resolution: Some(resolution),
             references: match named {
                 true => example().references,
                 false => vec![],
             },
+            reason,
             ..bare(TaskStatus::Archived)
         });
     }
@@ -318,10 +321,10 @@ fn a_claim_needs_all_three_rows() {
 
 #[test]
 fn a_newer_task_schema_asks_for_an_upgrade() {
-    let newer = edited("quecto-task schema=1", "quecto-task schema=3");
+    let newer = edited("quecto-task schema=1", "quecto-task schema=4");
     assert_eq!(
         decode::<TaskCodec>(newer.as_bytes()),
-        Err(CodecError::NewerSchema { found: 3, known: 2 })
+        Err(CodecError::NewerSchema { found: 4, known: 3 })
     );
     let other = edited("quecto-task schema=1", "quecto-plan schema=1");
     assert_eq!(

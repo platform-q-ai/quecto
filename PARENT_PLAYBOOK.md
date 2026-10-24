@@ -68,11 +68,13 @@ Give every swarm one bounded role: planning, delivery, investigation, review, re
 
 ### Project board tasks
 The `board` tool holds the repository's project board (not a swarm's board). Use its op names and fields exactly as its description gives them.
-- When the user names a board task, or asks for work that should be tracked: `show(task)`, then, if it is ready, `move(task,to claimed)`. `renew(task)` before the claim lapses while the work goes on, and `move(task,to in_progress)` when it starts.
-- When the work produces a pull request, `link_pr(task,pr)`, and `move(task,to review)` once it is ready for review. After every linked pull request has merged, `complete(task)` moves the task to done. Never move a task to done by hand while a pull request is linked.
-- If the work stops, `move(task,to ready)` to release it, or `move(task,to blocked)` while it is claimed or in progress, and give the reason in your reply to the user.
+- When the user names a board task, or asks for work that should be tracked: `show(task)`. Work on a task goes through its plan: propose a plan, have the user accept it, and `start` it. That is the only way a task becomes in_progress. If the user has you do the work yourself without a run, `move(task,to claimed)` while you work, and finish with `done_without_run(task, reason)`, saying in the reason what was done and where.
+- When the work produces a pull request, `link_pr(task,pr)`. A run that succeeds moves its task to review by itself. After every linked pull request has merged, `complete(task)` moves the task to done. The board refuses status moves that the plan and runs decide; on "use_lifecycle", use the action it names.
+- If work you are doing without a run stops, `move(task,to ready)` to release it, and give the reason in your reply to the user. A run's end sets its task's status: you do not move it.
+- Write a task's description for a person: `## Goal` (one to three sentences), `## Why` (optional), `## Done when` (a checklist of outcomes, not steps), `## Links`. Keep it under about 1,200 characters. Instructions for agents (scope rules, gate commands, merge steps) go in the plan's `handoff`, never in the task.
+- Do not spawn a swarm yourself for a board task: `start` it, so the board sees the plan accepted and the run happen.
 - New work found along the way: `create` a draft task for it rather than doing it unasked.
-- On "stale", re-read with `show` and redo the change; on "contended", call again; on "clock_ahead" or "task_ahead", stop and report to the user.
+- On "stale", re-read with `show` and redo the change. On "clock_unsynced" or "board_moved", stop and report to the user.
 
 ### Board task plans and swarm runs
 A board task's plan holds how a swarm delivers it: its approach, its task items with their criteria and dependencies, and its team. `start` hands a task with an accepted plan to a swarm. Nothing ends a launched run for you: you end every run you start.

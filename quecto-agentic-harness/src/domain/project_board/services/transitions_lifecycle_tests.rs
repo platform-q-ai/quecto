@@ -55,7 +55,7 @@ fn reason_for(from: TaskStatus, to: TaskStatus) -> MoveReason {
 }
 
 fn moved(task: &Task, to: TaskStatus, why: &MoveReason, actor: &str, time: &str) -> MoveResult {
-    move_with_reason(task, to, why, &person(actor), (&[], &[]), &[], &at(time))
+    move_with_reason(task, (to, why), &person(actor), (&[], &[]), &[], &at(time))
 }
 
 type MoveResult = Result<Task, BoardRuleError>;
@@ -358,8 +358,7 @@ fn a_release_from_progress_waits_for_its_run() {
     assert_eq!(
         move_with_reason(
             &held_by_bot(InProgress),
-            Ready,
-            &MoveReason::Unasked,
+            (Ready, &MoveReason::Unasked),
             &person("Bot"),
             (&going, &[]),
             &[],
