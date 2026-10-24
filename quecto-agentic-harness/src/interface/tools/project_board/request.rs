@@ -514,7 +514,7 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "create" => create(read),
         "update_draft" => update_draft(read),
         "move" => change(moves::moved(read)?),
-        "done_without_run" => change(moves::done_without_run(read)?),
+        "done_without_run" => moves::done_without_run(read),
         "renew" => change(BoardOp::Renew),
         "take_over" => change(BoardOp::TakeOver),
         "link_pr" => change(BoardOp::AddPr(read.pr()?)),

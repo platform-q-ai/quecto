@@ -173,6 +173,10 @@ pub enum BoardRuleError {
     /// holder may unlink one deliberately (a wrong or abandoned pull
     /// request) first.
     PrsLinked(Vec<u64>),
+    /// These linked pull requests have not merged (open, or closed
+    /// unmerged): a task linking them is done without a run only once
+    /// every one has (#2705 T4).
+    PrsOpen(Vec<u64>),
     /// The task does not link this pull request.
     PrNotLinked(u64),
     /// The task already links this pull request.
@@ -437,6 +441,11 @@ impl fmt::Display for BoardRuleError {
                 "the task links pull requests {prs:?}, so it is done when they merge: \
                  complete it once they have (anyone may), or unlink one first"
             ),
+            Self::PrsOpen(prs) => write!(
+                f,
+                "pull requests {prs:?} have not merged: a task linking pull requests is done \
+                 without a run only once every one has merged"
+            ),
             Self::PrNotLinked(pr) => write!(f, "the task does not link pull request {pr}"),
             Self::PrAlreadyLinked(pr) => write!(f, "the task already links pull request {pr}"),
             Self::NotDraft(status) => write!(
@@ -487,7 +496,7 @@ impl fmt::Display for BoardRuleError {
                 write!(
                     f,
                     "its child tasks are still being worked on: {}; finish or release them \
-                     before archiving it",
+                     first",
                     tasks.join(", ")
                 )
             }

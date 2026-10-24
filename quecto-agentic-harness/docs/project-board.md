@@ -932,12 +932,28 @@ not show it yet, as they hold back `resolution`.
 `done_without_run(task, reason)` finishes work done with no run of the task's
 plan (an answer, a fix made by hand): a ready task by anyone, a claimed one by
 its holder while the claim is live. The reason is required (`invalid_request`,
-field `reason`, when it is missing; `invalid`, field `reason`, when it is empty
-or not one line). The task is resolved `done_without_run`, keeps the reason,
-and leaves its claim. It is refused from any other status (`not_allowed`), for
-a task others took over (`superseded`), while a pull request (`prs_linked`) or
-a change (`changes_linked`) is linked, and while a run of it is going
-(`run_open`). `quecto board done-without-run` takes the same fields.
+field `reason`, when it is missing; `invalid`, field `reason`, when nothing is
+left once it is normalised as one line, "must say why", or when it is more
+than one line or past 1,000 characters, "must be 1 to 1000 visible characters
+on one line"). The task is resolved `done_without_run`, keeps the reason, and
+leaves its claim.
+
+It is refused from any other status (`not_allowed`), for a task others took
+over (`superseded`), while a run of it is going (`run_open`), and as a claim
+and an archive are refused: while a task it depends on is not done or archived
+(`dependency_not_done`), and while a child task is claimed, in progress, in
+review or blocked (`children_active`). A task that links pull requests is done
+so only once every one has merged (the owner's choice): their states are read
+from the host as `complete` reads them, within the same 30-second budget,
+and only once every other rule allows the task. One not merged (open, or
+closed unmerged) refuses it (`prs_open`, naming them in `prs`); a host that
+cannot be read in time answers `pull_requests_unavailable`, one that does not
+know a pull request `pr_state_unknown`, and none at all `no_pull_request_host`.
+A change linked and not merged refuses it the same way (`changes_unmerged`).
+A merged pull request still completes a task by itself only from review.
+`quecto board done-without-run` takes the same fields. A board server will
+need to read the pull requests' states before its write lock, as it will for
+`complete` (#2705 B7/B8).
 
 ### The task's file
 

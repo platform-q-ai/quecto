@@ -21,7 +21,7 @@ use crate::domain::project_board::services::claims::{claim_facts, renew, renewal
 use crate::domain::project_board::services::pull_requests::{add_pr, may_link, remove_pr};
 use crate::domain::project_board::services::starts::unstart;
 use crate::domain::project_board::services::transitions::{
-    MoveReason, done_without_run, done_without_run_reads, move_reads, move_with_reason,
+    MoveReason, move_reads, move_with_reason,
 };
 use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -121,7 +121,6 @@ impl ChangeBoardTask {
             }
             facts.status_to = match op {
                 BoardOp::Move(to, _) | BoardOp::UndoStart(to) => Some(*to),
-                BoardOp::DoneWithoutRun(_) => Some(TaskStatus::Done),
                 BoardOp::Renew | BoardOp::TakeOver | BoardOp::AddPr(_) | BoardOp::RemovePr(_) => {
                     written.as_ref().ok().map(|task| task.fields().status)
                 }
@@ -234,19 +233,6 @@ fn apply(
             add_pr(task, actor, *pr, linked, now)
         }
         BoardOp::RemovePr(pr) => remove_pr(task, actor, *pr, now),
-        BoardOp::DoneWithoutRun(reason) => {
-            let reads = done_without_run_reads(task, actor, now)?;
-            let runs = match reads.runs {
-                true => owned(board_view::runs_of(board, id)?),
-                false => vec![],
-            };
-            let changes = match reads.changes {
-                true => owned(board_view::changes_of(board, id)?),
-                false => vec![],
-            };
-            let reason = board_text::line(reason);
-            done_without_run(task, &reason, actor, (&runs, &changes), now)
-        }
         BoardOp::UndoStart(from) => {
             let runs = owned(board_view::runs_of(board, id)?);
             unstart(task, *from, &runs, actor, now)

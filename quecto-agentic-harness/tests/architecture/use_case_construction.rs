@@ -81,6 +81,7 @@ const USE_CASES: &[&str] = &[
     "ExtendRunDeadline",
     "FinalizeEnvironmentMember",
     "FindUseCase",
+    "FinishWithoutRun",
     "FoldBackRun",
     "GcOrphanedEnvironments",
     "HarnessShutdownTransaction",

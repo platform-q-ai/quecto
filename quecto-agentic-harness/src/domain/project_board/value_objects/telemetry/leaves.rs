@@ -297,6 +297,9 @@ const KNOWN_KINDS: &[&str] = &[
     "reason_required",
     "done_without_run",
     "reason",
+    // Done without a run once every linked pull request has merged (#2705
+    // T4 review round 1): its refusal for one that has not.
+    "prs_open",
 ];
 
 /// Whether every one of [`KNOWN_KINDS`] is shaped as a kind (checked as

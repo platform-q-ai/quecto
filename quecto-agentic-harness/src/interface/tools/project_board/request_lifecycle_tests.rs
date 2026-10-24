@@ -52,10 +52,10 @@ fn done_without_run_takes_a_required_reason() {
     for policy in [EntryPolicy::Sectioned, EntryPolicy::SectionedOrLegacy] {
         assert_eq!(
             parse(&done, policy),
-            Ok(BoardRequest::Change(
-                slug("a"),
-                BoardOp::DoneWithoutRun("Answered in chat".into())
-            ))
+            Ok(BoardRequest::DoneWithoutRun {
+                task: slug("a"),
+                reason: "Answered in chat".into(),
+            })
         );
         let bare = json!({"op": "done_without_run", "task": "a"});
         let refused = parse(&bare, policy).unwrap_err();

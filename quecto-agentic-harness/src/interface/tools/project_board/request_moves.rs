@@ -3,6 +3,7 @@
 //! front end's policy makes of none; `done_without_run` requires one.
 use super::{Read, RequestError};
 use crate::application::project_board::dto::BoardOp;
+use crate::application::project_board::operations::BoardRequest;
 use crate::domain::project_board::entities::task_parts::EntryPolicy;
 use crate::domain::project_board::services::transitions::MoveReason;
 
@@ -18,10 +19,13 @@ pub(super) fn moved(read: &Read<'_>) -> Result<BoardOp, RequestError> {
 /// The task done without a run, for the reason the request gives.
 ///
 /// # Errors
-/// A reason of the wrong type.
-pub(super) fn done_without_run(read: &Read<'_>) -> Result<BoardOp, RequestError> {
+/// A task id or reason of the wrong type.
+pub(super) fn done_without_run(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     let reason = read.text("reason")?.expect("a required field is present");
-    Ok(BoardOp::DoneWithoutRun(reason))
+    Ok(BoardRequest::DoneWithoutRun {
+        task: read.task()?,
+        reason,
+    })
 }
 
 /// A move's reason: the one given, or, given none, as its front end's

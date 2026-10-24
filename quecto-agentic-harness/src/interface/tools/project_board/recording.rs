@@ -535,6 +535,7 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         | R::NoPrs
         | R::PrsUnmerged(..)
         | R::PrsLinked(..)
+        | R::PrsOpen(..)
         | R::PrNotLinked(..)
         | R::PrAlreadyLinked(..)
         | R::NotDraft(..)

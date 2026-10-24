@@ -86,9 +86,6 @@ pub enum BoardOp {
     /// mover gives (#2705 T4: back to ready from review takes one);
     /// `Move(Claimed, _)` claims a ready task.
     Move(TaskStatus, MoveReason),
-    /// Finish a ready or claimed task done without a run, saying why
-    /// (#2705 T4).
-    DoneWithoutRun(String),
     /// A start's own undo (#2705 T4): an in-progress task back in the
     /// review or blocked status its start moved it from. No op names it:
     /// only the start use case makes it.
@@ -110,7 +107,6 @@ impl BoardOp {
             Self::Renew => format!("board: renew {id}"),
             Self::TakeOver => format!("board: take over {id}"),
             Self::Move(to, _) => format!("board: move {id} to {}", to.as_str()),
-            Self::DoneWithoutRun(_) => format!("board: done {id} without a run"),
             Self::UndoStart(to) => format!("board: undo the start of {id} to {}", to.as_str()),
             Self::AddPr(pr) => format!("board: link pull request {pr} to {id}"),
             Self::RemovePr(pr) => format!("board: unlink pull request {pr} from {id}"),

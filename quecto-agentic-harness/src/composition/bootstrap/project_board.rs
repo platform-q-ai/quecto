@@ -25,8 +25,8 @@ use crate::application::project_board::ports::{
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
-    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ListLeftRuns, ProposePlan, QueryBoard,
-    RunBoardOperation, StartBoardTask, UpdateDraftTask,
+    CreateBoardTask, DiscardPlan, EditPlan, EndRun, FinishWithoutRun, ListLeftRuns, ProposePlan,
+    QueryBoard, RunBoardOperation, StartBoardTask, UpdateDraftTask,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
@@ -128,6 +128,9 @@ fn build_with_warnings(
     let built = |error: crate::application::project_board::dto::ProjectBoardError| {
         unavailable(error.to_string())
     };
+    let done_without_run =
+        FinishWithoutRun::reading(Arc::clone(&store), Arc::clone(&clock), prs.clone())
+            .map_err(built)?;
     let complete =
         CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs).map_err(built)?;
     let parts = BoardOperationParts {
@@ -192,6 +195,7 @@ fn build_with_warnings(
             .map(|swarms| ListLeftRuns::new(Arc::clone(&store), swarms as Arc<dyn StartedRuns>)),
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         complete,
+        done_without_run,
         clock,
         listings,
         query: QueryBoard::new(store),

@@ -213,7 +213,14 @@ fn every_other_move_clears_the_reason() {
 fn done_without_run_finishes_a_ready_or_claimed_task_with_its_reason() {
     let why = "Answered in chat: the flag already exists";
     let ready = without_prs(task(Ready));
-    let done = done_without_run(&ready, why, &person("Bob"), (&[], &[]), &at("10:00:00")).unwrap();
+    let done = done_without_run(
+        &ready,
+        why,
+        &person("Bob"),
+        quiet(&[], &[]),
+        &at("10:00:00"),
+    )
+    .unwrap();
     let fields = done.fields();
     assert_eq!(
         (
@@ -232,15 +239,33 @@ fn done_without_run_finishes_a_ready_or_claimed_task_with_its_reason() {
         )
     );
     let claimed = without_prs(task(Claimed));
-    let done = done_without_run(&claimed, why, &person("Ada"), (&[], &[]), &at("10:00:00"));
+    let done = done_without_run(
+        &claimed,
+        why,
+        &person("Ada"),
+        quiet(&[], &[]),
+        &at("10:00:00"),
+    );
     assert_eq!(done.map(|task| task.fields().status), Ok(Done));
     // Only the holder finishes a claimed task, while the claim is live.
     assert_eq!(
-        done_without_run(&claimed, why, &person("Bob"), (&[], &[]), &at("10:00:00")),
+        done_without_run(
+            &claimed,
+            why,
+            &person("Bob"),
+            quiet(&[], &[]),
+            &at("10:00:00")
+        ),
         Err(BoardRuleError::NotHolder)
     );
     assert_eq!(
-        done_without_run(&claimed, why, &person("Ada"), (&[], &[]), &at("14:00:00")),
+        done_without_run(
+            &claimed,
+            why,
+            &person("Ada"),
+            quiet(&[], &[]),
+            &at("14:00:00")
+        ),
         Err(BoardRuleError::ClaimExpired)
     );
 }
@@ -252,7 +277,7 @@ fn done_without_run_without_a_reason_is_refused() {
             &without_prs(task(Ready)),
             why,
             &person("Ada"),
-            (&[], &[]),
+            quiet(&[], &[]),
             &at("10:00:00"),
         );
         match refused {
@@ -269,27 +294,52 @@ fn done_without_run_is_only_for_work_no_run_or_link_finishes() {
     let now = at("10:00:00");
     for from in [Draft, InProgress, Review, Blocked, Done, Archived] {
         assert_eq!(
-            done_without_run(&without_prs(task(from)), why, &ada, (&[], &[]), &now),
+            done_without_run(&without_prs(task(from)), why, &ada, quiet(&[], &[]), &now),
             Err(BoardRuleError::NotAllowed { from, to: Done }),
             "{from:?}"
         );
     }
-    // A task with pull requests or changes linked is done when they merge.
+    // A task with pull requests or changes linked is done without a run
+    // only once every one has merged.
     assert_eq!(
-        done_without_run(&task(Claimed), why, &ada, (&[], &[]), &now),
-        Err(BoardRuleError::PrsLinked(vec![2482, 2483]))
+        done_without_run(&task(Claimed), why, &ada, quiet(&[], &[]), &now),
+        Err(BoardRuleError::PrsOpen(vec![2482, 2483]))
     );
     let linked = [change(1, Some(9001))];
     assert_eq!(
-        done_without_run(&without_prs(task(Claimed)), why, &ada, (&[], &linked), &now),
-        Err(BoardRuleError::ChangesLinked(vec![1]))
+        done_without_run(
+            &without_prs(task(Claimed)),
+            why,
+            &ada,
+            quiet(&[], &linked),
+            &now
+        ),
+        Err(BoardRuleError::ChangesUnmerged(vec![1]))
     );
     // A run going holds the task.
     let going = [open_run(1, 1)];
     assert_eq!(
-        done_without_run(&without_prs(task(Claimed)), why, &ada, (&going, &[]), &now),
+        done_without_run(
+            &without_prs(task(Claimed)),
+            why,
+            &ada,
+            quiet(&going, &[]),
+            &now
+        ),
         Err(BoardRuleError::RunOpen(1))
     );
+}
+
+/// No runs or tasks, no pull request merged: the `runs` and `changes`
+/// given.
+fn quiet<'a>(runs: &'a [Run], changes: &'a [Change]) -> DoneWork<'a> {
+    static NONE_MERGED: BTreeSet<u64> = BTreeSet::new();
+    DoneWork {
+        runs,
+        changes,
+        tasks: &[],
+        merged: &NONE_MERGED,
+    }
 }
 
 /// The relay's bot holds what its runs start.

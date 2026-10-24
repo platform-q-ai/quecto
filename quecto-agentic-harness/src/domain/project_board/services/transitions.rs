@@ -161,10 +161,12 @@ fn entered_reason(text: &str) -> Result<String, BoardRuleError> {
 
 /// What [`done_without_run`] reads of the task's work, once its rule
 /// allows `actor` to finish it so at `now`: its runs (one going holds it)
-/// and its changes (one linked holds it, as a pull request linked does).
+/// and its changes (one not merged holds it). Its linked pull requests are
+/// the caller's to read on the host ([`DoneWork::merged`]).
 ///
 /// # Errors
-/// What [`done_without_run`] refuses before it looks at runs or changes.
+/// What [`done_without_run`] refuses before it looks at runs, changes or
+/// pull requests.
 pub fn done_without_run_reads(
     task: &Task,
     actor: &Identity,
@@ -181,41 +183,68 @@ pub fn done_without_run_reads(
         }
     }
     not_superseded(task)?;
-    match task.fields().prs.as_slice() {
-        [] => Ok(MoveReads {
-            runs: true,
-            changes: true,
-        }),
-        prs => Err(BoardRuleError::PrsLinked(prs.to_vec())),
-    }
+    Ok(MoveReads {
+        runs: true,
+        changes: true,
+    })
+}
+
+/// What a task done without a run is judged by: its `runs` and `changes`
+/// (all of them, as the board holds them), the `tasks` it relates to
+/// (every task the board holds), and which of its linked pull requests the
+/// host reads as `merged`.
+#[derive(Debug, Clone, Copy)]
+pub struct DoneWork<'a> {
+    pub runs: &'a [Run],
+    pub changes: &'a [Change],
+    pub tasks: &'a [Task],
+    pub merged: &'a BTreeSet<u64>,
 }
 
 /// `task` done without a run (#2705 T4): work finished with no run of its
 /// plan (an answer, a fix made by hand), for `reason`, by `actor` at `now`.
 /// A ready task is anyone's to finish so, a claimed one its holder's while
 /// the claim is live. It is resolved `done_without_run`, keeps the reason
-/// and leaves its claim; its `runs` and `changes` (all of them, as the
-/// board holds them) must hold no run going and no change linked.
+/// and leaves its claim. What it is judged by ([`DoneWork`]) must hold no
+/// run going, no change and no linked pull request that has not merged
+/// (the owner's choice, #2705 T4 review round 1: done without a run once
+/// every linked pull request has merged), and let it go as a claim and an
+/// archive would ([`relations_allow`]): every task it depends on done or
+/// archived, and no child task held.
 ///
 /// # Errors
 /// Any other status (`not_allowed`); not the holder of a live claim; a
-/// task others took over; pull requests or changes linked; a run going;
-/// a reason that is empty or never normalised as one line.
+/// task others took over; a change (`changes_unmerged`) or a linked pull
+/// request (`prs_open`) not merged; a run going; a task it depends on not
+/// done, or a child task held; a reason that is empty or never normalised
+/// as one line.
 pub fn done_without_run(
     task: &Task,
     reason: &str,
     actor: &Identity,
-    (runs, changes): (&[Run], &[Change]),
+    work: DoneWork<'_>,
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
     done_without_run_reads(task, actor, now)?;
     let reason = entered_reason(reason)?;
-    let linked = numbers(task, changes, Change::is_linked)?;
-    match linked.as_slice() {
+    let open = numbers(task, work.changes, Change::is_open)?;
+    match open.as_slice() {
         [] => {}
-        [_, ..] => return Err(BoardRuleError::ChangesLinked(linked)),
+        [_, ..] => return Err(BoardRuleError::ChangesUnmerged(open)),
     }
-    may_move_with(task, runs, Done)?;
+    let unmerged: Vec<u64> = (task.fields().prs.iter())
+        .copied()
+        .filter(|pr| !work.merged.contains(pr))
+        .collect();
+    match unmerged.as_slice() {
+        [] => {}
+        [_, ..] => return Err(BoardRuleError::PrsOpen(unmerged)),
+    }
+    may_move_with(task, work.runs, Done)?;
+    // As a claim waits for the task's dependencies, and an archive for its
+    // children to be free of work.
+    relations_allow(task, Claimed, work.tasks)?;
+    relations_allow(task, Archived, work.tasks)?;
     let at = stamp(task, now)?;
     let mut next = task.fields().clone();
     next.status = Done;
@@ -620,3 +649,7 @@ mod holder_tests;
 #[cfg(test)]
 #[path = "transitions_lifecycle_tests.rs"]
 mod lifecycle_tests;
+
+#[cfg(test)]
+#[path = "transitions_done_tests.rs"]
+mod done_tests;

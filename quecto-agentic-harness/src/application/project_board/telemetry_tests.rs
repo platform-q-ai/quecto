@@ -174,7 +174,10 @@ fn every_request() -> Vec<BoardRequest> {
             task: a.clone(),
             plan_version: 1,
         }),
-        change(BoardOp::DoneWithoutRun("By hand".into())),
+        BoardRequest::DoneWithoutRun {
+            task: a.clone(),
+            reason: "By hand".into(),
+        },
     ]
 }
 

@@ -417,6 +417,7 @@ board_rules! {
     R::NoPrs => R::NoPrs, "no_prs", [];
     R::PrsUnmerged(_) => R::PrsUnmerged(vec![7]), "prs_unmerged", ["prs"];
     R::PrsLinked(_) => R::PrsLinked(vec![7]), "prs_linked", ["prs"];
+    R::PrsOpen(_) => R::PrsOpen(vec![8]), "prs_open", ["prs"];
     R::PrNotLinked(_) => R::PrNotLinked(7), "pr_not_linked", ["pr"];
     R::PrAlreadyLinked(_) => R::PrAlreadyLinked(7), "pr_already_linked", ["pr"];
     R::NotDraft(_) => R::NotDraft(TaskStatus::Ready), "not_draft", ["status"];
@@ -632,8 +633,7 @@ fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
     );
 }
 
-/// A path in another kind's folder stops the answer, as a store never
-/// shows a run's file under `plans/`.
+/// A path in another kind's folder stops the answer: no store shows a run's file in `plans/`.
 #[test]
 #[should_panic(expected = "shows every path it sets aside sanitised")]
 fn an_artifact_path_in_another_kinds_folder_is_never_shown() {

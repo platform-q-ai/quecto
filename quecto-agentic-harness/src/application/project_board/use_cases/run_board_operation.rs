@@ -187,6 +187,12 @@ impl RunBoardOperation {
                 Ok(changed(task, completion))
             }
             BoardRequest::Complete(id) => Ok(changed(self.complete(id, facts)?, None)),
+            BoardRequest::DoneWithoutRun { task, reason } => Ok(changed(
+                self.parts
+                    .done_without_run
+                    .execute_noted(task, reason, facts)?,
+                None,
+            )),
             BoardRequest::ProposePlan(proposal) => Ok(BoardOutcome::Planned(
                 self.parts.propose_plan.execute_noted(proposal, facts)?,
             )),

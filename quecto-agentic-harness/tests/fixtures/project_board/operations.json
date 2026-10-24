@@ -2247,7 +2247,7 @@
       "op": "move",
       "error": {
         "code": "rule",
-        "message": "its child tasks are still being worked on: kid; finish or release them before archiving it",
+        "message": "its child tasks are still being worked on: kid; finish or release them first",
         "rule": {
           "code": "children_active",
           "tasks": [
