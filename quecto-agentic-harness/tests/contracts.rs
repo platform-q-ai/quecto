@@ -428,3 +428,7 @@ mod project_board_history_safety;
 #[cfg(feature = "test-support")]
 #[path = "contracts/project_board_history_native.rs"]
 mod project_board_history_native;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_history_lineage.rs"]
+mod project_board_history_lineage;
