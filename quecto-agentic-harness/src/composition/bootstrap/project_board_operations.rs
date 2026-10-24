@@ -2,12 +2,10 @@
 //! [`BoardOperations`] port the front ends hand their requests to,
 //! answered by the [`RunBoardOperation`] use case over the board
 //! composition built, exactly as the front ends ran it before the port.
-
-use crate::application::project_board::dto::{ProjectBoardError, RunEnd};
-use crate::application::project_board::operations::{BoardRequest, ListSummaries};
-use crate::application::project_board::ports::{
-    BoardAnswered, BoardExecution, BoardOperations, OpNoting,
+use crate::application::project_board::dto::{
+    BoardAnswered, BoardExecution, BoardRequest, ListSummaries, OpNoting, ProjectBoardError, RunEnd,
 };
+use crate::application::project_board::ports::BoardOperations;
 use crate::application::project_board::telemetry::OpFacts;
 use crate::application::project_board::use_cases::RunBoardOperation;
 

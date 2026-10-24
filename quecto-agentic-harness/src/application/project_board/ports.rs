@@ -3,10 +3,9 @@
 //! repository's `quecto/board` branch), its listings from a local view of
 //! it (the S1e index implements [`BoardListings`]) and what time it is.
 use super::dto::{
-    BoardListing, FoldBackFacts, FoldedBack, ProjectBoardError, RunEnd, SwarmRunView,
+    BoardExecution, BoardListing, BoardRequest, FoldBackFacts, FoldedBack, ListSummaries, OpNoting,
+    ProjectBoardError, RunEnd, SwarmRunView,
 };
-use super::operations::{BoardOutcome, BoardRequest, ListSummaries};
-use super::telemetry::OpFacts;
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::discussion::Discussion;
@@ -691,49 +690,22 @@ pub trait CoordinatorLaunch: Send + Sync {
     ) -> Result<LaunchedCoordinator, LaunchRefused>;
 }
 
-/// Whether a board request's run notes what its use cases saw, for the
-/// call's record (epic #2481 T4): only a recorded call asks, so an
-/// unrecorded one notes and times nothing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OpNoting {
-    Noted,
-    Unnoted,
-}
-
-/// A request the board answered: what it came to, and, when it reads the
-/// clock and the clock has no outside reference, why it was not bounded
-/// against an outside time.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BoardAnswered {
-    pub outcome: BoardOutcome,
-    pub clock_note: Option<String>,
-}
-
-/// What one board request came to, as a front end is handed it: the
-/// answer or the board's refusal, and what its use cases saw, refusals
-/// included, when it was noted ([`OpNoting::Noted`]; `None` otherwise).
-/// Owned values only, so an adapter may carry it over a wire.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BoardExecution {
-    pub result: Result<BoardAnswered, ProjectBoardError>,
-    pub facts: Option<OpFacts>,
-}
-
 /// Port: the board's operations as a front end reaches them (epic #2705
 /// B6). The `quecto board` CLI and the agent `board` tool hand each read
-/// and checked request to it and answer what it gives back: the local
-/// adapter runs it on this machine's board, a board server's (B7) sends it
-/// there. Requests and answers are owned values and refusals the board's
-/// own typed errors: no store handle crosses. Blocking: the board's store,
-/// clock and host all block, so callers run it off the async workers.
+/// and checked request to it and answer what it gives back. Requests and
+/// answers are owned values and refusals the board's own typed errors: no
+/// store handle crosses. The local adapter runs every request on this
+/// machine's board; a board server's (B7) will send the board's reads and
+/// writes there, while a start (its coordinator's launch) and
+/// [`Self::left_runs`] read this session's swarms, so they stay local
+/// until B8. Blocking: the board's store, clock and host all block, so
+/// callers run it off the async workers.
 pub trait BoardOperations: Send + Sync {
     /// What `request` comes to, a listing summarising its tasks as
-    /// `summaries` asks, noted as `noting` asks. A listing is never
-    /// refused for its summaries.
-    ///
-    /// # Panics
-    /// Summaries asked of a request that is no listing
-    /// ([`BoardRequest::is_listing`]): a front end refuses that first.
+    /// `summaries` asks, noted as `noting` asks: a noted request gives
+    /// back what its use cases saw, answered or refused. A listing is
+    /// never refused for its summaries; summaries asked of a request that
+    /// is no listing ([`BoardRequest::is_listing`]) are refused as invalid.
     fn execute(
         &self,
         request: &BoardRequest,
@@ -743,6 +715,9 @@ pub trait BoardOperations: Send + Sync {
 
     /// The ends this front end owes as its session ends (#2655): each run
     /// its starts launched that the board still shows open; none for a
-    /// front end that launches none. Errs when the board cannot be read.
+    /// front end that launches none.
+    ///
+    /// # Errors
+    /// The board could not be read.
     fn left_runs(&self) -> Result<Vec<RunEnd>, ProjectBoardError>;
 }

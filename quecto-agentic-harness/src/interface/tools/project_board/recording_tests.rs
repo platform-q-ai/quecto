@@ -655,7 +655,7 @@ fn a_rule_failed_completion_records_its_rule() {
                 crate::application::project_board::operations::PlanView::default(),
             ),
             ListSummaries::Omitted,
-            crate::application::project_board::ports::OpNoting::Unnoted,
+            crate::application::project_board::dto::OpNoting::Unnoted,
         )
         .result
         .unwrap()

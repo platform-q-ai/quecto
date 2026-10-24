@@ -336,15 +336,24 @@ fn a_listing_that_fails_when_read_again_answers_the_one_before() {
     ));
 }
 
+/// Summaries asked of a request that lists nothing are refused as
+/// invalid.
 #[test]
-#[should_panic(expected = "summaries are asked only of a listing")]
 fn summaries_are_asked_only_of_a_listing() {
     let board = moving(0, usize::MAX);
     let show = BoardRequest::Show(
         Slug::parse("a").unwrap(),
         crate::application::project_board::operations::PlanView::default(),
     );
-    let _ = board
-        .ops
-        .execute_noted_with(&show, None, ListSummaries::Wanted);
+    assert_eq!(
+        board
+            .ops
+            .execute_noted_with(&show, None, ListSummaries::Wanted),
+        Err(ProjectBoardError::Invalid(
+            crate::domain::project_board::value_objects::schema_error::SchemaError::new(
+                "summary",
+                crate::application::project_board::dto::SUMMARIES_LISTINGS_ONLY,
+            )
+        ))
+    );
 }

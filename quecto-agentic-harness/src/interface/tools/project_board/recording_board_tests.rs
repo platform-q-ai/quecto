@@ -1,6 +1,35 @@
 //! #2663: every record of a call names the board it reached.
 use super::*;
 
+/// An adapter that breaks the port's contract: it gives back no facts,
+/// even of a noted request.
+struct Factless;
+
+impl BoardOperations for Factless {
+    fn execute(&self, _: &BoardRequest, _: ListSummaries, _: OpNoting) -> BoardExecution {
+        BoardExecution {
+            result: Err(ProjectBoardError::Contended { attempts: 1 }),
+            facts: None,
+        }
+    }
+
+    fn left_runs(
+        &self,
+    ) -> Result<Vec<crate::application::project_board::dto::RunEnd>, ProjectBoardError> {
+        Ok(vec![])
+    }
+}
+
+/// #2705 B6 review: a noted request that gives back no facts is flagged,
+/// never filled in as a request that saw nothing.
+#[test]
+#[should_panic(expected = "a noted board request gave back no facts")]
+fn a_recorded_call_flags_an_adapter_that_gives_back_no_facts() {
+    let records = Arc::new(Records::default());
+    let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Tool, Client::Agent);
+    let _ = call.executed(&Factless, &BoardRequest::ListReady, ListSummaries::Omitted);
+}
+
 /// #2663 review round 1: every record of a call names the board it
 /// reached: its `board_op`, its start's `board_start`, and each fold-back
 /// it noted (a start's undo's, an end's).

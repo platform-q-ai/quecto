@@ -630,12 +630,12 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
         ],
     ),
     ("subagent_launch", &["LaunchFuture", "SubagentLaunchPorts"]),
-    // The board's requests and outcomes, and what a noted request saw:
-    // the values the `BoardOperations` port carries (#2705 B6).
-    (
-        "project_board::operations",
-        &["BoardOutcome", "BoardRequest", "ListSummaries"],
-    ),
+    // The values the board's requests and outcomes (`dto`, which the
+    // `BoardOperations` port carries, #2705 B6) hold from beside them: a
+    // listing, a started task, and what a noted request saw. None of
+    // these modules names a use case.
+    ("project_board::start", &["StartedTask"]),
+    ("project_board::task_summary", &["Listed"]),
     ("project_board::telemetry", &["OpFacts"]),
 ];
 

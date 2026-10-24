@@ -109,7 +109,8 @@ pub fn summaries_refusal(request: &BoardRequest, summaries: ListSummaries) -> Op
 }
 
 /// Why a summary is refused of a request that lists nothing.
-pub const SUMMARY_LISTINGS_ONLY: &str = "is taken only by list, list_ready and list_takeable";
+pub const SUMMARY_LISTINGS_ONLY: &str =
+    crate::application::project_board::dto::SUMMARIES_LISTINGS_ONLY;
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]

@@ -18,12 +18,12 @@ use serde_json::Value;
 
 use super::answer::{self, FrontEndRefusal, rule_code};
 use super::request::{RequestError, schema_field};
-use crate::application::project_board::dto::ProjectBoardError;
-use crate::application::project_board::operations::{
-    BoardOutcome, BoardRequest, Completion, ListSummaries,
+use crate::application::project_board::dto::{
+    BoardAnswered, BoardExecution, BoardOutcome, BoardRequest, Completion, ListSummaries, OpNoting,
+    ProjectBoardError,
 };
 use crate::application::project_board::ports::{
-    BoardAnswered, BoardExecution, BoardOperations, FoldBackOutcome, FoldBackRecorder, OpNoting,
+    BoardOperations, FoldBackOutcome, FoldBackRecorder,
 };
 use crate::application::project_board::start::{NotedFoldBack, StartFacts};
 use crate::application::project_board::telemetry::{
@@ -202,12 +202,16 @@ impl BoardCall {
         };
         let BoardExecution { result, facts } =
             operations.execute(request, summaries, OpNoting::Noted);
-        // A noted request gives back what it saw; an adapter that gave
-        // nothing back leaves the record as a request that saw nothing.
-        let mut facts = facts.unwrap_or_default();
-        facts.fill(&mut open.record);
-        open.start = facts.start.take();
-        open.fold_back = facts.fold_back.take();
+        // Every noted request gives back what it saw, answered or refused
+        // (the port's contract): an adapter that breaks it fails here in
+        // a debug build. A release build notes no facts, so the record
+        // reads as a request that saw nothing, never as invented ones.
+        debug_assert!(facts.is_some(), "a noted board request gave back no facts");
+        if let Some(mut facts) = facts {
+            facts.fill(&mut open.record);
+            open.start = facts.start.take();
+            open.fold_back = facts.fold_back.take();
+        }
         result
     }
 
