@@ -17,3 +17,5 @@ pub mod inference;
 
 pub mod project_board;
 pub mod swarm;
+
+pub use agents::value_objects::turn_declaration;

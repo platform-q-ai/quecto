@@ -24,3 +24,14 @@ pub trait AgentLoop: Send + Sync {
     /// Return information about this agent's configuration.
     fn info(&self) -> AgentInfo;
 }
+
+/// Inbound port for the inactive turn declaration adapter; identity/authority are trusted inputs.
+pub trait DeclareTurnOutcome: Send + Sync {
+    fn declare(
+        &self,
+        authority: crate::domain::turn_declaration::LaunchAuthority,
+        identity: &crate::domain::turn_declaration::TurnIdentity,
+        intent: crate::domain::turn_declaration::TurnIntent,
+        reason: &str,
+    ) -> Result<crate::domain::turn_declaration::TurnDeclaration, DomainError>;
+}
