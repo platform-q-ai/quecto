@@ -9,5 +9,6 @@ pub mod panic_probe;
 pub mod path_utils;
 pub mod recall;
 pub mod truncate;
+pub mod turn_outcome_definition;
 pub mod web_search;
 pub mod workflow_tool;
