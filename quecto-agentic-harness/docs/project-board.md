@@ -62,6 +62,18 @@ names the location. A board id that is not 16 lower-case hex digits, or a URL
 with a control or invisible character or over 4096 bytes, answers
 `invalid_request` on field `board-id` or `remote-url`.
 
+`quecto board --url <url>` sends every request to a board server instead
+(epic #2705 B7): `unix:///<socket path>`, or `http://<ip>:<port>` on loopback or
+a Tailscale address with its token in `QUECTO_BOARD_TOKEN` (or `board.token` in
+the global config), never on the command line. Without `--url`,
+`QUECTO_BOARD_URL` or the global config's `board.url` names one, for the agent
+tool too. The server answers each request exactly as this machine's board would,
+and a write is one round trip, made as `QUECTO_BOARD_COMMITTER` when it is set,
+else as the clone's committer. A `start` is refused there until B8. A URL of
+another shape, or TCP without a token, answers `store_unavailable`; so does a
+server that cannot be reached after 3 tries, or that refuses the request (its
+status and code in the `reason`). See `docs/board-server.md`.
+
 The board writes the marker `quecto-board 3` and reads `quecto-board 2` too. A
 build that reads only format 2 asks for an upgrade on a board this build has
 written, rather than taking its folders for someone else's branch.

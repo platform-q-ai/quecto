@@ -12,18 +12,12 @@ use std::sync::Arc;
 use crate::application::project_board::dto::{BoardRequest, ProjectBoardError};
 use crate::application::project_board::ports::{
     BoardOpStore, BoardOperations, BoardOperationsOver, BoardStoreError, OpWrite, ServeError,
+    Transacted,
 };
 
 /// What runs a served request on the operations it is handed and gives
 /// the answer to send (the server's front end renders it).
 pub type Present<'a> = dyn FnMut(&dyn BoardOperations) -> String + 'a;
-
-/// A served request's answer, and whether it is a write's kept answer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServedOp {
-    pub answer: String,
-    pub replayed: bool,
-}
 
 /// The board server's operations on its board.
 pub struct ServeBoardOperation {
@@ -48,11 +42,28 @@ impl ServeBoardOperation {
         request: Option<&BoardRequest>,
         write: Option<&OpWrite>,
         present: &mut Present<'_>,
-    ) -> Result<ServedOp, ServeError> {
-        let _ = (request, write, present, &self.store, &self.operations);
-        Err(ServeError::Board(ProjectBoardError::Store(
-            BoardStoreError::Unavailable("not served yet".into()),
-        )))
+    ) -> Result<Transacted, ServeError> {
+        let failed = |error| ServeError::Board(ProjectBoardError::Store(error));
+        match (request.map(BoardRequest::writes), write) {
+            (Some(true), Some(write)) => {
+                // Operations that cannot be built fail the write: it keeps
+                // no answer, so its retry runs it.
+                let transacted = self.store.transact(write, &mut |store| {
+                    let operations = self
+                        .operations
+                        .over(store)
+                        .map_err(|error| BoardStoreError::Unavailable(error.to_string()))?;
+                    Ok(present(&*operations))
+                });
+                transacted.map_err(failed)
+            }
+            (Some(true), None) => Err(ServeError::NoWrite),
+            (Some(false) | None, _) => {
+                let operations = self.operations.over(self.store.reads());
+                let operations = operations.map_err(ServeError::Board)?;
+                Ok(Transacted::Answered(present(&*operations)))
+            }
+        }
     }
 }
 

@@ -3,7 +3,14 @@
 `quecto board-server serve --socket <path> --repo <clone> [--remote origin]
 [--listen <ip:port>]... [--state <dir>]` serves a repository's project
 board over HTTP/1.1 on a Unix socket, and on each allowlisted TCP address,
-until SIGINT or SIGTERM (epic #2705 B4, B5).
+until SIGINT or SIGTERM (epic #2705 B4, B5, B7).
+
+The board is the server's own: a SQLite file, `board.sqlite3`, in the state
+directory (below). The clone gives only the board's id (from its remote's
+URL) and, for the board's operations, its remote's revisions and pull
+requests. A new server has no board until a `bootstrap` op makes one (an
+import of a `quecto/board` branch is B3). A `board.sqlite3` made by an
+earlier build is refused as an unsupported schema.
 
 ## Who may connect
 
@@ -69,11 +76,87 @@ SQLite store as admin revisions.)
 |---|---|
 | `GET /v1/status` | `{"role": "primary", "board": "<id>", "head": "<head>" or null}` |
 | `GET /v1/time` | `{"time": "<RFC 3339, to the second>"}` (the server's clock) |
+| `POST /v1/boards/{id}/op` | one board operation (below): `{"answer": {..}, "facts": {..} or null}` |
 | `GET /v1/admin/tokens` | `{"tokens": [{"name": "<name>", "created": "<RFC 3339>"}]}` (Unix socket only) |
 | `POST /v1/admin/tokens` `{"name": "<name>"}` | 201 `{"name", "created", "token"}`: the one time the token is shown (Unix socket only) |
 | `POST /v1/admin/tokens/revoke` `{"name": "<name>"}` | `{"name": "<name>", "revoked": true}` (Unix socket only) |
 
-The board snapshot route comes with B11. Writes (`/op`) come with B7.
+The board snapshot route comes with B11.
+
+## Operations (`POST /v1/boards/{id}/op`)
+
+`{id}` must be this server's board id (16 lowercase hex digits), or the
+answer is 404 `board`. The body is one JSON object, read strictly (a key
+named twice anywhere is refused) and within the front ends' 1 MiB request
+bound:
+
+```json
+{"request": {"op": "create", "task": "a", "title": "A", "status": "ready"},
+ "front_end": "cli",
+ "summary": false,
+ "noted": false,
+ "write_id": "6f1c0a52-7d0e-4c55-9a51-2b8f3a3e8c10",
+ "committer": {"name": "quecto pocket", "email": "pocket@quecto.invalid"}}
+```
+
+- `request` is the request exactly as `quecto board --input` or the agent
+  `board` tool takes it, and `front_end` (`cli` or `tool`) is the front end
+  that read it. The server reads it again as that front end does, runs it,
+  and `answer` is that front end's answer to it: what the board on this
+  machine would answer. A request refused (an unknown op, a bad field, a
+  task not on the board) is still 200, its refusal in `answer`.
+- `summary` asks a listing for its tasks' summaries (the CLI's
+  `--summary`); `noted` asks for `facts`: `{"attempts", "lost", "head"}`,
+  the write's attempts, the races it lost and the revision it made.
+- A write needs `write_id` (8 to 64 of `0-9`, `a-f` and `-`; the client
+  makes a UUID) and `committer`, the identity the caller asserts. Identities
+  are self-asserted: the server checks only that the committer is one a
+  task can hold. A read ignores both.
+
+A write runs under the board's write lock in one `BEGIN IMMEDIATE`
+transaction, so its compare-and-swap never loses, and every write it makes
+(a change and the completion it triggers) lands together or not at all.
+Each revision records the committer as its author and, beside it, who the
+server let in: `local` on the Unix socket, `token:<name>` over TCP. The
+answer is kept under its `write_id` as the write commits: the same
+`write_id` again is answered with that first answer, byte for byte, and
+writes nothing. The last 1,024 answers are kept: a client retries within
+seconds. A read takes no lock and no transaction.
+
+The server runs no start: a `start` is refused as from a session that may
+not spawn, and `left_runs` is empty, until B8 carries start and `end_run`
+across the wire. A `409 standby` from a follower and its epoch come with
+B12. The server's clock reads no outside time yet, so an answer to a
+request that reads it carries `"clock": {"referenced": false, ...}`; the
+`TimeSync` gate (`clock_unsynced`) is a follow-up.
+
+## Clients
+
+`quecto board ... --url <url>` sends the request to a board server. With
+no `--url`, `QUECTO_BOARD_URL` names one, else the global config's
+`board.url` (the `board` section is global-only); with none, the board is
+the clone's own branch, as before. The agent `board` tool follows
+`QUECTO_BOARD_URL` and `board.url` too.
+
+- `unix:///<socket path>`: the server's own user, no token.
+- `http://<ip>:<port>`, on loopback or a Tailscale address: the token is
+  read from `QUECTO_BOARD_TOKEN`, else `board.token`, never from the
+  command line, and sent as `Authorization: Bearer`. No error, answer or
+  log shows it.
+
+```json
+{ "board": { "url": "http://100.101.102.103:7979", "token": "<token>" } }
+```
+
+The client sends one request per operation and decodes no board: a write
+is one round trip. It reads no clock (the server's is the board's one
+clock). The board's id comes from `--board-id`, else from the clone's
+remote as for a local board. A write is made as `QUECTO_BOARD_COMMITTER`
+(`name <email>`) when it is set, else as the clone's configured committer.
+After a transport failure (no connection, a connection dropped, no reply)
+the client sends the same body again, with the same `write_id`, up to 3
+times; any other failure is answered `store_unavailable`, naming the
+server's status and code.
 
 ## Error replies
 
@@ -82,11 +165,13 @@ Every error reply the server makes is JSON, `{"error": "<why>", "code":
 
 | Status | `code` | When |
 |---|---|---|
-| 400 | `request` | an admin body that is not `{"name": "<name>"}` |
+| 400 | `request` | an admin body that is not `{"name": "<name>"}`, or an op body not shaped as above |
+| 400 | `write` | a write op without its `write_id` and `committer` |
 | 400 | `token_name` | a token name that is not 1 to 64 of `a-z`, `0-9` and inner `-` |
 | 401 | `token` | over TCP, no bearer token, or an unknown or revoked one (with `WWW-Authenticate: Bearer`) |
 | 403 | `peer` | the peer is not the server's user |
-| 403 | `local_only` | an admin route asked over TCP |
+| 403 | `local_only` | an admin route asked over TCP, or the op `bootstrap` or `clear_set_aside` over TCP |
+| 404 | `board` | an op for a board id this server does not serve |
 | 404 | `no_token` | revoking a name no token has |
 | 409 | `token_exists` | adding a name a token has |
 | 409 | `token_limit` | adding a token past 256 |

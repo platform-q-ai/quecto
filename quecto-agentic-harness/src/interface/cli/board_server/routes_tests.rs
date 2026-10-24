@@ -57,7 +57,7 @@ pub(in crate::interface::cli::board_server) fn routes_of(serve: ServeBoard) -> B
 
 fn routes_with(serve: ServeBoard, tokens: Arc<MemoryBoardTokens>) -> BoardRoutes {
     let access = BoardAccess::new(tokens, Arc::new(SystemBoardClock::default()));
-    BoardRoutes::new(serve, access)
+    BoardRoutes::new(serve, access, operating(&MemoryBoardStore::default()))
 }
 
 /// The board's operations over `store` as a server runs them, written

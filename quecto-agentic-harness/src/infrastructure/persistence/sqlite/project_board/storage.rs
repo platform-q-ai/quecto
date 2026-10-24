@@ -43,20 +43,18 @@ const INDEXES: [(&str, &str); 5] = [
     ("sqlite_autoindex_op_results_1", "op_results"),
 ];
 
-/// The most served writes' answers kept for their retries (B7): a retry
-/// comes within seconds, so the oldest past this are dropped.
-const KEPT_ANSWERS: i64 = 4096;
+/// The served writes' answers kept for their retries (B7), newest first.
+const KEPT_ANSWERS: i64 = 1024;
 
-/// A store call's own transaction, or, inside a served operation's (B7),
-/// a savepoint of it, so a failed call undoes its own rows alone.
+/// A store call's own transaction, or inside a served operation's (B7) a
+/// savepoint of it, so a failed call undoes its own rows alone.
 pub(super) enum Scope<'c> {
     Own(rusqlite::Transaction<'c>),
     Within(rusqlite::Savepoint<'c>),
 }
 
 impl Scope<'_> {
-    /// A scope on `c`: its own transaction (immediate when it writes)
-    /// while none is open, else a savepoint of the open one.
+    /// Immediate when it `writes`.
     pub(super) fn begin(c: &mut Connection, writes: bool) -> Result<Scope<'_>, BoardStoreError> {
         let behavior = match writes {
             true => TransactionBehavior::Immediate,

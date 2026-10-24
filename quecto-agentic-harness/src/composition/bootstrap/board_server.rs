@@ -7,7 +7,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use super::project_board::{PartsOf, operation_parts, pull_request_states};
+use super::project_board::{operation_parts, pull_request_states};
 use super::project_board_operations::LocalBoardOperations;
 use crate::application::project_board::dto::{NoPullRequestHost, ProjectBoardError};
 use crate::application::project_board::operations::StoreListings;
@@ -114,10 +114,10 @@ fn server_identity() -> Identity {
 /// is handed: this machine's clock, pull request states read with `gh`
 /// for the board's remote, a success judged by the remote's revisions. A
 /// start launches nothing and no run's swarm is seen here (B8).
-struct ServedOperations {
-    clock: Arc<dyn BoardClock>,
-    prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
-    revisions: Arc<dyn RemoteRevisions>,
+pub struct ServedOperations {
+    pub clock: Arc<dyn BoardClock>,
+    pub prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
+    pub revisions: Arc<dyn RemoteRevisions>,
 }
 
 impl BoardOperationsOver for ServedOperations {
@@ -126,17 +126,14 @@ impl BoardOperationsOver for ServedOperations {
         store: Arc<dyn ProjectBoardStore>,
     ) -> Result<Box<dyn BoardOperations>, ProjectBoardError> {
         let listings = StoreListings(QueryBoard::new(Arc::clone(&store)));
-        let parts = operation_parts(PartsOf {
-            undo_store: Arc::clone(&store),
-            store,
-            clock: Arc::clone(&self.clock),
-            listings: Arc::new(listings),
-            prs: self.prs.clone(),
-            revisions: Arc::clone(&self.revisions),
-            launcher: None,
-            swarm_session: None,
-            cancelled: None,
-        })?;
+        let parts = operation_parts(
+            (Arc::clone(&store), store),
+            Arc::clone(&self.clock),
+            Arc::new(listings),
+            self.prs.clone(),
+            Arc::clone(&self.revisions),
+            None,
+        )?;
         let operations = LocalBoardOperations::new(RunBoardOperation::new(parts));
         Ok(Box::new(operations))
     }

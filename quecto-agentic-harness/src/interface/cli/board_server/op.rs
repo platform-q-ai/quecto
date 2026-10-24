@@ -1,15 +1,9 @@
-//! `POST /v1/boards/{id}/op` (epic #2705 B7): one board request, sent as
-//! its front end read it, run on the server's board by
-//! [`ServeBoardOperation`] and answered exactly as that front end answers
-//! it, through the front ends' own path (`run_recorded_with`), so a
-//! remote answer never drifts from a local one. The body is read
-//! strictly (a key named twice is refused) and within the front ends'
-//! request bound:
-//!
-//! `{"request": {..}, "front_end": "cli"|"tool", "summary": bool,
-//! "noted": bool, "write_id": "<uuid>", "committer": {"name", "email"}}`
-//!
-//! A write needs its `write_id` and `committer`; a read ignores them.
+//! `POST /v1/boards/{id}/op` (epic #2705 B7): one board request, as its
+//! front end read it, run by [`ServeBoardOperation`] and answered through
+//! the front ends' own path (`run_recorded_with`), so a remote answer
+//! never drifts from a local one. The body is read strictly (a key named
+//! twice is refused) within the front ends' request bound; a write needs
+//! its `write_id` and `committer`, a read ignores them.
 use std::sync::{Mutex, PoisonError};
 
 use serde_json::{Value, json};
@@ -17,7 +11,9 @@ use serde_json::{Value, json};
 use crate::application::project_board::dto::{
     BoardExecution, BoardRequest, ListSummaries, OpNoting, ProjectBoardError, ReadRequest, RunEnd,
 };
-use crate::application::project_board::ports::{BoardOperations, OpWrite, ServeError, WriteId};
+use crate::application::project_board::ports::{
+    BoardOperations, OpWrite, ServeError, Transacted, WriteId,
+};
 use crate::application::project_board::telemetry::OpFacts;
 use crate::application::project_board::use_cases::{
     BoardAccess, Principal, Refused, Scope, ServeBoardOperation,
@@ -28,8 +24,7 @@ use crate::interface::tools::project_board::recording::BoardCall;
 use crate::interface::tools::project_board::request::{entry_policy, parse};
 use crate::interface::tools::project_board::{read, run_recorded_with};
 
-/// Why an op body is refused.
-pub(super) const BODY_SHAPE: &str = "the body must be {\"request\": {..}, \"front_end\": \
+const BODY_SHAPE: &str = "the body must be {\"request\": {..}, \"front_end\": \
      \"cli\" or \"tool\", \"summary\", \"noted\", and for a write \"write_id\" and \
      \"committer\": {\"name\", \"email\"}}";
 
@@ -51,6 +46,12 @@ struct OpBody {
 struct Committer {
     name: String,
     email: String,
+}
+
+impl From<Committer> for Identity {
+    fn from(Committer { name, email }: Committer) -> Self {
+        Self { name, email }
+    }
 }
 
 /// Why an op was not answered.
@@ -104,11 +105,13 @@ pub(super) fn answer_op(
         false => OpNoting::Unnoted,
     };
     let text = body.request.to_string();
+    let mut answer =
+        |board: &dyn BoardOperations| present(board, &text, front_end, summaries, noting);
     operations
-        .execute(request.as_ref(), write.as_ref(), &mut |board| {
-            present(board, &text, front_end, summaries, noting)
+        .execute(request.as_ref(), write.as_ref(), &mut answer)
+        .map(|served| match served {
+            Transacted::Answered(answer) | Transacted::Replayed(answer) => answer,
         })
-        .map(|served| served.answer)
         .map_err(OpRefusal::Serve)
 }
 
@@ -116,10 +119,7 @@ pub(super) fn answer_op(
 fn written(principal: &Principal, id: &str, committer: Committer) -> Result<OpWrite, OpRefusal> {
     let write_id = WriteId::parse(id)
         .ok_or_else(|| OpRefusal::Body("write_id must be 8 to 64 of 0-9, a-f and -".into()))?;
-    let committer = Identity {
-        name: committer.name,
-        email: committer.email,
-    };
+    let committer = Identity::from(committer);
     committer
         .validate("committer")
         .map_err(|error| OpRefusal::Body(format!("the committer is invalid: {error}")))?;

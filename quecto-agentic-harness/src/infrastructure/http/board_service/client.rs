@@ -156,14 +156,18 @@ impl BoardServiceClient {
             body.len()
         );
         let reply = match &self.endpoint {
-            Endpoint::Unix(socket) => exchange(
-                UnixStream::connect(socket).map_err(ClientError::Connect)?,
-                &head,
-                body,
-            ),
+            Endpoint::Unix(socket) => {
+                let stream = UnixStream::connect(socket).map_err(ClientError::Connect)?;
+                let timed = stream.set_read_timeout(Some(TIMEOUT));
+                let timed = timed.and(stream.set_write_timeout(Some(TIMEOUT)));
+                exchange(timed.map(|()| stream), &head, body)
+            }
             Endpoint::Tcp(address) => {
                 let stream = TcpStream::connect_timeout(address, TIMEOUT);
-                exchange(stream.map_err(ClientError::Connect)?, &head, body)
+                let stream = stream.map_err(ClientError::Connect)?;
+                let timed = stream.set_read_timeout(Some(TIMEOUT));
+                let timed = timed.and(stream.set_write_timeout(Some(TIMEOUT)));
+                exchange(timed.map(|()| stream), &head, body)
             }
         }?;
         match reply.is_empty() {
@@ -173,29 +177,14 @@ impl BoardServiceClient {
     }
 }
 
-/// A stream the client times out on.
-trait Timed: Read + Write {
-    fn timeouts(&self, timeout: Duration) -> io::Result<()>;
-}
-
-impl Timed for UnixStream {
-    fn timeouts(&self, timeout: Duration) -> io::Result<()> {
-        self.set_read_timeout(Some(timeout))?;
-        self.set_write_timeout(Some(timeout))
-    }
-}
-
-impl Timed for TcpStream {
-    fn timeouts(&self, timeout: Duration) -> io::Result<()> {
-        self.set_read_timeout(Some(timeout))?;
-        self.set_write_timeout(Some(timeout))
-    }
-}
-
-/// Sends `head` and `body` on `stream` and reads the reply to its end,
-/// within its bound.
-fn exchange(mut stream: impl Timed, head: &str, body: &[u8]) -> Result<Vec<u8>, ClientError> {
-    stream.timeouts(TIMEOUT).map_err(ClientError::Io)?;
+/// Sends `head` and `body` on `stream` (its timeouts set) and reads the
+/// reply to its end, within its bound.
+fn exchange(
+    stream: io::Result<impl Read + Write>,
+    head: &str,
+    body: &[u8],
+) -> Result<Vec<u8>, ClientError> {
+    let mut stream = stream.map_err(ClientError::Io)?;
     stream.write_all(head.as_bytes()).map_err(ClientError::Io)?;
     stream.write_all(body).map_err(ClientError::Io)?;
     let mut reply = Vec::new();

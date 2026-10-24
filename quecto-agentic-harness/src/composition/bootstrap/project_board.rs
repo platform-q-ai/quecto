@@ -54,7 +54,6 @@ use crate::infrastructure::tools::agents::coordinator_launch::KeptRunReports;
 use crate::interface::cli::controllers::board::{
     Access, BuildError, KnownLocation, ProjectBoardEnvironment, ProjectBoardHandles,
 };
-use crate::interface::tools::project_board::site::Launcher;
 
 /// # Errors
 /// A write with no committer configured, or one git would not record as
@@ -135,17 +134,14 @@ fn build_with_warnings(
     let built = |error: crate::application::project_board::dto::ProjectBoardError| {
         unavailable(error.to_string())
     };
-    let parts = operation_parts(PartsOf {
-        store,
-        undo_store,
+    let parts = operation_parts(
+        (store, undo_store),
         clock,
         listings,
         prs,
         revisions,
-        launcher: environment.launcher.clone(),
-        swarm_session: environment.swarm_session.clone(),
-        cancelled: environment.cancelled.clone(),
-    })
+        Some(environment),
+    )
     .map_err(built)?;
     Ok(ProjectBoardHandles {
         // The front ends reach the use case only through the port (#2705 B6).
@@ -156,38 +152,23 @@ fn build_with_warnings(
     })
 }
 
-/// What one board's operations are assembled from.
-pub(super) struct PartsOf {
-    pub store: Arc<dyn ProjectBoardStore>,
-    /// The store a start's undo writes through, past any cancel.
-    pub undo_store: Arc<dyn ProjectBoardStore>,
-    pub clock: Arc<dyn BoardClock>,
-    pub listings: Arc<dyn crate::application::project_board::ports::BoardListings>,
-    pub prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
-    pub revisions: Arc<dyn RemoteRevisions>,
-    pub launcher: Option<Launcher>,
-    pub swarm_session: Option<String>,
-    pub cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
-}
-
-/// The board's operations over `of` (a board server's too, B7).
+/// The board's operations over `store` (a board server's too, B7), a
+/// start's undo writing through `undo_store`, with the swarms, session
+/// and cancel of `environment` (none for a server).
 ///
 /// # Errors
 /// One of them could not be built.
 pub(super) fn operation_parts(
-    of: PartsOf,
+    (store, undo_store): (Arc<dyn ProjectBoardStore>, Arc<dyn ProjectBoardStore>),
+    clock: Arc<dyn BoardClock>,
+    listings: Arc<dyn crate::application::project_board::ports::BoardListings>,
+    prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
+    revisions: Arc<dyn RemoteRevisions>,
+    environment: Option<&ProjectBoardEnvironment>,
 ) -> Result<BoardOperationParts, crate::application::project_board::dto::ProjectBoardError> {
-    let PartsOf {
-        store,
-        undo_store,
-        clock,
-        listings,
-        prs,
-        revisions,
-        launcher,
-        swarm_session,
-        cancelled,
-    } = of;
+    let launcher = environment.and_then(|environment| environment.launcher.clone());
+    let swarm_session = environment.and_then(|environment| environment.swarm_session.as_deref());
+    let cancelled = environment.and_then(|environment| environment.cancelled.clone());
     let complete = CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs)?;
     Ok(BoardOperationParts {
         bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
@@ -215,7 +196,7 @@ pub(super) fn operation_parts(
                 .clone()
                 .map(|swarms| swarms as Arc<dyn RunLiveness>),
             // A run's end reads the boards its session's teardown kept.
-            swarm_session.as_deref().map(|session| {
+            swarm_session.map(|session| {
                 Arc::new(KeptRunReports::new(
                     super::super::environments::kept_swarm_boards(),
                     session,

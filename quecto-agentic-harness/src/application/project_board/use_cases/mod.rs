@@ -41,7 +41,7 @@ pub use propose_plan::ProposePlan;
 pub use query_board::QueryBoard;
 pub use run_board_operation::RunBoardOperation;
 pub use serve_board::ServeBoard;
-pub use serve_board_operation::{Present, ServeBoardOperation, ServedOp};
+pub use serve_board_operation::{Present, ServeBoardOperation};
 pub use start_board_task::StartBoardTask;
 pub use update_draft_task::UpdateDraftTask;
 

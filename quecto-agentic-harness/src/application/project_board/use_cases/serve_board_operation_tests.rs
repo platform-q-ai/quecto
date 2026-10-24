@@ -109,23 +109,11 @@ fn a_write_runs_once_per_write_id() {
     let mut present =
         |_: &dyn BoardOperations| format!("answer {}", presented.fetch_add(1, Ordering::SeqCst));
     let first = serve.execute(Some(&create()), Some(&write("aaaaaaaa")), &mut present);
-    assert_eq!(
-        first,
-        Ok(ServedOp {
-            answer: "answer 0".into(),
-            replayed: false
-        })
-    );
+    assert_eq!(first, Ok(Transacted::Answered("answer 0".into())));
     let again = serve.execute(Some(&create()), Some(&write("aaaaaaaa")), &mut present);
-    assert_eq!(
-        again,
-        Ok(ServedOp {
-            answer: "answer 0".into(),
-            replayed: true
-        })
-    );
+    assert_eq!(again, Ok(Transacted::Replayed("answer 0".into())));
     let other = serve.execute(Some(&create()), Some(&write("bbbbbbbb")), &mut present);
-    assert_eq!(other.map(|served| served.answer), Ok("answer 1".into()));
+    assert_eq!(other, Ok(Transacted::Answered("answer 1".into())));
 }
 
 /// A read takes no transaction; a request no front end could read is

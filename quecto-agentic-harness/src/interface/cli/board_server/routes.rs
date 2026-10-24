@@ -25,8 +25,7 @@ use super::op::{OpRefusal, answer_op};
 pub struct BoardRoutes {
     serve: ServeBoard,
     access: BoardAccess,
-    /// The board's operations (B7); `None` answers the route 404.
-    operations: Option<ServeBoardOperation>,
+    operations: ServeBoardOperation,
     /// The token store's failure last said on stderr.
     unavailable: std::sync::Mutex<String>,
 }
@@ -94,34 +93,23 @@ struct Named {
 }
 
 impl BoardRoutes {
-    pub fn new(serve: ServeBoard, access: BoardAccess) -> Self {
+    pub fn new(serve: ServeBoard, access: BoardAccess, operations: ServeBoardOperation) -> Self {
         Self {
             serve,
             access,
-            operations: None,
+            operations,
             unavailable: std::sync::Mutex::default(),
-        }
-    }
-
-    /// The routes serving the board's operations too (B7).
-    pub fn serving(self, operations: ServeBoardOperation) -> Self {
-        Self {
-            operations: Some(operations),
-            ..self
         }
     }
 
     /// An op's reply: 404 `board` for another board's id, else the
     /// answer, or the refusal by its code.
     fn op(&self, request: &ServiceRequest, principal: &Principal) -> ServiceReply {
-        let Some(operations) = &self.operations else {
-            return coded(404, "route", "no such route");
-        };
         match board_of(&request.path) {
             Some(board) if board == *self.serve.board() => {}
             Some(_) | None => return coded(404, "board", "this server serves no such board"),
         }
-        match answer_op(operations, principal, &request.body) {
+        match answer_op(&self.operations, principal, &request.body) {
             Ok(answer) => ServiceReply {
                 body: answer.into_bytes(),
                 ..ServiceReply::json(200, &serde_json::Value::Null)
@@ -147,7 +135,7 @@ impl BoardRoutes {
             Refused::LocalOnly => coded(
                 403,
                 "local_only",
-                "forbidden: admin routes are served on the Unix socket only",
+                "forbidden: admin routes and operations are served on the Unix socket only",
             ),
             Refused::Unavailable(error) => match transport {
                 Transport::Local => coded(503, "unavailable", &error.to_string()),

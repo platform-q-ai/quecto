@@ -68,8 +68,12 @@ mod board_members;
 mod board_messages;
 #[path = "contracts/board_op_log.rs"]
 mod board_op_log;
+#[path = "contracts/board_op_store.rs"]
+mod board_op_store;
 #[path = "contracts/board_operations.rs"]
 mod board_operations;
+#[path = "contracts/board_operations_over.rs"]
+mod board_operations_over;
 #[path = "contracts/board_projection_reads.rs"]
 mod board_projection_reads;
 #[path = "contracts/board_reads.rs"]

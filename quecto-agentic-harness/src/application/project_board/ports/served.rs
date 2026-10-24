@@ -39,9 +39,8 @@ pub enum ServeError {
     NoWrite,
 }
 
-/// A write's id (B7): its client's, the same on every retry of it, so a
-/// server that made the write answers the retry with its first answer and
-/// writes nothing. 8 to 64 of `0-9`, `a-f` and `-` (a UUID).
+/// A write's id (B7): the same on every retry of the write, so a server
+/// answers a retry with its first answer. 8 to 64 of `0-9a-f-` (a UUID).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteId(String);
 
@@ -61,8 +60,7 @@ impl WriteId {
 }
 
 /// One write a server makes (B7): its id, the identity its caller asserts
-/// (each revision's author), and who the server let in (recorded beside
-/// it: `local`, or `token:<name>`).
+/// (each revision's author), and who the server let in, recorded beside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpWrite {
     pub write_id: WriteId,
@@ -70,8 +68,7 @@ pub struct OpWrite {
     pub principal: String,
 }
 
-/// What a served write came to: its answer, made now, or the one first
-/// given to the same write id.
+/// A served write's answer: made now, or first given to its write id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Transacted {
     Answered(String),
@@ -83,15 +80,13 @@ pub trait BoardOpStore: Send + Sync {
     /// The store a read is answered from, outside any write.
     fn reads(&self) -> Arc<dyn ProjectBoardStore>;
 
-    /// Runs `op` for `write` once: under the board's write lock, in one
-    /// immediate transaction, `op` is handed a store bound to it (writing
-    /// as `write.committer`), so every write it makes lands together, and
-    /// its answer is kept under `write.write_id` as it commits. A write id
-    /// already kept is answered with its kept answer: `op` never runs and
-    /// nothing is written. An `op` that fails writes nothing.
+    /// Runs `op` once per write id: under the board's write lock, in one
+    /// immediate transaction, on a store bound to it that writes as
+    /// `write.committer`, keeping its answer as it commits. A kept id is
+    /// answered with its kept answer, `op` unrun.
     ///
     /// # Errors
-    /// The store's failure, or `op`'s, rolled back.
+    /// The store's failure, or `op`'s; either writes nothing.
     fn transact(
         &self,
         write: &OpWrite,
@@ -102,8 +97,6 @@ pub trait BoardOpStore: Send + Sync {
 /// Port: the board's operations over a store, as composition assembles
 /// them for a server (B7).
 pub trait BoardOperationsOver: Send + Sync {
-    /// The operations over `store`.
-    ///
     /// # Errors
     /// One of them could not be built.
     fn over(

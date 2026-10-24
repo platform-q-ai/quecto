@@ -103,18 +103,18 @@ fn get(routes: &BoardRoutes, path: &str) -> (u16, Value) {
     (reply.status, serde_json::from_slice(&reply.body).unwrap())
 }
 
+/// B7: the server serves its own SQLite board in its state directory, not
+/// the clone's git board: none until it is made.
 #[test]
-fn the_server_serves_the_git_boards_head() {
+fn the_server_serves_its_sqlite_board() {
     let (dir, work) = seeded();
-    let remote = dir.path().join("remote.git");
     let handles = build_board_server(&environment(&dir, &work, "origin")).unwrap();
     assert_eq!(handles.uid, this_uid());
     assert!(handles.listen.is_empty(), "no config, no TCP");
-    let routes = BoardRoutes::new(handles.serve, handles.access);
+    let routes = BoardRoutes::new(handles.serve, handles.access, handles.operations);
     let (status, body) = get(&routes, "/v1/status");
     assert_eq!(status, 200, "{body}");
-    let head = sh(&remote, &["rev-parse", "quecto/board"]);
-    assert_eq!(body["head"], head.trim());
+    assert_eq!(body["head"], Value::Null, "no board made yet");
     assert_eq!(body["role"], "primary");
     assert_eq!(body["board"].as_str().map(str::len), Some(16), "{body}");
     assert_eq!(get(&routes, "/v1/time").0, 200);
