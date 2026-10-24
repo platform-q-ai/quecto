@@ -5,10 +5,10 @@
 |---|---|
 | Task | board-2705-pocket-p1-p2 |
 | Version | 1 |
-| State | draft |
+| State | discarded |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
 | Created | 2026-10-23T16:50:00Z |
-| Updated | 2026-10-23T16:50:00Z |
+| Updated | 2026-10-24T03:02:45Z |
 
 ## Approach
 One serial quecto-pocket PR after harness MVP stages. Inspect actual Pocket source and minimize combined relay/deploy diff; red-first fresh swarms and independent exact-head review. Backend allowlist supports git compatibility; server path UDS explicit committer/no clones. Deploy templates and minute backup sync only, DO NOT deploy. Hard900 all-in.
