@@ -1,18 +1,19 @@
 use std::collections::BTreeMap;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, mpsc};
 
 use super::*;
 use crate::application::project_board::dto::{
     BoardExecution, ListSummaries, OpNoting, ReadRequest, RunEnd,
 };
-use crate::application::project_board::ports::{ProjectBoardStore, Transacted, WriteId};
+use crate::application::project_board::ports::{
+    OperationsOver, ProjectBoardStore, Transacted, WriteId,
+};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 
-/// A store keeping answers by write id, counting its transactions; it
-/// fails each `op` while `failing`.
+/// A store keeping answers by write id, counting its transactions.
 #[derive(Default)]
 struct Kept {
     store: MemoryBoardStore,
@@ -31,11 +32,17 @@ impl BoardOpStore for Kept {
         op: &mut dyn FnMut(Arc<dyn ProjectBoardStore>) -> Result<String, BoardStoreError>,
     ) -> Result<Transacted, BoardStoreError> {
         self.transactions.fetch_add(1, Ordering::SeqCst);
-        let mut answers = self.answers.lock().unwrap();
-        if let Some(answer) = answers.get(write.write_id.as_str()) {
-            return Ok(Transacted::Replayed(answer.clone()));
+        let kept = self
+            .answers
+            .lock()
+            .unwrap()
+            .get(write.write_id.as_str())
+            .cloned();
+        if let Some(answer) = kept {
+            return Ok(Transacted::Replayed(answer));
         }
         let answer = op(Arc::new(self.store.client()))?;
+        let mut answers = self.answers.lock().unwrap();
         answers.insert(write.write_id.as_str().into(), answer.clone());
         Ok(Transacted::Answered(answer))
     }
@@ -62,14 +69,12 @@ impl BoardOperations for Nothing {
 }
 
 impl BoardOperationsOver for Over {
-    fn over(
-        &self,
-        _: Arc<dyn ProjectBoardStore>,
-    ) -> Result<Box<dyn BoardOperations>, ProjectBoardError> {
-        match self.refused {
+    fn prepare(&self, _: Option<&BoardRequest>, _: &dyn ProjectBoardStore) -> OperationsOver {
+        let refused = self.refused;
+        Box::new(move |_| match refused {
             true => Err(ProjectBoardError::NoLauncher),
-            false => Ok(Box::new(Nothing)),
-        }
+            false => Ok(Box::new(Nothing) as Box<dyn BoardOperations>),
+        })
     }
 }
 
@@ -80,9 +85,10 @@ fn serving(store: &Arc<Kept>, refused: bool) -> ServeBoardOperation {
     )
 }
 
-fn write(id: &str) -> OpWrite {
+fn write(n: u8) -> OpWrite {
     OpWrite {
-        write_id: WriteId::parse(id).unwrap(),
+        write_id: WriteId::parse(&format!("{n:08x}-0000-4000-8000-000000000000")).unwrap(),
+        request: "cli\n{}".into(),
         committer: Identity {
             name: "Ada".into(),
             email: "ada@example.com".into(),
@@ -106,13 +112,17 @@ fn a_write_runs_once_per_write_id() {
     let store = Arc::new(Kept::default());
     let serve = serving(&store, false);
     let presented = AtomicUsize::new(0);
-    let mut present =
-        |_: &dyn BoardOperations| format!("answer {}", presented.fetch_add(1, Ordering::SeqCst));
-    let first = serve.execute(Some(&create()), Some(&write("aaaaaaaa")), &mut present);
+    let mut present = |_: &dyn BoardOperations| {
+        Ok(format!(
+            "answer {}",
+            presented.fetch_add(1, Ordering::SeqCst)
+        ))
+    };
+    let first = serve.execute(Some(&create()), Some(&write(1)), &mut present);
     assert_eq!(first, Ok(Transacted::Answered("answer 0".into())));
-    let again = serve.execute(Some(&create()), Some(&write("aaaaaaaa")), &mut present);
+    let again = serve.execute(Some(&create()), Some(&write(1)), &mut present);
     assert_eq!(again, Ok(Transacted::Replayed("answer 0".into())));
-    let other = serve.execute(Some(&create()), Some(&write("bbbbbbbb")), &mut present);
+    let other = serve.execute(Some(&create()), Some(&write(2)), &mut present);
     assert_eq!(other, Ok(Transacted::Answered("answer 1".into())));
 }
 
@@ -122,31 +132,76 @@ fn a_write_runs_once_per_write_id() {
 fn a_read_takes_no_transaction_and_a_write_needs_its_write() {
     let store = Arc::new(Kept::default());
     let serve = serving(&store, false);
-    let mut present = |_: &dyn BoardOperations| "read".to_string();
+    let mut present = |_: &dyn BoardOperations| Ok("read".to_string());
     assert!(
         serve
-            .execute(Some(&list()), Some(&write("aaaaaaaa")), &mut present)
+            .execute(Some(&list()), Some(&write(1)), &mut present)
             .is_ok()
     );
     assert!(serve.execute(None, None, &mut present).is_ok());
     assert_eq!(store.transactions.load(Ordering::SeqCst), 0);
-    let mut never = |_: &dyn BoardOperations| -> String { panic!("a write without its write ran") };
+    let mut never = |_: &dyn BoardOperations| -> Result<String, String> {
+        panic!("a write without its write ran")
+    };
     assert_eq!(
         serve.execute(Some(&create()), None, &mut never),
         Err(ServeError::NoWrite)
     );
 }
 
-/// Operations that cannot be built answer nothing: the write keeps no
-/// answer, so its retry runs it.
+/// Operations that cannot be built, or a store that failed under the
+/// presenter, answer nothing: the write keeps no answer, so its retry
+/// runs it.
 #[test]
-fn operations_that_cannot_be_built_keep_no_answer() {
+fn a_failed_operation_keeps_no_answer() {
     let store = Arc::new(Kept::default());
-    let mut present = |_: &dyn BoardOperations| "made".to_string();
-    let refused =
-        serving(&store, true).execute(Some(&create()), Some(&write("aaaaaaaa")), &mut present);
+    let mut present = |_: &dyn BoardOperations| Ok("made".to_string());
+    let refused = serving(&store, true).execute(Some(&create()), Some(&write(1)), &mut present);
     assert!(matches!(refused, Err(ServeError::Board(_))), "{refused:?}");
+    let mut failing = |_: &dyn BoardOperations| Err("the store failed".to_string());
+    let failed = serving(&store, false).execute(Some(&create()), Some(&write(1)), &mut failing);
+    assert!(matches!(failed, Err(ServeError::Board(_))), "{failed:?}");
     assert!(store.answers.lock().unwrap().is_empty());
     let read = serving(&store, true).execute(Some(&list()), None, &mut present);
     assert!(matches!(read, Err(ServeError::Board(_))), "{read:?}");
+}
+
+/// Past [`MAX_WRITES`] at once a write is answered busy, unrun, so
+/// writes waiting on the lock never take the threads reads need.
+#[test]
+fn writes_past_the_slots_are_busy() {
+    let store = Arc::new(Kept::default());
+    let serve = Arc::new(serving(&store, false));
+    let (entered, held) = (mpsc::channel(), mpsc::channel::<()>());
+    let (entered_tx, release) = (entered.0, Arc::new(Mutex::new(held.1)));
+    let holding: Vec<_> = (0..MAX_WRITES)
+        .map(|n| {
+            let (serve, entered, release) =
+                (Arc::clone(&serve), entered_tx.clone(), Arc::clone(&release));
+            std::thread::spawn(move || {
+                let mut present = |_: &dyn BoardOperations| {
+                    entered.send(()).unwrap();
+                    let _ = release.lock().unwrap().recv();
+                    Ok("held".to_string())
+                };
+                serve.execute(Some(&create()), Some(&write(n as u8)), &mut present)
+            })
+        })
+        .collect();
+    // Every slot holder is inside its write.
+    (0..MAX_WRITES).for_each(|_| entered.1.recv().unwrap());
+    let mut never = |_: &dyn BoardOperations| -> Result<String, String> { panic!("ran") };
+    assert_eq!(
+        serve.execute(Some(&create()), Some(&write(9)), &mut never),
+        Err(ServeError::Busy)
+    );
+    assert!(
+        serve
+            .execute(Some(&list()), None, &mut |_| Ok("read".into()))
+            .is_ok()
+    );
+    drop(held.0);
+    for thread in holding {
+        assert!(thread.join().unwrap().is_ok());
+    }
 }

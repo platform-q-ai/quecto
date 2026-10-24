@@ -1636,7 +1636,7 @@ fn application_path_allowed(path: &str) -> bool {
             "project_board",
             "dto",
             "BoardAnswered" | "BoardExecution" | "BoardOutcome" | "ListSummaries" | "OpNoting"
-            | "ProjectBoardError" | "ReadRequest" | "RunEnd" | "ServedAnswer",
+            | "ProjectBoardError" | "ReadRequest" | "RunEnd" | "ServedAnswer" | "BoardRequest",
         ]
         | ["crate", "application", "project_board", "telemetry", "OpFacts"] => true,
         // The project board's listings port (#2476 S1e) answers the

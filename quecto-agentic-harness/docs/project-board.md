@@ -72,7 +72,8 @@ and a write is one round trip, made as `QUECTO_BOARD_COMMITTER` when it is set,
 else as the clone's committer. A `start` is refused there until B8. A URL of
 another shape, or TCP without a token, answers `store_unavailable`; so does a
 server that cannot be reached after 3 tries, or that refuses the request (its
-status and code in the `reason`). See `docs/board-server.md`.
+status and code in the `reason`). A server that stays busy for 10 s answers
+`busy`: try again shortly. See `docs/board-server.md`.
 
 The board writes the marker `quecto-board 3` and reads `quecto-board 2` too. A
 build that reads only format 2 asks for an upgrade on a board this build has

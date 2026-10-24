@@ -54,7 +54,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         // A discussion's shape is its own: `kind`, `discussion`, `path`
         // (a_set_aside_artifact_is_named_by_its_kind_task_and_number).
         C::ArtifactSetAside => &["kind", "task", "number", "path", "object"],
-        C::NoPullRequestHost => &["reason"],
+        C::NoPullRequestHost | C::Busy => &["reason"],
         // A discussion's and a task's shapes are their own
         // (a_duplicate_artifact_is_named_by_its_kind_task_and_number).
         C::DuplicateArtifact => &["kind", "task", "number"],
@@ -185,6 +185,7 @@ board_errors! {
         updated: at("10:00:00"),
     },
     E::NoLauncher => E::NoLauncher,
+    E::Busy(_) => E::Busy("busy".into()),
     E::RunLive { .. } => E::RunLive {
         task: slug("a"),
         run: 1,

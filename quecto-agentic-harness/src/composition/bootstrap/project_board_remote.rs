@@ -1,11 +1,8 @@
-//! The board's operations on a board server (epic #2705 B7): picked when
-//! one is named, by the front end's `--url`, else `QUECTO_BOARD_URL`,
-//! else the global config's `board.url`. Its token, for TCP, comes from
-//! `QUECTO_BOARD_TOKEN`, else `board.token`, never from the command line.
-//! Nothing here reads the board or the clock: a write is the one request
-//! the server answers. git is asked only what the front end does not
-//! know: the board's id, and for a write its committer
-//! (`QUECTO_BOARD_COMMITTER` first).
+//! The board's operations on a board server (epic #2705 B7), named by
+//! `--url`, else `QUECTO_BOARD_URL`, else the global config's `board.url`;
+//! a TCP token from `QUECTO_BOARD_TOKEN`, else `board.token`, never argv.
+//! Nothing here reads the board or the clock; git is asked only the board's
+//! id when not given, and a write's committer (`QUECTO_BOARD_COMMITTER` first).
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -19,13 +16,10 @@ use crate::interface::cli::controllers::board::{
     Access, BuildError, ProjectBoardEnvironment, ProjectBoardHandles,
 };
 
-/// The variable naming a board server for every front end.
 pub const URL_VARIABLE: &str = "QUECTO_BOARD_URL";
-/// The variable holding the device's token for a board server over TCP.
 pub const TOKEN_VARIABLE: &str = "QUECTO_BOARD_TOKEN";
 
-/// The board server `environment` names, if any: its front end's, its
-/// variable's, or its global config's.
+/// The board server `environment` names, if any.
 pub fn server_url(environment: &ProjectBoardEnvironment) -> Option<String> {
     environment
         .known
@@ -38,8 +32,7 @@ pub fn server_url(environment: &ProjectBoardEnvironment) -> Option<String> {
 /// The board's operations on the server at `url`.
 ///
 /// # Errors
-/// A URL or token refused, no board id to be had, or for a write no
-/// committer.
+/// A URL or token refused, no board id, or for a write no committer.
 pub fn remote_handles(
     environment: &ProjectBoardEnvironment,
     url: &str,

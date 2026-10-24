@@ -83,24 +83,26 @@ pub(in crate::interface::cli::board_server) fn operating(
     }
     struct Over;
     impl BoardOperationsOver for Over {
-        fn over(
+        fn prepare(
             &self,
-            store: Arc<dyn ProjectBoardStore>,
-        ) -> Result<
-            Box<dyn BoardOperations>,
-            crate::application::project_board::dto::ProjectBoardError,
-        > {
+            _: Option<&crate::application::project_board::dto::BoardRequest>,
+            _: &dyn ProjectBoardStore,
+        ) -> crate::application::project_board::ports::OperationsOver {
             use crate::composition::bootstrap::project_board_operations::fixtures::{
                 QueryListings, assembled,
             };
-            let listings = QueryListings(
-                crate::application::project_board::use_cases::QueryBoard::new(Arc::clone(&store)),
-            );
-            let no_host =
-                crate::application::project_board::dto::NoPullRequestHost::NotAPullRequestHost;
-            let clock = Arc::new(SystemBoardClock::default());
-            assembled(store, clock, Arc::new(listings), Err(no_host))
-                .map(|operations| Box::new(operations) as Box<dyn BoardOperations>)
+            Box::new(|store| {
+                let listings = QueryListings(
+                    crate::application::project_board::use_cases::QueryBoard::new(Arc::clone(
+                        &store,
+                    )),
+                );
+                let no_host =
+                    crate::application::project_board::dto::NoPullRequestHost::NotAPullRequestHost;
+                let clock = Arc::new(SystemBoardClock::default());
+                assembled(store, clock, Arc::new(listings), Err(no_host))
+                    .map(|operations| Box::new(operations) as Box<dyn BoardOperations>)
+            })
         }
     }
     crate::application::project_board::use_cases::ServeBoardOperation::new(

@@ -29,7 +29,7 @@ const TABLES: [(&str, &str); 6] = [
     // B7: each served write's answer, by its write id, for its retries.
     (
         "op_results",
-        "CREATE TABLE op_results (write_id TEXT PRIMARY KEY NOT NULL, answer TEXT NOT NULL)",
+        "CREATE TABLE op_results (principal TEXT NOT NULL, write_id TEXT NOT NULL, request TEXT NOT NULL, answer TEXT NOT NULL, PRIMARY KEY(principal, write_id))",
     ),
 ];
 const INDEXES: [(&str, &str); 5] = [
@@ -87,29 +87,37 @@ impl std::ops::Deref for Scope<'_> {
     }
 }
 
-/// The answer kept for `write_id`, if any (B7).
+/// The answer kept for `write`'s id and principal, if any: `Ok(None)`
+/// when that id was kept for another request or committer (B7).
 pub(super) fn kept_answer(
     c: &Connection,
-    write_id: &str,
-) -> Result<Option<String>, BoardStoreError> {
-    c.query_row(
-        "SELECT answer FROM op_results WHERE write_id=?1",
-        [write_id],
-        |r| r.get(0),
-    )
-    .optional()
-    .map_err(unavailable)
+    write: &OpWrite,
+) -> Result<Option<Option<String>>, BoardStoreError> {
+    let kept: Option<(String, String)> = c
+        .query_row(
+            "SELECT request, answer FROM op_results WHERE principal=?1 AND write_id=?2",
+            [&write.principal, write.write_id.as_str()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(unavailable)?;
+    Ok(kept.map(|(request, answer)| (request == asked(write)).then_some(answer)))
 }
 
-/// Keeps `answer` for `write_id`, dropping the oldest past [`KEPT_ANSWERS`].
+/// Keeps `answer` for `write`, dropping the oldest past [`KEPT_ANSWERS`].
 pub(super) fn keep_answer(
     c: &Connection,
-    write_id: &str,
+    write: &OpWrite,
     answer: &str,
 ) -> Result<(), BoardStoreError> {
     c.execute(
-        "INSERT INTO op_results (write_id, answer) VALUES (?1, ?2)",
-        params![write_id, answer],
+        "INSERT INTO op_results VALUES (?1, ?2, ?3, ?4)",
+        params![
+            write.principal,
+            write.write_id.as_str(),
+            asked(write),
+            answer
+        ],
     )
     .map_err(unavailable)?;
     c.execute(
@@ -118,6 +126,15 @@ pub(super) fn keep_answer(
     )
     .map_err(unavailable)?;
     Ok(())
+}
+
+/// What `write` asks: its request and committer, hashed.
+fn asked(write: &OpWrite) -> String {
+    let OpWrite {
+        request, committer, ..
+    } = write;
+    let fields = [request, &committer.name, &committer.email].map(|field| field.as_bytes());
+    digest(b"op", &fields)
 }
 
 pub(super) fn open(path: &Path) -> Result<Connection, BoardStoreError> {
@@ -167,9 +184,11 @@ pub(super) fn open(path: &Path) -> Result<Connection, BoardStoreError> {
         }
         (false, true) => {}
         _ => {
-            return Err(BoardStoreError::Clash(
-                "unsupported SQLite board schema".into(),
-            ));
+            return Err(BoardStoreError::Clash(format!(
+                "{} is not a board this build reads (schema version {version}, this build \
+                 writes {VERSION}): move it aside to start a new board",
+                path.display()
+            )));
         }
     }
     tx.commit().map_err(unavailable)?;

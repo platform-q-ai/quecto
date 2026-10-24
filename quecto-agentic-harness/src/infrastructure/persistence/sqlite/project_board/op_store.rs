@@ -30,9 +30,10 @@ impl SqliteBoardOps {
         write: &OpWrite,
         op: &mut dyn FnMut(Arc<dyn ProjectBoardStore>) -> Result<String, BoardStoreError>,
     ) -> Result<Transacted, BoardStoreError> {
-        let id = write.write_id.as_str();
-        if let Some(answer) = storage::kept_answer(&*self.locked()?, id)? {
-            return Ok(Transacted::Replayed(answer));
+        match storage::kept_answer(&*self.locked()?, write)? {
+            Some(Some(answer)) => return Ok(Transacted::Replayed(answer)),
+            Some(None) => return Ok(Transacted::Reused),
+            None => {}
         }
         let bound = SqliteProjectBoardStore {
             connection: Arc::clone(&self.writes.connection),
@@ -44,7 +45,7 @@ impl SqliteBoardOps {
             hooks: Arc::clone(&self.writes.hooks),
         };
         let answer = op(Arc::new(bound))?;
-        storage::keep_answer(&*self.locked()?, id, &answer)?;
+        storage::keep_answer(&*self.locked()?, write, &answer)?;
         Ok(Transacted::Answered(answer))
     }
 

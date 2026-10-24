@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use super::{BoardHead, BoardOperations, BoardStoreError, ProjectBoardStore};
-use crate::application::project_board::dto::ProjectBoardError;
+use crate::application::project_board::dto::{BoardRequest, ProjectBoardError};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 
@@ -31,26 +31,30 @@ pub struct ServedStatus {
     pub head: Option<BoardHead>,
 }
 
-/// Why a board server could not answer: its store's or clock's failure,
-/// or a write sent without its id and committer (B7).
+/// Why a board server could not answer: its store's or clock's failure; a
+/// write sent without its id and committer, its id reused for another
+/// write, or past the writes it takes at once (B7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServeError {
     Board(ProjectBoardError),
     NoWrite,
+    WriteIdReused,
+    Busy,
 }
 
-/// A write's id (B7): the same on every retry of the write, so a server
-/// answers a retry with its first answer. 8 to 64 of `0-9a-f-` (a UUID).
+/// A write's id (B7), a UUID: the same on every retry of the write, so a
+/// server answers a retry with its first answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteId(String);
 
 impl WriteId {
-    /// `text` as a write id, when it is shaped as one.
+    /// `text` as a write id: lowercase hex in groups of 8-4-4-4-12.
     pub fn parse(text: &str) -> Option<Self> {
-        let shaped = (8..=64).contains(&text.len())
-            && text
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f' | b'-'));
+        let shaped = text.len() == 36
+            && text.char_indices().all(|(at, c)| match at {
+                8 | 13 | 18 | 23 => c == '-',
+                _ => matches!(c, '0'..='9' | 'a'..='f'),
+            });
         shaped.then(|| Self(text.to_string()))
     }
 
@@ -59,20 +63,24 @@ impl WriteId {
     }
 }
 
-/// One write a server makes (B7): its id, the identity its caller asserts
-/// (each revision's author), and who the server let in, recorded beside it.
+/// One write a server makes (B7): its id; what it asks, as sent (its front
+/// end and text); the identity its caller asserts (each revision's
+/// author); and who the server let in, recorded beside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpWrite {
     pub write_id: WriteId,
+    pub request: String,
     pub committer: Identity,
     pub principal: String,
 }
 
-/// A served write's answer: made now, or first given to its write id.
+/// A served write's answer: made now, or first given to its write id; or
+/// its principal's id was kept for another request or committer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Transacted {
     Answered(String),
     Replayed(String),
+    Reused,
 }
 
 /// Port: a board server's store, written one operation at a time (B7).
@@ -80,10 +88,10 @@ pub trait BoardOpStore: Send + Sync {
     /// The store a read is answered from, outside any write.
     fn reads(&self) -> Arc<dyn ProjectBoardStore>;
 
-    /// Runs `op` once per write id: under the board's write lock, in one
-    /// immediate transaction, on a store bound to it that writes as
-    /// `write.committer`, keeping its answer as it commits. A kept id is
-    /// answered with its kept answer, `op` unrun.
+    /// Runs `op` once per write id and principal: under the board's write
+    /// lock, in one immediate transaction, on a store bound to it that
+    /// writes as `write.committer`, keeping its answer as it commits. A
+    /// kept id is answered with its kept answer, `op` unrun.
     ///
     /// # Errors
     /// The store's failure, or `op`'s; either writes nothing.
@@ -94,13 +102,20 @@ pub trait BoardOpStore: Send + Sync {
     ) -> Result<Transacted, BoardStoreError>;
 }
 
-/// Port: the board's operations over a store, as composition assembles
-/// them for a server (B7).
+/// The operations over the store they are handed.
+pub type OperationsOver = Box<
+    dyn Fn(Arc<dyn ProjectBoardStore>) -> Result<Box<dyn BoardOperations>, ProjectBoardError>
+        + Send,
+>;
+
+/// Port: the board's operations, as composition assembles them for a
+/// server (B7).
 pub trait BoardOperationsOver: Send + Sync {
-    /// # Errors
-    /// One of them could not be built.
-    fn over(
+    /// The operations for `request`, every host read they may make (pull
+    /// requests' states) made now, from `reads`, before any lock.
+    fn prepare(
         &self,
-        store: Arc<dyn ProjectBoardStore>,
-    ) -> Result<Box<dyn BoardOperations>, ProjectBoardError>;
+        request: Option<&BoardRequest>,
+        reads: &dyn ProjectBoardStore,
+    ) -> OperationsOver;
 }

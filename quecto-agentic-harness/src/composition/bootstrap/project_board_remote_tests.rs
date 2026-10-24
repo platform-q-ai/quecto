@@ -344,7 +344,7 @@ fn a_dropped_answer_replayed_by_its_write_id_makes_one_revision() {
     assert_eq!(dropping.connections.load(Ordering::SeqCst), 2, "sent twice");
     assert_eq!(served.revisions().len(), before + 1, "written once");
     // The same write id again, raw: the kept answer, byte for byte.
-    let body = json!({"request": ready("b"), "front_end": "cli", "write_id": "0123abcd-0000",
+    let body = json!({"request": ready("b"), "front_end": "cli", "write_id": ID,
                       "committer": {"name": "Ada", "email": "ada@example.com"}})
     .to_string();
     let send = || {
@@ -360,6 +360,91 @@ fn a_dropped_answer_replayed_by_its_write_id_makes_one_revision() {
     assert_eq!(first.status, 200);
     assert_eq!(again, first, "replayed as first answered");
     assert_eq!(served.revisions().len(), before + 2);
+}
+
+const ID: &str = "0b7a1c0d-e000-4000-8000-000000000001";
+
+/// `body` posted to the op route over `client`: status, code, answer.
+fn posted(
+    client: &crate::infrastructure::http::board_service::client::BoardServiceClient,
+    board: &BoardId,
+    body: &Value,
+) -> (u16, Value) {
+    let path = format!("/v1/boards/{}/op", board.as_str());
+    let method = crate::infrastructure::http::board_service::limits::Method::Post;
+    let reply = client
+        .send(method, &path, body.to_string().as_bytes())
+        .unwrap();
+    (
+        reply.status,
+        serde_json::from_slice(&reply.body).unwrap_or(Value::Null),
+    )
+}
+
+/// A write id is kept per principal and per request: the same id for
+/// another request is 409 `write_id_reused`, and a token cannot replay a
+/// local write's id (its write is its own).
+#[test]
+fn a_write_id_is_kept_per_principal_and_request() {
+    use crate::infrastructure::http::board_service::client::{
+        BearerToken, BoardServiceClient, Endpoint,
+    };
+    let served = served(true);
+    let local = BoardServiceClient::unix(&served.socket);
+    let token = BearerToken::parse(served.token.as_deref().unwrap()).unwrap();
+    let device = BoardServiceClient::new(Endpoint::Tcp(served.tcp.unwrap()), Some(token));
+    let ada = json!({"name": "Ada", "email": "ada@example.com"});
+    let body = |id: &str| {
+        json!({"request": ready("a"), "front_end": "cli", "write_id": id,
+                                 "committer": ada})
+    };
+    let (status, first) = posted(&local, &served.board, &body(ID));
+    assert_eq!(
+        (status, &first["answer"]["ok"]),
+        (200, &json!(true)),
+        "{first}"
+    );
+    let mut other = body(ID);
+    other["request"] = ready("b");
+    let (status, reused) = posted(&local, &served.board, &other);
+    assert_eq!((status, &reused["code"]), (409, &json!("write_id_reused")));
+    other["request"] = ready("a");
+    other["committer"] = json!({"name": "Bob", "email": "bob@example.com"});
+    assert_eq!(
+        posted(&local, &served.board, &other).0,
+        409,
+        "another committer"
+    );
+    let (status, theirs) = posted(&device, &served.board, &body(ID));
+    assert_eq!(status, 200);
+    assert_eq!(
+        theirs["answer"]["error"]["code"],
+        json!("exists"),
+        "run, not replayed"
+    );
+    assert_eq!(served.revisions().len(), 2, "made, and one create");
+}
+
+/// Over TCP one token holds 4 answers at once: 12 creates at once are
+/// answered busy past that, and each is sent again until it lands.
+#[test]
+fn busy_writes_over_tcp_are_retried_until_they_land() {
+    let served = served(true);
+    let token = served.token.clone().unwrap();
+    let url = format!("http://{}", served.tcp.unwrap());
+    let remote: Arc<dyn BoardOperations> =
+        Arc::from(served.remote(&url, Access::Write, &[("QUECTO_BOARD_TOKEN", &token)]));
+    let threads: Vec<_> = (0..12)
+        .map(|n| {
+            let remote = Arc::clone(&remote);
+            std::thread::spawn(move || run(&*remote, &ready(&format!("t{n}")).to_string()))
+        })
+        .collect();
+    for thread in threads {
+        let answer = thread.join().unwrap();
+        assert_eq!(answer["ok"], json!(true), "{answer}");
+    }
+    assert_eq!(served.revisions().len(), 13);
 }
 
 /// 8 writers × 50 changes at once: every change lands (none lost to a
@@ -548,7 +633,9 @@ fn the_op_route_refuses_by_typed_codes() {
         json!({"request": {"op": "list"}, "front_end": "cli", "extra": 1}),
         json!({"request": ready("a"), "front_end": "cli", "write_id": "NOT-HEX!",
                "committer": {"name": "Ada", "email": "ada@example.com"}}),
-        json!({"request": ready("a"), "front_end": "cli", "write_id": "0123abcd",
+        json!({"request": ready("a"), "front_end": "cli", "write_id": "0123abcd-0000",
+               "committer": {"name": "Ada", "email": "ada@example.com"}}),
+        json!({"request": ready("a"), "front_end": "cli", "write_id": ID,
                "committer": {"name": "Ada <x>", "email": "ada@example.com"}}),
     ] {
         assert_eq!(

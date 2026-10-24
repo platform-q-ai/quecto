@@ -4,22 +4,25 @@
 //! machine's clock; peer credentials letting in this user only; the tokens
 //! file in the state directory; and the TCP addresses the global config
 //! names.
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use super::project_board::{operation_parts, pull_request_states};
 use super::project_board_operations::LocalBoardOperations;
-use crate::application::project_board::dto::{NoPullRequestHost, ProjectBoardError};
+use crate::application::project_board::dto::{BoardOp, BoardRequest, NoPullRequestHost};
 use crate::application::project_board::operations::StoreListings;
 use crate::application::project_board::ports::ListenAddress;
 use crate::application::project_board::ports::{
-    BoardClock, BoardOpStore, BoardOperations, BoardOperationsOver, BoardTokens, ProjectBoardStore,
-    PullRequestStates, RemoteRevisions,
+    BoardClock, BoardOpStore, BoardOperations, BoardOperationsOver, BoardTokens, OperationsOver,
+    ProjectBoardStore, PullRequestState, PullRequestStates, PullRequestStatesError,
+    RemoteRevisions,
 };
 use crate::application::project_board::use_cases::{
     BoardAccess, QueryBoard, RunBoardOperation, ServeBoard, ServeBoardOperation,
 };
 use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::http::board_service::listener::{SocketPeerCredentials, this_uid};
@@ -121,21 +124,64 @@ pub struct ServedOperations {
 }
 
 impl BoardOperationsOver for ServedOperations {
-    fn over(
+    fn prepare(
         &self,
-        store: Arc<dyn ProjectBoardStore>,
-    ) -> Result<Box<dyn BoardOperations>, ProjectBoardError> {
-        let listings = StoreListings(QueryBoard::new(Arc::clone(&store)));
-        let parts = operation_parts(
-            (Arc::clone(&store), store),
-            Arc::clone(&self.clock),
-            Arc::new(listings),
-            self.prs.clone(),
-            Arc::clone(&self.revisions),
-            None,
-        )?;
-        let operations = LocalBoardOperations::new(RunBoardOperation::new(parts));
-        Ok(Box::new(operations))
+        request: Option<&BoardRequest>,
+        reads: &dyn ProjectBoardStore,
+    ) -> OperationsOver {
+        let prs = self.prs.clone().map(|host| {
+            Arc::new(StatedPullRequests::read(&*host, request, reads)) as Arc<dyn PullRequestStates>
+        });
+        let (clock, revisions) = (Arc::clone(&self.clock), Arc::clone(&self.revisions));
+        Box::new(move |store| {
+            let listings = StoreListings(QueryBoard::new(Arc::clone(&store)));
+            let parts = operation_parts(
+                (Arc::clone(&store), store),
+                Arc::clone(&clock),
+                Arc::new(listings),
+                prs.clone(),
+                Arc::clone(&revisions),
+                None,
+            )?;
+            let operations = LocalBoardOperations::new(RunBoardOperation::new(parts));
+            Ok(Box::new(operations) as Box<dyn BoardOperations>)
+        })
+    }
+}
+
+/// The states of the pull requests a request may complete its task by,
+/// read before its write: its task's linked ones and one it links.
+struct StatedPullRequests(BTreeMap<u64, Result<PullRequestState, PullRequestStatesError>>);
+
+impl StatedPullRequests {
+    fn read(
+        host: &dyn PullRequestStates,
+        request: Option<&BoardRequest>,
+        reads: &dyn ProjectBoardStore,
+    ) -> Self {
+        let (task, linking) = match request {
+            Some(BoardRequest::Change(id, BoardOp::AddPr(pr))) => (Some(id), Some(*pr)),
+            Some(
+                BoardRequest::Change(id, BoardOp::Move(TaskStatus::Review))
+                | BoardRequest::Complete(id),
+            ) => (Some(id), None),
+            Some(_) | None => (None, None),
+        };
+        let board = task.and_then(|_| reads.read().ok());
+        let linked = board.iter().flat_map(|board| &board.tasks);
+        let linked = linked.filter(|held| Some(&held.fields().id) == task);
+        let prs = linked
+            .flat_map(|held| held.fields().prs.clone())
+            .chain(linking);
+        Self(prs.map(|pr| (pr, host.state(pr))).collect())
+    }
+}
+
+impl PullRequestStates for StatedPullRequests {
+    fn state(&self, pr: u64) -> Result<PullRequestState, PullRequestStatesError> {
+        let unread = || format!("pull request {pr} was linked after its states were read");
+        let state = self.0.get(&pr).cloned();
+        state.unwrap_or_else(|| Err(PullRequestStatesError::Unavailable(unread())))
     }
 }
 

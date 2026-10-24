@@ -25,6 +25,9 @@ fn a_url_names_a_socket_or_an_allowlisted_address_with_its_token() {
         assert!(endpoint_of(refused, Some(TOKEN)).is_err(), "{refused}");
     }
     let none = endpoint_of("http://127.0.0.1:7979", None).unwrap_err();
+    // Rendered as a refusal is, redaction leaves it whole (round 1).
+    let rendered = crate::domain::shared::redaction::redact_secrets(&none);
+    assert_eq!(rendered, none);
     assert!(none.contains("QUECTO_BOARD_TOKEN"), "{none}");
     let bad = endpoint_of("http://127.0.0.1:7979", Some("bad token\r\n")).unwrap_err();
     assert!(!bad.contains("bad token"), "never shown: {bad}");
@@ -37,6 +40,9 @@ fn a_reply_is_an_answer_or_a_refusal_by_its_code() {
     let body = json!({"answer": {"ok": true, "op": "create"},
                       "facts": {"attempts": 1, "lost": 0, "head": "abc"}});
     let (answer, facts) = answered(200, body.to_string().as_bytes()).unwrap();
+    let BoardOutcome::Served(ServedAnswer(answer)) = answer.outcome else {
+        panic!("served")
+    };
     assert_eq!(
         serde_json::from_str::<Value>(&answer).unwrap()["op"],
         "create"
@@ -55,5 +61,26 @@ fn a_reply_is_an_answer_or_a_refusal_by_its_code() {
     assert!(
         answered(200, br#"{"answer": [1]}"#).is_err(),
         "an answer is an object"
+    );
+}
+
+/// A start is refused before anything is sent: no server starts runs yet.
+#[test]
+fn a_start_is_refused_unsent() {
+    let client = endpoint_of("unix:///nonexistent/board.sock", None).unwrap();
+    let board = BoardId::of_hex("0123456789abcdef").unwrap();
+    let remote = RemoteBoardOperations::new(vec![client], board, None);
+    let value = json!({"op": "start", "task": "a", "plan_version": 1});
+    let policy = crate::domain::project_board::entities::task_parts::EntryPolicy::Sectioned;
+    let request = crate::interface::tools::project_board::request::parse(&value, policy).unwrap();
+    let read = ReadRequest {
+        request: &request,
+        text: &value.to_string(),
+        front_end: crate::domain::project_board::value_objects::telemetry::FrontEnd::Tool,
+    };
+    let refused = remote.execute(read, ListSummaries::Omitted, OpNoting::Unnoted);
+    assert_eq!(
+        refused.result,
+        Err(ProjectBoardError::Refused(NO_START.into()))
     );
 }

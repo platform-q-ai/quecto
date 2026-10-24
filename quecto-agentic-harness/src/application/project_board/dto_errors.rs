@@ -117,6 +117,7 @@ impl fmt::Display for ProjectBoardError {
                 updated.as_str(),
                 expected.as_str()
             ),
+            Self::Busy(why) => write!(f, "the board server is busy: {why}; try again shortly"),
             Self::NoLauncher => f.write_str(
                 "this session may not spawn, so it cannot launch a coordinator: \
                  start the task from a session that may",

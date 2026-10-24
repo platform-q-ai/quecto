@@ -317,6 +317,16 @@ fn failed(error: &ServeError) -> ServiceReply {
             "write",
             "a write needs its write_id and committer".to_string(),
         ),
+        ServeError::WriteIdReused => (
+            409,
+            "write_id_reused",
+            "this write_id was used for another write: make a new one".to_string(),
+        ),
+        ServeError::Busy => (
+            503,
+            "busy",
+            "too many writes at once: try again shortly".into(),
+        ),
     };
     coded(status, code, &redact_secrets(&redact_url_userinfo(&why)))
 }

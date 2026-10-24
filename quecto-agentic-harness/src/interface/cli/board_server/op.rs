@@ -1,9 +1,8 @@
 //! `POST /v1/boards/{id}/op` (epic #2705 B7): one board request, as its
 //! front end read it, run by [`ServeBoardOperation`] and answered through
-//! the front ends' own path (`run_recorded_with`), so a remote answer
-//! never drifts from a local one. The body is read strictly (a key named
-//! twice is refused) within the front ends' request bound; a write needs
-//! its `write_id` and `committer`, a read ignores them.
+//! the front ends' own path (`run_recorded_with`), so a remote answer never
+//! drifts from a local one. The body is read strictly (a key named twice is
+//! refused); a write needs its `write_id` and `committer`.
 use std::sync::{Mutex, PoisonError};
 
 use serde_json::{Value, json};
@@ -48,15 +47,8 @@ struct Committer {
     email: String,
 }
 
-impl From<Committer> for Identity {
-    fn from(Committer { name, email }: Committer) -> Self {
-        Self { name, email }
-    }
-}
-
-/// Why an op was not answered.
+/// Why an op was not answered: a body not an op's (why), access, or the server.
 pub(super) enum OpRefusal {
-    /// The body is not an op's: why.
     Body(String),
     Access(Refused),
     Serve(ServeError),
@@ -65,8 +57,7 @@ pub(super) enum OpRefusal {
 /// The answer to the op `body` from `principal`.
 ///
 /// # Errors
-/// A body not shaped as an op's, an op `principal` may not make, or the
-/// server's failure.
+/// A body not an op's, an op `principal` may not make, or the server's.
 pub(super) fn answer_op(
     operations: &ServeBoardOperation,
     principal: &Principal,
@@ -74,25 +65,33 @@ pub(super) fn answer_op(
 ) -> Result<String, OpRefusal> {
     let shape = || OpRefusal::Body(BODY_SHAPE.into());
     let text = std::str::from_utf8(body).map_err(|_| shape())?;
-    let value = read(text).map_err(|_| shape())?;
-    let body: OpBody = serde_json::from_value(value).map_err(|_| shape())?;
+    let body: OpBody =
+        serde_json::from_value(read(text).map_err(|_| shape())?).map_err(|_| shape())?;
     let front_end = FrontEnd::ALL
         .iter()
         .copied()
-        .find(|front_end| front_end.as_str() == body.front_end)
-        .ok_or_else(shape)?;
-    let Value::Object(_) = &body.request else {
+        .find(|named| named.as_str() == body.front_end);
+    let (Some(front_end), Value::Object(_)) = (front_end, &body.request) else {
         return Err(shape());
     };
     let request = parse(&body.request, entry_policy(front_end)).ok();
     let scope = request.as_ref().map_or(Scope::Read, Scope::of);
     BoardAccess::authorize(principal, scope).map_err(OpRefusal::Access)?;
-    let write = match (
-        request.as_ref().map(BoardRequest::writes),
-        body.write_id,
-        body.committer,
-    ) {
-        (Some(true), Some(id), Some(committer)) => Some(written(principal, &id, committer)?),
+    let text = body.request.to_string();
+    let writes = request.as_ref().map(BoardRequest::writes);
+    let write = match (writes, body.write_id, body.committer) {
+        (Some(true), Some(id), Some(Committer { name, email })) => {
+            let unshaped = || OpRefusal::Body("write_id must be a lowercase UUID".into());
+            let committer = Identity { name, email };
+            let invalid = |error| OpRefusal::Body(format!("the committer is invalid: {error}"));
+            committer.validate("committer").map_err(invalid)?;
+            Some(OpWrite {
+                write_id: WriteId::parse(&id).ok_or_else(unshaped)?,
+                request: format!("{}\n{text}", front_end.as_str()),
+                committer,
+                principal: principal.recorded(),
+            })
+        }
         (Some(true), _, _) => return Err(OpRefusal::Serve(ServeError::NoWrite)),
         (Some(false) | None, _, _) => None,
     };
@@ -104,48 +103,37 @@ pub(super) fn answer_op(
         true => OpNoting::Noted,
         false => OpNoting::Unnoted,
     };
-    let text = body.request.to_string();
     let mut answer =
         |board: &dyn BoardOperations| present(board, &text, front_end, summaries, noting);
-    operations
-        .execute(request.as_ref(), write.as_ref(), &mut answer)
-        .map(|served| match served {
-            Transacted::Answered(answer) | Transacted::Replayed(answer) => answer,
-        })
-        .map_err(OpRefusal::Serve)
+    match operations.execute(request.as_ref(), write.as_ref(), &mut answer) {
+        Ok(Transacted::Answered(answer) | Transacted::Replayed(answer)) => Ok(answer),
+        Ok(Transacted::Reused) => Err(OpRefusal::Serve(ServeError::WriteIdReused)),
+        Err(error) => Err(OpRefusal::Serve(error)),
+    }
 }
 
-/// The write `id` by `committer`, let in as `principal`.
-fn written(principal: &Principal, id: &str, committer: Committer) -> Result<OpWrite, OpRefusal> {
-    let write_id = WriteId::parse(id)
-        .ok_or_else(|| OpRefusal::Body("write_id must be 8 to 64 of 0-9, a-f and -".into()))?;
-    let committer = Identity::from(committer);
-    committer
-        .validate("committer")
-        .map_err(|error| OpRefusal::Body(format!("the committer is invalid: {error}")))?;
-    Ok(OpWrite {
-        write_id,
-        committer,
-        principal: principal.recorded(),
-    })
-}
-
-/// The reply body: the front end's answer to `text` on `board`, and the
-/// facts its use cases noted, as far as they travel.
+/// The reply body: the front end's answer to `text` on `board` and the
+/// facts noted, as far as they travel; or why the store failed under it,
+/// so a write is undone and keeps no answer.
 fn present(
     board: &dyn BoardOperations,
     text: &str,
     front_end: FrontEnd,
     summaries: ListSummaries,
     noting: OpNoting,
-) -> String {
+) -> Result<String, String> {
+    let facts = Mutex::new(None);
     let captured = Captured {
-        inner: board,
+        board,
         noting,
-        facts: Mutex::new(None),
+        facts,
     };
     let mut call = BoardCall::start(None, front_end, Client::Other);
     let answer = run_recorded_with(&captured, text, summaries, &mut call);
+    let error = &answer["error"];
+    if let Some("store_unavailable" | "clock_unreadable") = error["code"].as_str() {
+        return Err(error["message"].as_str().unwrap_or_default().to_string());
+    }
     let facts = captured
         .facts
         .into_inner()
@@ -154,12 +142,12 @@ fn present(
         json!({"attempts": facts.attempts, "lost": facts.lost,
                "head": facts.head.map(|head| head.0)})
     });
-    json!({ "answer": answer, "facts": facts }).to_string()
+    Ok(json!({ "answer": answer, "facts": facts }).to_string())
 }
 
 /// The operations, noted as the client asked, their facts kept.
 struct Captured<'a> {
-    inner: &'a dyn BoardOperations,
+    board: &'a dyn BoardOperations,
     noting: OpNoting,
     facts: Mutex<Option<OpFacts>>,
 }
@@ -171,13 +159,12 @@ impl BoardOperations for Captured<'_> {
         summaries: ListSummaries,
         _: OpNoting,
     ) -> BoardExecution {
-        let mut execution = self.inner.execute(request, summaries, self.noting);
-        let mut facts = self.facts.lock().unwrap_or_else(PoisonError::into_inner);
-        *facts = execution.facts.take();
+        let mut execution = self.board.execute(request, summaries, self.noting);
+        *self.facts.lock().unwrap_or_else(PoisonError::into_inner) = execution.facts.take();
         execution
     }
 
     fn left_runs(&self) -> Result<Vec<RunEnd>, ProjectBoardError> {
-        self.inner.left_runs()
+        self.board.left_runs()
     }
 }

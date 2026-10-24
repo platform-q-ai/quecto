@@ -8,6 +8,7 @@
 //! whole server outside a tool call (ADR-0029), so every failure is a
 //! [`ServeError`].
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::application::project_board::dto::{BoardRequest, ProjectBoardError};
 use crate::application::project_board::ports::{
@@ -15,19 +16,30 @@ use crate::application::project_board::ports::{
     Transacted,
 };
 
-/// What runs a served request on the operations it is handed and gives
-/// the answer to send (the server's front end renders it).
-pub type Present<'a> = dyn FnMut(&dyn BoardOperations) -> String + 'a;
+/// Runs a served request on the operations it is handed and gives the
+/// answer to send (the server's front end renders it), or why the store
+/// failed, which undoes a write and keeps no answer.
+pub type Present<'a> = dyn FnMut(&dyn BoardOperations) -> Result<String, String> + 'a;
+
+/// The writes a server holds at once: one runs, one waits on the lock;
+/// more are answered busy, so writes never take the threads reads need.
+pub const MAX_WRITES: usize = 2;
 
 /// The board server's operations on its board.
 pub struct ServeBoardOperation {
     store: Arc<dyn BoardOpStore>,
     operations: Arc<dyn BoardOperationsOver>,
+    writing: AtomicUsize,
 }
 
 impl ServeBoardOperation {
     pub fn new(store: Arc<dyn BoardOpStore>, operations: Arc<dyn BoardOperationsOver>) -> Self {
-        Self { store, operations }
+        let writing = AtomicUsize::new(0);
+        Self {
+            store,
+            operations,
+            writing,
+        }
     }
 
     /// The answer `present` gives to `request` (`None`: one its front end
@@ -35,8 +47,8 @@ impl ServeBoardOperation {
     /// write needs its `write`; a read takes none.
     ///
     /// # Errors
-    /// A write without its `write` ([`ServeError::NoWrite`]); the store's
-    /// failure, or operations that could not be built, before any answer.
+    /// A write without its `write`, its id reused, or past [`MAX_WRITES`];
+    /// the store's failure, or operations that could not be built.
     pub fn execute(
         &self,
         request: Option<&BoardRequest>,
@@ -44,26 +56,45 @@ impl ServeBoardOperation {
         present: &mut Present<'_>,
     ) -> Result<Transacted, ServeError> {
         let failed = |error| ServeError::Board(ProjectBoardError::Store(error));
+        let over = self.operations.prepare(request, &*self.store.reads());
+        let mut run = |store| {
+            let operations = over(store).map_err(|error| error.to_string());
+            operations.and_then(|operations| present(&*operations))
+        };
         match (request.map(BoardRequest::writes), write) {
             (Some(true), Some(write)) => {
-                // Operations that cannot be built fail the write: it keeps
-                // no answer, so its retry runs it.
+                let _slot = Slot::taken(&self.writing).ok_or(ServeError::Busy)?;
+                // A failed op keeps no answer, so its retry runs it.
                 let transacted = self.store.transact(write, &mut |store| {
-                    let operations = self
-                        .operations
-                        .over(store)
-                        .map_err(|error| BoardStoreError::Unavailable(error.to_string()))?;
-                    Ok(present(&*operations))
+                    run(store).map_err(BoardStoreError::Unavailable)
                 });
-                transacted.map_err(failed)
+                match transacted.map_err(failed)? {
+                    Transacted::Reused => Err(ServeError::WriteIdReused),
+                    done @ (Transacted::Answered(_) | Transacted::Replayed(_)) => Ok(done),
+                }
             }
             (Some(true), None) => Err(ServeError::NoWrite),
-            (Some(false) | None, _) => {
-                let operations = self.operations.over(self.store.reads());
-                let operations = operations.map_err(ServeError::Board)?;
-                Ok(Transacted::Answered(present(&*operations)))
-            }
+            (Some(false) | None, _) => run(self.store.reads())
+                .map(Transacted::Answered)
+                .map_err(|why| failed(BoardStoreError::Unavailable(why))),
         }
+    }
+}
+
+/// One of the [`MAX_WRITES`] write slots, given back when dropped.
+struct Slot<'a>(&'a AtomicUsize);
+
+impl<'a> Slot<'a> {
+    fn taken(writing: &'a AtomicUsize) -> Option<Self> {
+        let free = |held: usize| (held < MAX_WRITES).then_some(held + 1);
+        let taken = writing.fetch_update(Ordering::SeqCst, Ordering::SeqCst, free);
+        taken.ok().map(|_| Self(writing))
+    }
+}
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
