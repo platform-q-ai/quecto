@@ -328,3 +328,7 @@ fn slugs(table: &'static str, rows: &[Vec<String>]) -> Result<Vec<Slug>, CodecEr
 #[cfg(test)]
 #[path = "task_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "task_sections_tests.rs"]
+mod sections_tests;

@@ -592,3 +592,44 @@ fn end_run_reads_its_run_outcome_and_pin() {
         );
     }
 }
+
+/// #2705 T2: create and update_draft take a description in its sections,
+/// composed into the text the use case normalises and the task checks.
+#[test]
+fn create_and_update_draft_take_the_descriptions_sections() {
+    let created = parse(&json!({
+        "op": "create",
+        "task": "a",
+        "title": "Ship it",
+        "goal": "Ship it.",
+        "why": "Users wait.",
+        "done_when": ["Merged", "CI green"],
+        "links": ["PR #1"],
+    }));
+    let Ok(BoardRequest::Create(new)) = created else {
+        panic!("{created:?}")
+    };
+    assert_eq!(
+        new.description,
+        "## Goal\nShip it.\n\n## Why\nUsers wait.\n\n## Done when\n- [ ] Merged\n- [ ] CI \
+         green\n\n## Links\n- PR #1"
+    );
+    let edit = parse(&json!({
+        "op": "update_draft", "task": "a", "goal": "Ship.", "done_when": ["Merged"],
+    }));
+    let Ok(BoardRequest::UpdateDraft(update)) = edit else {
+        panic!("{edit:?}")
+    };
+    assert_eq!(
+        update.description.as_deref(),
+        Some("## Goal\nShip.\n\n## Done when\n- [ ] Merged")
+    );
+    for op in ["create", "update_draft"] {
+        let both = json!({"op": op, "task": "a", "title": "T", "description": "x", "goal": "y"});
+        assert_eq!(refused(both).field, "description", "{op}");
+        let not_text = json!({"op": op, "task": "a", "title": "T", "done_when": "x"});
+        assert_eq!(refused(not_text).field, "done_when", "{op}");
+        let not_line = json!({"op": op, "task": "a", "title": "T", "links": ["a", 1]});
+        assert_eq!(refused(not_line).field, "links/1", "{op}");
+    }
+}

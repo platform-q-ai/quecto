@@ -373,3 +373,7 @@ pub(super) fn artifact_folder(key: &ArtifactKey) -> Option<&'static str> {
         ArtifactKey::Discussion(_) => Some("discussions"),
     }
 }
+
+#[cfg(test)]
+#[path = "answer_description_tests.rs"]
+mod description_tests;
