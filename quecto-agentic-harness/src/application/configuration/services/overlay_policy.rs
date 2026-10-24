@@ -14,7 +14,8 @@
 //! - `workflow` — field-wise (`templates` replaced whole);
 //! - `providers`, `admission`, `extensions` (#2446: launching commands is
 //!   the owner's alone), `board_server` (#2705 B5: what the server listens
-//!   on) — global-only: an overlay carrying them is
+//!   on), `board` (#2705 B7: the board server a client uses, and its
+//!   token) — global-only: an overlay carrying them is
 //!   refused naming the key; so is an overlay turning `tools.grep.relevance`
 //!   on or `tools.grep.log` off (#2136; see [`GLOBAL_ONLY_PATHS`]);
 //! - any other key — replaced whole (unknown keys pass through both files).
@@ -22,7 +23,13 @@
 use serde_json::{Map, Value};
 
 /// Sections only the global file may define.
-pub const GLOBAL_ONLY_KEYS: &[&str] = &["providers", "admission", "extensions", "board_server"];
+pub const GLOBAL_ONLY_KEYS: &[&str] = &[
+    "providers",
+    "admission",
+    "extensions",
+    "board_server",
+    "board",
+];
 
 /// Every top-level section the configuration schema knows. A file that
 /// carries none of them is not a quecto configuration.

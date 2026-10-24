@@ -97,7 +97,7 @@ impl SqliteProjectBoardStore {
             store: self,
             connection: &tx,
         })?;
-        let head = storage::advance(&tx, &root, &self.writer)?;
+        let head = storage::advance(&tx, &root, &self.writer, None)?;
         tx.commit().map_err(unavailable)?;
         Ok(head)
     }

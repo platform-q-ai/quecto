@@ -146,6 +146,8 @@ pub enum ErrorCode {
     NoPullRequestHost,
     /// This session may not spawn, so it starts nothing (S4c).
     NoLauncher,
+    /// `reason`: the board server stayed busy (#2705 B7); try again.
+    Busy,
     /// `task`, `run`: the run's swarm still runs here, so it is not ended
     /// by hand (S4c).
     RunLive,
@@ -198,6 +200,7 @@ impl ErrorCode {
             Self::NotSetAside => "not_set_aside",
             Self::NoPullRequestHost => "no_pull_request_host",
             Self::NoLauncher => "no_launcher",
+            Self::Busy => "busy",
             Self::RunLive => "run_live",
             Self::Brief => "brief",
             Self::LaunchFailed => "launch_failed",
@@ -307,6 +310,7 @@ pub fn outcome(
             }
         }
         BoardOutcome::Started(started) => fields.extend(started_fields(started)),
+        BoardOutcome::Served(_) => {}
         BoardOutcome::Accepted(accepted) => {
             fields.insert("task".into(), task_json(&accepted.task));
             fields.insert("plan".into(), planned_json(&accepted.plan));
@@ -684,6 +688,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             fields([("reason", shown_json(&why.to_string()))]),
         ),
         E::NoLauncher => (C::NoLauncher, Map::new()),
+        E::Busy(why) => (C::Busy, fields([("reason", shown_json(why))])),
         E::RunLive { task, run, agent } => (
             C::RunLive,
             fields([

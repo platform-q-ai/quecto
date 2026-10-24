@@ -848,8 +848,8 @@ fn round2_recognized_names_wrong_ddl_refused_before_any_mutation() {
     );
     assert_eq!(
         names.len(),
-        7,
-        "four original tables and three original indexes"
+        11,
+        "six tables and five indexes (B7 adds op_results and revision_principals)"
     );
     assert_eq!(
         rows(&raw, "PRAGMA application_id"),
@@ -857,7 +857,7 @@ fn round2_recognized_names_wrong_ddl_refused_before_any_mutation() {
     );
     assert_eq!(
         rows(&raw, "PRAGMA user_version"),
-        vec![vec![Value::Integer(2)]]
+        vec![vec![Value::Integer(3)]]
     );
     // Only SQL text changes: all recognized names/indexes, count, ownership and
     // usable original columns survive. name == n remains true; SQL == s is false.

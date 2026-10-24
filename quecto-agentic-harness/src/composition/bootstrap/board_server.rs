@@ -1,20 +1,37 @@
-//! The board server's graph (epic #2705 B4, B5): the git store, read only
-//! (writes are B7), this machine's clock, peer credentials letting in this
-//! user only, the tokens file in the state directory, and the TCP addresses
-//! the global config names. A SQLite store (B2) slots in here unchanged.
+//! The board server's graph (epic #2705 B4, B5, B7): the SQLite board in
+//! the state directory, written one operation at a time; the clone's git,
+//! for the board's id and its remote's revisions and pull requests; this
+//! machine's clock; peer credentials letting in this user only; the tokens
+//! file in the state directory; and the TCP addresses the global config
+//! names.
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use super::project_board::{operation_parts, pull_request_states};
+use super::project_board_operations::LocalBoardOperations;
+use crate::application::project_board::dto::{BoardOp, BoardRequest, NoPullRequestHost};
+use crate::application::project_board::operations::StoreListings;
 use crate::application::project_board::ports::ListenAddress;
-use crate::application::project_board::ports::{BoardClock, BoardTokens, ProjectBoardStore};
-use crate::application::project_board::use_cases::{BoardAccess, ServeBoard};
+use crate::application::project_board::ports::{
+    BoardClock, BoardOpStore, BoardOperations, BoardOperationsOver, BoardTokens, OperationsOver,
+    ProjectBoardStore, PullRequestState, PullRequestStates, PullRequestStatesError,
+    RemoteRevisions,
+};
+use crate::application::project_board::use_cases::{
+    BoardAccess, QueryBoard, RunBoardOperation, ServeBoard, ServeBoardOperation,
+};
+use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::http::board_service::listener::{SocketPeerCredentials, this_uid};
 use crate::infrastructure::persistence::file::board_tokens::FileBoardTokens;
 use crate::infrastructure::persistence::project_board::board_tree::told;
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
+use crate::infrastructure::persistence::project_board::remote_revisions::GitRemoteRevisions;
 use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
+use crate::infrastructure::persistence::sqlite::project_board::SqliteBoardOps;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
 pub use crate::interface::cli::board_server::{BoardServerEnvironment, BoardServerHandles};
 
@@ -59,15 +76,113 @@ pub fn build_board_server(
     });
     let tokens: Arc<dyn BoardTokens> =
         Arc::new(FileBoardTokens::open(&state).map_err(|why| refused(&why))?);
-    let store: Arc<dyn ProjectBoardStore> = Arc::new(store);
+    let ops =
+        SqliteBoardOps::open(&state.join(BOARD_FILE), server_identity()).map_err(|error| {
+            refused(&format!(
+                "the board in {}: {}",
+                state.display(),
+                told(&error)
+            ))
+        })?;
+    let ops: Arc<dyn BoardOpStore> = Arc::new(ops);
     let clock: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());
+    let served = ServedOperations {
+        clock: Arc::clone(&clock),
+        prs: pull_request_states(&url, &environment.vars),
+        revisions: Arc::new(GitRemoteRevisions::of_store(&store)),
+    };
     Ok(BoardServerHandles {
-        serve: ServeBoard::new(store, Arc::clone(&clock), board),
+        serve: ServeBoard::new(ops.reads(), Arc::clone(&clock), board),
+        operations: ServeBoardOperation::new(ops, Arc::new(served)),
         access: BoardAccess::new(tokens, clock),
         peers: Arc::new(SocketPeerCredentials),
         uid: this_uid(),
         listen,
     })
+}
+
+/// The board's file in the state directory.
+pub const BOARD_FILE: &str = "board.sqlite3";
+
+/// Who the server's reads are made as: a read writes nothing, and every
+/// write is its caller's ([`OpWrite`](crate::application::project_board::ports::OpWrite)).
+fn server_identity() -> Identity {
+    Identity {
+        name: "quecto board-server".into(),
+        email: "board-server@quecto.invalid".into(),
+    }
+}
+
+/// The board's operations as a server runs them (B7), over the store each
+/// is handed: this machine's clock, pull request states read with `gh`
+/// for the board's remote, a success judged by the remote's revisions. A
+/// start launches nothing and no run's swarm is seen here (B8).
+pub struct ServedOperations {
+    pub clock: Arc<dyn BoardClock>,
+    pub prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
+    pub revisions: Arc<dyn RemoteRevisions>,
+}
+
+impl BoardOperationsOver for ServedOperations {
+    fn prepare(
+        &self,
+        request: Option<&BoardRequest>,
+        reads: &dyn ProjectBoardStore,
+    ) -> OperationsOver {
+        let prs = self.prs.clone().map(|host| {
+            Arc::new(StatedPullRequests::read(&*host, request, reads)) as Arc<dyn PullRequestStates>
+        });
+        let (clock, revisions) = (Arc::clone(&self.clock), Arc::clone(&self.revisions));
+        Box::new(move |store| {
+            let listings = StoreListings(QueryBoard::new(Arc::clone(&store)));
+            let parts = operation_parts(
+                (Arc::clone(&store), store),
+                Arc::clone(&clock),
+                Arc::new(listings),
+                prs.clone(),
+                Arc::clone(&revisions),
+                None,
+            )?;
+            let operations = LocalBoardOperations::new(RunBoardOperation::new(parts));
+            Ok(Box::new(operations) as Box<dyn BoardOperations>)
+        })
+    }
+}
+
+/// The states of the pull requests a request may complete its task by,
+/// read before its write: its task's linked ones and one it links.
+struct StatedPullRequests(BTreeMap<u64, Result<PullRequestState, PullRequestStatesError>>);
+
+impl StatedPullRequests {
+    fn read(
+        host: &dyn PullRequestStates,
+        request: Option<&BoardRequest>,
+        reads: &dyn ProjectBoardStore,
+    ) -> Self {
+        let (task, linking) = match request {
+            Some(BoardRequest::Change(id, BoardOp::AddPr(pr))) => (Some(id), Some(*pr)),
+            Some(
+                BoardRequest::Change(id, BoardOp::Move(TaskStatus::Review))
+                | BoardRequest::Complete(id),
+            ) => (Some(id), None),
+            Some(_) | None => (None, None),
+        };
+        let board = task.and_then(|_| reads.read().ok());
+        let linked = board.iter().flat_map(|board| &board.tasks);
+        let linked = linked.filter(|held| Some(&held.fields().id) == task);
+        let prs = linked
+            .flat_map(|held| held.fields().prs.clone())
+            .chain(linking);
+        Self(prs.map(|pr| (pr, host.state(pr))).collect())
+    }
+}
+
+impl PullRequestStates for StatedPullRequests {
+    fn state(&self, pr: u64) -> Result<PullRequestState, PullRequestStatesError> {
+        let unread = || format!("pull request {pr} was linked after its states were read");
+        let state = self.0.get(&pr).cloned();
+        state.unwrap_or_else(|| Err(PullRequestStatesError::Unavailable(unread())))
+    }
 }
 
 /// The addresses `board_server.listen` names in the config at `path`.

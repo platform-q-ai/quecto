@@ -639,6 +639,8 @@ pub enum ProjectBoardError {
     /// This session may not spawn, so it has no launcher: nothing is
     /// started (S4c).
     NoLauncher,
+    /// The board server stayed busy (#2705 B7): try again shortly.
+    Busy(String),
     /// Run `run` of task `task` still has its swarm running in this
     /// session, its coordinator `agent`, so it is not ended by hand: the
     /// coordinator is stopped first (S4c).
@@ -714,7 +716,8 @@ pub use start::{EndedRun, LivenessCheck, RunEnd, RunEndOutcome, RunReport, TaskS
 mod requests;
 pub use requests::{
     BoardAnswered, BoardExecution, BoardOutcome, BoardRequest, Completion, ListFilter,
-    ListSummaries, OpNoting, PlanPage, PlanView, SUMMARIES_LISTINGS_ONLY,
+    ListSummaries, OpNoting, PlanPage, PlanView, ReadRequest, SUMMARIES_LISTINGS_ONLY,
+    ServedAnswer,
 };
 
 #[cfg(test)]

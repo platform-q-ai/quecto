@@ -1,21 +1,30 @@
-//! Contract for [`BoardOperations`] (epic #2705 B6): what the board's
+//! Contract for [`BoardOperations`] (epic #2705 B6, B7): what the board's
 //! front ends are handed for a request, as every adapter must answer it.
-//! The checks take the operations of one fresh board that is not
-//! bootstrapped yet ([`Fixture`]); here they run against the local adapter
-//! as composition builds it for `quecto board`, over a clone of a bare git
-//! remote. A board server's adapter (B7) runs the same checks.
+//! A front end answers what it is handed through one path (an answer, or
+//! the board's refusal, rendered by its call), so the checks judge that
+//! answer: the local adapter hands typed outcomes over, a board server's
+//! (B7) the answer its server rendered, and both must read alike. The
+//! checks take the operations of one fresh board not bootstrapped yet
+//! ([`Fixture`]): the local adapter as composition builds it for `quecto
+//! board` over a clone of a bare git remote, and the remote adapter
+//! composition picks for `--url`, against an in-process board server on
+//! its Unix socket.
+use std::path::Path;
+
 use quecto::application::project_board::dto::{
-    BoardAnswered, BoardExecution, BoardOutcome, BoardRequest, ListSummaries, OpNoting,
-    ProjectBoardError, SUMMARIES_LISTINGS_ONLY,
+    BoardExecution, ListSummaries, OpNoting, ReadRequest, SUMMARIES_LISTINGS_ONLY,
 };
 use quecto::application::project_board::ports::BoardOperations;
-use quecto::application::project_board::task_summary::{RowSummaries, RowSummary};
+use quecto::application::project_board::telemetry::OpFacts;
+use quecto::composition::bootstrap::board_server::build_board_server;
 use quecto::composition::bootstrap::project_board::build_project_board_handles;
 use quecto::domain::project_board::entities::task_parts::EntryPolicy;
-use quecto::domain::project_board::value_objects::schema_error::SchemaError;
-use quecto::domain::project_board::value_objects::slug::Slug;
+use quecto::domain::project_board::value_objects::telemetry::{Client, FrontEnd};
 use quecto::infrastructure::time::remote_time::{ReferenceSource, reference_source};
-use quecto::interface::cli::controllers::board::{Access, ProjectBoardEnvironment};
+use quecto::interface::cli::board_server::BoardServerEnvironment;
+use quecto::interface::cli::board_server::serve::{Started, serve};
+use quecto::interface::cli::controllers::board::{Access, KnownLocation, ProjectBoardEnvironment};
+use quecto::interface::tools::project_board::recording::BoardCall;
 use quecto::interface::tools::project_board::request::parse;
 use serde_json::{Value, json};
 
@@ -23,98 +32,88 @@ use super::project_board_git_store::{Remote, sh};
 
 /// A fresh board's operations, and the clock note its fixture's clock
 /// gives a request that reads it (`None`: the clock has an outside
-/// reference).
+/// reference); and, for a board server, the server, stopped when dropped.
 pub struct Fixture {
     pub operations: Box<dyn BoardOperations>,
     pub clock_note: Option<String>,
+    pub _server: Option<Server>,
 }
 
-fn request(value: Value) -> BoardRequest {
-    parse(&value, EntryPolicy::Sectioned).expect("a well-formed request")
+/// `value` handed to `operations` as the CLI reads it, and its answer as
+/// the CLI renders it, with the facts noted when `noting` asks.
+fn answer(
+    operations: &dyn BoardOperations,
+    value: Value,
+    summaries: ListSummaries,
+    noting: OpNoting,
+) -> (Value, Option<OpFacts>) {
+    let text = value.to_string();
+    let request = parse(&value, EntryPolicy::SectionedOrLegacy).expect("a well-formed request");
+    let op = value["op"].as_str().expect("an op");
+    let read = ReadRequest {
+        request: &request,
+        text: &text,
+        front_end: FrontEnd::Cli,
+    };
+    let BoardExecution { result, facts } = operations.execute(read, summaries, noting);
+    let mut call = BoardCall::start(None, FrontEnd::Cli, Client::Cli);
+    let answer = match result {
+        Ok(answered) => call.answer(op, &answered.outcome, answered.clock_note),
+        Err(error) => call.refuse_as_board(op, &error, None),
+    };
+    (answer, facts)
 }
 
-fn create(id: &str) -> BoardRequest {
-    request(json!({"op": "create", "task": id, "title": "A task", "status": "ready"}))
+fn run(operations: &dyn BoardOperations, value: Value) -> Value {
+    answer(operations, value, ListSummaries::Omitted, OpNoting::Unnoted).0
 }
 
-fn slug(id: &str) -> Slug {
-    Slug::parse(id).expect("a slug")
+fn create(id: &str) -> Value {
+    json!({"op": "create", "task": id, "title": "A task", "status": "ready"})
 }
 
-fn answered(execution: BoardExecution) -> BoardAnswered {
-    match execution.result {
-        Ok(answered) => answered,
-        Err(error) => panic!("refused: {error:?}"),
-    }
-}
-
-fn run(operations: &dyn BoardOperations, request: &BoardRequest) -> BoardAnswered {
-    answered(operations.execute(request, ListSummaries::Omitted, OpNoting::Unnoted))
-}
-
-fn refusal(operations: &dyn BoardOperations, request: &BoardRequest) -> ProjectBoardError {
-    match operations
-        .execute(request, ListSummaries::Omitted, OpNoting::Unnoted)
-        .result
-    {
-        Err(error) => error,
-        Ok(answered) => panic!("answered: {answered:?}"),
-    }
+fn code(answer: &Value) -> &Value {
+    assert_eq!(answer["ok"], json!(false), "refused: {answer}");
+    &answer["error"]["code"]
 }
 
 fn bootstrap(operations: &dyn BoardOperations) {
-    run(operations, &request(json!({"op": "bootstrap"})));
+    let made = run(operations, json!({"op": "bootstrap"}));
+    assert_eq!(made["ok"], json!(true), "{made}");
 }
 
-fn listed(outcome: &BoardOutcome) -> (Vec<String>, &RowSummaries) {
-    match outcome {
-        BoardOutcome::Listing(listed) => (
-            listed
-                .entries()
-                .map(|(task, _)| task.fields().id.as_str().to_owned())
-                .collect(),
-            listed.summaries(),
-        ),
-        other => panic!("not a listing: {other:?}"),
-    }
+fn ids(listing: &Value) -> Vec<&str> {
+    let tasks = listing["tasks"].as_array().expect("a listing's tasks");
+    tasks
+        .iter()
+        .filter_map(|task| task["id"].as_str())
+        .collect()
 }
 
 /// The board is created once: a bootstrap after it finds it, at the head
 /// it was created at.
 pub fn check_bootstrap(fixture: Fixture) {
     let operations = &*fixture.operations;
-    let bootstrap = request(json!({"op": "bootstrap"}));
-    let BoardOutcome::Bootstrapped {
-        head,
-        created: true,
-    } = run(operations, &bootstrap).outcome
-    else {
-        panic!("created")
-    };
+    let made = run(operations, json!({"op": "bootstrap"}));
     assert_eq!(
-        run(operations, &bootstrap).outcome,
-        BoardOutcome::Bootstrapped {
-            head,
-            created: false
-        }
+        (&made["ok"], &made["created"]),
+        (&json!(true), &json!(true))
     );
+    let found = run(operations, json!({"op": "bootstrap"}));
+    assert_eq!(found["created"], json!(false));
+    assert_eq!(found["head"], made["head"], "{made} {found}");
 }
 
 /// A task created is shown and listed as written.
 pub fn check_create_show_and_list(fixture: Fixture) {
     let operations = &*fixture.operations;
     bootstrap(operations);
-    let BoardOutcome::Changed { task, completion } = run(operations, &create("a")).outcome else {
-        panic!("changed")
-    };
-    assert_eq!((task.fields().id.as_str(), completion), ("a", None));
-    let show = request(json!({"op": "show", "task": "a"}));
-    let BoardOutcome::Shown(shown, _) = run(operations, &show).outcome else {
-        panic!("shown")
-    };
-    assert_eq!(shown.task, task);
-    let listing = request(json!({"op": "list"}));
-    assert_eq!(listed(&run(operations, &listing).outcome).0, ["a"]);
+    let created = run(operations, create("a"));
+    assert_eq!(created["task"]["id"], json!("a"), "{created}");
+    assert_eq!(created.get("completion"), None, "{created}");
+    let shown = run(operations, json!({"op": "show", "task": "a"}));
+    assert_eq!(shown["task"], created["task"]);
+    assert_eq!(ids(&run(operations, json!({"op": "list"}))), ["a"]);
 }
 
 /// A listing carries summaries only when they are asked for: one per task
@@ -123,79 +122,78 @@ pub fn check_create_show_and_list(fixture: Fixture) {
 pub fn check_summaries(fixture: Fixture) {
     let operations = &*fixture.operations;
     bootstrap(operations);
-    run(operations, &create("a"));
-    let listing = request(json!({"op": "list"}));
-    let omitted = run(operations, &listing);
-    assert_eq!(listed(&omitted.outcome).1, &RowSummaries::Omitted);
-    let wanted = operations.execute(&listing, ListSummaries::Wanted, OpNoting::Unnoted);
-    let wanted = answered(wanted);
-    let (ids, summaries) = listed(&wanted.outcome);
-    assert_eq!(ids, ["a"], "a listing is never refused for its summaries");
-    match summaries {
-        RowSummaries::Given(rows) => {
-            assert_eq!(rows.len(), 1, "one summary per listed task");
-            assert!(matches!(rows[0], RowSummary::Summary(_)), "{rows:?}");
-        }
-        RowSummaries::Skipped(why) => {
-            panic!("a quiet one-writer board is summarised, not skipped: {why:?}")
-        }
-        RowSummaries::Omitted => panic!("summaries were asked for"),
-    }
-    let show = request(json!({"op": "show", "task": "a"}));
-    let refused = operations.execute(&show, ListSummaries::Wanted, OpNoting::Unnoted);
+    run(operations, create("a"));
+    let omitted = run(operations, json!({"op": "list"}));
+    assert_eq!(omitted["tasks"][0].get("summary"), None, "{omitted}");
+    let listing = json!({"op": "list"});
+    let (wanted, _) = answer(
+        operations,
+        listing,
+        ListSummaries::Wanted,
+        OpNoting::Unnoted,
+    );
     assert_eq!(
-        refused.result,
-        Err(ProjectBoardError::Invalid(SchemaError::new(
-            "summary",
-            SUMMARIES_LISTINGS_ONLY
-        )))
+        ids(&wanted),
+        ["a"],
+        "a listing is never refused for its summaries"
+    );
+    assert!(wanted["tasks"][0]["summary"].is_object(), "{wanted}");
+    assert_eq!(
+        wanted.get("summary_skipped"),
+        None,
+        "a quiet board: {wanted}"
+    );
+    let show = json!({"op": "show", "task": "a"});
+    let (refused, _) = answer(operations, show, ListSummaries::Wanted, OpNoting::Unnoted);
+    assert_eq!(refused["ok"], json!(false), "{refused}");
+    assert!(
+        refused.to_string().contains(SUMMARIES_LISTINGS_ONLY),
+        "{refused}"
     );
 }
 
-/// The board's refusal reaches the front end typed, as the use cases
-/// refuse: before the board exists, of a task it does not hold, and of a
-/// task created twice.
+/// The board's refusal reaches the front end as the use cases refuse:
+/// before the board exists, of a task it does not hold, and of a task
+/// created twice.
 pub fn check_refusals(fixture: Fixture) {
     let operations = &*fixture.operations;
-    let show = request(json!({"op": "show", "task": "missing"}));
-    let before = refusal(operations, &show);
-    assert!(matches!(before, ProjectBoardError::Store(_)), "{before:?}");
+    let show = json!({"op": "show", "task": "missing"});
+    assert_eq!(code(&run(operations, show.clone())), "no_board");
     bootstrap(operations);
-    assert_eq!(
-        refusal(operations, &show),
-        ProjectBoardError::NotFound(slug("missing"))
-    );
-    run(operations, &create("a"));
-    assert_eq!(
-        refusal(operations, &create("a")),
-        ProjectBoardError::Exists(slug("a"))
-    );
+    assert_eq!(code(&run(operations, show)), "not_found");
+    run(operations, create("a"));
+    assert_eq!(code(&run(operations, create("a"))), "exists");
 }
 
 /// What a request's use cases saw comes back exactly when it is noted:
 /// every noted request, answered or refused, gives it back.
 pub fn check_noting(fixture: Fixture) {
     let operations = &*fixture.operations;
-    let show = request(json!({"op": "show", "task": "a"}));
-    let listing = request(json!({"op": "list"}));
-    let bootstrap = request(json!({"op": "bootstrap"}));
-    let unnoted = operations.execute(&bootstrap, ListSummaries::Omitted, OpNoting::Unnoted);
-    assert_eq!(unnoted.facts, None);
-    let noted = |request: &BoardRequest, summaries| {
-        let execution = operations.execute(request, summaries, OpNoting::Noted);
-        assert!(execution.facts.is_some(), "noted: {request:?}");
-        execution
+    let show = json!({"op": "show", "task": "a"});
+    let listing = json!({"op": "list"});
+    let bootstrap = json!({"op": "bootstrap"});
+    let unnoted = answer(
+        operations,
+        bootstrap.clone(),
+        ListSummaries::Omitted,
+        OpNoting::Unnoted,
+    );
+    assert_eq!(unnoted.1, None);
+    let noted = |value: &Value, summaries| {
+        let (answer, facts) = answer(operations, value.clone(), summaries, OpNoting::Noted);
+        assert!(facts.is_some(), "noted: {value}");
+        (answer["ok"] == json!(true), facts)
     };
     // Refused before the board exists, then answered.
-    assert!(noted(&show, ListSummaries::Omitted).result.is_err());
-    assert!(noted(&bootstrap, ListSummaries::Omitted).result.is_ok());
-    let created = noted(&create("a"), ListSummaries::Omitted);
-    assert!(created.result.is_ok(), "{created:?}");
-    assert_eq!(created.facts.and_then(|facts| facts.attempts), Some(1));
-    assert!(noted(&create("a"), ListSummaries::Omitted).result.is_err());
-    assert!(noted(&show, ListSummaries::Omitted).result.is_ok());
-    assert!(noted(&listing, ListSummaries::Wanted).result.is_ok());
-    assert!(noted(&show, ListSummaries::Wanted).result.is_err());
+    assert!(!noted(&show, ListSummaries::Omitted).0);
+    assert!(noted(&bootstrap, ListSummaries::Omitted).0);
+    let (created, facts) = noted(&create("a"), ListSummaries::Omitted);
+    assert!(created);
+    assert_eq!(facts.and_then(|facts| facts.attempts), Some(1));
+    assert!(!noted(&create("a"), ListSummaries::Omitted).0);
+    assert!(noted(&show, ListSummaries::Omitted).0);
+    assert!(noted(&listing, ListSummaries::Wanted).0);
+    assert!(!noted(&show, ListSummaries::Wanted).0);
 }
 
 /// A request that reads the clock carries the note the fixture's clock
@@ -203,22 +201,52 @@ pub fn check_noting(fixture: Fixture) {
 pub fn check_clock_notes(fixture: Fixture) {
     let operations = &*fixture.operations;
     for value in [json!({"op": "bootstrap"}), json!({"op": "list"})] {
-        assert_eq!(
-            run(operations, &request(value.clone())).clock_note,
-            None,
-            "{value}"
-        );
+        let answered = run(operations, value.clone());
+        assert_eq!(answered.get("clock"), None, "{value}: {answered}");
     }
+    let created = run(operations, create("a"));
     assert_eq!(
-        run(operations, &create("a")).clock_note,
-        fixture.clock_note,
-        "a create reads the clock"
+        created["clock"]["reason"].as_str(),
+        fixture.clock_note.as_deref(),
+        "a create reads the clock: {created}"
     );
 }
 
 /// A front end that launches nothing owes no ends as its session ends.
 pub fn check_no_left_runs(fixture: Fixture) {
     assert_eq!(fixture.operations.left_runs(), Ok(vec![]));
+}
+
+fn vars(repo: &Path) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    vec![
+        ("PATH".into(), std::env::var_os("PATH").expect("PATH")),
+        ("HOME".into(), repo.as_os_str().to_owned()),
+        ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
+        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+        (
+            "QUECTO_BOARD_COMMITTER".into(),
+            "Ada <ada@example.com>".into(),
+        ),
+    ]
+}
+
+/// The operations composition builds for `quecto board` in `repo`, at
+/// the board server `url` when one is given.
+fn built(repo: &Path, known: KnownLocation) -> Box<dyn BoardOperations> {
+    let environment = ProjectBoardEnvironment {
+        repo: repo.to_path_buf(),
+        remote: "origin".into(),
+        access: Access::Write,
+        vars: vars(repo),
+        cancelled: None,
+        launcher: None,
+        swarm_session: None,
+        known,
+    };
+    match build_project_board_handles(&environment) {
+        Ok(handles) => handles.operations,
+        Err(error) => panic!("the board is built: {error:?}"),
+    }
 }
 
 /// The local adapter over a fresh clone of `remote`, writing as `Ada`, as
@@ -230,71 +258,110 @@ fn local(remote: &Remote) -> Fixture {
     let ReferenceSource::Unavailable(why) = reference_source(&url) else {
         panic!("a local remote gives no time: {url}")
     };
-    let vars = vec![
-        ("PATH".into(), std::env::var_os("PATH").expect("PATH")),
-        ("HOME".into(), repo.clone().into_os_string()),
-        ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
-        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
-        (
-            "QUECTO_BOARD_COMMITTER".into(),
-            "Ada <ada@example.com>".into(),
-        ),
-    ];
-    let environment = ProjectBoardEnvironment {
-        repo,
+    Fixture {
+        operations: built(&repo, KnownLocation::default()),
+        clock_note: Some(why),
+        _server: None,
+    }
+}
+
+/// A board server serving until dropped.
+pub struct Server {
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.stop.take().map(|stop| stop.send(()));
+        let _ = self.thread.take().map(std::thread::JoinHandle::join);
+    }
+}
+
+/// The remote adapter composition picks for `--url`, against a board
+/// server for a fresh clone of `remote`, its board in a fresh state
+/// directory; the server's clock reads no outside time.
+fn served(remote: &Remote) -> Fixture {
+    let repo = remote.clone_dir(0).to_path_buf();
+    let state = repo.join(".git").join("served");
+    let environment = BoardServerEnvironment {
+        repo: repo.clone(),
         remote: "origin".into(),
-        access: Access::Write,
-        vars,
-        cancelled: None,
-        launcher: None,
-        swarm_session: None,
-        known: Default::default(),
+        vars: vars(&repo),
+        config: state.join("config.json"),
+        state: Some(state.join("state")),
+        base_dir: state.clone(),
     };
-    match build_project_board_handles(&environment) {
-        Ok(handles) => Fixture {
-            operations: handles.operations,
-            clock_note: Some(why),
-        },
-        Err(error) => panic!("the local board is built: {error:?}"),
+    let handles = build_board_server(&environment).expect("the board server is built");
+    let board = handles.serve.board().clone();
+    let socket = state.join("s").join("board.sock");
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let (ready, started) = std::sync::mpsc::channel();
+    let at = socket.clone();
+    let thread = std::thread::spawn(move || {
+        let stopping = move || async move {
+            let _ = stopped.await;
+        };
+        let announce = |_: &Started| {
+            let _ = ready.send(());
+        };
+        let began = std::time::Instant::now();
+        serve(handles, &at, &[], began, stopping, announce).expect("served");
+    });
+    started.recv().expect("the server started");
+    let known = KnownLocation {
+        board_id: Some(board),
+        remote_url: None,
+        url: Some(format!("unix://{}", socket.display())),
+    };
+    Fixture {
+        operations: built(&repo, known),
+        clock_note: Some("this machine's clock reads no outside time".into()),
+        _server: Some(Server {
+            stop: Some(stop),
+            thread: Some(thread),
+        }),
     }
 }
 
 fn each(check: fn(Fixture)) {
     let remote = Remote::new();
     check(local(&remote));
+    let remote = Remote::new();
+    check(served(&remote));
 }
 
 #[test]
-fn local_board_operations_bootstrap() {
+fn board_operations_bootstrap() {
     each(check_bootstrap);
 }
 
 #[test]
-fn local_board_operations_create_show_and_list() {
+fn board_operations_create_show_and_list() {
     each(check_create_show_and_list);
 }
 
 #[test]
-fn local_board_operations_summaries() {
+fn board_operations_summaries() {
     each(check_summaries);
 }
 
 #[test]
-fn local_board_operations_refusals() {
+fn board_operations_refusals() {
     each(check_refusals);
 }
 
 #[test]
-fn local_board_operations_noting() {
+fn board_operations_noting() {
     each(check_noting);
 }
 
 #[test]
-fn local_board_operations_clock_notes() {
+fn board_operations_clock_notes() {
     each(check_clock_notes);
 }
 
 #[test]
-fn local_board_operations_no_left_runs() {
+fn board_operations_no_left_runs() {
     each(check_no_left_runs);
 }
