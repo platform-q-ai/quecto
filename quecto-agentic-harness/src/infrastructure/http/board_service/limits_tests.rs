@@ -43,6 +43,6 @@ fn each_refusal_has_its_status() {
         Refusal::BadLength,
         Refusal::TooLarge,
     ]
-    .map(Refusal::status);
+    .map(|refusal| refusal.verdict().0);
     assert_eq!(statuses, [405, 411, 400, 413]);
 }

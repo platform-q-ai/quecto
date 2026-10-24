@@ -1,12 +1,9 @@
 //! What a board server answers of the one board it serves (epic #2705
-//! B4): its status, its time and its files at the head. Reads only, each
-//! through the board's store, clock and file codec as composition gave
-//! them, so the same server serves any store.
+//! B4): its status, its time and its stored files at the head.
 //!
-//! A panic here is fatal: the binary's panic hook aborts the process for
-//! any panic outside a tool call (ADR-0029), so the whole server would
-//! stop. Every breach of a port's contract is answered as a
-//! [`ServeError`] instead, and nothing indexes or unwraps board data.
+//! A panic here is fatal: the panic hook aborts the whole server for any
+//! panic outside a tool call (ADR-0029). A breach of a port's contract is
+//! a [`ServeError`] instead, and nothing indexes or unwraps board data.
 use std::sync::Arc;
 
 use crate::application::project_board::dto::ProjectBoardError;
@@ -40,13 +37,11 @@ impl ServeBoard {
         }
     }
 
-    /// The board this server serves.
     pub fn board(&self) -> &BoardId {
         &self.board
     }
 
-    /// The server's role, its board, and the head its store gives (none
-    /// while there is no board).
+    /// The server's role, its board, and the head its store gives.
     ///
     /// # Errors
     /// The store could not be read.

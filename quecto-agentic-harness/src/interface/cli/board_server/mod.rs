@@ -1,12 +1,6 @@
-//! `quecto board-server serve --socket <path> --repo <clone> [--remote
-//! <name>]` (epic #2705 B4): serves the repository's project board over
-//! HTTP/1.1 on a Unix socket, until SIGINT or SIGTERM. Reads only, for
-//! now: `GET /v1/status`, `GET /v1/time` and `GET
-//! /v1/boards/{id}/snapshot`. Only a process of the server's own user may
-//! connect (its peer credentials are read on accept); the socket is
-//! created mode 0600 in a directory of mode 0700.
-//!
-//! Composition builds the board's store, clock and file codec
+//! `quecto board-server serve` (epic #2705 B4): serves the repository's
+//! board over HTTP/1.1 on a Unix socket until SIGINT or SIGTERM, to this
+//! user only. Composition builds the store, clock and files
 //! ([`BoardServerBuilder`]); this front end owns the command line, the
 //! route table and the one tokio runtime the command starts.
 use std::ffi::OsString;
@@ -29,8 +23,7 @@ pub struct BoardServerEnvironment {
     pub vars: Vec<(OsString, OsString)>,
 }
 
-/// The board server's graph, as composition builds it: the reads it
-/// answers, the peer-credential reader, and the one uid let in.
+/// The board server's graph: its reads, peer reader and the uid let in.
 pub struct BoardServerHandles {
     pub serve: ServeBoard,
     pub peers: Arc<dyn PeerCredentials>,

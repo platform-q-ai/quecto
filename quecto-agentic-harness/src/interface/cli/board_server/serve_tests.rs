@@ -1,8 +1,8 @@
 use super::*;
-use crate::infrastructure::http::board_service::client::BoardServiceClient;
 use crate::infrastructure::http::board_service::listener::{
     PeerCredentials, SocketPeerCredentials, this_uid,
 };
+use crate::infrastructure::http::board_service::test_server::raw;
 use crate::interface::cli::board_server::routes::tests::{BOARD, serving, written};
 use std::sync::Arc;
 
@@ -40,6 +40,12 @@ fn served(
     (dir, socket, stop, thread)
 }
 
+/// `GET path` over `socket`, as curl sends it: the status and body.
+fn get(socket: &std::path::Path, path: &str) -> (u16, String) {
+    let request = format!("GET {path} HTTP/1.1\r\nHost: board\r\nConnection: close\r\n\r\n");
+    raw(socket, request.as_bytes())
+}
+
 fn handles(serve: crate::application::project_board::use_cases::ServeBoard) -> BoardServerHandles {
     BoardServerHandles {
         serve,
@@ -52,9 +58,9 @@ fn handles(serve: crate::application::project_board::use_cases::ServeBoard) -> B
 fn status_over_a_temp_socket_answers_the_role_and_head() {
     let (store, head) = written();
     let (_dir, socket, stop, thread) = served(handles(serving(&store)));
-    let reply = BoardServiceClient::unix(&socket).get("/v1/status").unwrap();
-    assert_eq!(reply.status, 200);
-    let body: serde_json::Value = serde_json::from_slice(&reply.body).unwrap();
+    let (status, reply) = get(&socket, "/v1/status");
+    assert_eq!(status, 200, "{reply}");
+    let body: serde_json::Value = serde_json::from_str(&reply).unwrap();
     assert_eq!(body["role"], "primary");
     assert_eq!(body["head"], head.0.as_str());
     assert_eq!(body["board"], BOARD);
@@ -68,10 +74,7 @@ fn status_over_a_temp_socket_answers_the_role_and_head() {
 fn an_unknown_path_over_the_socket_is_404() {
     let (store, _) = written();
     let (_dir, socket, stop, thread) = served(handles(serving(&store)));
-    let reply = BoardServiceClient::unix(&socket)
-        .get("/v1/nothing")
-        .unwrap();
-    assert_eq!(reply.status, 404);
+    assert_eq!(get(&socket, "/v1/nothing").0, 404);
     stop.send(()).unwrap();
     thread.join().unwrap().unwrap();
 }

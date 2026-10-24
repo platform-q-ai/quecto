@@ -1,13 +1,7 @@
-//! The board service's route table (epic #2705 B4): a fixed allowlist of
-//! paths, each with the one method it takes, answered from the server's
-//! reads of its board. A path outside the table is 404; a path in it
-//! asked by another method is 405.
-//!
-//! | Route | Answer |
-//! |---|---|
-//! | `GET /v1/status` | `{role, board, head}` (`head` null while there is no board) |
-//! | `GET /v1/time` | `{time}`: the server's clock, the clock authority |
-//! | `GET /v1/boards/{id}/snapshot` | `{board, head, files: [{path, encoding, content, set_aside}]}`: the stored bytes |
+//! The board service's route table (epic #2705 B4), a fixed allowlist:
+//! `GET /v1/status` `{role, board, head}`, `GET /v1/time` `{time}`, and
+//! `GET /v1/boards/{id}/snapshot` `{board, head, files}` (stored bytes).
+//! A path outside the table is 404; one asked by another method is 405.
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde_json::{Value, json};

@@ -1,7 +1,7 @@
 //! The board server (epic #2705 B4) keeps its layers apart:
 //!
-//! - its transport ([`TRANSPORT`]: the listener, its limits and the
-//!   client) knows no board: it names no layer of the crate's board, no
+//! - its transport ([`TRANSPORT`]: the listener and its limits) knows no
+//!   board: it names no layer of the crate's board, no
 //!   store and no use case, and climbs out of its own module only to the
 //!   crate's other HTTP adapters (never `super::super`);
 //! - the listener reaches the board and the peer only through the handles
@@ -22,7 +22,6 @@ const TRANSPORT: &[&str] = &[
     "src/infrastructure/http/board_service/mod.rs",
     "src/infrastructure/http/board_service/listener.rs",
     "src/infrastructure/http/board_service/limits.rs",
-    "src/infrastructure/http/board_service/client.rs",
 ];
 
 /// The crate paths the transport may never reach.

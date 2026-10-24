@@ -1,16 +1,9 @@
 //! The board service's listener (epic #2705 B4): HTTP/1.1 on a Unix
-//! socket, parsed by hyper. It knows no board. Each connection is let in
-//! only when its peer's uid, read by the injected [`PeerCredentials`], is
-//! the one uid allowed; each request is held to the [`limits`] and then
-//! handed, whole, to the injected [`ServiceHandler`] on a blocking thread
-//! (a board's store blocks), whose reply is sent back as JSON. Its writes
-//! fail once the peer takes no byte for the write timeout, so a peer that
-//! never reads frees its connection slot.
-//!
-//! [`bind`] makes the socket safely: in a directory of mode 0700 (made so,
-//! or found so and owned by this user), never replacing a path that is
-//! not a socket, nor a socket a server still answers on; the socket
-//! itself is mode 0600.
+//! socket, parsed by hyper; it knows no board. A connection is let in only
+//! when the injected [`PeerCredentials`] read the one uid allowed; each
+//! request is held to the [`limits`] and handed to the injected
+//! [`ServiceHandler`] on a blocking thread. [`bind`] makes the socket
+//! safely: mode 0600, in a directory of mode 0700.
 use std::convert::Infallible;
 use std::fs;
 use std::future::Future;
@@ -49,10 +42,9 @@ pub struct ServiceReply {
 }
 
 impl ServiceReply {
-    /// `value` as the body of a reply of `status` (a status code, 100 to
-    /// 599; any other is sent as 500).
+    /// `value` as the body of a reply of `status`; a code outside 100 to
+    /// 599 is sent as 500 (never a panic on the data path).
     pub fn json(status: u16, value: &serde_json::Value) -> Self {
-        // Never a panic on the data path: a code out of range is a fault.
         let status = match (100..=599).contains(&status) {
             true => status,
             false => 500,
@@ -110,13 +102,11 @@ pub struct ServiceParts {
 /// Why a socket was not bound.
 #[derive(Debug)]
 pub enum BindError {
-    /// The socket's path is not absolute.
     Relative(PathBuf),
     /// Its directory is not one only this user can enter.
     Directory(PathBuf, String),
     /// Something other than this user's socket is at its path.
     NotASocket(PathBuf),
-    /// A server answers on the socket already.
     AlreadyServing(PathBuf),
     Io(PathBuf, io::Error),
 }
@@ -142,12 +132,11 @@ impl std::fmt::Display for BindError {
 impl std::error::Error for BindError {}
 
 /// Binds a Unix socket at `path`, mode 0600, in a directory of mode 0700
-/// (made if missing; its parent must exist). A stale socket of this
-/// user's (no server answers on it) is replaced; nothing else is.
+/// (made if missing). Only a stale socket of this user's is replaced.
 ///
 /// # Errors
-/// A relative path, a directory others may enter or not this user's, a
-/// path holding anything but a stale socket of this user's, or the bind.
+/// A relative path, a shared or foreign directory, a path holding
+/// anything but a stale socket of this user's, or the bind.
 pub fn bind(path: &Path) -> Result<std::os::unix::net::UnixListener, BindError> {
     let dir = match (path.is_absolute(), path.parent()) {
         (true, Some(dir)) => dir,
@@ -348,7 +337,8 @@ fn error(status: u16, why: &str) -> ServiceReply {
 }
 
 fn refused(refusal: Refusal) -> Response<Full<Bytes>> {
-    let mut reply = response(error(refusal.status(), refusal.reason()));
+    let (status, why) = refusal.verdict();
+    let mut reply = response(error(status, why));
     if refusal == Refusal::Method {
         reply
             .headers_mut()

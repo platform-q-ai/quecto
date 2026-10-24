@@ -59,23 +59,16 @@ pub enum Refusal {
 }
 
 impl Refusal {
-    /// The status it is answered with.
-    pub fn status(self) -> u16 {
+    /// The status it is answered with, and what its answer says.
+    pub fn verdict(self) -> (u16, &'static str) {
         match self {
-            Self::Method => 405,
-            Self::LengthRequired => 411,
-            Self::BadLength => 400,
-            Self::TooLarge => 413,
-        }
-    }
-
-    /// What its answer says.
-    pub fn reason(self) -> &'static str {
-        match self {
-            Self::Method => "method not allowed: the board service takes GET and POST",
-            Self::LengthRequired => "a body needs a Content-Length",
-            Self::BadLength => "Content-Length is not a length",
-            Self::TooLarge => "the body is past 1 MiB",
+            Self::Method => (
+                405,
+                "method not allowed: the board service takes GET and POST",
+            ),
+            Self::LengthRequired => (411, "a body needs a Content-Length"),
+            Self::BadLength => (400, "Content-Length is not a length"),
+            Self::TooLarge => (413, "the body is past 1 MiB"),
         }
     }
 }
