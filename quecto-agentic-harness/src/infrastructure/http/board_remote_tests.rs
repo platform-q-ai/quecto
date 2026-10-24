@@ -84,3 +84,71 @@ fn a_start_is_refused_unsent() {
         Err(ProjectBoardError::Refused(NO_START.into()))
     );
 }
+
+/// B7 round 3: a server that accepts and never replies fails a read once
+/// its read reply time is past, and a write once its write reply time is
+/// past, each sent once: a write that may have landed is never sent again
+/// (only the in-flight write would answer, busy), and says so.
+#[test]
+fn a_hung_server_fails_a_read_and_a_write_once_each() {
+    use super::super::board_service::client::CONNECT_TIMEOUT;
+    use std::time::{Duration, Instant};
+    assert_eq!(
+        (READ_REPLY, WRITE_REPLY),
+        (Duration::from_secs(30), Duration::from_secs(75))
+    );
+    assert_eq!(CONNECT_TIMEOUT, Duration::from_secs(5));
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("hung.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let accepted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = std::sync::Arc::clone(&accepted);
+    std::thread::spawn(move || {
+        let mut held = vec![];
+        for stream in listener.incoming() {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            held.push(stream);
+        }
+    });
+    let client = endpoint_of(&format!("unix://{}", socket.display()), None).unwrap();
+    let board = BoardId::of_hex("0123456789abcdef").unwrap();
+    let ada = Identity {
+        name: "Ada".into(),
+        email: "ada@example.com".into(),
+    };
+    let mut remote = RemoteBoardOperations::new(vec![client], board, Some(ada));
+    remote.replies = (Duration::from_millis(300), Duration::from_millis(800));
+    let run = |value: Value| {
+        let policy = crate::domain::project_board::entities::task_parts::EntryPolicy::Sectioned;
+        let request =
+            crate::interface::tools::project_board::request::parse(&value, policy).unwrap();
+        let read = ReadRequest {
+            request: &request,
+            text: &value.to_string(),
+            front_end: crate::domain::project_board::value_objects::telemetry::FrontEnd::Cli,
+        };
+        let began = Instant::now();
+        (
+            remote
+                .execute(read, ListSummaries::Omitted, OpNoting::Unnoted)
+                .result,
+            began.elapsed(),
+        )
+    };
+    let (listed, took) = run(json!({"op": "list"}));
+    assert!(
+        matches!(listed, Err(ProjectBoardError::Store(_))),
+        "{listed:?}"
+    );
+    assert!(took < Duration::from_secs(2), "{took:?}");
+    let count = || accepted.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(count(), 1, "a read with no reply is not sent again");
+    let (made, took) = run(json!({"op": "create", "task": "a", "title": "A", "status": "ready"}));
+    let Err(ProjectBoardError::Unanswered(why)) = made else {
+        panic!("{made:?}")
+    };
+    assert!(took < Duration::from_secs(3), "{took:?}");
+    assert_eq!(count(), 2, "a write with no reply is sent once");
+    let said = ProjectBoardError::Unanswered(why).to_string();
+    assert!(said.contains("the write may have landed"), "{said}");
+}

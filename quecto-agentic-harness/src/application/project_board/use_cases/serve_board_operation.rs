@@ -1,6 +1,4 @@
-//! A board server's operations (epic #2705 B7): a write is admitted, its
-//! host reads made, then it runs once per write id in one transaction under
-//! the write lock; a read takes neither. A panic aborts the server
+//! A board server's operations (epic #2705 B7). A panic aborts the server
 //! (ADR-0029), so every failure is a [`ServeError`].
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -11,16 +9,13 @@ use crate::application::project_board::ports::{
     Transacted,
 };
 
-/// Runs a served request on the operations it is handed and gives the
-/// answer to send (the server's front end renders it), or why the store
-/// failed, which undoes a write and keeps no answer.
+/// The answer the front end renders on the operations handed, or why the
+/// store failed (a write is then undone and keeps no answer).
 pub type Present<'a> = dyn FnMut(&dyn BoardOperations) -> Result<String, String> + 'a;
 
-/// The writes a server holds at once: one runs, one waits on the lock;
-/// more are answered busy, so writes never take the threads reads need.
+/// The writes held at once (one runs, one waits on the lock); more are busy.
 pub const MAX_WRITES: usize = 2;
 
-/// The board server's operations on its board.
 pub struct ServeBoardOperation {
     store: Arc<dyn BoardOpStore>,
     operations: Arc<dyn BoardOperationsOver>,
@@ -38,9 +33,9 @@ impl ServeBoardOperation {
         }
     }
 
-    /// The answer `present` gives to `request` (`None`: one its front end
-    /// could not read, whose refusal `present` renders, as a read's). A
-    /// write needs its `write`, and is admitted before its host reads.
+    /// `present`'s answer to `request` (`None`: unread, refused as a read).
+    /// A write is admitted, replayed if kept, its host reads made, then run
+    /// once per write id in one transaction under the write lock.
     ///
     /// # Errors
     /// A write without its `write`, its id reused, past [`MAX_WRITES`] or
@@ -59,6 +54,14 @@ impl ServeBoardOperation {
             (Some(true), None) => return Err(ServeError::NoWrite),
             (Some(false) | None, _) => None,
         };
+        // A write already answered is replayed with no host read.
+        if let (Some(true), Some(write)) = (writes, write) {
+            match self.store.kept(write).map_err(failed)? {
+                Some(Transacted::Reused) => return Err(ServeError::WriteIdReused),
+                Some(replayed) => return Ok(replayed),
+                None => {}
+            }
+        }
         let over = self.operations.prepare(request, &*self.store.reads());
         let mut run = |store| {
             let operations = over(store).map_err(|error| error.to_string());

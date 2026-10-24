@@ -1,13 +1,12 @@
 //! The [`BoardOperations`] port over a board server (epic #2705 B7): each
-//! request is sent as the text its front end read, to `POST
-//! /v1/boards/{id}/op`, and its answer comes back as the server rendered
-//! it ([`BoardOutcome::Served`]), so the client decodes no board and reads
-//! no clock. A write is sent again with the same write id after a
-//! transport failure or a `503 busy`. The endpoint list holds one until
-//! followers (B12).
+//! request's text to `POST /v1/boards/{id}/op`, its answer as the server
+//! rendered it ([`BoardOutcome::Served`]): no board decoded, no clock read.
+//! One endpoint until followers (B12).
 use serde_json::{Value, json};
 
-use super::board_service::client::{BearerToken, BoardServiceClient, Endpoint};
+use super::board_service::client::{
+    BearerToken, BoardServiceClient, ClientError, Endpoint, READ_REPLY, WRITE_REPLY,
+};
 use super::board_service::limits::Method;
 use crate::application::project_board::dto::{
     BoardAnswered, BoardExecution, BoardOutcome, BoardRequest, ListSummaries, OpNoting,
@@ -31,8 +30,7 @@ pub const URL_SHAPE: &str = "a board server URL is unix:///<socket path> or \
 /// The client of the server `url` names, sending `token` over TCP.
 ///
 /// # Errors
-/// A URL of neither shape, an address off the allowlist, or TCP without a
-/// token shaped as one (no reason quotes a token).
+/// A bad URL or address, or TCP without a token (never quoted).
 pub fn endpoint_of(url: &str, token: Option<&str>) -> Result<BoardServiceClient, String> {
     let socket = url.strip_prefix("unix://").map(std::path::Path::new);
     match (socket, url.strip_prefix("http://")) {
@@ -57,20 +55,22 @@ pub struct RemoteBoardOperations {
     board: BoardId,
     /// Who a write is made as; `None` for a front end that only reads.
     committer: Option<Identity>,
+    /// How long a read's reply, and a write's, may take.
+    replies: (std::time::Duration, std::time::Duration),
 }
 
 impl RemoteBoardOperations {
     pub fn new(endpoints: Vec<BoardServiceClient>, board: BoardId, by: Option<Identity>) -> Self {
-        let committer = by;
+        let (committer, replies) = (by, (READ_REPLY, WRITE_REPLY));
         Self {
             endpoints,
             board,
             committer,
+            replies,
         }
     }
 
-    /// The body: the request's text and front end, summaries and noting,
-    /// and for a write a fresh write id and its committer.
+    /// The body; a write's with a fresh write id and its committer.
     fn body(
         &self,
         read: ReadRequest<'_>,
@@ -92,10 +92,11 @@ impl RemoteBoardOperations {
         Ok(body.to_string().into_bytes())
     }
 
-    /// The reply to `body`, the same body each time: each endpoint in turn
-    /// while it fails in transport, at most [`ATTEMPTS`] rounds, or is
-    /// `busy`, after a jittered pause, at most [`BUSY_MS`] of pauses.
-    fn sent(&self, body: &[u8]) -> Result<(u16, Vec<u8>), ProjectBoardError> {
+    /// The reply to `body`, sent again (the same) after a transport failure,
+    /// [`ATTEMPTS`] rounds, or a busy, [`BUSY_MS`] of jittered pauses; never
+    /// after a reply that did not come, as a write may have landed.
+    fn sent(&self, body: &[u8], writes: bool) -> Result<(u16, Vec<u8>), ProjectBoardError> {
+        let reply = [self.replies.0, self.replies.1][usize::from(writes)];
         let path = format!("/v1/boards/{}/op", self.board.as_str());
         let (mut last, mut rounds, mut slept) = (String::from("no board server is named"), 0, 0);
         loop {
@@ -103,12 +104,15 @@ impl RemoteBoardOperations {
             for client in &self.endpoints {
                 let said =
                     |error: &dyn std::fmt::Display| format!("{}: {error}", client.endpoint());
-                match client.send(Method::Post, &path, body) {
+                match client.send(Method::Post, &path, body, reply) {
                     Ok(reply) if reply.status == 503 && code_of(&reply.body) == "busy" => {
                         (busy, last) = (true, said(&"503 busy"));
                     }
                     Ok(reply) => return Ok((reply.status, reply.body)),
                     Err(error) if error.transport() => last = said(&error),
+                    Err(ClientError::NoReply) if writes => {
+                        return Err(ProjectBoardError::Unanswered(said(&ClientError::NoReply)));
+                    }
                     Err(error) => return Err(refused(&said(&error))),
                 }
             }
@@ -142,7 +146,7 @@ impl BoardOperations for RemoteBoardOperations {
             BoardRequest::Start(_) => Err(ProjectBoardError::Refused(NO_START.into())),
             _ => self.body(read, summaries == ListSummaries::Wanted, noted),
         };
-        let replied = body.and_then(|body| self.sent(&body));
+        let replied = body.and_then(|body| self.sent(&body, read.request.writes()));
         let (result, facts) = match replied.and_then(|(status, body)| answered(status, &body)) {
             Ok((answer, facts)) => (Ok(answer), facts),
             Err(error) => (Err(error), None),
@@ -163,8 +167,7 @@ fn code_of(body: &[u8]) -> String {
     reply["code"].as_str().unwrap_or_default().to_string()
 }
 
-/// The answer and facts of a 200 reply `body`; any other `status` is the
-/// server's refusal, by its code (a bodiless 400 or 431 is hyper's).
+/// A 200 reply's answer and facts; any other, the server's refusal.
 fn answered(
     status: u16,
     body: &[u8],

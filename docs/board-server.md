@@ -145,9 +145,10 @@ A write is admitted first: two are held at once (one running, one waiting
 on the lock), and a third, or a retry of a write whose first run is still
 running (by principal and `write_id`), is answered 503 `busy` at once,
 before any host is read. So waiting writes never take the blocking threads
-reads need, and a busy retry costs no `gh` call; the retry of a write still
-running is answered from its kept answer once it lands. An admitted write
-then reads every host it may need (the pull requests' states, for completing
+reads need, and a busy answer costs no `gh` call. An admitted write whose
+answer is already kept (a retry after its first run landed) is answered
+from it at once, again with no host read; the transaction still judges a
+write id it does not find. Otherwise an admitted write reads every host it may need (the pull requests' states, for completing
 its task: none for a task not on the board or linking none) before the write
 lock, so the transaction touches only the store and a slow `gh` holds up no
 other write. Those reads share the 30 s budget a local completion has: a
@@ -188,9 +189,13 @@ is one round trip. It reads no clock (the server's is the board's one
 clock). The board's id comes from `--board-id`, else from the clone's
 remote as for a local board. A write is made as `QUECTO_BOARD_COMMITTER`
 (`name <email>`) when it is set, else as the clone's configured committer.
-After a transport failure (no connection, a connection dropped, no reply)
-the client sends the same body again, with the same `write_id`, up to 3
-times. After a `503 busy` (a token past its 4 answers at once, or the
+A TCP connect may take 5 s; a read's reply 30 s, a write's 75 s. After a
+transport failure before a reply (no connection, a connection dropped
+or closed unanswered) the client sends the same body again, with the same
+`write_id`, up to 3 times. A reply that never came is not sent again: a
+read is answered `store_unavailable`, and a write `unanswered`, saying it
+may have landed, so read the board before making it again (a raw client
+may retry the same `write_id`, and gets the kept answer once it lands). After a `503 busy` (a token past its 4 answers at once, or the
 server past its 2 writes) it sends it again after a jittered pause of
 50 to 500 ms, for up to 10 s of pauses in all; still busy, it answers
 `busy`, a code a caller may retry. Any other failure is answered

@@ -131,6 +131,7 @@ pub fn refused(request: &BoardRequest, error: &ProjectBoardError) -> Option<Stri
         | E::Stale { .. }
         | E::NoLauncher
         | E::Busy(_)
+        | E::Unanswered(_)
         | E::RunLive { .. }
         | E::Brief { .. } => REFUSED.to_string(),
     })

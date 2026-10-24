@@ -1,7 +1,5 @@
-//! The board service's blocking client (epic #2705 B4, B7): one HTTP/1.1
-//! request per connection over the Unix socket or TCP, no runtime. Over TCP
-//! it sends the device's token, which no error or `Debug` shows. A reply is
-//! read within bounds: a head of 8 KiB, a body of its one `Content-Length`.
+//! The board service's blocking client (epic #2705 B4, B7): one request a
+//! connection, a bounded reply; a TCP token no error or `Debug` shows.
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::os::unix::net::UnixStream;
@@ -12,9 +10,13 @@ use super::limits::{MAX_HEAD_BYTES, Method};
 
 /// The most bytes a reply's body may be: a whole board's listing.
 pub const MAX_REPLY_BYTES: usize = 64 * 1024 * 1024;
-/// How long a connect, read or write may wait: past a server's worst write
-/// (30 s of pull request reads, one 20 s `gh` read, a turn at the lock).
-pub const TIMEOUT: Duration = Duration::from_secs(75);
+/// How long a TCP connect may wait.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a read's reply may take.
+pub const READ_REPLY: Duration = Duration::from_secs(30);
+/// How long a write's reply may take: past a server's worst write (30 s of
+/// pull request reads, one 20 s `gh` read, a turn at the lock).
+pub const WRITE_REPLY: Duration = Duration::from_secs(75);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Endpoint {
@@ -31,8 +33,7 @@ impl std::fmt::Display for Endpoint {
     }
 }
 
-/// A device's token: 16 to 512 token68 characters, so it cannot break
-/// its header. Never shown.
+/// A device's token: 16 to 512 token68 characters. Never shown.
 #[derive(Clone, PartialEq, Eq)]
 pub struct BearerToken(String);
 
@@ -63,6 +64,8 @@ pub enum ClientError {
     Request(String),
     Io(io::Error),
     Closed,
+    /// Sent, but no reply came in time: a write may have landed.
+    NoReply,
     Malformed(String),
 }
 
@@ -71,7 +74,7 @@ impl ClientError {
     pub fn transport(&self) -> bool {
         match self {
             Self::Connect(_) | Self::Io(_) | Self::Closed => true,
-            Self::Request(_) | Self::Malformed(_) => false,
+            Self::Request(_) | Self::NoReply | Self::Malformed(_) => false,
         }
     }
 }
@@ -83,6 +86,7 @@ impl std::fmt::Display for ClientError {
             Self::Request(why) => write!(f, "not sent: {why}"),
             Self::Io(error) => write!(f, "the board server's connection failed: {error}"),
             Self::Closed => f.write_str("the board server closed the connection unanswered"),
+            Self::NoReply => f.write_str("the board server sent no reply in time"),
             Self::Malformed(why) => write!(f, "the board server's reply is malformed: {why}"),
         }
     }
@@ -109,15 +113,16 @@ impl BoardServiceClient {
         &self.endpoint
     }
 
-    /// `method path` with the JSON `body`: the reply, whatever its status.
+    /// `method path` with the JSON `body`: the reply within `reply`.
     ///
     /// # Errors
-    /// A path not of visible ASCII, no server, or a failed or bad reply.
+    /// A path not of visible ASCII, no server, or a failed, late or bad reply.
     pub fn send(
         &self,
         method: Method,
         path: &str,
         body: &[u8],
+        reply: Duration,
     ) -> Result<ClientReply, ClientError> {
         let target = path.starts_with('/') && path.bytes().all(|b| b.is_ascii_graphic());
         if !target {
@@ -138,15 +143,15 @@ impl BoardServiceClient {
         let reply = match &self.endpoint {
             Endpoint::Unix(socket) => {
                 let stream = UnixStream::connect(socket).map_err(ClientError::Connect)?;
-                let timed = stream.set_read_timeout(Some(TIMEOUT));
-                let timed = timed.and(stream.set_write_timeout(Some(TIMEOUT)));
+                let timed = stream.set_read_timeout(Some(reply));
+                let timed = timed.and(stream.set_write_timeout(Some(reply)));
                 exchange(timed.map(|()| stream), &head, body)
             }
             Endpoint::Tcp(address) => {
-                let stream = TcpStream::connect_timeout(address, TIMEOUT);
+                let stream = TcpStream::connect_timeout(address, CONNECT_TIMEOUT);
                 let stream = stream.map_err(ClientError::Connect)?;
-                let timed = stream.set_read_timeout(Some(TIMEOUT));
-                let timed = timed.and(stream.set_write_timeout(Some(TIMEOUT)));
+                let timed = stream.set_read_timeout(Some(reply));
+                let timed = timed.and(stream.set_write_timeout(Some(reply)));
                 exchange(timed.map(|()| stream), &head, body)
             }
         }?;
@@ -167,15 +172,18 @@ fn exchange(
     stream.write_all(head.as_bytes()).map_err(ClientError::Io)?;
     stream.write_all(body).map_err(ClientError::Io)?;
     let mut reply = Vec::new();
+    let late = |error: io::Error| match error.kind() {
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => ClientError::NoReply,
+        _ => ClientError::Io(error),
+    };
     stream
         .take((MAX_HEAD_BYTES + MAX_REPLY_BYTES + 1) as u64)
         .read_to_end(&mut reply)
-        .map_err(ClientError::Io)?;
+        .map_err(late)?;
     Ok(reply)
 }
 
-/// The reply `bytes` holds: an `HTTP/1.1` status, a bounded head, and a
-/// body of exactly its one `Content-Length`.
+/// The reply `bytes` holds: a status, and a body of its `Content-Length`.
 ///
 /// # Errors
 /// What in it the client does not read.

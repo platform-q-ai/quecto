@@ -641,6 +641,8 @@ pub enum ProjectBoardError {
     NoLauncher,
     /// The board server stayed busy (#2705 B7): try again shortly.
     Busy(String),
+    /// A write's server sent no reply in time (B7): it may have landed.
+    Unanswered(String),
     /// Run `run` of task `task` still has its swarm running in this
     /// session, its coordinator `agent`, so it is not ended by hand: the
     /// coordinator is stopped first (S4c).

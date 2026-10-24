@@ -21,8 +21,7 @@ impl SqliteBoardOps {
         })
     }
 
-    /// Inside the open transaction: the answer kept for the write's id,
-    /// or `op`'s, run on the write connection as its committer and kept.
+    /// Inside the transaction: the kept answer, or `op`'s, kept.
     fn ran(
         &self,
         write: &OpWrite,
@@ -55,6 +54,14 @@ impl SqliteBoardOps {
 impl BoardOpStore for SqliteBoardOps {
     fn reads(&self) -> Arc<dyn ProjectBoardStore> {
         Arc::clone(&self.reads) as _
+    }
+
+    fn kept(&self, write: &OpWrite) -> Result<Option<Transacted>, BoardStoreError> {
+        let c = self.reads.connection.lock().map_err(unavailable)?;
+        Ok(storage::kept_answer(&c, write)?.map(|kept| match kept {
+            Some(answer) => Transacted::Replayed(answer),
+            None => Transacted::Reused,
+        }))
     }
 
     fn transact(

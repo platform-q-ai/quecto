@@ -88,11 +88,23 @@ impl PullRequestStates for SlowHost {
 
 /// `value` served as the CLI sends it, a write as Ada with a fresh id.
 fn serve(operations: &ServeBoardOperation, value: Value) -> Result<Value, ServeError> {
+    let id = format!("{}", uuid::Uuid::new_v4());
+    match served_as(operations, value, &id)? {
+        Transacted::Answered(answer) => Ok(serde_json::from_str(&answer).expect("JSON")),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// `value` served as the CLI sends it, a write as Ada with write id `id`.
+fn served_as(
+    operations: &ServeBoardOperation,
+    value: Value,
+    id: &str,
+) -> Result<Transacted, ServeError> {
     let text = value.to_string();
     let request = parse(&value, EntryPolicy::SectionedOrLegacy).expect("a request");
-    let id = format!("{}", uuid::Uuid::new_v4());
     let write = OpWrite {
-        write_id: WriteId::parse(&id).expect("a UUID"),
+        write_id: WriteId::parse(id).expect("a UUID"),
         request: text.clone(),
         committer: Identity {
             name: "Ada".into(),
@@ -105,10 +117,7 @@ fn serve(operations: &ServeBoardOperation, value: Value) -> Result<Value, ServeE
         let mut call = BoardCall::start(None, FrontEnd::Cli, Client::Cli);
         Ok(run_recorded_with(board, &text, ListSummaries::Omitted, &mut call).to_string())
     };
-    match operations.execute(Some(&request), write, &mut present)? {
-        Transacted::Answered(answer) => Ok(serde_json::from_str(&answer).expect("JSON")),
-        other => panic!("{other:?}"),
-    }
+    operations.execute(Some(&request), write, &mut present)
 }
 
 /// A board server's operations over a fresh SQLite board read with
@@ -256,4 +265,27 @@ fn the_host_reads_share_one_budget() {
         3,
         "reads stop at the budget"
     );
+}
+
+/// B7 round 3: a write already answered is replayed from its kept answer
+/// before any host is read.
+#[test]
+fn a_replay_reads_no_host() {
+    let (remote, host) = (Remote::new(), Arc::new(SlowHost::default()));
+    let (_dir, operations) = board(&remote, &host, Duration::from_secs(30), &[7]);
+    let id = "0b7a1c0d-e000-4000-8000-0000000000bb";
+    let complete = json!({"op": "complete", "task": "a"});
+    let first = served_as(&operations, complete.clone(), id).expect("served");
+    assert_eq!(host.calls.load(Ordering::SeqCst), 1);
+    let Transacted::Answered(answer) = first else {
+        panic!("{first:?}")
+    };
+    let again = served_as(&operations, complete, id).expect("served");
+    assert_eq!(again, Transacted::Replayed(answer));
+    let other = json!({"op": "create", "task": "b", "title": "B"});
+    assert_eq!(
+        served_as(&operations, other, id),
+        Err(ServeError::WriteIdReused)
+    );
+    assert_eq!(host.calls.load(Ordering::SeqCst), 1, "no read for a replay");
 }

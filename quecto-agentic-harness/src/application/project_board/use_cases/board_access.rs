@@ -18,8 +18,7 @@ pub enum Principal {
 }
 
 impl Principal {
-    /// How a revision records who it was let in as (B7): `local`, or
-    /// `token:<name>`.
+    /// Who a revision records was let in (B7): `local` or `token:<name>`.
     pub fn recorded(&self) -> String {
         match self {
             Self::Local => "local".into(),
@@ -37,8 +36,7 @@ pub enum Scope {
 }
 
 impl Scope {
-    /// The scope of the board operation `request` (B7), an allowlist:
-    /// making the board and clearing a file set aside administer it.
+    /// The scope of `request` (B7): `bootstrap` and `clear_set_aside` admin.
     pub fn of(request: &BoardRequest) -> Self {
         match (request, request.writes()) {
             (BoardRequest::Bootstrap | BoardRequest::Clear { .. }, _) => Self::Admin,

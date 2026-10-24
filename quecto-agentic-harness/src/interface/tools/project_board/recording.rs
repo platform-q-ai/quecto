@@ -475,6 +475,7 @@ pub(super) fn refusal_parts(
         | E::Stale { .. }
         | E::NoLauncher
         | E::Busy(_)
+        | E::Unanswered(_)
         | E::RunLive { .. }
         | E::LaunchFailed { .. } => (None, None),
     }

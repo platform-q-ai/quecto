@@ -292,6 +292,7 @@ const KNOWN_KINDS: &[&str] = &[
     "handoff",
     "handoff_from",
     "busy",
+    "unanswered",
 ];
 
 /// Whether every one of [`KNOWN_KINDS`] is shaped as a kind (checked as

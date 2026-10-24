@@ -349,7 +349,7 @@ fn a_dropped_answer_replayed_by_its_write_id_makes_one_revision() {
     .to_string();
     let send = || {
         crate::infrastructure::http::board_service::client::BoardServiceClient::unix(&served.socket)
-            .send(
+            .send_read(
                 crate::infrastructure::http::board_service::limits::Method::Post,
                 &format!("/v1/boards/{}/op", served.board.as_str()),
                 body.as_bytes(),
@@ -373,7 +373,7 @@ fn posted(
     let path = format!("/v1/boards/{}/op", board.as_str());
     let method = crate::infrastructure::http::board_service::limits::Method::Post;
     let reply = client
-        .send(method, &path, body.to_string().as_bytes())
+        .send_read(method, &path, body.to_string().as_bytes())
         .unwrap();
     (
         reply.status,
@@ -612,7 +612,7 @@ fn the_op_route_refuses_by_typed_codes() {
     let path = format!("/v1/boards/{}/op", served.board.as_str());
     let code = |method, path: &str, body: &Value| {
         let reply = client
-            .send(method, path, body.to_string().as_bytes())
+            .send_read(method, path, body.to_string().as_bytes())
             .unwrap();
         let body: Value = serde_json::from_slice(&reply.body).unwrap_or(Value::Null);
         (
@@ -649,6 +649,34 @@ fn the_op_route_refuses_by_typed_codes() {
     // A key named twice anywhere in the body is refused, as the front
     // ends refuse it.
     let twice = br#"{"request": {"op": "list", "op": "list"}, "front_end": "cli"}"#;
-    let reply = client.send(Method::Post, &path, twice).unwrap();
+    let reply = client.send_read(Method::Post, &path, twice).unwrap();
     assert_eq!(reply.status, 400);
+}
+
+/// A request sent within a read's reply time.
+trait SendRead {
+    fn send_read(
+        &self,
+        method: crate::infrastructure::http::board_service::limits::Method,
+        path: &str,
+        body: &[u8],
+    ) -> Result<
+        crate::infrastructure::http::board_service::client::ClientReply,
+        crate::infrastructure::http::board_service::client::ClientError,
+    >;
+}
+
+impl SendRead for crate::infrastructure::http::board_service::client::BoardServiceClient {
+    fn send_read(
+        &self,
+        method: crate::infrastructure::http::board_service::limits::Method,
+        path: &str,
+        body: &[u8],
+    ) -> Result<
+        crate::infrastructure::http::board_service::client::ClientReply,
+        crate::infrastructure::http::board_service::client::ClientError,
+    > {
+        let reply = crate::infrastructure::http::board_service::client::READ_REPLY;
+        self.send(method, path, body, reply)
+    }
 }

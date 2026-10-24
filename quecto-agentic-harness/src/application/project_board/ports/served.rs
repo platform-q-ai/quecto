@@ -1,7 +1,4 @@
-//! The board service's contracts (epic #2705 B4, B7). The server reads its
-//! board only through `ProjectBoardStore` and `BoardClock`, and writes it
-//! one operation at a time through [`BoardOpStore`], over the operations
-//! [`BoardOperationsOver`] assembles.
+//! The board service's contracts (epic #2705 B4, B7).
 use std::sync::Arc;
 
 use super::{BoardHead, BoardOperations, BoardStoreError, ProjectBoardStore};
@@ -31,9 +28,7 @@ pub struct ServedStatus {
     pub head: Option<BoardHead>,
 }
 
-/// Why a board server could not answer: its store's or clock's failure; a
-/// write sent without its id and committer, its id reused for another
-/// write, or past the writes it takes at once (B7).
+/// Why a board server could not answer (the write cases are B7's).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServeError {
     Board(ProjectBoardError),
@@ -42,8 +37,7 @@ pub enum ServeError {
     Busy,
 }
 
-/// A write's id (B7), a UUID: the same on every retry of the write, so a
-/// server answers a retry with its first answer.
+/// A write's id (B7), a UUID, the same on every retry of the write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteId(String);
 
@@ -73,8 +67,7 @@ pub struct OpWrite {
     pub principal: String,
 }
 
-/// A served write's answer: made now, or first given to its write id; or
-/// its principal's id was kept for another request or committer.
+/// A served write's answer, made now or kept; or its id kept for another.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Transacted {
     Answered(String),
@@ -86,6 +79,12 @@ pub enum Transacted {
 pub trait BoardOpStore: Send + Sync {
     /// The store a read is answered from, outside any write.
     fn reads(&self) -> Arc<dyn ProjectBoardStore>;
+
+    /// `write`'s kept answer, read outside any write (`transact` judges).
+    ///
+    /// # Errors
+    /// The store's failure.
+    fn kept(&self, write: &OpWrite) -> Result<Option<Transacted>, BoardStoreError>;
 
     /// Runs `op` once per write id and principal, under the write lock in
     /// one immediate transaction, on a store writing as `write.committer`;
@@ -108,8 +107,7 @@ pub type OperationsOver = Box<
 
 /// Port: the board's operations, as composition assembles them (B7).
 pub trait BoardOperationsOver: Send + Sync {
-    /// The operations for `request`, every host read they may make (pull
-    /// requests' states) made now, from `reads`, before any lock.
+    /// The operations for `request`, its host reads made now, before any lock.
     fn prepare(
         &self,
         request: Option<&BoardRequest>,

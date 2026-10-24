@@ -87,8 +87,7 @@ impl std::ops::Deref for Scope<'_> {
     }
 }
 
-/// The answer kept for `write`'s id and principal, if any: `Ok(None)`
-/// when that id was kept for another request or committer (B7).
+/// The answer kept for `write` (B7); `Some(None)` when kept for another.
 pub(super) fn kept_answer(
     c: &Connection,
     write: &OpWrite,

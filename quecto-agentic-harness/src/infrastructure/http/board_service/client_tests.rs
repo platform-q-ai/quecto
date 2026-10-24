@@ -9,7 +9,7 @@ fn a_request_over_the_socket_answers_the_status_and_body() {
     let running = start(SERVER_UID);
     let client = BoardServiceClient::unix(&running.socket);
     let reply = client
-        .send(Method::Post, "/v1/thing", b"{\"a\":1}")
+        .send_read(Method::Post, "/v1/thing", b"{\"a\":1}")
         .unwrap();
     assert_eq!(reply.status, 200);
     let body: serde_json::Value = serde_json::from_slice(&reply.body).unwrap();
@@ -18,7 +18,7 @@ fn a_request_over_the_socket_answers_the_status_and_body() {
         (&"/v1/thing".into(), &7.into())
     );
     // Each request on its own connection, the server answers them all.
-    let again = client.send(Method::Get, "/v1/thing", b"").unwrap();
+    let again = client.send_read(Method::Get, "/v1/thing", b"").unwrap();
     assert_eq!(again.status, 200);
     assert_eq!(running.handler.calls.load(Ordering::SeqCst), 2);
 }
@@ -30,7 +30,7 @@ fn over_tcp_the_token_is_sent_and_never_shown() {
     let running = start_tcp(SERVER_UID);
     let token = BearerToken::parse(TOKEN).unwrap();
     let client = BoardServiceClient::new(Endpoint::Tcp(running.tcp.unwrap()), Some(token));
-    let reply = client.send(Method::Get, "/v1/thing", b"").unwrap();
+    let reply = client.send_read(Method::Get, "/v1/thing", b"").unwrap();
     let body: serde_json::Value = serde_json::from_slice(&reply.body).unwrap();
     assert_eq!(body["principal"], format!("Bearer {TOKEN}"), "{body}");
     assert!(!format!("{client:?}").contains(TOKEN));
@@ -43,7 +43,7 @@ fn over_tcp_the_token_is_sent_and_never_shown() {
 fn a_refusal_is_a_reply_not_an_error() {
     let running = start(SERVER_UID + 1);
     let reply = BoardServiceClient::unix(&running.socket)
-        .send(Method::Get, "/v1/status", b"")
+        .send_read(Method::Get, "/v1/status", b"")
         .unwrap();
     assert_eq!(reply.status, 403);
 }
@@ -52,7 +52,7 @@ fn a_refusal_is_a_reply_not_an_error() {
 fn no_server_is_a_connect_error_a_retry_may_mend() {
     let dir = tempfile::tempdir().unwrap();
     let error = BoardServiceClient::unix(&dir.path().join("none.sock"))
-        .send(Method::Get, "/v1/status", b"")
+        .send_read(Method::Get, "/v1/status", b"")
         .unwrap_err();
     assert!(matches!(error, ClientError::Connect(_)), "{error}");
     assert!(error.transport());
@@ -69,7 +69,7 @@ fn a_path_outside_the_allowlist_is_never_sent() {
         "/v1/st atus",
         "",
     ] {
-        let error = client.send(Method::Get, path, b"").unwrap_err();
+        let error = client.send_read(Method::Get, path, b"").unwrap_err();
         assert!(
             matches!(error, ClientError::Request(_)),
             "{path:?}: {error}"
@@ -94,5 +94,33 @@ fn a_reply_is_parsed_by_its_status_line_and_length() {
             "{}",
             String::from_utf8_lossy(malformed)
         );
+    }
+}
+
+/// A request sent within a read's reply time.
+trait SendRead {
+    fn send_read(
+        &self,
+        method: crate::infrastructure::http::board_service::limits::Method,
+        path: &str,
+        body: &[u8],
+    ) -> Result<
+        crate::infrastructure::http::board_service::client::ClientReply,
+        crate::infrastructure::http::board_service::client::ClientError,
+    >;
+}
+
+impl SendRead for crate::infrastructure::http::board_service::client::BoardServiceClient {
+    fn send_read(
+        &self,
+        method: crate::infrastructure::http::board_service::limits::Method,
+        path: &str,
+        body: &[u8],
+    ) -> Result<
+        crate::infrastructure::http::board_service::client::ClientReply,
+        crate::infrastructure::http::board_service::client::ClientError,
+    > {
+        let reply = crate::infrastructure::http::board_service::client::READ_REPLY;
+        self.send(method, path, body, reply)
     }
 }

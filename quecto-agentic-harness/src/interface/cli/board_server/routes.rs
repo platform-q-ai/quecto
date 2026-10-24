@@ -20,8 +20,7 @@ use crate::infrastructure::http::board_service::listener::{
 
 use super::op::{OpRefusal, answer_op};
 
-/// The routes, over the server's reads of its board, its operations and
-/// its access rules.
+/// The routes, over the server's reads, operations and access rules.
 pub struct BoardRoutes {
     serve: ServeBoard,
     access: BoardAccess,
@@ -41,8 +40,7 @@ enum Route {
 }
 
 impl Route {
-    /// The route `path` names, if the table holds it: `/v1/boards/{id}/op`
-    /// only for an `id` shaped as a board's.
+    /// The route `path` names, if the table holds it.
     fn of(path: &str) -> Option<Self> {
         match path {
             "/v1/status" => Some(Self::Status),
@@ -68,8 +66,7 @@ impl Route {
             .any(|allowed| allowed == method.as_str())
     }
 
-    /// The scope a caller needs to reach it (each op's own is judged as
-    /// it is read).
+    /// The scope a caller needs to reach it (an op's own is judged after).
     fn scope(self) -> Scope {
         match self {
             Self::Status | Self::Time | Self::Op => Scope::Read,
@@ -102,8 +99,7 @@ impl BoardRoutes {
         }
     }
 
-    /// An op's reply: 404 `board` for another board's id, else the
-    /// answer, or the refusal by its code.
+    /// An op's reply, or its refusal by its code.
     fn op(&self, request: &ServiceRequest, principal: &Principal) -> ServiceReply {
         match board_of(&request.path) {
             Some(board) if board == *self.serve.board() => {}

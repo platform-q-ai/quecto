@@ -27,6 +27,10 @@ impl BoardOpStore for Kept {
         Arc::new(self.store.client())
     }
 
+    fn kept(&self, _: &OpWrite) -> Result<Option<Transacted>, BoardStoreError> {
+        Ok(None)
+    }
+
     fn transact(
         &self,
         write: &OpWrite,

@@ -152,9 +152,8 @@ fn build_with_warnings(
     })
 }
 
-/// The board's operations over `store` (a board server's too, B7), a
-/// start's undo writing through `undo_store`, with the swarms, session
-/// and cancel of `environment` (none for a server).
+/// The board's operations over `store` (a server's too, B7), with the
+/// swarms, session and cancel of `environment` (none for a server).
 ///
 /// # Errors
 /// One of them could not be built.

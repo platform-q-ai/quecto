@@ -73,6 +73,9 @@ pub(in crate::interface::cli::board_server) fn operating(
         fn reads(&self) -> Arc<dyn ProjectBoardStore> {
             Arc::new(self.0.client())
         }
+        fn kept(&self, _: &OpWrite) -> Result<Option<Transacted>, BoardStoreError> {
+            Ok(None)
+        }
         fn transact(
             &self,
             _: &OpWrite,

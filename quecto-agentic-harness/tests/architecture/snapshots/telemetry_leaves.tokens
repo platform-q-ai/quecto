@@ -225,6 +225,7 @@ const KNOWN_KINDS : & [
 "handoff" ,
 "handoff_from" ,
 "busy" ,
+"unanswered" ,
 ] ;
 const fn all_shaped (  ) -> bool { let mut at = 0 ; while at < KNOWN_KINDS . len (  ) { if ! kind_shaped ( KNOWN_KINDS [
 at

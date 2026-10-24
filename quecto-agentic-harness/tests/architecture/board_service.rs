@@ -67,6 +67,7 @@ const FRONT_END_REACHES: &[&str] = &[
     "crate::infrastructure::http::board_service::listener::Listener",
     "crate::infrastructure::http::board_service::listener::bind_tcp",
     "crate::infrastructure::http::board_service::client::BoardServiceClient",
+    "crate::infrastructure::http::board_service::client::READ_REPLY",
 ];
 
 /// The listener's module, for resolving a synthetic source's paths.

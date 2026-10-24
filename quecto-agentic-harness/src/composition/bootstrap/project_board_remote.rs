@@ -1,8 +1,6 @@
 //! The board's operations on a board server (epic #2705 B7), named by
-//! `--url`, else `QUECTO_BOARD_URL`, else the global config's `board.url`;
-//! a TCP token from `QUECTO_BOARD_TOKEN`, else `board.token`, never argv.
-//! Nothing here reads the board or the clock; git is asked only the board's
-//! id when not given, and a write's committer (`QUECTO_BOARD_COMMITTER` first).
+//! `--url`, `QUECTO_BOARD_URL` or `board.url`, its token never from argv;
+//! git is asked only the board's id when not given, and a write's committer.
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -89,9 +87,7 @@ fn var(vars: &[(OsString, OsString)], name: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// `board.<key>` in the global config (`$QUECTO_BASE_DIR/config.json`,
-/// else `~/.quecto/config.json`), when it is text; a config that cannot
-/// be read names none, so it never stops the board on this clone.
+/// `board.<key>` in the global config, when it is text (unreadable: none).
 fn configured(vars: &[(OsString, OsString)], key: &str) -> Option<String> {
     let base = var(vars, "QUECTO_BASE_DIR")
         .map(PathBuf::from)

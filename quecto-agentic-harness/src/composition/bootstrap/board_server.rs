@@ -1,7 +1,5 @@
 //! The board server's graph (epic #2705 B4, B5, B7): the SQLite board and
-//! tokens in the state directory; the clone's git for the board's id, its
-//! remote's revisions and pull requests; this machine's clock; peer
-//! credentials; and the TCP addresses the global config names.
+//! tokens in the state directory, and the clone's git for the board's id.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -104,8 +102,7 @@ pub fn build_board_server(
 /// The board's file in the state directory.
 pub const BOARD_FILE: &str = "board.sqlite3";
 
-/// Who the server's reads are made as: a read writes nothing, and every
-/// write is its caller's ([`OpWrite`](crate::application::project_board::ports::OpWrite)).
+/// Who the server's reads are made as (every write is its caller's).
 fn server_identity() -> Identity {
     Identity {
         name: "quecto board-server".into(),
@@ -113,10 +110,7 @@ fn server_identity() -> Identity {
     }
 }
 
-/// The board's operations as a server runs them (B7), over the store each
-/// is handed: this machine's clock, pull request states read with `gh`
-/// for the board's remote, a success judged by the remote's revisions. A
-/// start launches nothing and no run's swarm is seen here (B8).
+/// The board's operations as a server runs them (B7): no launcher (B8).
 pub struct ServedOperations {
     pub clock: Arc<dyn BoardClock>,
     pub prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
@@ -151,8 +145,7 @@ impl BoardOperationsOver for ServedOperations {
     }
 }
 
-/// The states of the pull requests a request may complete its task by,
-/// read before its write: its task's linked ones and one it links.
+/// The states of the pull requests a write may complete its task by.
 struct StatedPullRequests(BTreeMap<u64, Result<PullRequestState, PullRequestStatesError>>);
 
 impl StatedPullRequests {

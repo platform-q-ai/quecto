@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use crate::infrastructure::http::board_service::client::BoardServiceClient;
+use crate::infrastructure::http::board_service::client::{BoardServiceClient, READ_REPLY};
 use crate::infrastructure::http::board_service::listener::ServiceMethod;
 
 /// A token command.
@@ -69,7 +69,7 @@ pub fn run(options: &TokenOptions, stdout: &mut String, stderr: &mut String) -> 
         TokenAction::List => (ServiceMethod::Get, "/v1/admin/tokens", String::new()),
     };
     let client = BoardServiceClient::unix(&options.socket);
-    let (status, reply) = match client.send(method, path, body.as_bytes()) {
+    let (status, reply) = match client.send(method, path, body.as_bytes(), READ_REPLY) {
         Ok(reply) => (reply.status, reply.body),
         Err(error) => {
             let socket = options.socket.display();

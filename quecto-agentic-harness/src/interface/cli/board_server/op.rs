@@ -1,8 +1,5 @@
-//! `POST /v1/boards/{id}/op` (epic #2705 B7): one board request, as its
-//! front end read it, run by [`ServeBoardOperation`] and answered through
-//! the front ends' own path (`run_recorded_with`), so a remote answer never
-//! drifts from a local one. The body is read strictly (a key named twice is
-//! refused); a write needs its `write_id` and `committer`.
+//! `POST /v1/boards/{id}/op` (epic #2705 B7): a request as its front end
+//! read it, answered through the front ends' own `run_recorded_with`.
 use std::sync::{Mutex, PoisonError};
 
 use serde_json::{Value, json};
@@ -112,9 +109,7 @@ pub(super) fn answer_op(
     }
 }
 
-/// The reply body: the front end's answer to `text` on `board` and the
-/// facts noted, as far as they travel; or why the store failed under it,
-/// so a write is undone and keeps no answer.
+/// The reply body (answer and facts), or why the store failed under it.
 fn present(
     board: &dyn BoardOperations,
     text: &str,
