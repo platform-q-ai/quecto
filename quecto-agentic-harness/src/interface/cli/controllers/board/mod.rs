@@ -16,11 +16,11 @@
 //! where the board is, as a caller that already knows (the pocket relay)
 //! can: the id its records name it by and the remote's fetch URL. A read
 //! takes each one given as given, so git is not asked for it; with both,
-//! and a remote the clone's own config file plainly lists, a read is
-//! composed with no git process at all (the request itself still reads
-//! the board with git). The remote is always one the clone configures,
-//! checked with git when the config file does not plainly show it. A
-//! write takes neither on trust: git names the location, as without them.
+//! a read is composed with one git process: the check that `--remote` is
+//! a remote the clone configures, with a URL of its own, so git never
+//! takes the name for a folder (the request itself then reads the board
+//! with git). A write takes neither on trust: git names the location, as
+//! without them.
 //!
 //! `--summary` (no value; `list`, `list_ready` and `list_takeable` only,
 //! with flags or `--input` alike) gives each listed task its `summary`:

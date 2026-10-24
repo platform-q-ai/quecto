@@ -1,9 +1,11 @@
 //! #2705 B1: where a board is, resolved once. A front end that names its
 //! board's id and its remote's URL (`quecto board --board-id
-//! --remote-url`) is composed without a git process; each part it names
-//! skips only the git call that part would need, and one that names
-//! neither is composed exactly as before. git is counted through a `git`
-//! on the composed `PATH` that logs each call, then runs the real one.
+//! --remote-url`) is composed with one git process, the check that its
+//! remote is one the clone configures; each part it names skips only the
+//! git call that part would need, and one that names neither is composed
+//! exactly as before. A write takes no location on trust. git is counted
+//! through a `git` on the composed `PATH` that logs each call, then runs
+//! the real one.
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -84,8 +86,22 @@ fn any_call(calls: &[String], spelt: &str) -> bool {
     calls.iter().any(|call| call.contains(spelt))
 }
 
+/// Each call logged so far, as its own arguments, past the settings every
+/// call carries.
+fn own_calls(log: &Path) -> Vec<String> {
+    calls(log)
+        .iter()
+        .map(|call| {
+            let (_, own) = call
+                .split_once("maintenance.auto=false ")
+                .expect("every call carries the runner's settings");
+            own.to_owned()
+        })
+        .collect()
+}
+
 #[test]
-fn a_list_on_a_given_location_spawns_no_git_to_compose() {
+fn a_list_on_a_given_location_spawns_only_the_remote_check_to_compose() {
     let (dir, work) = repository();
     let (board, url) = board_with_a(&work);
     let (bin, log) = counting_git(dir.path());
@@ -95,15 +111,15 @@ fn a_list_on_a_given_location_spawns_no_git_to_compose() {
     };
     let handles = build_project_board_handles(&counted(&work, Access::Read, known, &bin)).unwrap();
     assert_eq!(
-        calls(&log),
-        Vec::<String>::new(),
-        "composition spawns no git"
+        own_calls(&log),
+        ["remote get-url origin"],
+        "composition spawns one git: the check that the remote is configured"
     );
     assert_eq!(handles.board, Some(board), "the board id given");
     let listed = run(&handles.operations, r#"{"op": "list"}"#);
     assert_eq!(listed["tasks"][0]["id"], json!("a"), "{listed}");
     assert!(
-        !calls(&log).is_empty(),
+        own_calls(&log).len() > 1,
         "the listing itself reads the board with git"
     );
 }
@@ -115,18 +131,8 @@ fn a_board_with_no_given_location_asks_git_for_it_as_before() {
     let (bin, log) = counting_git(dir.path());
     let reading = counted(&work, Access::Read, KnownLocation::default(), &bin);
     let handles = build_project_board_handles(&reading).unwrap();
-    // Each call's own arguments, past the settings every call carries.
-    let asked: Vec<String> = calls(&log)
-        .iter()
-        .map(|call| {
-            let (_, own) = call
-                .split_once("maintenance.auto=false ")
-                .expect("every call carries the runner's settings");
-            own.to_owned()
-        })
-        .collect();
     assert_eq!(
-        asked,
+        own_calls(&log),
         [
             "var GIT_COMMITTER_IDENT",
             "remote get-url origin",
@@ -167,32 +173,118 @@ fn a_write_takes_no_location_on_trust() {
     assert!(!any_call(&asked, "push"), "{asked:?}");
 }
 
+/// A board on `work` and a copy of it in a bare `decoy` folder in `repo`,
+/// where git would read a remote named `decoy` taken for a path; then a
+/// read of `repo`'s `decoy` on `known`, which must be refused before git
+/// reads any remote at all.
+fn refused_without_reading_the_decoy(dir: &Path, work: &Path, repo: &Path, known: KnownLocation) {
+    sh(repo, &["init", "-q", "--bare", "decoy"]);
+    let decoy = repo.join("decoy");
+    let spec = "refs/remotes/origin/quecto/board:refs/heads/quecto/board";
+    sh(work, &["push", "-q", decoy.to_str().unwrap(), spec]);
+    let (bin, log) = counting_git(dir);
+    let mut reading = counted(repo, Access::Read, known, &bin);
+    reading.remote = "decoy".into();
+    let built = build_project_board_handles(&reading).err();
+    assert!(
+        matches!(built, Some(BuildError::NoSuchRemote(_))),
+        "{built:?}"
+    );
+    let asked = calls(&log);
+    assert!(!any_call(&asked, "ls-remote"), "{asked:?}");
+    assert!(!any_call(&asked, "fetch"), "{asked:?}");
+    assert_ne!(decoy_branches(&decoy), "", "the decoy holds a board");
+}
+
 #[test]
 fn a_read_on_a_known_location_never_reads_an_unconfigured_remote_folder() {
     let (dir, work) = repository();
     board_with_a(&work);
-    let decoy = decoy(&work);
-    // Something on the decoy that a read of it would find.
-    sh(
-        &work,
-        &[
-            "push",
-            "-q",
-            "decoy",
-            "refs/remotes/origin/quecto/board:refs/heads/quecto/board",
-        ],
-    );
-    let (bin, log) = counting_git(dir.path());
-    let mut reading = counted(&work, Access::Read, given_location(), &bin);
+    refused_without_reading_the_decoy(dir.path(), &work, &work, given_location());
+}
+
+/// Round 2: a `[remote "decoy"]` line inside a backslash-continued value
+/// is no remote to git, whatever a reading of the file by hand finds.
+#[test]
+fn a_remote_header_inside_a_continued_value_is_no_remote() {
+    let (dir, work) = repository();
+    board_with_a(&work);
+    let config = work.join(".git/config");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("[alias]\n\tx = log \\\n[remote \"decoy\"]\n\turl = decoy\n");
+    std::fs::write(&config, text).unwrap();
+    refused_without_reading_the_decoy(dir.path(), &work, &work, given_location());
+}
+
+/// Round 2: a `.git` directory git does not take for one (no `HEAD`,
+/// objects or refs) leaves git in the repository around it, whose remotes
+/// are the ones that count.
+#[test]
+fn a_git_directory_git_does_not_take_for_one_lists_no_remote() {
+    let (dir, work) = repository();
+    board_with_a(&work);
+    let inner = work.join("inner");
+    std::fs::create_dir_all(inner.join(".git")).unwrap();
+    std::fs::write(
+        inner.join(".git/config"),
+        "[remote \"decoy\"]\n\turl = /nonexistent/decoy.git\n",
+    )
+    .unwrap();
+    refused_without_reading_the_decoy(dir.path(), &work, &inner, given_location());
+}
+
+/// A remote whose `url` was emptied: git prints its name back as its URL,
+/// and would read a folder of that name, so it is no remote (allowlist).
+#[test]
+fn a_remote_whose_url_was_emptied_is_no_remote() {
+    let (dir, work) = repository();
+    board_with_a(&work);
+    sh(&work, &["config", "remote.decoy.url", ""]);
+    refused_without_reading_the_decoy(dir.path(), &work, &work, KnownLocation::default());
+    let (_kept, emptied) = repository();
+    sh(&emptied, &["config", "remote.decoy.url", ""]);
+    let mut reading = environment(&emptied, Access::Read);
     reading.remote = "decoy".into();
-    assert!(matches!(
-        build_project_board_handles(&reading),
-        Err(BuildError::NoSuchRemote(_))
-    ));
-    let asked = calls(&log);
-    assert!(!any_call(&asked, "ls-remote"), "{asked:?}");
-    assert!(!any_call(&asked, "fetch"), "{asked:?}");
-    assert_ne!(decoy_branches(&decoy), "");
+    reading.known = given_location();
+    let built = build_project_board_handles(&reading).err();
+    assert!(
+        matches!(built, Some(BuildError::NoSuchRemote(_))),
+        "{built:?}"
+    );
+}
+
+/// A write on `origin` told another board id and URL builds on the ones
+/// git resolves: its records name the real board, and pull request
+/// states are judged by the real remote (a local one: no host), never
+/// by the URL given (GitHub).
+#[test]
+fn a_write_names_the_board_and_remote_git_resolves() {
+    let (dir, work) = repository();
+    let (board, _) = board_with_a(&work);
+    let (bin, _) = counting_git(dir.path());
+    // Only the counting git on the PATH: no gh to ask GitHub with.
+    let mut writing = counted(&work, Access::Write, given_location(), &bin);
+    for (key, value) in &mut writing.vars {
+        if key == "PATH" {
+            *value = bin.clone().into_os_string();
+        }
+    }
+    let handles = build_project_board_handles(&writing).unwrap();
+    assert_eq!(handles.board, Some(board), "the id git resolves");
+    assert_ne!(handles.board, given_location().board_id);
+    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    let claimed = ops(json!({"op": "move", "task": "a", "to": "claimed"}));
+    assert_eq!(claimed["ok"], json!(true), "{claimed}");
+    let linked = ops(json!({"op": "link_pr", "task": "a", "pr": 7}));
+    assert_eq!(linked["ok"], json!(true), "{linked}");
+    let complete = ops(json!({"op": "complete", "task": "a"}));
+    assert_eq!(
+        complete["error"]["code"],
+        json!("no_pull_request_host"),
+        "{complete}"
+    );
+    let reason = complete["error"]["reason"].as_str().unwrap_or_default();
+    assert!(reason.contains("not on GitHub"), "{complete}");
 }
 
 /// A whole location, as the pocket relay gives one.

@@ -102,11 +102,6 @@ impl Git {
         })
     }
 
-    /// The repository this git runs in, as it was given.
-    pub fn repo(&self) -> &Path {
-        &self.repo
-    }
-
     /// This git, every call bounded by `bound` (local or reaching the
     /// remote): for a read that must answer soon, as a teardown's (#2666).
     #[must_use]

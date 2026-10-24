@@ -51,12 +51,11 @@ to say whether a remote exists does.
 `quecto board --board-id <16 hex digits> --remote-url <url>` names where the
 board is, for a caller that already knows (the pocket relay): the id its records
 name it by and the remote's fetch URL. A read takes each as given, so git is not
-asked for it; with both, and a `--remote` the clone's own `.git/config` plainly
-lists (`[remote "<name>"]` with a `url`), a read is composed with no git process
-(the request itself still reads the board with git). Otherwise the remote is
-checked with git as before, so it is always one the clone configures and never
-a folder of that name. A write takes neither flag on trust: git names the
-location. A board id that is not 16 lower-case hex
+asked for it; with both, a read is composed with one git process, the check that
+`--remote` is a remote the clone configures (the request itself then reads the
+board with git). A remote counts only when git resolves it to a URL that is
+neither empty nor the name itself, so a folder of that name is never read. A
+write takes neither flag on trust: git names the location. A board id that is not 16 lower-case hex
 digits, or a URL with a control or invisible character or over 4096 bytes,
 answers `invalid_request` on field `board-id` or `remote-url`.
 

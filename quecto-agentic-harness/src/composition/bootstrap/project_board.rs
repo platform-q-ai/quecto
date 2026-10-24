@@ -44,7 +44,6 @@ use crate::infrastructure::persistence::project_board::index::{
     BoardIndex, BoardRevisions, IndexError,
 };
 use crate::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
-use crate::infrastructure::persistence::project_board::remote_config::lists_remote;
 use crate::infrastructure::persistence::project_board::remote_revisions::GitRemoteRevisions;
 use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
@@ -87,13 +86,13 @@ fn build_with_warnings(
     }
     // A write takes no location on trust: git names it, and checks the
     // remote is one the clone configures (#2705 B1). A read on a location
-    // known whole asks git nothing when the clone's own config file
-    // plainly lists the remote, so git never takes its name for a path.
+    // known whole asks git one thing only: whether the remote is one the
+    // clone configures, so git never takes its name for a path.
     let known = match environment.access {
         Access::Write => KnownLocation::default(),
         Access::Read => environment.known.clone(),
     };
-    let unasked = located(&known) && lists_remote(&environment.repo, &environment.remote);
+    let known_whole = located(&known);
     let git = match environment.access {
         Access::Write => {
             let committer = match board_committer(&environment.vars) {
@@ -104,17 +103,13 @@ fn build_with_warnings(
             };
             Git::new(&environment.repo, vars, committer).map_err(write_refusal)?
         }
-        Access::Read => match unasked {
+        Access::Read => match known_whole {
             true => Git::reader_unasked(&environment.repo, vars),
             false => Git::reader(&environment.repo, vars),
         }
         .map_err(|error| unavailable(format!("git cannot run here: {error}")))?,
     };
-    let opened = match unasked {
-        true => GitBoardStore::on_listed_remote(git, &environment.remote),
-        false => GitBoardStore::new(git, &environment.remote),
-    };
-    let board = opened.map_err(|error| match error {
+    let board = GitBoardStore::new(git, &environment.remote).map_err(|error| match error {
         StoreOpenError::NoSuchRemote(why) => BuildError::NoSuchRemote(why),
         StoreOpenError::Unavailable(error) => unavailable(store_reason(&error)),
     })?;
@@ -124,7 +119,7 @@ fn build_with_warnings(
     let location = BoardLocation::resolve(&known, &store, &environment.repo)
         .map_err(|error| unavailable(store_reason(&error)))?;
     let clock: Arc<dyn BoardClock> = Arc::new(ReferencedBoardClock::for_remote(&location.url));
-    let listings = Arc::new(listings_of(&store, unasked)?);
+    let listings = Arc::new(listings_of(&store, known_whole)?);
     let prs = pull_request_states(&location.url, &environment.vars);
     // A success is judged by the revisions the board's own remote holds
     // (#2666), read by their own adapter on the store's remote.
@@ -198,7 +193,7 @@ fn build_with_warnings(
 }
 
 /// Whether a front end knows its board's whole location (its id and its
-/// remote's URL), so composition need ask git nothing for it.
+/// remote's URL), so composition asks git only whether its remote is one.
 fn located(known: &KnownLocation) -> bool {
     matches!(
         known,

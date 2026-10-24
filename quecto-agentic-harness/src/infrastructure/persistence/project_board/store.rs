@@ -35,7 +35,6 @@ use super::board_tree::{
 };
 use super::git::{Git, GitError, SHORT_OUTPUT, failed, quoted};
 use super::push_report::{PushReport, RefStatus, Rejection, ref_status, remote_rejection};
-use super::remote_config::lists_remote;
 use crate::application::project_board::ports::{
     BoardArtifact, BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite,
     ProjectBoardStore, SetAsideClear,
@@ -116,15 +115,21 @@ fn remote_name(remote: &str) -> Result<(), StoreOpenError> {
 }
 
 /// Whether `remote` is a remote the repository `git` runs in configures:
-/// a name quecto accepts ([`remote_name`]) that git resolves.
+/// a name quecto accepts ([`remote_name`]) that git resolves to a URL
+/// that is not empty and is not the name itself (an allowlist: git
+/// prints the name back for a remote whose `url` was emptied, and would
+/// then read a folder of that name, #2705 B1).
 ///
 /// # Errors
 /// A name that is not a configured remote's; git that cannot say.
 pub(super) fn configured_remote(git: &Git, remote: &str) -> Result<(), StoreOpenError> {
     remote_name(remote)?;
     // The name was checked first, so it is never read as an option.
-    match git.ok(&["remote", "get-url", remote], None) {
-        Ok(_) => Ok(()),
+    match git.text(&["remote", "get-url", remote], None) {
+        Ok(url) if !url.is_empty() && url != remote => Ok(()),
+        Ok(url) => Err(StoreOpenError::NoSuchRemote(format!(
+            "{remote:?} names no repository of its own: git resolves it to {url:?}"
+        ))),
         // git ran and failed: only a name its own list of remotes lacks
         // is no such remote (an allowlist); anything else (no
         // repository, a corrupt config, an unsafe directory) is a
@@ -160,21 +165,6 @@ impl GitBoardStore {
     pub fn new(git: Git, remote: &str) -> Result<Self, StoreOpenError> {
         configured_remote(&git, remote)?;
         Ok(Self::opened(git, remote))
-    }
-
-    /// The board on `remote`, opened with no git process when the clone's
-    /// own config file plainly lists it ([`lists_remote`], #2705 B1), so
-    /// git never takes the name for a path; otherwise checked as
-    /// [`Self::new`] checks it, asking git.
-    ///
-    /// # Errors
-    /// As [`Self::new`]'s.
-    pub fn on_listed_remote(git: Git, remote: &str) -> Result<Self, StoreOpenError> {
-        remote_name(remote)?;
-        match lists_remote(git.repo(), remote) {
-            true => Ok(Self::opened(git, remote)),
-            false => Self::new(git, remote),
-        }
     }
 
     fn opened(git: Git, remote: &str) -> Self {

@@ -10,7 +10,6 @@ pub mod indexed_listings;
 pub mod markdown;
 mod own_group;
 mod push_report;
-pub mod remote_config;
 pub mod remote_revisions;
 pub mod store;
 pub mod text_cells;
