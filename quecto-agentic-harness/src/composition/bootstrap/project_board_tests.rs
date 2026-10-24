@@ -72,7 +72,7 @@ pub(super) fn environment(repo: &Path, access: Access) -> ProjectBoardEnvironmen
 fn the_board_runs_end_to_end_over_git_and_the_index() {
     let (_dir, work) = repository();
     let handles = build_project_board_handles(&environment(&work, Access::Write)).unwrap();
-    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    let ops = |request: Value| run(&*handles.operations, &request.to_string());
     let bootstrap = ops(json!({"op": "bootstrap"}));
     assert_eq!(
         (&bootstrap["ok"], &bootstrap["created"]),
@@ -98,7 +98,7 @@ fn the_board_runs_end_to_end_over_git_and_the_index() {
     // index listed.
     assert_eq!(listed["tasks"][0].get("summary"), None, "{listed}");
     let summarised = crate::interface::tools::project_board::run_recorded_with(
-        &handles.operations,
+        &*handles.operations,
         r#"{"op": "list"}"#,
         crate::application::project_board::operations::ListSummaries::Wanted,
         &mut crate::interface::tools::project_board::recording::BoardCall::unrecorded(),
@@ -125,14 +125,14 @@ fn the_board_runs_end_to_end_over_git_and_the_index() {
 fn a_read_needs_no_committer_and_a_write_says_none_is_configured() {
     let (_dir, work) = repository();
     let writer = build_project_board_handles(&environment(&work, Access::Write)).unwrap();
-    run(&writer.operations, r#"{"op": "bootstrap"}"#);
+    run(&*writer.operations, r#"{"op": "bootstrap"}"#);
     run(
-        &writer.operations,
+        &*writer.operations,
         r#"{"op": "create", "task": "a", "title": "A"}"#,
     );
     sh(&work, &["config", "--unset", "user.name"]);
     let reader = build_project_board_handles(&environment(&work, Access::Read)).unwrap();
-    let listed = run(&reader.operations, r#"{"op": "list"}"#);
+    let listed = run(&*reader.operations, r#"{"op": "list"}"#);
     assert_eq!(listed["tasks"][0]["id"], json!("a"), "{listed}");
     let refused = build_project_board_handles(&environment(&work, Access::Write));
     assert!(
@@ -240,19 +240,19 @@ fn which(program: &str) -> std::path::PathBuf {
 fn a_cancelled_calls_write_lands_nothing() {
     let (_dir, work) = repository();
     let writer = build_project_board_handles(&environment(&work, Access::Write)).unwrap();
-    run(&writer.operations, r#"{"op": "bootstrap"}"#);
+    run(&*writer.operations, r#"{"op": "bootstrap"}"#);
     let mut cancelled = environment(&work, Access::Write);
     cancelled.cancelled = Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
         true,
     )));
     let handles = build_project_board_handles(&cancelled).unwrap();
     let refused = run(
-        &handles.operations,
+        &*handles.operations,
         r#"{"op": "create", "task": "a", "title": "A"}"#,
     );
     assert_eq!(refused["ok"], json!(false), "{refused}");
     assert!(refused.to_string().contains("cancelled"), "{refused}");
-    let listed = run(&writer.operations, r#"{"op": "list"}"#);
+    let listed = run(&*writer.operations, r#"{"op": "list"}"#);
     assert_eq!(listed["tasks"], json!([]), "{listed}");
 }
 
@@ -314,7 +314,7 @@ fn a_command_scope_identity_outranks_the_clones_own() {
         ],
     );
     let handles = build_project_board_handles(&pocket).unwrap();
-    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    let ops = |request: Value| run(&*handles.operations, &request.to_string());
     assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
     let created = ops(json!({"op": "create", "task": "a", "title": "A", "status": "ready"}));
     assert_eq!(created["ok"], json!(true), "{created}");
@@ -350,7 +350,7 @@ fn the_container_scripts_identity_writes_the_board() {
     let mut warnings: Vec<String> = Vec::new();
     let handles = build_with_warnings(&container, &mut |line| warnings.push(line.into())).unwrap();
     assert_eq!(warnings, Vec::<String>::new());
-    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    let ops = |request: Value| run(&*handles.operations, &request.to_string());
     assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
     let created = ops(json!({"op": "create", "task": "a", "title": "A"}));
     assert_eq!(created["ok"], json!(true), "{created}");
@@ -369,7 +369,7 @@ fn a_malformed_set_is_dropped_and_only_a_write_warns_of_it() {
     let (_dir, work) = repository();
     let plain = build_project_board_handles(&environment(&work, Access::Write)).unwrap();
     assert_eq!(
-        run(&plain.operations, r#"{"op": "bootstrap"}"#)["ok"],
+        run(&*plain.operations, r#"{"op": "bootstrap"}"#)["ok"],
         json!(true)
     );
     let malformed = |access| {
@@ -398,7 +398,7 @@ fn a_malformed_set_is_dropped_and_only_a_write_warns_of_it() {
         ]
     );
     let created = run(
-        &writer.operations,
+        &*writer.operations,
         r#"{"op": "create", "task": "a", "title": "A"}"#,
     );
     assert_eq!(created["ok"], json!(true), "{created}");
@@ -412,7 +412,7 @@ fn a_malformed_set_is_dropped_and_only_a_write_warns_of_it() {
     })
     .unwrap();
     assert_eq!(warnings, Vec::<String>::new());
-    let listed = run(&reader.operations, r#"{"op": "list"}"#);
+    let listed = run(&*reader.operations, r#"{"op": "list"}"#);
     assert_eq!(listed["tasks"][0]["id"], json!("a"), "{listed}");
 }
 
@@ -440,7 +440,7 @@ fn a_set_naming_half_an_identity_writes_with_the_clones_other_half() {
         ]
     );
     assert_eq!(
-        run(&writer.operations, r#"{"op": "bootstrap"}"#)["ok"],
+        run(&*writer.operations, r#"{"op": "bootstrap"}"#)["ok"],
         json!(true)
     );
     assert_eq!(
@@ -451,7 +451,7 @@ fn a_set_naming_half_an_identity_writes_with_the_clones_other_half() {
     let reader =
         build_with_warnings(&half(Access::Read), &mut |line| warnings.push(line.into())).unwrap();
     assert_eq!(warnings, Vec::<String>::new());
-    let listed = run(&reader.operations, r#"{"op": "list"}"#);
+    let listed = run(&*reader.operations, r#"{"op": "list"}"#);
     assert_eq!(listed["ok"], json!(true), "{listed}");
 }
 
@@ -505,7 +505,7 @@ fn a_sessions_decided_switch_is_kept() {
 fn a_committer_spaced_with_a_chat_space_fails_fast_for_every_write() {
     let (_dir, work) = repository();
     let writer = build_project_board_handles(&environment(&work, Access::Write)).unwrap();
-    run(&writer.operations, r#"{"op": "bootstrap"}"#);
+    run(&*writer.operations, r#"{"op": "bootstrap"}"#);
     sh(
         &work,
         &[
@@ -521,7 +521,7 @@ fn a_committer_spaced_with_a_chat_space_fails_fast_for_every_write() {
         refused.as_ref().err()
     );
     let reader = build_project_board_handles(&environment(&work, Access::Read)).unwrap();
-    let listed = run(&reader.operations, r#"{"op": "list"}"#);
+    let listed = run(&*reader.operations, r#"{"op": "list"}"#);
     assert_eq!(listed["ok"], json!(true), "{listed}");
 }
 
@@ -538,7 +538,7 @@ fn the_board_committer_override_changes_only_the_boards_commits() {
         "quecto pocket <pocket@quecto.invalid>".into(),
     ));
     let handles = build_project_board_handles(&pocket).unwrap();
-    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    let ops = |request: Value| run(&*handles.operations, &request.to_string());
     assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
     let created = ops(json!({"op": "create", "task": "a", "title": "A", "status": "ready"}));
     assert_eq!(created["ok"], json!(true), "{created}");
@@ -659,7 +659,7 @@ fn a_composed_start_asks_whether_its_coordinator_still_runs() {
     let mut writing = environment(&work, Access::Write);
     writing.launcher = Some(std::sync::Arc::new(FailedButRunning));
     let handles = build_project_board_handles(&writing).unwrap();
-    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    let ops = |request: Value| run(&*handles.operations, &request.to_string());
     assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
     let created = ops(json!({"op": "create", "task": "a", "title": "A", "status": "ready"}));
     assert_eq!(created["ok"], json!(true), "{created}");

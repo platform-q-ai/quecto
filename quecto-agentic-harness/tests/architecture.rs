@@ -51,6 +51,10 @@ mod hook_scripts_worktree;
 mod no_python;
 #[path = "architecture/panic_strategy.rs"]
 mod panic_strategy;
+/// The board's front ends reach its use case only through the
+/// `BoardOperations` port (epic #2705 B6).
+#[path = "architecture/project_board_operations.rs"]
+mod project_board_operations;
 /// A `board_op` record holds no text by type, and every board op has its
 /// kind (epic #2481 T1).
 #[path = "architecture/project_board_telemetry.rs"]
@@ -626,6 +630,13 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
         ],
     ),
     ("subagent_launch", &["LaunchFuture", "SubagentLaunchPorts"]),
+    // The board's requests and outcomes, and what a noted request saw:
+    // the values the `BoardOperations` port carries (#2705 B6).
+    (
+        "project_board::operations",
+        &["BoardOutcome", "BoardRequest", "ListSummaries"],
+    ),
+    ("project_board::telemetry", &["OpFacts"]),
 ];
 
 fn port_target_allowed(path: &str) -> bool {

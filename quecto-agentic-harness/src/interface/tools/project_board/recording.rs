@@ -22,12 +22,13 @@ use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::operations::{
     BoardOutcome, BoardRequest, Completion, ListSummaries,
 };
-use crate::application::project_board::ports::{FoldBackOutcome, FoldBackRecorder};
+use crate::application::project_board::ports::{
+    BoardAnswered, BoardExecution, BoardOperations, FoldBackOutcome, FoldBackRecorder, OpNoting,
+};
 use crate::application::project_board::start::{NotedFoldBack, StartFacts};
 use crate::application::project_board::telemetry::{
-    BoardRecording, OpFacts, access_of, op_kind, pr_of, task_of,
+    BoardRecording, access_of, op_kind, pr_of, task_of,
 };
-use crate::application::project_board::use_cases::RunBoardOperation;
 use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
@@ -187,18 +188,23 @@ impl BoardCall {
     /// (T4) noted while recorded; unrecorded, nothing is noted or timed.
     ///
     /// # Errors
-    /// As [`RunBoardOperation::execute`].
+    /// As [`BoardOperations::execute`].
     pub fn executed(
         &mut self,
-        operations: &RunBoardOperation,
+        operations: &dyn BoardOperations,
         request: &BoardRequest,
         summaries: ListSummaries,
-    ) -> Result<BoardOutcome, ProjectBoardError> {
+    ) -> Result<BoardAnswered, ProjectBoardError> {
         let Some(open) = &mut self.open else {
-            return operations.execute_noted_with(request, None, summaries);
+            return operations
+                .execute(request, summaries, OpNoting::Unnoted)
+                .result;
         };
-        let mut facts = OpFacts::default();
-        let result = operations.execute_noted_with(request, Some(&mut facts), summaries);
+        let BoardExecution { result, facts } =
+            operations.execute(request, summaries, OpNoting::Noted);
+        // A noted request gives back what it saw; an adapter that gave
+        // nothing back leaves the record as a request that saw nothing.
+        let mut facts = facts.unwrap_or_default();
         facts.fill(&mut open.record);
         open.start = facts.start.take();
         open.fold_back = facts.fold_back.take();

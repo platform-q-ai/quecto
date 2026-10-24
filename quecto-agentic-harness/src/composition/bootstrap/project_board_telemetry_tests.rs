@@ -19,7 +19,7 @@ fn recorded(handles: &ProjectBoardHandles, request: Value) -> Value {
     let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Cli, Client::Cli);
     call.on_board(handles.board.as_ref());
     let answer = run_recorded_with(
-        &handles.operations,
+        &*handles.operations,
         &request.to_string(),
         ListSummaries::Omitted,
         &mut call,
