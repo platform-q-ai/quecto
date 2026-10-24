@@ -7,7 +7,7 @@ use crate::infrastructure::persistence::project_board::board_tree::{
 pub(super) struct SqlReader<'a> {
     pub connection: &'a Connection,
     #[cfg(feature = "test-support")]
-    pub fetches: &'a Mutex<Vec<(String, String, usize)>>,
+    pub fetches: Option<&'a Mutex<Vec<(String, String, usize)>>>,
     #[cfg(feature = "test-support")]
     witnesses: std::cell::RefCell<BTreeMap<String, String>>,
 }
@@ -116,8 +116,10 @@ impl Reader for SqlReader<'_> {
             {
                 // Names are supplied by the shared interpreter, never decoded
                 // from raw aliases. Record only after the actual BLOB fetch.
-                if let Some(path) = self.witnesses.borrow().get(*id) {
-                    self.fetches.lock().map_err(unavailable)?.push((
+                if let (Some(path), Some(fetches)) =
+                    (self.witnesses.borrow().get(*id), self.fetches)
+                {
+                    fetches.lock().map_err(unavailable)?.push((
                         path.clone(),
                         (*id).into(),
                         bytes.len(),
@@ -134,7 +136,7 @@ impl SqliteProjectBoardStore {
         SqlReader {
             connection: c,
             #[cfg(feature = "test-support")]
-            fetches: &self.payload_fetches,
+            fetches: Some(&self.payload_fetches),
             #[cfg(feature = "test-support")]
             witnesses: std::cell::RefCell::default(),
         }
@@ -146,5 +148,16 @@ impl SqliteProjectBoardStore {
                 Unread::Missing(_) => unavailable("missing SQLite board object"),
             }
         })
+    }
+}
+
+/// The same structural reader, without ordinary-read payload observations.
+pub(super) fn structural(c: &Connection) -> SqlReader<'_> {
+    SqlReader {
+        connection: c,
+        #[cfg(feature = "test-support")]
+        fetches: None,
+        #[cfg(feature = "test-support")]
+        witnesses: std::cell::RefCell::default(),
     }
 }
