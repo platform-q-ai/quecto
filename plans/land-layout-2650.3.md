@@ -5,10 +5,12 @@
 |---|---|
 | Task | land-layout-2650 |
 | Version | 3 |
-| State | draft |
+| State | accepted |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-24T18:59:54Z |
 | Created | 2026-10-24T18:59:42Z |
-| Updated | 2026-10-24T18:59:42Z |
+| Updated | 2026-10-24T18:59:54Z |
 
 ## Approach
 Finish existing PR2650 under the operator-approved fallback after the include-read spike failed. General scanner work is stopped and deferred to [issue2729](https://github.com/platform-q-ai/quecto/issues/2729); no disposable spike or uncommitted general-scanner candidate code enters this PR. Preserve original moves-only scope and RED ancestry13bd5a6f556cbd80244a8f3940b89814a73228c0, with the sole newly authorized amendment: one exact auditable architecture allowance per actual test-owned file tripped by the move, expected services/active_session/tests.rs for constructor and services/conversation_ledger/tests.rs for retention. Verify actual files/roles; each entry states a one-line reason and links issue2729. No wildcard/directory/suffix/unrelated owner or production relaxation; hard30 unchanged. Original scope/gates are PR comments6371420343/6371410494/6371410978/6371411483, source preservation6375156118/receipt6375188214. Refresh actual GitHub base/head/reviews/labels/threads and merge current origin/master normally, preserving master's content at moved destinations. Fresh RED stage establishes exact missing-behavior failures and production rejection at existing compilable boundaries; separate delivery starts from verified unchanged red bundle. Verify source conservation, ratchets/MIGRATED/PLACEMENTS and all targeted gates. Final own version-only master-plus-one Cargo.toml/lock entry; foreground push at least1500seconds; merge-requested full CI. Fresh independent exact-head review and separate remediation/re-review; required CI green, high/medium findings resolved, low findings explicitly adjudicated/deferred and conversations resolved before authorized parent merge. Target750/max1500 production lines excludes tests/fixtures/snapshots/lock/generated; no renewed sizing checkpoint. Known local TUI footer branch flake under long worktrees is ignored or avoided with a short worktree.
