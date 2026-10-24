@@ -5,10 +5,10 @@
 |---|---|
 | Task | board-2705-b4-b6 |
 | Version | 1 |
-| State | draft |
+| State | discarded |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
 | Created | 2026-10-23T16:49:44Z |
-| Updated | 2026-10-23T16:49:44Z |
+| Updated | 2026-10-24T00:12:10Z |
 
 ## Approach
 One serial PR after B1. Introduce contracted BoardOperations seam and injected UDS listener/routes, composition owns construction. Fresh compiling red bundle then green delivery and independent review/CI. Source-grounded all-in size before work, hard900; no host server/unit install/start.
