@@ -42,6 +42,7 @@ fn main() {
             board_cli_recording: cli::controllers::board::CliRecordingBuilder(
                 quecto::composition::bootstrap::project_board::cli_board_recording,
             ),
+            board_server: quecto::composition::bootstrap::board_server::build_board_server,
         },
     ));
 }

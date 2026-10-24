@@ -165,6 +165,7 @@ const USE_CASES: &[&str] = &[
     "SelectConfig",
     "SelectContainerConfig",
     "SendMessage",
+    "ServeBoard",
     "SetTaskDependencies",
     "SettleAuthority",
     "SettleDelegatedChild",
