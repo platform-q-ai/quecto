@@ -1,5 +1,5 @@
 <!-- quecto-task schema=1 -->
-# Operator-owned B4: UDS board server
+# Operator B4 fulfilled: UDS board server merged #2719
 
 | Field | Value |
 |---|---|
@@ -8,10 +8,10 @@
 | Status | draft |
 | Parent | board-service-mvp-2705 |
 | Created | 2026-10-23T16:47:46Z |
-| Updated | 2026-10-24T07:16:54Z |
+| Updated | 2026-10-24T10:13:28Z |
 
 ## Description
-Operator-owned independent B4 for epic2705; legacy task id retains b4-b6, but B6 already merged as PR2714 and B1 as PR2715. Operator delivers quecto board-server over UDS: hyper listener, bounded methods/routes/body/headers/timeouts/connections, status/time/snapshot routes, peer-credential allowlist, and composition-only construction. It uses ProjectBoardStore and works with Git now and SQLite after B2; B3 is not its dependency. This agent consumes the merged B4 seam, never duplicates listener/route ownership. B7 must wait for this operator delivery to merge. Human-approved2713 production750target1500max, tests/fixtures/snapshots/lock/generated excluded/reported separately; size once planning/rejudge at remediation checkpoint or maximum exceeded. No live server/unit installation/start/deployment/cutover or protected playbook/relay/admission changes.
+External prerequisite fulfilled by operator PR2719, version0.107.436, per operator confirmation. quecto board-server serve over UDS; /v1/status and /v1/time, request limits, write deadline, connection lifetime cap, typed error codes, docs/board-server.md. Snapshot is explicitly deferred to B11; blocking client belongs to B7. Legacy id retains b4-b6; B6 was already merged PR2714 and B1 PR2715. Consume actual merged interfaces, never duplicate server/root/peer ownership. Git ProjectBoardStore works now, SQLite after B2. No agent implementation claim; archived as fulfilled dependency. No installation, real service/unit start, deployment or cut-over.
 
 ## Depends on
 | Task |
