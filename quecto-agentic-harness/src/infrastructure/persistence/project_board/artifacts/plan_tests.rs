@@ -668,9 +668,10 @@ fn a_criterion_with_a_chat_space_is_held_once_normalised() {
     );
 }
 
-/// An approach typed on a French keyboard is held once normalised; a chat
-/// space the normaliser leaves (beside a list marker) is refused by the
-/// domain with the approach's field, never by the file at write time.
+/// An approach typed on a French keyboard is held once normalised, and so
+/// is a chat space beside a list marker (entry makes it plain: it is never
+/// meaningful there); an em space is refused by the domain with the
+/// approach's field, never by the file at write time.
 #[test]
 fn an_approach_with_chat_spaces_is_held_once_normalised() {
     let with_approach = |approach: &str| {
@@ -685,8 +686,11 @@ fn an_approach_with_chat_spaces_is_held_once_normalised() {
     let file = encode::<PlanCodec>(&held).unwrap();
     assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(held));
     read_by_the_oracle(&file);
+    let listed = board_text::text("-\u{a0}first");
+    assert_eq!(listed, "- first");
+    assert!(with_approach(&listed).is_ok(), "{listed:?}");
     assert_eq!(
-        with_approach(&board_text::text("-\u{a0}first")),
+        with_approach(&board_text::text("an em\u{2003}space")).map(|_| ()),
         Err(SchemaError::new(
             "approach",
             format!("line 1: {PLAIN_SPACES_ONLY}")
