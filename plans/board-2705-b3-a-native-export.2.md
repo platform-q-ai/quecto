@@ -5,10 +5,12 @@
 |---|---|
 | Task | board-2705-b3-a-native-export |
 | Version | 2 |
-| State | draft |
+| State | accepted |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-24T20:10:14Z |
 | Created | 2026-10-24T20:09:57Z |
-| Updated | 2026-10-24T20:09:57Z |
+| Updated | 2026-10-24T20:10:14Z |
 
 ## Approach
 FRESH DELIVERY ONLY; complete A scope/criteria unchanged from accepted plan1 and parentcoordinationplan4. Fresh scoped RA249f7275f09fac9fd5402e7b1e0a368dd097c291 is independently accepted on actualMA4977c3b1d8859c6d4981afe2959f190bcb8db506. Read FULL shared /home/shane-pocket/.quecto/artifacts/b3-a-red/{RAhand-off.md,independent-verification.md,independent-RA-seal.md,coverage-ledger.md,coverage-original71.json,original-adaptation.json,mechanical-ledger.md,failure-depth.md,source-obligations.md,author-report.md}. Verify board-2705-b3-a-red.bundle SHA25617d7d2ce21defd16a0d5c6052d7b74ece59b5b7abc7495c29cba0fc2f8351296 and gitbundleverify; startbranchfeat/board-2705-b3-a-native-export atRAUNCHANGED/firstPRcommitRA. Historical997/52dcoffbranchimmutable; do NOT merge whole oldtransfer/WIP intoA. Complete corrected referenceWIP82e1/bundle28e564... available b3-delivery/wip-preservation with full handoff, referenceonly extracting acceptedA source neverimport/source/Prepared behavior.

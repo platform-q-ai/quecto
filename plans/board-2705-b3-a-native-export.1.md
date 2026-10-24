@@ -5,12 +5,12 @@
 |---|---|
 | Task | board-2705-b3-a-native-export |
 | Version | 1 |
-| State | accepted |
+| State | superseded |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted at | 2026-10-24T19:19:37Z |
 | Created | 2026-10-24T19:19:19Z |
-| Updated | 2026-10-24T19:19:37Z |
+| Updated | 2026-10-24T20:10:14Z |
 
 ## Approach
 Adopt accepted alternative split evidence /home/shane-pocket/.quecto/artifacts/b3-split-planning/{parent-report.md,proposed-tasks.json,source-partition.md,red-handoffs.md,handoff.md,refutation.md,coordinator-disposition.md}. Full proposed A task/criteria govern, current owner/header/latest operator decisions override historical native-only blocked plan. Scope complete native SQL foundation AND usable native rollback export; subsequent B owns full capture/import/exact original replay. Forecast1399+80reserve=1479production lines/tests excluded, sized once, actual1500max still binding; no golf/safety/test loss or silent exception.
