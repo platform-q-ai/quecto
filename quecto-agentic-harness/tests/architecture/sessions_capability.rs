@@ -2093,3 +2093,79 @@ fn retained_context_has_exactly_one_owner_per_role() {
         set(&["src/composition/sessions.rs"])
     );
 }
+
+/// Characterization: the inherited tests have real ordinary cfg(test) owners.
+/// This does not grant either constructor or retention policy an exception.
+#[test]
+fn families_use_ordinary_test_children() {
+    let prefix = ["application", "sessions", "services"];
+    let mounted = super::dependency_scan::mounted_under(&prefix);
+    let mut owners = BTreeSet::new();
+    let mut children = BTreeSet::new();
+    for family in [
+        "active_session",
+        "conversation_ledger",
+        "history_paging",
+        "session_home",
+    ] {
+        let mut identity: Vec<String> = prefix.iter().map(|part| part.to_string()).collect();
+        identity.push(family.to_string());
+        let owner = format!("src/application/sessions/services/{family}.rs");
+        let production: Vec<_> = mounted
+            .iter()
+            .filter(|(_, module, test_only)| module == &identity && !test_only)
+            .collect();
+        assert_eq!(
+            production.len(),
+            1,
+            "{family}: one production service owner"
+        );
+        assert_eq!(production[0].0, Path::new(&owner));
+        assert!(owners.insert(owner.clone()), "{family}: distinct owner");
+        let source = std::fs::read_to_string(&owner).unwrap();
+        let ast = syn::parse_file(&source).unwrap();
+        let declarations: Vec<_> = ast
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Mod(module) if module.ident == "tests" => Some(module),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            declarations.len(),
+            1,
+            "{family}: one direct tests declaration"
+        );
+        let tests = declarations[0];
+        assert!(matches!(tests.vis, syn::Visibility::Inherited));
+        assert!(tests.content.is_none() && tests.semi.is_some());
+        assert_eq!(tests.attrs.len(), 1, "{family}: no redirected test child");
+        let cfg = &tests.attrs[0];
+        assert!(
+            cfg.path().is_ident("cfg")
+                && cfg
+                    .parse_args::<syn::Path>()
+                    .is_ok_and(|path| path.is_ident("test")),
+            "{family}: direct cfg(test) only"
+        );
+        let child = format!("src/application/sessions/services/{family}/tests.rs");
+        identity.push("tests".to_string());
+        let tests: Vec<_> = mounted
+            .iter()
+            .filter(|(_, module, test_only)| module == &identity && *test_only)
+            .collect();
+        assert_eq!(tests.len(), 1, "{family}: one test-only child mount");
+        assert_eq!(tests[0].0, Path::new(&child));
+        assert!(Path::new(&child).is_file() && children.insert(child));
+        for retired in [
+            format!("src/application/sessions/{family}.rs"),
+            format!("src/application/sessions/{family}_tests.rs"),
+            format!("src/application/sessions/services/{family}_tests.rs"),
+            format!("src/application/sessions/services/{family}/tests/mod.rs"),
+        ] {
+            assert!(!Path::new(&retired).exists(), "duplicate owner: {retired}");
+        }
+    }
+    assert_eq!((owners.len(), children.len()), (4, 4));
+}

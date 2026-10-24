@@ -172,3 +172,31 @@ policy!(
     "use crate::application::sessions::dto::Report;",
     "imports beyond the capability's DTOs/use cases"
 );
+
+// Passing characterization, not the policy RED: a real production offender
+// must be reported independently of the two inherited test-file offenders.
+#[test]
+fn sessions_constructor_still_rejects_another_production_file() {
+    let f = Fixture::new();
+    f.append(
+        "src/application/sessions/services/history_paging.rs",
+        "fn forbidden() { ActiveSessionState::new(identity, store); }",
+    );
+    f.check(
+        "sessions_capability::sessions_graph_nodes_are_constructed_only_in_composition",
+        Some("src/application/sessions/services/history_paging.rs"),
+    );
+}
+
+#[test]
+fn sessions_retention_still_rejects_another_production_file() {
+    let f = Fixture::new();
+    f.append(
+        "src/application/sessions/services/history_paging.rs",
+        "use crate::application::sessions::ports::ContextSpillStore;",
+    );
+    f.check(
+        "sessions_capability::retained_context_has_exactly_one_owner_per_role",
+        Some("src/application/sessions/services/history_paging.rs"),
+    );
+}
