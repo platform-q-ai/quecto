@@ -653,3 +653,5 @@ fn summary_is_refused_beside_another_op_or_twice() {
         (&json!("summary"), &json!("is given twice"))
     );
 }
+
+mod location;

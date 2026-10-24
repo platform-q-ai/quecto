@@ -92,6 +92,70 @@ pub enum StoreOpenError {
     Unavailable(BoardStoreError),
 }
 
+/// Whether `remote` is spelt as a remote's name quecto accepts: letters,
+/// digits, '.', '_' and '-', starting with a letter or a digit (an
+/// allowlist), so it is never read as an option, a path or a URL.
+///
+/// # Errors
+/// Any other spelling.
+fn remote_name(remote: &str) -> Result<(), StoreOpenError> {
+    let named = remote
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        && remote
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric);
+    match named {
+        true => Ok(()),
+        false => Err(StoreOpenError::NoSuchRemote(format!(
+            "{remote:?} is not a remote name quecto accepts: letters, digits, '.', '_' and '-', starting with a letter or a digit"
+        ))),
+    }
+}
+
+/// Whether `remote` is a remote the repository `git` runs in configures:
+/// a name quecto accepts ([`remote_name`]) that git resolves to a URL
+/// that is not empty and is not the name itself (an allowlist: git
+/// prints the name back for a remote whose `url` was emptied, and would
+/// then read a folder of that name, #2705 B1).
+///
+/// # Errors
+/// A name that is not a configured remote's; git that cannot say.
+pub(super) fn configured_remote(git: &Git, remote: &str) -> Result<(), StoreOpenError> {
+    remote_name(remote)?;
+    // The name was checked first, so it is never read as an option.
+    match git.text(&["remote", "get-url", remote], None) {
+        Ok(url) if !url.is_empty() && url != remote => Ok(()),
+        Ok(url) => Err(StoreOpenError::NoSuchRemote(format!(
+            "{remote:?} names no repository of its own: git resolves it to {url:?}; give it a URL with git remote set-url {remote:?} <url>"
+        ))),
+        // git ran and failed: only a name its own list of remotes lacks
+        // is no such remote (an allowlist); anything else (no
+        // repository, a corrupt config, an unsafe directory) is a
+        // store git cannot reach.
+        Err(error @ GitError::Failed { .. }) => match git.text(&["remote"], None) {
+            Ok(listed) if !listed.lines().any(|name| name == remote) => {
+                Err(StoreOpenError::NoSuchRemote(format!(
+                    "{remote:?} is not a remote of this repository: {error}"
+                )))
+            }
+            Ok(_) | Err(_) => Err(StoreOpenError::Unavailable(BoardStoreError::Unavailable(
+                format!("git could not say whether {remote:?} is a remote: {error}"),
+            ))),
+        },
+        Err(
+            error @ (GitError::NotFound
+            | GitError::Spawn(_)
+            | GitError::TimedOut { .. }
+            | GitError::TooMuchOutput { .. }
+            | GitError::Identity(_)),
+        ) => Err(StoreOpenError::Unavailable(BoardStoreError::Unavailable(
+            format!("git could not say whether {remote:?} is a remote: {error}"),
+        ))),
+    }
+}
+
 impl GitBoardStore {
     /// `remote` is the name of a remote the repository configures, so a
     /// path or URL spelled like a name is never taken for one.
@@ -99,53 +163,25 @@ impl GitBoardStore {
     /// # Errors
     /// A name that is not a configured remote's; git that cannot say.
     pub fn new(git: Git, remote: &str) -> Result<Self, StoreOpenError> {
-        let named = remote
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-            && remote
-                .as_bytes()
-                .first()
-                .is_some_and(u8::is_ascii_alphanumeric);
-        if !named {
-            return Err(StoreOpenError::NoSuchRemote(format!(
-                "{remote:?} is not a remote name quecto accepts: letters, digits, '.', '_' and '-', starting with a letter or a digit"
-            )));
+        configured_remote(&git, remote)?;
+        Ok(Self::opened(git, remote))
+    }
+
+    fn opened(git: Git, remote: &str) -> Self {
+        Self {
+            git,
+            remote: remote.to_string(),
+            last: Mutex::new(None),
+            limits: LIMITS,
+            cancelled: None,
+            partial: std::sync::OnceLock::new(),
+            lock_races: std::sync::atomic::AtomicU64::new(0),
         }
-        // The name was checked first, so it is never read as an option.
-        match git.ok(&["remote", "get-url", remote], None) {
-            Ok(_) => Ok(Self {
-                git,
-                remote: remote.to_string(),
-                last: Mutex::new(None),
-                limits: LIMITS,
-                cancelled: None,
-                partial: std::sync::OnceLock::new(),
-                lock_races: std::sync::atomic::AtomicU64::new(0),
-            }),
-            // git ran and failed: only a name its own list of remotes lacks
-            // is no such remote (an allowlist); anything else (no
-            // repository, a corrupt config, an unsafe directory) is a
-            // store git cannot reach.
-            Err(error @ GitError::Failed { .. }) => match git.text(&["remote"], None) {
-                Ok(listed) if !listed.lines().any(|name| name == remote) => {
-                    Err(StoreOpenError::NoSuchRemote(format!(
-                        "{remote:?} is not a remote of this repository: {error}"
-                    )))
-                }
-                Ok(_) | Err(_) => Err(StoreOpenError::Unavailable(BoardStoreError::Unavailable(
-                    format!("git could not say whether {remote:?} is a remote: {error}"),
-                ))),
-            },
-            Err(
-                error @ (GitError::NotFound
-                | GitError::Spawn(_)
-                | GitError::TimedOut { .. }
-                | GitError::TooMuchOutput { .. }
-                | GitError::Identity(_)),
-            ) => Err(StoreOpenError::Unavailable(BoardStoreError::Unavailable(
-                format!("git could not say whether {remote:?} is a remote: {error}"),
-            ))),
-        }
+    }
+
+    /// The git this store runs.
+    pub(super) fn git(&self) -> &Git {
+        &self.git
     }
 
     fn tracking(&self) -> String {
@@ -670,8 +706,6 @@ mod committer;
 mod fetch_state;
 #[path = "store_fetch.rs"]
 mod fetching;
-#[path = "store_reach.rs"]
-mod reach;
 #[path = "store_write.rs"]
 mod writing;
 

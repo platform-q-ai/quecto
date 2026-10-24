@@ -1,17 +1,24 @@
-//! Which revisions the board's remote holds (#2666): what a run's end
-//! judges a success by. A revision is held when it names a commit (its
-//! full id, or a prefix of at least 12 hex digits) that one
-//! of the remote's branches or tags reaches. The remote's tips are listed
-//! (`ls-remote`), each commit is walked first against the tips this clone
-//! holds, and only when they do not reach it are the tips it lacks
-//! fetched by id (no ref, tag or `FETCH_HEAD` moves) and it is walked
-//! again. A commit this clone does not hold once every tip's history is
-//! here is reached by none. Text that names no commit is never held, and asks
-//! nothing of the remote. A shallow clone's walk stops at its boundary, so
-//! a commit past it reads as not held: a success is then refused, never
-//! recorded wrongly.
-use super::*;
-use crate::application::project_board::ports::RemoteRevisions;
+//! Which revisions a repository's remote holds (#2666), with git, as the
+//! [`RemoteRevisions`] port: what a run's end judges a success by, and
+//! what a teardown asks of a board run's completion. Its own adapter, apart
+//! from the board store (#2705 B1), so a board kept anywhere else still
+//! judges by the repository's remote.
+//!
+//! A revision is held when it names a commit (its full id, or a prefix of
+//! at least 12 hex digits) that one of the remote's branches or tags
+//! reaches. The remote's tips are listed (`ls-remote`), each commit is
+//! walked first against the tips this clone holds, and only when they do
+//! not reach it are the tips it lacks fetched by id (no ref, tag or
+//! `FETCH_HEAD` moves) and it is walked again. A commit this clone does not
+//! hold once every tip's history is here is reached by none. Text that
+//! names no commit is never held, and asks nothing of the remote. A shallow
+//! clone's walk stops at its boundary, so a commit past it reads as not
+//! held: a success is then refused, never recorded wrongly.
+use super::board_tree::{object_id, unavailable};
+use super::git::{Git, SHORT_OUTPUT, failed};
+use super::store::{GitBoardStore, StoreOpenError, configured_remote};
+use crate::application::project_board::ports::{BoardStoreError, RemoteRevisions};
+use std::collections::BTreeSet;
 
 /// The most a listing of the remote's branches and tags takes.
 const MAX_TIP_LISTING: usize = 16 * 1024 * 1024;
@@ -28,7 +35,40 @@ fn commit_named(revision: &str) -> Option<String> {
     (hex && long_enough).then(|| revision.to_ascii_lowercase())
 }
 
-impl RemoteRevisions for GitBoardStore {
+/// The revisions one configured remote of a repository holds, read with
+/// git.
+pub struct GitRemoteRevisions {
+    git: Git,
+    remote: String,
+}
+
+impl GitRemoteRevisions {
+    /// `remote` of the repository `git` runs in: a remote the repository
+    /// configures, checked as the board store checks its own, so a path or
+    /// URL spelled like a name is never taken for one.
+    ///
+    /// # Errors
+    /// A name that is not a configured remote's; git that cannot say.
+    pub fn new(git: Git, remote: &str) -> Result<Self, StoreOpenError> {
+        configured_remote(&git, remote)?;
+        Ok(Self {
+            git,
+            remote: remote.to_owned(),
+        })
+    }
+
+    /// The remote `store` is opened on, read with the store's own git: no
+    /// git is asked, since the store's remote was checked as it was
+    /// opened.
+    pub fn of_store(store: &GitBoardStore) -> Self {
+        Self {
+            git: store.git().clone(),
+            remote: store.remote().to_owned(),
+        }
+    }
+}
+
+impl RemoteRevisions for GitRemoteRevisions {
     fn not_on_remote(&self, revisions: &[String]) -> Result<Vec<String>, BoardStoreError> {
         let named: Vec<(usize, String)> = revisions
             .iter()
@@ -94,7 +134,7 @@ impl RemoteRevisions for GitBoardStore {
     }
 }
 
-impl GitBoardStore {
+impl GitRemoteRevisions {
     /// The objects the remote's branches and tags point at, once each.
     ///
     /// # Errors

@@ -247,6 +247,7 @@ fn local(remote: &Remote) -> Fixture {
         cancelled: None,
         launcher: None,
         swarm_session: None,
+        known: Default::default(),
     };
     match build_project_board_handles(&environment) {
         Ok(handles) => Fixture {

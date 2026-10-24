@@ -17,7 +17,6 @@ use crate::application::project_board::ports::{
     BoardOperations, CoordinatorLaunch, RunLiveness, StartedRuns,
 };
 use crate::domain::project_board::value_objects::telemetry::{BoardId, FaultKind, FrontEnd};
-
 /// What a request does with the board.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Access {
@@ -27,10 +26,23 @@ pub enum Access {
     Write,
 }
 
+/// What a front end already knows of where its board is (#2705 B1), so
+/// composition need not ask git for it: the id the board's records name
+/// it by, and its remote's fetch URL. Each part left `None` is asked of
+/// git, as before; the caller that names one vouches for it. Only a read
+/// takes it: a write asks git for the whole location.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KnownLocation {
+    pub board_id: Option<BoardId>,
+    pub remote_url: Option<String>,
+}
+
 /// What composition is given to build the board's operations.
 pub struct ProjectBoardEnvironment {
     pub repo: PathBuf,
     pub remote: String,
+    /// Where the board is, as far as the front end knows it.
+    pub known: KnownLocation,
     pub access: Access,
     /// The process environment, which composition allowlists for git.
     pub vars: Vec<(std::ffi::OsString, std::ffi::OsString)>,
@@ -89,6 +101,9 @@ pub type ProjectBoardHandlesBuilder =
 pub struct BoardSite {
     pub repo: PathBuf,
     pub remote: String,
+    /// Where the board is, as far as the front end knows it (the CLI's
+    /// `--board-id` and `--remote-url`; the agent tool knows nothing).
+    pub known: KnownLocation,
     pub build: Option<ProjectBoardHandlesBuilder>,
     pub launcher: Option<Launcher>,
     /// The session whose ended swarms' boards a run's end reads (`None`:
@@ -117,6 +132,7 @@ impl BoardSite {
         Self {
             repo,
             remote: "origin".into(),
+            known: KnownLocation::default(),
             build: Some(build),
             launcher: Some(launcher),
             swarm_session: Some(spawned_in.session().to_owned()),
@@ -129,6 +145,7 @@ impl std::fmt::Debug for BoardSite {
         f.debug_struct("BoardSite")
             .field("repo", &self.repo)
             .field("remote", &self.remote)
+            .field("known", &self.known)
             .field("build", &self.build.is_some())
             .field("launcher", &self.launcher.is_some())
             .field("swarm_session", &self.swarm_session)
@@ -225,6 +242,7 @@ fn environment_of(
     ProjectBoardEnvironment {
         repo: site.repo.clone(),
         remote: site.remote.clone(),
+        known: site.known.clone(),
         access,
         vars: std::env::vars_os().collect(),
         cancelled,
