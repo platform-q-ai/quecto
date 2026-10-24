@@ -4,10 +4,13 @@ use crate::infrastructure::persistence::project_board::board_tree::{
     Entry, Found, LeftOnRemote, Object, Reader, Unread, raw_entry_bytes, read_root,
 };
 
+#[cfg(feature = "test-support")]
+type Fetches = Mutex<Vec<(String, String, usize)>>;
+
 pub(super) struct SqlReader<'a> {
     pub connection: &'a Connection,
     #[cfg(feature = "test-support")]
-    pub fetches: Option<&'a Mutex<Vec<(String, String, usize)>>>,
+    pub fetches: Option<&'a Fetches>,
     #[cfg(feature = "test-support")]
     witnesses: std::cell::RefCell<BTreeMap<String, String>>,
 }

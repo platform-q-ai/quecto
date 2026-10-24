@@ -64,17 +64,17 @@ fn refuses_with_bound(sql: &str, oversized: bool) {
     c.close().unwrap();
     let before = fingerprint(&fixture.database);
     assert!(
-        match (oversized, handles.store.snapshot()) {
-            (false, Err(HistoryError::Malformed(_))) | (true, Err(HistoryError::Bounds(_))) => true,
-            _ => false,
-        },
+        matches!(
+            (oversized, handles.store.snapshot()),
+            (false, Err(HistoryError::Malformed(_))) | (true, Err(HistoryError::Bounds(_)))
+        ),
         "noncanonical/impossible stored lineage must refuse: {sql}"
     );
     assert!(
-        match (oversized, handles.export.execute(false, None)) {
-            (false, Err(HistoryError::Malformed(_))) | (true, Err(HistoryError::Bounds(_))) => true,
-            _ => false,
-        },
+        matches!(
+            (oversized, handles.export.execute(false, None)),
+            (false, Err(HistoryError::Malformed(_))) | (true, Err(HistoryError::Bounds(_)))
+        ),
         "corrupt lineage must not publish: {sql}"
     );
     assert_eq!(fingerprint(&fixture.database), before);
