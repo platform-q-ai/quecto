@@ -33,6 +33,9 @@ struct Board {
     after_read: Vec<Interleaved>,
     refusal: Option<String>,
     failure: Option<BoardStoreError>,
+    /// Every call fails with it, as a git store fails every call on a
+    /// board moved to a board server (#2705 B13).
+    always: Option<BoardStoreError>,
     writes: usize,
     /// Who made the board at each revision a write made.
     committers: BTreeMap<u64, Identity>,
@@ -111,6 +114,16 @@ impl MemoryBoardStore {
     /// the store's bounds), as a git store fails it; nothing is written.
     pub fn fail_next_write(&self, error: BoardStoreError) {
         self.lock().failure = Some(error);
+    }
+
+    /// Every call from now on fails with `error`; nothing is written.
+    pub fn fail_every_call(&self, error: BoardStoreError) {
+        self.lock().always = Some(error);
+    }
+
+    /// The error every call fails with, if any.
+    fn always(&self) -> Result<(), BoardStoreError> {
+        self.lock().always.clone().map_or(Ok(()), Err)
     }
 
     /// Sets the file `tasks/<id>.md` aside, as a store that found it
@@ -295,6 +308,7 @@ fn of_kind<'a, T: Clone + 'a>(
 
 impl ProjectBoardStore for MemoryBoardStore {
     fn read(&self) -> Result<BoardSnapshot, BoardStoreError> {
+        self.always()?;
         let (snapshot, after) = {
             let mut board = self.lock();
             let revision = board.head.ok_or(BoardStoreError::NoBoard)?;
@@ -338,6 +352,7 @@ impl ProjectBoardStore for MemoryBoardStore {
         artifacts: &[BoardArtifact],
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
+        self.always()?;
         checked(artifacts, message)?;
         let interleaved = std::mem::take(&mut self.lock().interleaved);
         interleaved.into_iter().for_each(|change| change(self));
@@ -393,6 +408,7 @@ impl ProjectBoardStore for MemoryBoardStore {
         clear: &SetAsideClear,
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
+        self.always()?;
         let path = clear.path.as_str();
         line("message", message, 200)
             .map_err(|error| BoardStoreError::InvalidWrite(error.to_string()))?;
@@ -449,6 +465,7 @@ impl ProjectBoardStore for MemoryBoardStore {
     }
 
     fn bootstrap(&self) -> Result<BoardBootstrap, BoardStoreError> {
+        self.always()?;
         let mut board = self.lock();
         match board.head {
             Some(revision) => Ok(BoardBootstrap::Existing(head(revision))),

@@ -374,3 +374,38 @@ fn a_marker_left_on_the_remote_is_told_at_least_its_size() {
 
 #[path = "store_partial_state_tests.rs"]
 mod state;
+
+/// A fence's `MOVED` past every cap, in a clone made without blobs, is
+/// refused by the least size the clone knows, never fetched (#2705 B13).
+#[test]
+fn a_moved_left_on_the_remote_is_told_at_least_its_size_unfetched() {
+    let repos = fresh();
+    let remote = repos.remote();
+    let moved = blob_in(&remote, &vec![b'x'; 2 * 1024 * 1024]);
+    let marker = blob_in(&remote, b"quecto-board 4\n");
+    let format = raw_rows(
+        &remote,
+        &[
+            ("100644", "MOVED", moved.clone()),
+            ("100644", "board", marker),
+        ],
+    );
+    let root = raw_rows(
+        &remote,
+        &[
+            ("100644", "README.md", blob_in(&remote, README)),
+            ("40000", "format", format),
+            ("40000", "tasks", raw_rows(&remote, &[])),
+        ],
+    );
+    let head = raw_commit(&remote, &root);
+    sh(&remote, &["update-ref", BOARD_REF, &head.0]);
+    let carol = partial(&repos, "blob:none", "carol");
+    let read = store(&carol).read();
+    assert!(
+        matches!(&read, Err(BoardStoreError::MovedMalformed(why))
+            if why.contains("(format/MOVED is at least 1572865 bytes; the most read is 4096)")),
+        "{read:?}"
+    );
+    assert!(!held(&carol, &moved), "MOVED was fetched");
+}

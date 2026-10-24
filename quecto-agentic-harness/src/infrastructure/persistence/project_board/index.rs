@@ -65,8 +65,10 @@ impl std::fmt::Display for IndexError {
                 | BoardStoreError::WriteTooLarge(why)
                 | BoardStoreError::Unavailable(why)
                 | BoardStoreError::TooLarge(why)
-                | BoardStoreError::FolderSetAside { why, .. },
+                | BoardStoreError::FolderSetAside { why, .. }
+                | BoardStoreError::MovedMalformed(why),
             ) => f.write_str(why),
+            Self::Store(BoardStoreError::Moved(moved)) => write!(f, "{moved}"),
             Self::NeedsRebuild(why) => write!(f, "the index needs a rebuild: {why}"),
             Self::Corrupt(why) => write!(f, "the index is corrupt: {why}"),
             Self::Sqlite(why) => write!(f, "the index's SQLite failed: {why}"),

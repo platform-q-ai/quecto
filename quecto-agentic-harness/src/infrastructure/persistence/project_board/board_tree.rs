@@ -41,7 +41,8 @@
 //! it never reads, and never writes over, a board whose tasks it would not
 //! see. Every write adds the marker; a root without one is a board written
 //! before it, read as it is; a marker of a newer format asks for an
-//! upgrade.
+//! upgrade; the fence's (format 4, `format/MOVED` beside it, #2705 B13)
+//! answers that the board moved to a board server, and is never written.
 //!
 //! An object a partial clone does not hold yet is not fetched here (every
 //! local call runs with `GIT_NO_LAZY_FETCH`): the read answers
@@ -97,15 +98,17 @@ const SYMLINK: &str = "120000";
 const GITLINK: &str = "160000";
 
 /// What a store error says, as text to quote in another.
-pub fn told(error: &BoardStoreError) -> &str {
+pub fn told(error: &BoardStoreError) -> std::borrow::Cow<'_, str> {
     match error {
-        BoardStoreError::NoBoard => "there is no board",
+        BoardStoreError::NoBoard => "there is no board".into(),
         BoardStoreError::Clash(why)
         | BoardStoreError::InvalidWrite(why)
         | BoardStoreError::WriteTooLarge(why)
         | BoardStoreError::Unavailable(why)
         | BoardStoreError::TooLarge(why)
-        | BoardStoreError::FolderSetAside { why, .. } => why,
+        | BoardStoreError::FolderSetAside { why, .. }
+        | BoardStoreError::MovedMalformed(why) => why.into(),
+        BoardStoreError::Moved(moved) => moved.to_string().into(),
     }
 }
 
@@ -331,38 +334,10 @@ fn read(
         [entry] if is_tree(entry, &kinds) => Some(*entry),
         _ => None,
     };
-    // The format marker, at the same depth as the folders. A file of its
-    // name is a stray, as on a board before the marker; none is a board
-    // before it.
-    let marker = match named(FORMAT_TREE).collect::<Vec<_>>().as_slice() {
-        [] => None,
-        [entry] if is_tree(entry, &kinds) => Some(read_format(git, &entry.oid, limits, left)),
-        [entry] if is_file(entry, &kinds) => None,
-        [entry] => Some(Ok(Marker::Damaged(format!(
-            "format at the root is mode {} over a {}",
-            entry.mode,
-            match kinds.get(&entry.oid) {
-                Some(Found::Present(object)) => object.kind.as_str(),
-                Some(Found::Missing) | None => "missing object",
-            }
-        )))),
-        [_, _, ..] => Some(Ok(Marker::Damaged(
-            "format is named more than once at the root".into(),
-        ))),
-    };
-    // A newer format first: whatever else this quecto would make of the
-    // board, it asks for an upgrade, before any folder is scanned.
-    match &marker {
-        Some(Ok(Marker::Newer(version))) => return Err(Unread::Failed(newer(version))),
-        Some(Ok(Marker::Oversized(size))) => {
-            return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
-                "its format marker (format/board) is {size}, more than this quecto reads: \
-                 if a newer quecto wrote the board, upgrade quecto; if a hand edit did, mend the \
-                 board: {RECOVERY}"
-            ))));
-        }
-        Some(Ok(Marker::Current | Marker::Damaged(_)) | Err(_)) | None => {}
-    }
+    // The format marker, at the same depth as the folders; a fence's or a
+    // newer format's is refused before any folder is scanned.
+    let marker = root_marker(git, &root, &kinds, limits, left);
+    refuse_first(&marker)?;
     // Every folder that really is a tree is scanned in the same round as
     // the root, so a partial clone fetches what they all miss at once.
     let tasks = named("tasks")
@@ -420,7 +395,14 @@ fn read(
         Some(Marker::Damaged(why)) => {
             return Err(damage(&format!("its format marker is damaged ({why})")));
         }
-        Some(Marker::Current | Marker::Newer(_) | Marker::Oversized(_)) | None => {}
+        Some(
+            Marker::Current
+            | Marker::Newer(_)
+            | Marker::Oversized(_)
+            | Marker::Moved(_)
+            | Marker::MovedMalformed(_),
+        )
+        | None => {}
     }
     let tasks = tasks.transpose()?;
     let folders = folders
@@ -648,8 +630,11 @@ use tasks::{TasksScan, load_tasks, scan_tasks};
 pub use writes::{FolderAfter, FolderFile, folder_file};
 #[path = "board_format.rs"]
 mod format;
-pub use format::{FORMAT, FORMAT_FILE, FORMAT_TREE};
-use format::{Marker, newer, read_format};
+pub use format::read_marker;
+pub use format::{FORMAT, FORMAT_FILE, FORMAT_TREE, MOVED_FILE, MOVED_FORMAT};
+use format::{Marker, refuse_first, root_marker};
+#[path = "board_fence.rs"]
+pub mod fence;
 
 #[path = "board_reader.rs"]
 mod reader;
