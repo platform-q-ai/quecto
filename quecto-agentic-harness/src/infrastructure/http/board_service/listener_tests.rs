@@ -370,8 +370,10 @@ fn tcp_requests_reach_the_handler_as_tcp_with_their_authorization() {
 fn tcp_peers_holding_every_slot_leave_the_socket_served() {
     let running = start_tcp(SERVER_UID);
     let address = running.tcp.unwrap();
-    let held: Vec<_> = (0..limits::MAX_CONNECTIONS + 4)
-        .map(|_| std::net::TcpStream::connect(address).unwrap())
+    // 9 sources of 8 each: more than the listener's 64 slots.
+    let held: Vec<_> = (2..11)
+        .flat_map(|n| (0..limits::MAX_CONNECTIONS_PER_PEER).map(move |_| n))
+        .map(|n| from_source(&format!("127.0.0.{n}"), address))
         .collect();
     std::thread::sleep(Duration::from_millis(200));
     let began = Instant::now();
@@ -392,4 +394,81 @@ fn unix_requests_reach_the_handler_as_local() {
     assert_eq!(status, 200, "{body}");
     assert!(body.contains(r#""tcp":false"#), "{body}");
     assert!(body.contains(r#""authorization":null"#), "{body}");
+}
+
+/// A TCP connection to `address` from the loopback source `source`
+/// (Linux routes all of 127.0.0.0/8 to loopback).
+fn from_source(source: &str, address: std::net::SocketAddr) -> std::net::TcpStream {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .build()
+        .unwrap();
+    let stream = runtime.block_on(async {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind(format!("{source}:0").parse().unwrap()).unwrap();
+        socket.connect(address).await.unwrap()
+    });
+    let stream = stream.into_std().unwrap();
+    stream.set_nonblocking(false).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    stream
+}
+
+/// Sends `request` on `stream` and reads the answer to its end.
+fn exchange(mut stream: std::net::TcpStream, request: &[u8]) -> String {
+    use std::io::Read;
+    let _ = stream.write_all(request);
+    let mut answer = Vec::new();
+    let _ = stream.read_to_end(&mut answer);
+    String::from_utf8_lossy(&answer).to_string()
+}
+
+/// Review round 1: one TCP source holds at most 8 connections; its 9th is
+/// closed unanswered, while another source is still served.
+#[test]
+fn one_tcp_source_holds_at_most_eight_connections() {
+    let running = start_tcp(SERVER_UID);
+    let address = running.tcp.unwrap();
+    let held: Vec<_> = (0..limits::MAX_CONNECTIONS_PER_PEER)
+        .map(|_| from_source("127.0.0.1", address))
+        .collect();
+    std::thread::sleep(Duration::from_millis(200));
+    let get = request("GET", 2, "", b"");
+    let ninth = exchange(from_source("127.0.0.1", address), &get);
+    assert_eq!(ninth, "", "the 9th is closed unanswered");
+    let other = exchange(from_source("127.0.0.2", address), &get);
+    assert!(other.starts_with("HTTP/1.1 200"), "{other}");
+    drop(held);
+    std::thread::sleep(Duration::from_millis(200));
+    let again = exchange(from_source("127.0.0.1", address), &get);
+    assert!(
+        again.starts_with("HTTP/1.1 200"),
+        "its slots come back: {again}"
+    );
+}
+
+/// Review round 1: over TCP the handler's gate is asked first. A refused
+/// caller is 401 whatever its method, path or body: no 405 or 404 says
+/// which routes exist, and no body (not even one past 1 MiB) is judged.
+#[test]
+fn an_unauthenticated_tcp_request_is_401_whatever_it_asks() {
+    let running = start_tcp(SERVER_UID);
+    let address = running.tcp.unwrap();
+    let refuse = "Authorization: Bearer refuse\r\n";
+    for sent in [
+        request("GET", 3, refuse, b""),
+        request("DELETE", 3, refuse, b""),
+        b"DELETE /zzz HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer refuse\r\nConnection: close\r\n\r\n".to_vec(),
+        request("POST", 4, &format!("{refuse}Content-Length: 1048577\r\n"), b""),
+        request("POST", 4, &format!("{refuse}Transfer-Encoding: chunked\r\n"), b"0\r\n\r\n"),
+    ] {
+        let answer = over_tcp(address, &sent);
+        assert!(answer.starts_with("HTTP/1.1 401"), "{answer}");
+    }
+    assert_eq!(running.handler.calls.load(Ordering::SeqCst), 0);
+    // The Unix socket has no gate: its peers are already let in.
+    let (status, _) = raw(&running.socket, &request("GET", 3, refuse, b""));
+    assert_eq!(status, 200);
 }

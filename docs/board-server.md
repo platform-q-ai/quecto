@@ -15,8 +15,15 @@ until SIGINT or SIGTERM (epic #2705 B4, B5).
   Tailscale address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`). Any other
   address, `0.0.0.0` and `::` among them, is refused at start. Every TCP
   request needs `Authorization: Bearer <token>`. Without one, or with an
-  unknown or revoked token, the answer is 401 (before any route is looked
-  up). The admin routes answer 403 over TCP, whatever the token.
+  unknown or revoked token, the answer is 401 whatever the method, path
+  or body: the token is checked before anything else about the request,
+  and before its body is read. The admin routes answer 403 over TCP,
+  whatever the token. Over TCP a token store failure is answered only
+  `the token store is unavailable` (the detail goes to the server's stderr, and is said on
+  the Unix socket).
+- **Addresses, not interfaces.** `100.64.0.0/10` is matched by address,
+  not by interface: an address in that range on a non-Tailscale interface
+  would be allowed too. A token is still required on every TCP request.
 
 The addresses come from `--listen` (repeatable), else from the global
 config (`~/.quecto/config.json`, or `--config`). The `board_server`
@@ -41,7 +48,10 @@ A name is 1 to 64 of `a-z`, `0-9` and inner `-`. A token is 32 random
 bytes, base64url. Only its SHA-256 is kept, in `tokens.json` (mode 0600)
 in the state directory (mode 0700): `--state <dir>`, else
 `~/.quecto/board-server/<board id>/`. A token is compared in constant
-time. A server holds at most 256 tokens. (After B2 the tokens move into
+time. A server holds at most 256 tokens. The server holds an exclusive
+lock on `lock` in the state directory for its whole life, so a second
+server on the same state directory (say, a second clone of the same
+remote) is refused at start; give it its own `--state <dir>`. (After B2 the tokens move into
 the SQLite store as admin revisions.)
 
 ## Routes
@@ -80,11 +90,11 @@ Every error reply the server makes is JSON, `{"error": "<why>", "code":
 | 400 | `body` | a body that could not be read |
 | 413 | `too_large` | a body past 1 MiB |
 | 500 | `handler` | the request's handler failed |
-| 503 | `unavailable` | the board's store, the clock or the tokens could not answer |
+| 503 | `unavailable` | the board's store, the clock or the tokens could not answer (over TCP a token failure says only `the token store is unavailable`) |
 
-The limits answer before a token is checked: over TCP, a request refused
-by a limit (405, 408, 411, 413, or one of the bodyless replies below) is
-refused whatever its token.
+Over TCP the token is checked first: an unauthenticated request is 401
+before any limit or route answers it (only the HTTP parser's own bodyless
+400 and 431, below, come first).
 
 **Replies from the HTTP layer may have no body.** The HTTP parser refuses some requests before the server sees them, with an empty body and no code. Clients map these by status:
 
@@ -103,4 +113,5 @@ hold for the Unix socket and TCP alike:
 - 10 s for a head, which also ends an idle keep-alive connection, and 10 s for a body;
 - 10 s for a peer to take any reply byte;
 - 64 connections at once on the socket, and 64 on each TCP address (TCP peers never take the socket's);
+- at most 8 TCP connections at once from one source address; a 9th is closed unanswered;
 - each connection at most 60 s or 1,000 requests, then 15 s to finish what it is answering before it is dropped.

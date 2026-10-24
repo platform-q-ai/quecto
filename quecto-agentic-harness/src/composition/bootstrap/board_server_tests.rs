@@ -189,6 +189,12 @@ fn the_tokens_live_in_the_state_directory() {
         raw.contains("laptop") && !raw.contains(&issued.secret),
         "{raw}"
     );
+    // Review round 1: one server per state directory.
+    let error = build_board_server(&environment(&dir, &work, "origin"))
+        .err()
+        .unwrap();
+    assert!(error.contains("another board server holds it"), "{error}");
+    drop(handles);
     let again = build_board_server(&environment(&dir, &work, "origin")).unwrap();
     let caller = crate::application::project_board::use_cases::Caller::Remote(Some(&issued.secret));
     assert!(again.access.authenticate(caller).is_ok());

@@ -427,9 +427,15 @@ fn tokens_that_cannot_be_read_are_503() {
         "/v1/status",
         "",
     );
+    // Review round 1: a TCP caller is never told why (paths, user, board).
+    let generic =
+        serde_json::json!({"error": "the token store is unavailable", "code": "unavailable"});
+    assert_eq!((reply.status, &body), (503, &generic));
+    let gated = routes.authenticate_remote(Some("Bearer x")).unwrap();
+    assert_eq!(gated.status, 503);
     assert_eq!(
-        (reply.status, &body["code"]),
-        (503, &Value::from("unavailable"))
+        serde_json::from_slice::<Value>(&gated.body).unwrap(),
+        generic
     );
     let (reply, body) = sent(
         &routes,
@@ -443,6 +449,10 @@ fn tokens_that_cannot_be_read_are_503() {
         (reply.status, &body["code"]),
         (503, &Value::from("unavailable"))
     );
+    assert_eq!(
+        body["error"], "the disk is gone",
+        "the socket keeps the detail"
+    );
     let (reply, _) = sent(
         &routes,
         Transport::Local,
@@ -452,4 +462,30 @@ fn tokens_that_cannot_be_read_are_503() {
         "",
     );
     assert_eq!(reply.status, 200, "a local read needs no token");
+}
+
+/// Review round 1: the TCP gate the listener asks first is 401 for no
+/// held bearer token, and lets a held one on.
+#[test]
+fn the_tcp_gate_lets_on_only_a_held_token() {
+    let (store, _) = written();
+    let routes = routes_of(serving(&store));
+    let (_, added) = sent(
+        &routes,
+        Transport::Local,
+        None,
+        ServiceMethod::Post,
+        "/v1/admin/tokens",
+        r#"{"name":"laptop"}"#,
+    );
+    let bearer = format!("Bearer {}", added["token"].as_str().unwrap());
+    assert_eq!(routes.authenticate_remote(Some(&bearer)), None);
+    for refused in [None, Some("Bearer token-phone"), Some(""), Some("Basic x")] {
+        let reply = routes.authenticate_remote(refused).unwrap();
+        assert_eq!(
+            (reply.status, reply.challenge),
+            (401, Some("Bearer")),
+            "{refused:?}"
+        );
+    }
 }

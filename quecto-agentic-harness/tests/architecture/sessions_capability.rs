@@ -183,8 +183,6 @@ const CANONICAL_FILES: &[&str] = &[
     "src/interface/uds/controllers/recover_message_controller.rs",
     "src/interface/uds/controllers/export_report_controller.rs",
     "src/infrastructure/persistence/file/session_export.rs",
-    // The board server's device tokens (epic #2705 B5).
-    "src/infrastructure/persistence/file/board_tokens.rs",
     "src/interface/uds/controllers/synchronize_transcript_controller.rs",
     "src/interface/uds/controllers/rewind_conversation_controller.rs",
     "src/domain/conversation/services/conversation_view.rs",

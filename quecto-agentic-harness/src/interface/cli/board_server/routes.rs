@@ -137,6 +137,15 @@ fn administer(answered: Result<(u16, serde_json::Value), TokenError>) -> Service
 }
 
 impl ServiceHandler for BoardRoutes {
+    /// A TCP caller with no held token is 401 whatever it asks.
+    fn authenticate_remote(&self, authorization: Option<&str>) -> Option<ServiceReply> {
+        let caller = Caller::Remote(authorization.and_then(bearer));
+        match self.access.authenticate(caller) {
+            Ok(_) => None,
+            Err(refused) => Some(refusal(&refused, Transport::Tcp)),
+        }
+    }
+
     fn answer(&self, request: &ServiceRequest) -> ServiceReply {
         let caller = match request.transport {
             Transport::Local => Caller::Local,
@@ -144,13 +153,13 @@ impl ServiceHandler for BoardRoutes {
         };
         let principal = match self.access.authenticate(caller) {
             Ok(principal) => principal,
-            Err(refused) => return refusal(&refused),
+            Err(refused) => return refusal(&refused, request.transport),
         };
         match Route::of(&request.path) {
             Some(route) if route.takes(request.method) => {
                 match BoardAccess::authorize(&principal, route.scope()) {
                     Ok(()) => self.route(route, request),
-                    Err(refused) => refusal(&refused),
+                    Err(refused) => refusal(&refused, request.transport),
                 }
             }
             Some(route) => ServiceReply {
@@ -194,8 +203,10 @@ fn coded(status: u16, code: &str, why: &str) -> ServiceReply {
     ServiceReply::json(status, &json!({ "error": why, "code": code }))
 }
 
-/// A refused request's reply: 401 `token`, 403 `local_only`, or 503.
-fn refusal(refused: &Refused) -> ServiceReply {
+/// A refused request's reply: 401 `token`, 403 `local_only`, or 503. A
+/// TCP caller is never told why the tokens failed (paths, user, board id):
+/// that goes to the server's stderr and is said on the Unix socket only.
+fn refusal(refused: &Refused, transport: Transport) -> ServiceReply {
     match refused {
         Refused::Token => ServiceReply {
             challenge: Some("Bearer"),
@@ -210,7 +221,14 @@ fn refusal(refused: &Refused) -> ServiceReply {
             "local_only",
             "forbidden: admin routes are served on the Unix socket only",
         ),
-        Refused::Unavailable(error) => coded(503, "unavailable", &error.to_string()),
+        Refused::Unavailable(error) => match transport {
+            Transport::Local => coded(503, "unavailable", &error.to_string()),
+            Transport::Tcp => {
+                // The server's own stderr (no tracing subscriber is set here).
+                eprintln!("board-server: the token store is unavailable: {error}");
+                coded(503, "unavailable", "the token store is unavailable")
+            }
+        },
     }
 }
 

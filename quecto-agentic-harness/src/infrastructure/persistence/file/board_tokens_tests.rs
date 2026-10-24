@@ -78,6 +78,47 @@ fn a_full_store_refuses_another_token() {
     assert_eq!(tokens.add(&name("one-more"), &at()), Err(TokenError::Full));
 }
 
+/// Review round 1: two servers on one state directory lost tokens (80
+/// parallel adds kept 41). The state directory's lock is held for the
+/// adapter's life, so a second one is refused at start, until the first
+/// is gone.
+#[test]
+fn a_second_server_on_one_state_directory_is_refused() {
+    let (dir, tokens) = opened();
+    let state = dir.path().join("state").join("board");
+    let error = FileBoardTokens::open(&state).unwrap_err();
+    assert!(error.contains("another board server holds it"), "{error}");
+    assert!(error.contains("--state"), "{error}");
+    let mode = std::fs::metadata(state.join(LOCK_FILE))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600);
+    drop(tokens);
+    assert!(FileBoardTokens::open(&state).is_ok());
+}
+
+/// Within one server, parallel adds are serialised: every one is kept.
+#[test]
+fn parallel_adds_through_one_server_are_all_kept() {
+    let (_dir, tokens) = opened();
+    let tokens = std::sync::Arc::new(tokens);
+    let adders: Vec<_> = (0..80)
+        .map(|n| {
+            let tokens = std::sync::Arc::clone(&tokens);
+            std::thread::spawn(move || tokens.add(&name(&format!("d{n}")), &at()).unwrap())
+        })
+        .collect();
+    let issued: Vec<IssuedToken> = adders.into_iter().map(|a| a.join().unwrap()).collect();
+    assert_eq!(tokens.list().unwrap().len(), 80);
+    for token in &issued {
+        assert_eq!(
+            tokens.verify(&token.secret),
+            Ok(Some(token.record.name.clone()))
+        );
+    }
+}
+
 /// The tokens survive the server: a fresh open reads what was written.
 #[test]
 fn tokens_outlive_the_adapter() {
@@ -100,7 +141,10 @@ fn a_file_not_as_written_is_refused() {
         matches!(tokens.verify("x"), Err(TokenError::Unavailable(why)) if why.contains("0600"))
     );
     let state = dir.path().join("state").join("board");
+    drop(tokens);
     assert!(FileBoardTokens::open(&state).unwrap_err().contains("0600"));
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let tokens = FileBoardTokens::open(&state).unwrap();
     for bad in [
         "not json",
         r#"{"tokens":[{"name":"Laptop","sha256":"00","created":"2026-10-24T12:00:00Z"}]}"#,

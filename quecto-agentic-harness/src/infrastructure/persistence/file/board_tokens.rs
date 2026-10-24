@@ -27,6 +27,9 @@ use crate::domain::shared::secret_compare::constant_time_eq;
 /// The tokens file's name in the state directory.
 pub const TOKENS_FILE: &str = "tokens.json";
 
+/// The lock file's name in the state directory.
+const LOCK_FILE: &str = "lock";
+
 /// The most bytes a tokens file may hold (256 tokens take about 40 KiB).
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
@@ -60,18 +63,23 @@ pub struct FileBoardTokens {
     path: PathBuf,
     /// Serialises this process's read-change-write of the file.
     writing: Mutex<()>,
+    /// The state directory's lock, held exclusively for this adapter's
+    /// life: no other server writes the file meanwhile.
+    _lock: fs::File,
 }
 
 impl FileBoardTokens {
-    /// The tokens in `state`, made mode 0700 if missing; a file there must
-    /// read.
+    /// The tokens in `state`, made mode 0700 if missing, its `lock` held
+    /// exclusively until this is dropped; a file there must read.
     /// # Errors
-    /// A relative, shared or foreign directory, or a file refused.
+    /// A relative, shared or foreign directory, a lock another server
+    /// holds, or a file refused.
     pub fn open(state: &Path) -> Result<Self, String> {
         private_dir(state)?;
         let tokens = Self {
             path: state.join(TOKENS_FILE),
             writing: Mutex::new(()),
+            _lock: locked(state)?,
         };
         tokens.held().map_err(|error| error.to_string())?;
         Ok(tokens)
@@ -243,6 +251,33 @@ fn unhex(text: &str) -> Option<Digested> {
         *slot = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
     }
     Some(digest)
+}
+
+/// `<state>/lock`, mode 0600, locked exclusively (never waiting).
+// `File::try_lock` stabilized in 1.89 (the admission authority's
+// `SingletonLock` shares the toolchain-floor note).
+#[expect(clippy::incompatible_msrv)]
+fn locked(state: &Path) -> Result<fs::File, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = state.join(LOCK_FILE);
+    let refused = |why: String| format!("the state directory's lock {}: {why}", path.display());
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&path)
+        .map_err(|error| refused(error.to_string()))?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(fs::TryLockError::WouldBlock) => Err(refused(
+            "another board server holds it: one server per state directory (give this one --state <dir>)"
+                .into(),
+        )),
+        Err(fs::TryLockError::Error(error)) => Err(refused(error.to_string())),
+    }
 }
 
 /// `dir` as an absolute directory of mode 0700 of this user's, made so

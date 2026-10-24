@@ -22,6 +22,12 @@ pub struct Counting {
 }
 
 impl ServiceHandler for Counting {
+    /// A TCP request whose `Authorization` is `Bearer refuse` is 401.
+    fn authenticate_remote(&self, authorization: Option<&str>) -> Option<ServiceReply> {
+        (authorization == Some("Bearer refuse"))
+            .then(|| ServiceReply::json(401, &serde_json::json!({"code": "token"})))
+    }
+
     fn answer(&self, request: &ServiceRequest) -> ServiceReply {
         self.calls.fetch_add(1, Ordering::SeqCst);
         ServiceReply::json(
