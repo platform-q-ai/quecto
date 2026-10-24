@@ -192,27 +192,6 @@ fn linked(shape: Shape, item: String) -> String {
     }
 }
 
-/// A bare https address in prose: at a line's start or after a space (so
-/// never inside a link's `](…)` or a code span's backticks).
-static PROSE_ADDRESS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(&format!(r"(^|\s)({ADDRESS})")).expect("prose address"));
-
-/// `text`, a paragraph, with each bare https address written as a link
-/// ([`linked`]), its trailing punctuation kept outside it.
-fn linked_prose(text: &str) -> String {
-    let linked_address = |found: &regex::Captures<'_>| {
-        let address = &found[2];
-        let kept = address.trim_end_matches(['.', ',', ';', ':', '!', '?', '\'']);
-        let after = &address[kept.len()..];
-        format!(
-            "{}{}{after}",
-            &found[1],
-            linked(Shape::List, kept.to_string())
-        )
-    };
-    PROSE_ADDRESS.replace_all(text, linked_address).into_owned()
-}
-
 /// One outcome of the done-when checklist.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
@@ -274,9 +253,9 @@ impl Description {
     ) -> Result<String, SchemaError> {
         let [goal_rule, why_rule, done_rule, links_rule] = &PARTS;
         let paragraph = |rule: &PartRule, text: Option<&str>| {
+            // Prose is kept as written: what a file cannot hold is refused
+            // on entry, never rewritten.
             let text = text.map(board_text::text).filter(|text| !text.is_empty());
-            // A bare https address in prose is written as a link, as Links are.
-            let text = text.map(|text| linked_prose(&text));
             text.map(|text| shaped_lines(rule, &text).map(|()| text))
                 .transpose()
         };

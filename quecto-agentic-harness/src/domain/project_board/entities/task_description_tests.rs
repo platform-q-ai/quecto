@@ -232,17 +232,26 @@ fn composed_sections_are_normalised_and_enter() {
             Err(SchemaError::new("goal", PARTS[0].wanted))
         );
     }
-    // A bare https address in a goal is written as a link, its trailing
-    // punctuation outside; one in a link or code is left alone.
-    let goal = "See https://www.x.io/a. Or [y](https://y.io) and `https://z.io`.";
+    // Review round 3: a goal or why is kept as written, code and addresses
+    // in it included: never rewritten.
     let done = ["Done".to_string()];
-    let text = Description::compose(Some(goal), None, Some(&done), None).unwrap();
-    assert_eq!(
-        text,
-        "## Goal\nSee [x.io/a](https://www.x.io/a). Or [y](https://y.io) and \
-         `https://z.io`.\n\n## Done when\n- [ ] Done"
-    );
+    for (goal, why) in CODE {
+        let text = Description::compose(Some(goal), Some(why), Some(&done), None).unwrap();
+        assert_eq!(
+            text,
+            format!("## Goal\n{goal}\n\n## Why\n{why}\n\n## Done when\n- [ ] Done")
+        );
+    }
 }
+
+/// Goals and whys holding addresses in code (review round 3): a span, a
+/// double-backtick span, a fence, and a span in a why.
+const CODE: [(&str, &str); 4] = [
+    ("Run `curl https://x.io` first.", "Users."),
+    ("Run ``curl https://x.io/`a` `` first.", "Users."),
+    ("```sh\ncurl https://x.io\n```", "Users."),
+    ("Ship.", "It fails on `curl https://x.io` today."),
+];
 
 /// #2705 T2 review round 1: each section is checked on its own field
 /// before it is composed, so a line break in one never reaches another's

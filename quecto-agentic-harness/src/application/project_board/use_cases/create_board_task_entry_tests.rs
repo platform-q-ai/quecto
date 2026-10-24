@@ -70,6 +70,50 @@ fn a_goal_or_why_the_file_cannot_hold_is_refused_on_entry() {
     assert!(held.is_ok(), "{held:?}");
 }
 
+/// Review round 3: a bare address in a goal or why is never rewritten: it
+/// is refused with the hint to write it as a link; one in code is held as
+/// written.
+#[test]
+fn a_bare_address_is_refused_with_the_link_hint_and_code_is_held_as_written() {
+    let store = board();
+    let made = |id: &str, goal: &str, why: &str| {
+        let description = format!("## Goal\n{goal}\n\n## Why\n{why}\n\n## Done when\n- [ ] Done");
+        let made = create(&store, SetClock::at("10:00:00")).execute(&NewBoardTask {
+            description: description.clone(),
+            ..new_task(id)
+        });
+        (made, description)
+    };
+    let hint = "is text the board's file cannot hold: write the address as [text](https://…)";
+    for (goal, why, field) in [
+        ("See https://x.io/Käse now.", "Users.", "goal"),
+        ("Read it (https://x.io).", "Users.", "goal"),
+        ("Ship.", "See http://x.io now.", "why"),
+    ] {
+        let (refused, _) = made("a", goal, why);
+        assert!(
+            matches!(&refused, Err(ProjectBoardError::Invalid(error))
+                if error.field == field && error.problem == hint),
+            "{goal} / {why}: {refused:?}"
+        );
+    }
+    for (index, (goal, why)) in [
+        ("Run `curl https://x.io` first.", "Users."),
+        ("Run ``curl https://x.io/`a` `` first.", "Users."),
+        ("```sh\ncurl https://x.io\n```", "Users."),
+        ("Ship.", "It fails on `curl https://x.io` today."),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (held, description) = made(&format!("code-{index}"), goal, why);
+        assert_eq!(
+            held.map(|task| task.into_fields().description),
+            Ok(description)
+        );
+    }
+}
+
 /// Review round 1: an outcome or link a board file cannot hold is refused
 /// as it enters, on its own field, never at write.
 #[test]
