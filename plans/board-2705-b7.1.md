@@ -5,10 +5,10 @@
 |---|---|
 | Task | board-2705-b7 |
 | Version | 1 |
-| State | draft |
+| State | discarded |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
 | Created | 2026-10-23T16:49:47Z |
-| Updated | 2026-10-23T16:49:47Z |
+| Updated | 2026-10-24T00:12:27Z |
 
 ## Approach
 One serial PR after UDS/operations seam. Run operation under per-board lock in one SQLite transaction; durable request-ID result replay and remote UDS client. Time gate and explicit committer wiring in proper layers. Fresh red/green/independent review; hard900 all-in, targeted local verification/full CI.
