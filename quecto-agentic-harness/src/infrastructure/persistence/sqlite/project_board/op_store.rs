@@ -1,8 +1,6 @@
-//! A board server's store, written one operation at a time (epic #2705
-//! B7): one connection that only an operation holding the board's write
-//! lock uses, in one `BEGIN IMMEDIATE` transaction, each store call in a
-//! savepoint of it. Reads have their own connection, which sees only what
-//! has committed.
+//! A board server's store (epic #2705 B7): one write connection, used only
+//! under the write lock in one `BEGIN IMMEDIATE` transaction (each store
+//! call a savepoint of it); reads on their own, seeing only commits.
 use super::*;
 
 pub struct SqliteBoardOps {

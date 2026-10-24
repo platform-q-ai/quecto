@@ -141,13 +141,21 @@ a token can never replay a local write's answer. The last 1,024 answers
 are kept: a client retries within seconds. A read takes no lock and no
 transaction.
 
-Every read of a host a write may need (the pull requests' states, for
-completing its task) is made before the write lock is taken, so the
-transaction touches only the store, and a slow `gh` holds up no other
-write. Two writes are held at once (one running, one waiting on the
-lock); a third is answered 503 `busy` at once, so waiting writes never
-take the blocking threads reads need. `end_run`'s check that a run's
-evidence is on the remote still runs inside the lock.
+A write is admitted first: two are held at once (one running, one waiting
+on the lock), and a third, or a retry of a write whose first run is still
+running (by principal and `write_id`), is answered 503 `busy` at once,
+before any host is read. So waiting writes never take the blocking threads
+reads need, and a busy retry costs no `gh` call; the retry of a write still
+running is answered from its kept answer once it lands. An admitted write
+then reads every host it may need (the pull requests' states, for completing
+its task: none for a task not on the board or linking none) before the write
+lock, so the transaction touches only the store and a slow `gh` holds up no
+other write. Those reads share the 30 s budget a local completion has: a
+pull request left unread past it is unavailable, so the write is answered
+(`pull_requests_unavailable`) rather than failed. A write's worst case is
+that budget plus one 20 s `gh` read, then its turn at the lock behind one
+other write, which stays under the client's 75 s reply timeout. `end_run`'s
+check that a run's evidence is on the remote still runs inside the lock.
 
 The server runs no start, and `left_runs` is empty, until B8 carries
 start and `end_run` across the wire: a client refuses a `start` before

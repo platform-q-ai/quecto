@@ -1,12 +1,11 @@
-//! The board server's graph (epic #2705 B4, B5, B7): the SQLite board in
-//! the state directory, written one operation at a time; the clone's git,
-//! for the board's id and its remote's revisions and pull requests; this
-//! machine's clock; peer credentials letting in this user only; the tokens
-//! file in the state directory; and the TCP addresses the global config
-//! names.
-use std::collections::BTreeMap;
+//! The board server's graph (epic #2705 B4, B5, B7): the SQLite board and
+//! tokens in the state directory; the clone's git for the board's id, its
+//! remote's revisions and pull requests; this machine's clock; peer
+//! credentials; and the TCP addresses the global config names.
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use super::project_board::{operation_parts, pull_request_states};
 use super::project_board_operations::LocalBoardOperations;
@@ -19,7 +18,7 @@ use crate::application::project_board::ports::{
     RemoteRevisions,
 };
 use crate::application::project_board::use_cases::{
-    BoardAccess, QueryBoard, RunBoardOperation, ServeBoard, ServeBoardOperation,
+    BoardAccess, QueryBoard, READ_BUDGET, RunBoardOperation, ServeBoard, ServeBoardOperation,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -90,6 +89,7 @@ pub fn build_board_server(
         clock: Arc::clone(&clock),
         prs: pull_request_states(&url, &environment.vars),
         revisions: Arc::new(GitRemoteRevisions::of_store(&store)),
+        read_budget: READ_BUDGET,
     };
     Ok(BoardServerHandles {
         serve: ServeBoard::new(ops.reads(), Arc::clone(&clock), board),
@@ -121,6 +121,7 @@ pub struct ServedOperations {
     pub clock: Arc<dyn BoardClock>,
     pub prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
     pub revisions: Arc<dyn RemoteRevisions>,
+    pub read_budget: Duration,
 }
 
 impl BoardOperationsOver for ServedOperations {
@@ -130,7 +131,8 @@ impl BoardOperationsOver for ServedOperations {
         reads: &dyn ProjectBoardStore,
     ) -> OperationsOver {
         let prs = self.prs.clone().map(|host| {
-            Arc::new(StatedPullRequests::read(&*host, request, reads)) as Arc<dyn PullRequestStates>
+            let stated = StatedPullRequests::read(&*host, request, reads, self.read_budget);
+            Arc::new(stated) as Arc<dyn PullRequestStates>
         });
         let (clock, revisions) = (Arc::clone(&self.clock), Arc::clone(&self.revisions));
         Box::new(move |store| {
@@ -154,10 +156,12 @@ impl BoardOperationsOver for ServedOperations {
 struct StatedPullRequests(BTreeMap<u64, Result<PullRequestState, PullRequestStatesError>>);
 
 impl StatedPullRequests {
+    /// None for a task absent or linking none; unread past `budget`, unavailable.
     fn read(
         host: &dyn PullRequestStates,
         request: Option<&BoardRequest>,
         reads: &dyn ProjectBoardStore,
+        budget: Duration,
     ) -> Self {
         let (task, linking) = match request {
             Some(BoardRequest::Change(id, BoardOp::AddPr(pr))) => (Some(id), Some(*pr)),
@@ -168,12 +172,17 @@ impl StatedPullRequests {
             Some(_) | None => (None, None),
         };
         let board = task.and_then(|_| reads.read().ok());
-        let linked = board.iter().flat_map(|board| &board.tasks);
-        let linked = linked.filter(|held| Some(&held.fields().id) == task);
-        let prs = linked
-            .flat_map(|held| held.fields().prs.clone())
-            .chain(linking);
-        Self(prs.map(|pr| (pr, host.state(pr))).collect())
+        let mut tasks = board.iter().flat_map(|board| &board.tasks);
+        let held = tasks.find(|held| Some(&held.fields().id) == task);
+        let prs = held.into_iter().flat_map(|held| held.fields().prs.clone());
+        let prs: BTreeSet<u64> = prs.chain(linking.filter(|_| held.is_some())).collect();
+        let began = Instant::now();
+        let late = || PullRequestStatesError::Unavailable("not read within its time budget".into());
+        let state = |pr| match began.elapsed() < budget {
+            true => host.state(pr),
+            false => Err(late()),
+        };
+        Self(prs.into_iter().map(|pr| (pr, state(pr))).collect())
     }
 }
 

@@ -63,9 +63,8 @@ impl WriteId {
     }
 }
 
-/// One write a server makes (B7): its id; what it asks, as sent (its front
-/// end and text); the identity its caller asserts (each revision's
-/// author); and who the server let in, recorded beside it.
+/// One write (B7): its id, what it asks (front end and text), the identity
+/// asserted (its author), and who the server let in (recorded beside it).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpWrite {
     pub write_id: WriteId,
@@ -88,10 +87,9 @@ pub trait BoardOpStore: Send + Sync {
     /// The store a read is answered from, outside any write.
     fn reads(&self) -> Arc<dyn ProjectBoardStore>;
 
-    /// Runs `op` once per write id and principal: under the board's write
-    /// lock, in one immediate transaction, on a store bound to it that
-    /// writes as `write.committer`, keeping its answer as it commits. A
-    /// kept id is answered with its kept answer, `op` unrun.
+    /// Runs `op` once per write id and principal, under the write lock in
+    /// one immediate transaction, on a store writing as `write.committer`;
+    /// its answer is kept as it commits, and replayed for the same id.
     ///
     /// # Errors
     /// The store's failure, or `op`'s; either writes nothing.
@@ -108,8 +106,7 @@ pub type OperationsOver = Box<
         + Send,
 >;
 
-/// Port: the board's operations, as composition assembles them for a
-/// server (B7).
+/// Port: the board's operations, as composition assembles them (B7).
 pub trait BoardOperationsOver: Send + Sync {
     /// The operations for `request`, every host read they may make (pull
     /// requests' states) made now, from `reads`, before any lock.

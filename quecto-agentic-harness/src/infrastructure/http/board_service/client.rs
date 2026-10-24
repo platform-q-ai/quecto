@@ -12,8 +12,9 @@ use super::limits::{MAX_HEAD_BYTES, Method};
 
 /// The most bytes a reply's body may be: a whole board's listing.
 pub const MAX_REPLY_BYTES: usize = 64 * 1024 * 1024;
-/// How long a connect, a read or a write may wait.
-pub const TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a connect, read or write may wait: past a server's worst write
+/// (30 s of pull request reads, one 20 s `gh` read, a turn at the lock).
+pub const TIMEOUT: Duration = Duration::from_secs(75);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Endpoint {

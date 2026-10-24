@@ -30,7 +30,7 @@ pub use board_change::MAX_WRITE_ATTEMPTS;
 pub use bootstrap_project_board::BootstrapProjectBoard;
 pub use change_board_task::ChangeBoardTask;
 pub use clear_set_aside::ClearSetAside;
-pub use complete_merged_task::CompleteMergedTask;
+pub use complete_merged_task::{CompleteMergedTask, READ_BUDGET};
 pub use create_board_task::CreateBoardTask;
 pub use discard_plan::DiscardPlan;
 pub use edit_plan::EditPlan;

@@ -19,6 +19,7 @@ struct Kept {
     store: MemoryBoardStore,
     answers: Mutex<BTreeMap<String, String>>,
     transactions: AtomicUsize,
+    prepared: Arc<AtomicUsize>,
 }
 
 impl BoardOpStore for Kept {
@@ -48,9 +49,11 @@ impl BoardOpStore for Kept {
     }
 }
 
-/// Operations that answer nothing; or none, when `refused`.
+/// Operations that answer nothing; or none, when `refused`; counting the
+/// requests prepared (each a host read).
 struct Over {
     refused: bool,
+    prepared: Arc<AtomicUsize>,
 }
 
 struct Nothing;
@@ -70,6 +73,7 @@ impl BoardOperations for Nothing {
 
 impl BoardOperationsOver for Over {
     fn prepare(&self, _: Option<&BoardRequest>, _: &dyn ProjectBoardStore) -> OperationsOver {
+        self.prepared.fetch_add(1, Ordering::SeqCst);
         let refused = self.refused;
         Box::new(move |_| match refused {
             true => Err(ProjectBoardError::NoLauncher),
@@ -81,7 +85,10 @@ impl BoardOperationsOver for Over {
 fn serving(store: &Arc<Kept>, refused: bool) -> ServeBoardOperation {
     ServeBoardOperation::new(
         Arc::clone(store) as Arc<dyn BoardOpStore>,
-        Arc::new(Over { refused }),
+        Arc::new(Over {
+            refused,
+            prepared: Arc::clone(&store.prepared),
+        }),
     )
 }
 
@@ -149,6 +156,39 @@ fn a_read_takes_no_transaction_and_a_write_needs_its_write() {
     );
 }
 
+/// A retry of a write whose first run still runs is busy, unprepared;
+/// once it lands the retry is its kept answer.
+#[test]
+fn a_write_still_running_is_busy_to_its_retry() {
+    let store = Arc::new(Kept::default());
+    let serve = Arc::new(serving(&store, false));
+    let (entered, release) = (mpsc::channel(), mpsc::channel::<()>());
+    let first = {
+        let (serve, entered, release) = (Arc::clone(&serve), entered.0, release.1);
+        std::thread::spawn(move || {
+            let mut present = |_: &dyn BoardOperations| {
+                entered.send(()).unwrap();
+                let _ = release.recv();
+                Ok("first".to_string())
+            };
+            serve.execute(Some(&create()), Some(&write(1)), &mut present)
+        })
+    };
+    entered.1.recv().unwrap();
+    let mut never = |_: &dyn BoardOperations| -> Result<String, String> { panic!("ran twice") };
+    assert_eq!(
+        serve.execute(Some(&create()), Some(&write(1)), &mut never),
+        Err(ServeError::Busy)
+    );
+    drop(release.0);
+    assert_eq!(
+        first.join().unwrap(),
+        Ok(Transacted::Answered("first".into()))
+    );
+    let replayed = serve.execute(Some(&create()), Some(&write(1)), &mut never);
+    assert_eq!(replayed, Ok(Transacted::Replayed("first".into())));
+}
+
 /// Operations that cannot be built, or a store that failed under the
 /// presenter, answer nothing: the write keeps no answer, so its retry
 /// runs it.
@@ -166,8 +206,9 @@ fn a_failed_operation_keeps_no_answer() {
     assert!(matches!(read, Err(ServeError::Board(_))), "{read:?}");
 }
 
-/// Past [`MAX_WRITES`] at once a write is answered busy, unrun, so
-/// writes waiting on the lock never take the threads reads need.
+/// Past [`MAX_WRITES`] at once, or while its own id still runs, a write
+/// is answered busy before it is prepared (no host read), so writes
+/// waiting on the lock never take the threads reads need.
 #[test]
 fn writes_past_the_slots_are_busy() {
     let store = Arc::new(Kept::default());
@@ -191,9 +232,15 @@ fn writes_past_the_slots_are_busy() {
     // Every slot holder is inside its write.
     (0..MAX_WRITES).for_each(|_| entered.1.recv().unwrap());
     let mut never = |_: &dyn BoardOperations| -> Result<String, String> { panic!("ran") };
+    let prepared = store.prepared.load(Ordering::SeqCst);
     assert_eq!(
         serve.execute(Some(&create()), Some(&write(9)), &mut never),
         Err(ServeError::Busy)
+    );
+    assert_eq!(
+        store.prepared.load(Ordering::SeqCst),
+        prepared,
+        "busy reads no host"
     );
     assert!(
         serve

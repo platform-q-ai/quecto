@@ -1,14 +1,9 @@
-//! A board server's operations (epic #2705 B7): each `POST /op` is run
-//! here, on the server's own store. A write runs once per write id, under
-//! the board's write lock, in one immediate transaction that every write
-//! it makes lands in (a change and the completion it triggers alike), so
-//! its compare-and-swap never loses inside the lock; the same id again is
-//! answered with the first answer and writes nothing. A read takes no lock
-//! and no transaction. A panic here is fatal: the panic hook aborts the
-//! whole server outside a tool call (ADR-0029), so every failure is a
-//! [`ServeError`].
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+//! A board server's operations (epic #2705 B7): a write is admitted, its
+//! host reads made, then it runs once per write id in one transaction under
+//! the write lock; a read takes neither. A panic aborts the server
+//! (ADR-0029), so every failure is a [`ServeError`].
+use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::application::project_board::dto::{BoardRequest, ProjectBoardError};
 use crate::application::project_board::ports::{
@@ -29,12 +24,13 @@ pub const MAX_WRITES: usize = 2;
 pub struct ServeBoardOperation {
     store: Arc<dyn BoardOpStore>,
     operations: Arc<dyn BoardOperationsOver>,
-    writing: AtomicUsize,
+    /// The writes admitted, by principal and write id.
+    writing: Mutex<BTreeSet<String>>,
 }
 
 impl ServeBoardOperation {
     pub fn new(store: Arc<dyn BoardOpStore>, operations: Arc<dyn BoardOperationsOver>) -> Self {
-        let writing = AtomicUsize::new(0);
+        let writing = Mutex::default();
         Self {
             store,
             operations,
@@ -44,11 +40,11 @@ impl ServeBoardOperation {
 
     /// The answer `present` gives to `request` (`None`: one its front end
     /// could not read, whose refusal `present` renders, as a read's). A
-    /// write needs its `write`; a read takes none.
+    /// write needs its `write`, and is admitted before its host reads.
     ///
     /// # Errors
-    /// A write without its `write`, its id reused, or past [`MAX_WRITES`];
-    /// the store's failure, or operations that could not be built.
+    /// A write without its `write`, its id reused, past [`MAX_WRITES`] or
+    /// already running; the store's failure, or operations not built.
     pub fn execute(
         &self,
         request: Option<&BoardRequest>,
@@ -56,14 +52,20 @@ impl ServeBoardOperation {
         present: &mut Present<'_>,
     ) -> Result<Transacted, ServeError> {
         let failed = |error| ServeError::Board(ProjectBoardError::Store(error));
+        let writes = request.map(BoardRequest::writes);
+        // Admitted first, so busy is answered before any host is read.
+        let _admitted = match (writes, write) {
+            (Some(true), Some(write)) => Some(self.admitted(write).ok_or(ServeError::Busy)?),
+            (Some(true), None) => return Err(ServeError::NoWrite),
+            (Some(false) | None, _) => None,
+        };
         let over = self.operations.prepare(request, &*self.store.reads());
         let mut run = |store| {
             let operations = over(store).map_err(|error| error.to_string());
             operations.and_then(|operations| present(&*operations))
         };
-        match (request.map(BoardRequest::writes), write) {
+        match (writes, write) {
             (Some(true), Some(write)) => {
-                let _slot = Slot::taken(&self.writing).ok_or(ServeError::Busy)?;
                 // A failed op keeps no answer, so its retry runs it.
                 let transacted = self.store.transact(write, &mut |store| {
                     run(store).map_err(BoardStoreError::Unavailable)
@@ -73,28 +75,30 @@ impl ServeBoardOperation {
                     done @ (Transacted::Answered(_) | Transacted::Replayed(_)) => Ok(done),
                 }
             }
-            (Some(true), None) => Err(ServeError::NoWrite),
-            (Some(false) | None, _) => run(self.store.reads())
+            (_, _) => run(self.store.reads())
                 .map(Transacted::Answered)
                 .map_err(|why| failed(BoardStoreError::Unavailable(why))),
         }
     }
-}
 
-/// One of the [`MAX_WRITES`] write slots, given back when dropped.
-struct Slot<'a>(&'a AtomicUsize);
-
-impl<'a> Slot<'a> {
-    fn taken(writing: &'a AtomicUsize) -> Option<Self> {
-        let free = |held: usize| (held < MAX_WRITES).then_some(held + 1);
-        let taken = writing.fetch_update(Ordering::SeqCst, Ordering::SeqCst, free);
-        taken.ok().map(|_| Self(writing))
+    /// `write` admitted: one of [`MAX_WRITES`], its id not already running
+    /// (a retry of it is busy, then answered from the kept answer).
+    fn admitted(&self, write: &OpWrite) -> Option<Admitted<'_>> {
+        let key = format!("{}\n{}", write.principal, write.write_id.as_str());
+        let mut held = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        let free = held.len() < MAX_WRITES && held.insert(key.clone());
+        drop(held);
+        free.then(|| Admitted(&self.writing, key))
     }
 }
 
-impl Drop for Slot<'_> {
+/// An admitted write, let go when dropped.
+struct Admitted<'a>(&'a Mutex<BTreeSet<String>>, String);
+
+impl Drop for Admitted<'_> {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
+        let mut held = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        held.remove(&self.1);
     }
 }
 
