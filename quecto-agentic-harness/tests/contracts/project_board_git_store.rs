@@ -348,19 +348,25 @@ fn the_git_store_takes_a_plan_proposed_then_patched() {
     BootstrapProjectBoard::new(Arc::clone(&store))
         .execute()
         .unwrap();
-    CreateBoardTask::new(Arc::clone(&store), clock.clone())
-        .unwrap()
-        .execute(&NewBoardTask {
-            id: id.clone(),
-            title: "Board store".into(),
-            kind: TaskKind::Task,
-            description: String::new(),
-            status: NewBoardTaskStatus::Ready,
-            parent: None,
-            depends_on: vec![],
-            entry: quecto::domain::project_board::entities::task_parts::Entry::Sectioned,
-        })
-        .unwrap();
+    CreateBoardTask::new(
+        Arc::clone(&store),
+        clock.clone(),
+        std::sync::Arc::new(
+            quecto::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+        ),
+    )
+    .unwrap()
+    .execute(&NewBoardTask {
+        id: id.clone(),
+        title: "Board store".into(),
+        kind: TaskKind::Task,
+        description: String::new(),
+        status: NewBoardTaskStatus::Ready,
+        parent: None,
+        depends_on: vec![],
+        entry: quecto::domain::project_board::entities::task_parts::Entry::Sectioned,
+    })
+    .unwrap();
     let task_file = remote.object("tasks/board-store.md");
     let item = |name: &str| PlanItem {
         id: Slug::parse(name).unwrap(),
@@ -431,19 +437,25 @@ fn the_git_store_takes_an_acceptance_of_three_files_in_one_commit() {
     BootstrapProjectBoard::new(Arc::clone(&store))
         .execute()
         .unwrap();
-    CreateBoardTask::new(Arc::clone(&store), clock.clone())
-        .unwrap()
-        .execute(&NewBoardTask {
-            id: id.clone(),
-            title: "Board store".into(),
-            kind: TaskKind::Task,
-            description: String::new(),
-            status: NewBoardTaskStatus::Ready,
-            parent: None,
-            depends_on: vec![],
-            entry: quecto::domain::project_board::entities::task_parts::Entry::Sectioned,
-        })
-        .unwrap();
+    CreateBoardTask::new(
+        Arc::clone(&store),
+        clock.clone(),
+        std::sync::Arc::new(
+            quecto::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+        ),
+    )
+    .unwrap()
+    .execute(&NewBoardTask {
+        id: id.clone(),
+        title: "Board store".into(),
+        kind: TaskKind::Task,
+        description: String::new(),
+        status: NewBoardTaskStatus::Ready,
+        parent: None,
+        depends_on: vec![],
+        entry: quecto::domain::project_board::entities::task_parts::Entry::Sectioned,
+    })
+    .unwrap();
     let propose = ProposePlan::new(Arc::clone(&store), clock.clone()).unwrap();
     let accept = AcceptPlan::new(Arc::clone(&store), clock).unwrap();
     let proposal = |approach: &str| PlanProposal {
@@ -553,6 +565,7 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
         references: vec![],
         created: at.clone(),
         updated: at.clone(),
+        description_form: Default::default(),
     })
     .unwrap();
     let plan = Plan::new(PlanFields {

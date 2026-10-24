@@ -42,12 +42,15 @@ pub(super) fn description(read: &Read<'_>) -> Result<(Option<String>, Entry), Re
     let entry = read.policy.entry(sectioned);
     let described = match (text, sectioned) {
         (text, false) => Ok(text),
-        (None, true) => Ok(Some(Description::compose(
+        (None, true) => Description::compose(
             goal.as_deref(),
             why.as_deref(),
             done_when.as_deref(),
             links.as_deref(),
-        ))),
+        )
+        .map(Some)
+        // Each section is checked on its own field before it is composed.
+        .map_err(|error| RequestError::of(&error.field, error.problem, FaultKind::InvalidValue)),
         (Some(_), true) => Err(RequestError::of(
             "description",
             BOTH,

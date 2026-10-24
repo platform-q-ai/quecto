@@ -92,6 +92,7 @@ fn example() -> TaskFields {
         id: slug("board-cli"),
         title: "The board CLI answers in `JSON`".into(),
         kind: TaskKind::Task,
+        description_form: Default::default(),
         description:
             "Build the CLI on the store.\n# not a heading\n\n- read first\n- then write\n\n\
                       ```sh\nquecto board list\n\nquecto board show board-cli\n```"
@@ -316,10 +317,10 @@ fn a_claim_needs_all_three_rows() {
 
 #[test]
 fn a_newer_task_schema_asks_for_an_upgrade() {
-    let newer = edited("quecto-task schema=1", "quecto-task schema=2");
+    let newer = edited("quecto-task schema=1", "quecto-task schema=3");
     assert_eq!(
         decode::<TaskCodec>(newer.as_bytes()),
-        Err(CodecError::NewerSchema { found: 2, known: 1 })
+        Err(CodecError::NewerSchema { found: 3, known: 2 })
     );
     let other = edited("quecto-task schema=1", "quecto-plan schema=1");
     assert_eq!(
@@ -358,6 +359,7 @@ fn widest(title: String, description: String) -> TaskFields {
         id: long_slug(999),
         title,
         kind: TaskKind::Chore,
+        description_form: Default::default(),
         description,
         status: TaskStatus::InProgress,
         parent: Some(long_slug(998)),

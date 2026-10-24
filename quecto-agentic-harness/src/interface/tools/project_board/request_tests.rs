@@ -612,7 +612,7 @@ fn create_and_update_draft_take_the_descriptions_sections() {
         "goal": "Ship it.",
         "why": "Users wait.",
         "done_when": ["Merged", "CI green"],
-        "links": ["PR #1"],
+        "links": ["https://x.io/1"],
     }));
     let Ok(BoardRequest::Create(new)) = created else {
         panic!("{created:?}")
@@ -620,7 +620,7 @@ fn create_and_update_draft_take_the_descriptions_sections() {
     assert_eq!(
         new.description,
         "## Goal\nShip it.\n\n## Why\nUsers wait.\n\n## Done when\n- [ ] Merged\n- [ ] CI \
-         green\n\n## Links\n- PR #1"
+         green\n\n## Links\n- [x.io/1](https://x.io/1)"
     );
     let edit = parse(&json!({
         "op": "update_draft", "task": "a", "goal": "Ship.", "done_when": ["Merged"],

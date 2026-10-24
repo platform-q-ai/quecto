@@ -72,6 +72,7 @@ fn fields() -> TaskFields {
         id: slug("board-store"),
         title: "Board store".into(),
         kind: TaskKind::Task,
+        description_form: Default::default(),
         description: String::new(),
         status: TaskStatus::InProgress,
         parent: None,

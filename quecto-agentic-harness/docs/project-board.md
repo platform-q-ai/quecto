@@ -183,8 +183,8 @@ Part of the layout epic #2357.
 - [ ] CI green, merged with a merge commit
 
 ## Links
-- PR #2652 · issue #2370
-- Handoff: planning notes
+- [PR #2652](https://github.com/platform-q-ai/quecto/pull/2652)
+- [Planning handoff](https://example.com/handoff)
 ```
 
 `create` and `update_draft` take the sections as fields: `goal` and `why`
@@ -201,12 +201,12 @@ edit:
 
 | Rule | On entry |
 |---|---|
-| Goal | Required: 1 to 3 sentences, one paragraph, no heading |
+| Goal | Required: 1 to 3 sentences, one paragraph, no heading or blank line. Sentences are counted at a word ending in `.`, `!` or `?` before a capital, but never at an abbreviation (`Mr.`, `Mrs.`, `Ms.`, `Dr.`, `St.`, `e.g.`, `i.e.`, `etc.`, `vs.`, `cf.`) or an initial (`X.`) |
 | Why | Optional: one short paragraph, no heading |
-| Done when | Required: 1 to 8 outcomes, each `- [ ] ` (or `- [x] `) and the outcome |
-| Links | Optional: each `- ` and the link, shown as chips |
+| Done when | Required: 1 to 8 outcomes, each `- [ ] ` (or `- [x] `) and the outcome on one line, text a board file's table cell holds (plain words, `code`, `[text](https://…)` links) |
+| Links | Optional: each `- [text](https://…)`, shown as chips. Given as a field, a bare `https://` address is written `[address](https://…)` |
 | Description | At most 1,200 characters, headings included: a longer one is refused with "move details into the plan or a handoff" |
-| Title | At most 70 characters, written as an outcome |
+| Title | At most 70 characters (Unicode scalar values, not graphemes), written as an outcome |
 
 An empty description still enters, for a draft not written yet. Reading never
 checks these rules: a description in any other shape is legacy text, read,
@@ -218,11 +218,27 @@ Every task answer carries the sections beside `description`: `goal` and `why`
 `needs_goal`, `true` for legacy or empty text, which answers no sections. A
 listing's `summary` carries the goal on one line as its `subtitle`.
 
-In the task's file a description in its sections is a file section each:
-`## Goal`, `## Why` and `## Links` as prose, and `## Done when` as a
-`| Done | Outcome |` table (`yes` or `no`). Legacy text stays its
-`## Description`. A file holding both, or sections that make no description,
-is refused.
+Each field given as a section is checked on its own field before it is
+composed: a goal or why with a blank line or a heading, and an outcome or
+link that is empty or more than one line, are refused on `goal`, `why`,
+`done_when/{i}` or `links/{i}`.
+
+A task keeps the form its description entered in, and the form, never the
+text's shape, picks its file's layout. A description entered as sections is
+written at `schema=2`, a file section each: `## Goal`, `## Why` and
+`## Links` as prose, and `## Done when` as a `| Done | Outcome |` table (`yes`
+or `no`). Any other description (legacy text, text from the CLI's legacy
+entry, or none) stays `schema=1` with its `## Description`, the bytes earlier
+builds wrote, however its text reads; an existing task stays at schema 1 on
+every write until its description is given anew as sections. A file holding
+both layouts, sections at schema 1, or sections that make no description, is
+refused.
+
+**Deploy order.** A quecto from before T2 reads only schema 1: it sets a
+schema-2 task aside with "schema 2, written by a newer quecto; ... upgrade
+quecto to read it", never misreading it. Upgrade every reader first (every
+host that runs quecto, the Pocket relay's host included), then let agents
+write sectioned tasks.
 
 ### Entry policies by front end
 

@@ -126,6 +126,7 @@ pub fn fields(id: &str) -> TaskFields {
         id: slug(id),
         title: format!("Task {id}"),
         kind: TaskKind::Task,
+        description_form: Default::default(),
         description: String::new(),
         status: TaskStatus::Ready,
         parent: None,

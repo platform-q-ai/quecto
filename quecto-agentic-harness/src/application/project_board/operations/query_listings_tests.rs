@@ -119,8 +119,16 @@ pub fn assembled_reporting(
     let complete = CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs)?;
     Ok(RunBoardOperation::new(BoardOperationParts {
         bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
-        create: CreateBoardTask::new(Arc::clone(&store), Arc::clone(&clock))?,
-        update: UpdateDraftTask::new(Arc::clone(&store), Arc::clone(&clock))?,
+        create: CreateBoardTask::new(
+            Arc::clone(&store),
+            Arc::clone(&clock),
+            Arc::new(MarkdownTextCells),
+        )?,
+        update: UpdateDraftTask::new(
+            Arc::clone(&store),
+            Arc::clone(&clock),
+            Arc::new(MarkdownTextCells),
+        )?,
         change: ChangeBoardTask::new(Arc::clone(&store), Arc::clone(&clock))?,
         propose_plan: ProposePlan::new(Arc::clone(&store), Arc::clone(&clock))?,
         edit_plan: EditPlan::new(Arc::clone(&store), Arc::clone(&clock))?,

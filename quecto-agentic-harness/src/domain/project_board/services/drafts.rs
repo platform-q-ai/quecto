@@ -44,7 +44,8 @@ pub fn edit_draft(task: &Task, edit: &DraftEdit, now: &Timestamp) -> Result<Task
             .map_err(BoardRuleError::Invalid)?;
     }
     let new_description = edit.description.as_ref();
-    if let Some(description) = new_description.filter(|text| **text != fields.description) {
+    let changed = new_description.filter(|text| **text != fields.description);
+    if let Some(description) = changed {
         edit.entry
             .description(description)
             .map_err(BoardRuleError::Invalid)?;
@@ -53,8 +54,11 @@ pub fn edit_draft(task: &Task, edit: &DraftEdit, now: &Timestamp) -> Result<Task
     if let Some(title) = &edit.title {
         next.title = title.clone();
     }
-    if let Some(description) = &edit.description {
+    // A new description is kept in the form it entered in; one left as
+    // it is keeps its form (a legacy file stays legacy).
+    if let Some(description) = changed {
         next.description = description.clone();
+        next.description_form = edit.entry.form(description);
     }
     if let Some(parent) = &edit.parent {
         next.parent = parent.clone();

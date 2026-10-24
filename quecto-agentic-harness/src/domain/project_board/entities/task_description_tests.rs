@@ -11,8 +11,8 @@ use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 const SECTIONED: &str = "## Goal\nLand L12 (#2652): move the UDS presenters, mapping\nand loop \
      controllers into interface/uds roles.\n\n## Why\nPart of the layout epic #2357. #2648 and \
      #2650\nstack on it.\n\n## Done when\n- [ ] Current master merged in, moves only\n- [x] \
-     Layout ratchet and placements still hold\n\n## Links\n- PR #2652 · issue #2370 · epic \
-     #2357\n- Handoff: planning notes";
+     Layout ratchet and placements still hold\n\n## Links\n- [PR #2652](https://github.com/o/r/pull/2652)\n- \
+     [Handoff: planning notes](https://example.com/handoff)";
 
 const LEGACY: &str = "Refresh existing PR #2652 after #2641. Merge current origin/master as a \
      merge commit; moves only.\n\n- keep the ratchet";
@@ -170,8 +170,8 @@ fn sectioned_text_reads_back_byte_for_byte() {
     assert_eq!(
         description.links(),
         [
-            "PR #2652 · issue #2370 · epic #2357",
-            "Handoff: planning notes"
+            "[PR #2652](https://github.com/o/r/pull/2652)",
+            "[Handoff: planning notes](https://example.com/handoff)"
         ]
     );
     assert_eq!(
@@ -202,18 +202,71 @@ fn legacy_text_reads_as_legacy() {
 #[test]
 fn composed_sections_are_normalised_and_enter() {
     let outcomes = vec!["  Merged \u{a0}".to_string(), "CI green".to_string()];
-    let links = vec!["PR #1".to_string()];
-    let text = Description::compose(Some("Ship it.\r\n"), None, Some(&outcomes), Some(&links));
+    let links = vec![
+        "[PR #1](https://github.com/o/r/pull/1)".to_string(),
+        "https://www.example.com/a?b=1".to_string(),
+    ];
+    let text =
+        Description::compose(Some("Ship it.\r\n"), None, Some(&outcomes), Some(&links)).unwrap();
     assert_eq!(
         text,
-        "## Goal\nShip it.\n\n## Done when\n- [ ] Merged\n- [ ] CI green\n\n## Links\n- PR #1"
+        "## Goal\nShip it.\n\n## Done when\n- [ ] Merged\n- [ ] CI green\n\n## Links\n- [PR \
+         #1](https://github.com/o/r/pull/1)\n- [example.com/a?b=1](https://www.example.com/a?b=1)"
     );
     assert!(Description::entered(&text).unwrap().is_some());
     // What is not given, or given empty, is left out.
     assert_eq!(
         Description::compose(Some("Ship."), Some(" "), Some(&[]), None),
-        "## Goal\nShip."
+        Ok("## Goal\nShip.".into())
     );
+}
+
+/// #2705 T2 review round 1: each section is checked on its own field
+/// before it is composed, so a line break in one never reaches another's
+/// structure, and an item is named by its own index.
+#[test]
+fn a_section_given_as_a_field_is_refused_on_its_own_field() {
+    let refused = |goal: &str, done_when: &[&str]| {
+        let items: Vec<String> = done_when.iter().map(|item| (*item).to_string()).collect();
+        Description::compose(Some(goal), None, Some(&items), None)
+            .unwrap_err()
+            .field
+    };
+    assert_eq!(refused("a\n\n## Done when\n- [ ] injected", &["x"]), "goal");
+    assert_eq!(refused("a\n\nb", &["x"]), "goal");
+    assert_eq!(refused("Ship.", &["x\n- [ ] y"]), "done_when/0");
+    assert_eq!(refused("Ship.", &["x\ny"]), "done_when/0");
+    assert_eq!(refused("Ship.", &["ok", "   "]), "done_when/1");
+    let why = Description::compose(Some("Ship."), Some("w\n# h"), None, None);
+    assert_eq!(why.unwrap_err().field, "why");
+    let link = |links: &[&str]| {
+        let items: Vec<String> = links.iter().map(|item| (*item).to_string()).collect();
+        let text = Description::compose(Some("Ship."), None, Some(&["x".into()]), Some(&items));
+        text.and_then(|text| Description::entered(&text).map(|_| ()))
+    };
+    assert_eq!(link(&["x\ny"]).unwrap_err().field, "links/0");
+    // Only `[text](https://…)` or a bare https address enters as a link.
+    for refused in ["<https://x.io>", "PR #2", "http://x.io", "[x](http://x.io)"] {
+        assert_eq!(
+            link(&["https://x.io", refused]).unwrap_err().field,
+            "links/1"
+        );
+    }
+    assert_eq!(link(&["https://github.com/o/r/pull/1"]), Ok(()));
+}
+
+/// #2705 T2 review round 1: an abbreviation or an initial ends no
+/// sentence, so the count falls short, never over.
+#[test]
+fn abbreviations_and_initials_end_no_sentence() {
+    for goal in [
+        "Fix Dr. Who. Fix Mr. X. Done.",
+        "Use e.g. The parser, i.e. The codec, etc. Then stop.",
+        "Cf. St. James vs. Ms. Lee and Mrs. Doe. Ship.",
+    ] {
+        let text = format!("## Goal\n{goal}\n\n## Done when\n- [ ] Done");
+        assert!(Description::entered(&text).unwrap().is_some(), "{goal}");
+    }
 }
 
 #[test]
@@ -311,4 +364,55 @@ fn editing_a_legacy_drafts_other_fields_never_rewrites_its_description() {
         ..DraftEdit::default()
     };
     assert!(edit_draft(&legacy, &long, &at("10:00:00")).is_err());
+}
+
+/// Review round 1 (HIGH): the form, never the text's shape, says how a
+/// description is kept. Legacy text in the sections' shape stays legacy
+/// on every write; only a description entered as sections is kept in them,
+/// and the form is never the caller's to set.
+#[test]
+fn only_a_description_entered_as_sections_is_kept_in_them() {
+    let shaped = "## Goal\nShip it.\n\n## Done when\n- [ ] Merged";
+    let mut forged = draft(shaped, "Ship it");
+    forged.description_form = DescriptionForm::Sectioned;
+    let legacy_entry = Task::entered(forged.clone(), Entry::Legacy).unwrap();
+    assert_eq!(
+        legacy_entry.fields().description_form,
+        DescriptionForm::Legacy
+    );
+    let sectioned = Task::entered(forged, Entry::Sectioned).unwrap();
+    assert_eq!(
+        sectioned.fields().description_form,
+        DescriptionForm::Sectioned
+    );
+    let empty = Task::entered(draft("", "Ship it"), Entry::Sectioned).unwrap();
+    assert_eq!(empty.fields().description_form, DescriptionForm::Legacy);
+    // A legacy task in the sections' shape keeps its form when its title
+    // changes; a description given as sections makes it sectioned.
+    let legacy = Task::new(draft(shaped, "Ship it")).unwrap();
+    let retitle = DraftEdit {
+        title: Some("Ship it now".into()),
+        ..DraftEdit::default()
+    };
+    let retitled = edit_draft(&legacy, &retitle, &at("10:00:00")).unwrap();
+    assert_eq!(retitled.fields().description_form, DescriptionForm::Legacy);
+    let describe = |entry: Entry| DraftEdit {
+        description: Some(SECTIONED.into()),
+        entry,
+        ..DraftEdit::default()
+    };
+    let as_sections = edit_draft(&legacy, &describe(Entry::Sectioned), &at("10:00:00"));
+    assert_eq!(
+        as_sections.unwrap().fields().description_form,
+        DescriptionForm::Sectioned
+    );
+    let as_text = edit_draft(&legacy, &describe(Entry::Legacy), &at("10:00:00"));
+    assert_eq!(
+        as_text.unwrap().fields().description_form,
+        DescriptionForm::Legacy
+    );
+    // A form that says sections holds text in them.
+    let mut broken = draft(LEGACY, "Ship it");
+    broken.description_form = DescriptionForm::Sectioned;
+    assert_eq!(Task::new(broken).unwrap_err().field, "description");
 }

@@ -68,6 +68,7 @@ fn task(id: &str, status: TaskStatus, parent: Option<&str>, depends_on: &[&str])
         references: vec![],
         created: at.clone(),
         updated: at,
+        description_form: Default::default(),
     })
     .unwrap()
 }

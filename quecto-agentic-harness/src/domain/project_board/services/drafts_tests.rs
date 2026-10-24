@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::project_board::entities::task_parts::DescriptionForm;
 use crate::domain::project_board::services::fixtures_tests::{at, task};
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus::*;
 
@@ -20,6 +21,7 @@ fn a_draft_takes_a_new_title_description_and_references() {
     let mut expected = draft.fields().clone();
     expected.title = "Board store, again".into();
     expected.description = "## Goal\nWhy.\n\n## Done when\n- [ ] Done".into();
+    expected.description_form = DescriptionForm::Sectioned;
     expected.parent = Some(slug("epic"));
     expected.depends_on = vec![slug("schema")];
     expected.updated = at("10:00:00");

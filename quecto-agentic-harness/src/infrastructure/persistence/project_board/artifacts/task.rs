@@ -2,10 +2,11 @@
 //! task's own; its fields and sections hold the rest, every list in the
 //! task's own order:
 //!
-//! - Description, prose: legacy text, as written; or, never beside it, a
-//!   description in its sections (#2705 T2), each a section in its order:
-//!   Goal and Why, prose; Done when `[Done | Outcome]`, `yes` or `no`;
-//!   Links, prose (`- ` lines);
+//! - at schema 1, Description, prose: legacy text, as written; or, at
+//!   schema 2 (a description kept in its sections, #2705 T2), a section
+//!   each in its order: Goal and Why, prose; Done when `[Done | Outcome]`,
+//!   `yes` or `no`; Links, prose (`- [text](https://…)` lines). The task's
+//!   description form picks the schema, never its text;
 //! - Depends on `[Task]`, Superseded by `[Task]`;
 //! - Pull requests `[Pull request]`, `#n`: the links made the old way,
 //!   until S2c retires them;
@@ -20,7 +21,7 @@ use super::{ArtifactCodec, CodecError};
 use crate::domain::project_board::entities::claim::Claim;
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::entities::task_parts::{
-    Description, Outcome, PARTS, Shape as PartShape,
+    Description, DescriptionForm, Outcome, PARTS, Shape as PartShape,
 };
 use crate::domain::project_board::value_objects::reference::{IssueNumber, Reference};
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -52,6 +53,12 @@ const REFERENCES: &str = "References";
 /// description.
 const NOT_A_DESCRIPTION: &str = "its sections must be a Goal paragraph, an optional Why \
      paragraph, a Done when table of outcomes, and optional Links written as \"- \" lines";
+/// Why a schema-2 file holding a Description beside the sections is
+/// refused.
+const BESIDE_SECTIONS: &str = "beside its own sections";
+/// Why a schema-1 file holding the description's sections is refused: no
+/// build wrote them at schema 1.
+const SECTIONS_AT_SCHEMA_1: &str = "its sections are written only at schema 2";
 
 const FIELDS: &[Column<'static>] = &[
     column(ID, CellKind::Ascii),
@@ -80,6 +87,11 @@ const OUTCOME_COLUMNS: &[Column<'static>] = &[
 ];
 const DONE: &str = "yes";
 const OPEN: &str = "no";
+/// The schema of a file whose description is kept in its sections (#2705
+/// T2). A legacy description stays at schema 1, the bytes earlier builds
+/// wrote; an earlier build reads schema 2 as a newer quecto's ("upgrade
+/// quecto to read it"), never as a file it misreads.
+const SECTIONED_SCHEMA: u32 = 2;
 
 const SECTIONS: &[SectionShape<'static>] = &[
     SectionShape {
@@ -139,7 +151,8 @@ pub struct TaskCodec;
 
 impl ArtifactCodec for TaskCodec {
     type Value = Task;
-    const SCHEMA: u32 = 1;
+    const SCHEMA: u32 = SECTIONED_SCHEMA;
+    const OLDEST_SCHEMA: u32 = 1;
     const SHAPE: Shape<'static> = Shape {
         kind: "task",
         fields: FIELDS,
@@ -176,20 +189,28 @@ impl ArtifactCodec for TaskCodec {
         fields.push((CREATED, cells::time(&task.created)));
         fields.push((UPDATED, cells::time(&task.updated)));
         let mut sections = vec![];
-        // A description in its sections is a file section each (#2705
-        // T2); legacy text stays the Description, as written. Each one's
-        // own line, from 1, names where it is refused.
-        match Description::read(&task.description) {
-            Some(description) => {
+        // The description's form, never its text's shape, picks the
+        // layout (#2705 T2): one kept in its sections is a file section
+        // each, at schema 2; any other stays the Description, as written,
+        // at schema 1, the bytes earlier builds wrote. Each one's own
+        // line, from 1, names where it is refused.
+        let schema = match task.description_form {
+            DescriptionForm::Sectioned => {
+                let description = Description::read(&task.description)
+                    .ok_or_else(|| refused(DESCRIPTION, NOT_A_DESCRIPTION))?;
                 for (heading, text) in description.sections() {
                     match heading == DONE_WHEN {
                         true => sections.push(section(heading, outcome_rows(&description))),
                         false => sections.extend(prose(heading, &text)?),
                     }
                 }
+                SECTIONED_SCHEMA
             }
-            None => sections.extend(prose(DESCRIPTION, &task.description)?),
-        }
+            DescriptionForm::Legacy => {
+                sections.extend(prose(DESCRIPTION, &task.description)?);
+                Self::OLDEST_SCHEMA
+            }
+        };
         let slugs = |slugs: &[Slug]| slugs.iter().map(|slug| vec![cells::slug(slug)]).collect();
         let prs = task
             .prs
@@ -216,7 +237,7 @@ impl ArtifactCodec for TaskCodec {
             "the fields are written in the shape's order"
         );
         Ok(Document {
-            schema: Self::SCHEMA,
+            schema,
             title: task.title.clone(),
             fields: fields
                 .into_iter()
@@ -264,11 +285,13 @@ impl ArtifactCodec for TaskCodec {
         for section in &document.sections {
             read.section(section)?;
         }
+        let (description, description_form) = read.description(document.schema)?;
         let fields = TaskFields {
             id: cells::read_slug(ID, required(ID)?)?,
             title: document.title.clone(),
             kind: cells::read_word(KIND, required(KIND)?, TaskKind::parse)?,
-            description: read.description()?,
+            description,
+            description_form,
             status: cells::read_word(STATUS, required(STATUS)?, TaskStatus::parse)?,
             parent: field(PARENT)
                 .map(|cell| cells::read_slug(PARENT, cell))
@@ -350,21 +373,28 @@ impl Read {
     /// The task's description: its Description as written, or the text
     /// its own sections make (one of the two, never both), which must be
     /// a description in its sections.
-    fn description(&mut self) -> Result<String, CodecError> {
+    /// The task's description and its form, by the file's `schema`: at
+    /// schema 1 its Description as written (legacy); at schema 2 the text
+    /// its own sections make, which must be a description in its sections.
+    /// Never both, and never the other schema's layout.
+    fn description(&mut self, schema: u32) -> Result<(String, DescriptionForm), CodecError> {
         let parts = std::mem::take(&mut self.parts);
-        match (self.description.is_empty(), parts.as_slice()) {
-            (_, []) => Ok(std::mem::take(&mut self.description)),
-            (true, [_, ..]) => {
+        let text = std::mem::take(&mut self.description);
+        match (schema, text.is_empty(), parts.as_slice()) {
+            (SECTIONED_SCHEMA, true, [_, ..]) => {
                 let pairs = parts
                     .iter()
                     .map(|(heading, text)| (*heading, text.as_str()));
                 let text = Description::assemble(pairs);
                 match Description::read(&text) {
-                    Some(_) => Ok(text),
+                    Some(_) => Ok((text, DescriptionForm::Sectioned)),
                     None => Err(refused(DESCRIPTION, NOT_A_DESCRIPTION)),
                 }
             }
-            (false, [_, ..]) => Err(refused(DESCRIPTION, "beside its own sections")),
+            (SECTIONED_SCHEMA, false, _) => Err(refused(DESCRIPTION, BESIDE_SECTIONS)),
+            (SECTIONED_SCHEMA, true, []) => Err(refused(DESCRIPTION, NOT_A_DESCRIPTION)),
+            (_, _, []) => Ok((text, DescriptionForm::Legacy)),
+            (_, _, [_, ..]) => Err(refused(DESCRIPTION, SECTIONS_AT_SCHEMA_1)),
         }
     }
 

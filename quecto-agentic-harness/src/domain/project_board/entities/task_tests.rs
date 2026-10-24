@@ -14,6 +14,7 @@ pub(super) fn fields() -> TaskFields {
         id: slug("board-store"),
         title: "Board store".into(),
         kind: TaskKind::Task,
+        description_form: Default::default(),
         description: "Store **tasks** on a branch.\n\n- one".into(),
         status: TaskStatus::InProgress,
         parent: Some(slug("boards")),

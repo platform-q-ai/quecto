@@ -33,7 +33,14 @@ fn holding(tasks: &[(&str, TaskStatus, Option<&str>, &[&str])]) -> MemoryBoardSt
 }
 
 fn update(store: &MemoryBoardStore) -> UpdateDraftTask {
-    UpdateDraftTask::new(Arc::new(store.client()), SetClock::at("10:00:00")).unwrap()
+    UpdateDraftTask::new(
+        Arc::new(store.client()),
+        SetClock::at("10:00:00"),
+        std::sync::Arc::new(
+            crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+        ),
+    )
+    .unwrap()
 }
 
 /// An update of draft `id` setting nothing yet.

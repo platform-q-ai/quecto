@@ -25,14 +25,14 @@ fn task(description: &str) -> Task {
         references: vec![],
         created: at.clone(),
         updated: at,
+        description_form: Default::default(),
     })
     .unwrap()
 }
 
 #[test]
 fn a_sectioned_description_answers_its_sections_beside_its_text() {
-    let text =
-        "## Goal\nShip it.\n\n## Done when\n- [ ] Merged\n- [x] CI green\n\n## Links\n- PR #1";
+    let text = "## Goal\nShip it.\n\n## Done when\n- [ ] Merged\n- [x] CI green\n\n## Links\n- [PR #1](https://x.io/1)";
     let answered = task_json(&task(text));
     assert_eq!(answered["description"], text);
     assert_eq!(answered["goal"], "Ship it.");
@@ -41,7 +41,7 @@ fn a_sectioned_description_answers_its_sections_beside_its_text() {
         answered["done_when"],
         json!([{"outcome": "Merged", "done": false}, {"outcome": "CI green", "done": true}])
     );
-    assert_eq!(answered["links"], json!(["PR #1"]));
+    assert_eq!(answered["links"], json!(["[PR #1](https://x.io/1)"]));
     assert_eq!(answered["needs_goal"], false);
 }
 

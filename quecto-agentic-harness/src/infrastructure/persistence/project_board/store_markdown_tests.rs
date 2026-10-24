@@ -116,7 +116,8 @@ fn a_hand_edited_task_file_is_set_aside_and_carried() {
 
 #[test]
 fn a_newer_schema_task_file_is_set_aside_with_upgrade_reason_and_carried() {
-    let marker = format!("quecto-task schema={}", TaskCodec::SCHEMA);
+    // A legacy task is written at the oldest schema the codec reads.
+    let marker = format!("quecto-task schema={}", TaskCodec::OLDEST_SCHEMA);
     let newer = canonical(&task("a")).replace(
         &marker,
         &format!("quecto-task schema={}", TaskCodec::SCHEMA + 1),

@@ -69,8 +69,11 @@ pub struct EntryRules {
     pub goal_sentences: RangeInclusive<usize>,
     /// Outcomes of its done-when checklist.
     pub done_when: RangeInclusive<usize>,
-    /// Characters of a title.
+    /// Characters (Unicode scalar values) of a title.
     pub max_title_chars: usize,
+    /// Words ending in `.` that end no sentence (matched ignoring case);
+    /// a single capital and `.` (an initial) ends none either.
+    pub abbreviations: &'static [&'static str],
 }
 
 pub const ENTRY_RULES: EntryRules = EntryRules {
@@ -78,6 +81,9 @@ pub const ENTRY_RULES: EntryRules = EntryRules {
     goal_sentences: 1..=3,
     done_when: 1..=8,
     max_title_chars: 70,
+    abbreviations: &[
+        "mr.", "mrs.", "ms.", "dr.", "st.", "e.g.", "i.e.", "etc.", "vs.", "cf.",
+    ],
 };
 
 /// Where a refused size sends the detail (owner-approved design, #2705).
@@ -147,7 +153,7 @@ pub const PARTS: [PartRule; 4] = [
         required: false,
         shape: Shape::List,
         wanted: "is empty: list links, or leave it out",
-        misshapen: "must be one link, written \"- \" then the link",
+        misshapen: "must be one link, written \"- [text](https://…)\"",
     },
 ];
 
@@ -156,6 +162,33 @@ const BETWEEN: &str = "\n\n";
 const OPEN: &str = "- [ ] ";
 const DONE: &str = "- [x] ";
 const ITEM: &str = "- ";
+/// Why an outcome or link given empty is refused.
+const EMPTY_ITEM: &str = "is empty: write it, or leave it out";
+
+/// An https address a board file holds: no space, bracket, parenthesis,
+/// `<`, `>` or backtick (an allowlist of what may follow `https://`).
+const ADDRESS: &str = r"https://[A-Za-z0-9\-._~:/?#@!&'*+,;=%]+";
+/// A link as a description's Links hold it: `[text](https://…)`, its text
+/// holding no bracket or backslash.
+static LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r"^\[[^\[\]\\]+\]\({ADDRESS}\)$")).expect("link"));
+/// A bare https address, as a link may be given.
+static BARE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!("^{ADDRESS}$")).expect("bare address"));
+
+/// `item` as a section of `shape` writes it: a link given as a bare
+/// address becomes `[address](address)`, its text without the scheme (and
+/// a leading `www.`), as a board file shows no bare address.
+fn linked(shape: Shape, item: String) -> String {
+    match (shape, BARE.is_match(&item)) {
+        (Shape::List, true) => {
+            let shown = item.trim_start_matches("https://");
+            let shown = shown.strip_prefix("www.").unwrap_or(shown);
+            format!("[{shown}]({item})")
+        }
+        (Shape::List, false) | (Shape::Paragraph | Shape::Checklist, _) => item,
+    }
+}
 
 /// One outcome of the done-when checklist.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,34 +234,56 @@ impl Description {
     }
 
     /// The description the sections given make, each normalised as board
-    /// text: a section not given, or given empty, is left out (and a
-    /// required one is then refused on entry).
+    /// text and checked on its own field first, so no line break in one
+    /// can reach another's structure: a section not given, or given empty,
+    /// is left out (a required one is then refused on entry). A link given
+    /// as a bare `https://` address is written `[address](https://…)`,
+    /// the one form a board file holds.
+    ///
+    /// # Errors
+    /// A goal or why with a blank line or a heading, or an outcome or link
+    /// that is empty or more than one line, with its own field.
     pub fn compose(
         goal: Option<&str>,
         why: Option<&str>,
         done_when: Option<&[String]>,
         links: Option<&[String]>,
-    ) -> String {
-        let paragraph = |text: Option<&str>| text.map(board_text::text);
-        let listed = |prefix: &str, items: Option<&[String]>| {
-            items.map(|items| {
-                let lines: Vec<String> = items
-                    .iter()
-                    .map(|item| format!("{prefix}{}", board_text::line(item)))
-                    .collect();
-                lines.join("\n")
-            })
+    ) -> Result<String, SchemaError> {
+        let [goal_rule, why_rule, done_rule, links_rule] = &PARTS;
+        let paragraph = |rule: &PartRule, text: Option<&str>| {
+            let text = text.map(board_text::text).filter(|text| !text.is_empty());
+            text.map(|text| shaped_lines(rule, &text).map(|()| text))
+                .transpose()
+        };
+        let listed = |rule: &PartRule, prefix: &str, items: Option<&[String]>| {
+            let items = items.filter(|items| !items.is_empty());
+            let lines = items.map(|items| {
+                let mut indexed = items.iter().enumerate();
+                indexed.try_fold(vec![], |mut lines, (index, raw)| {
+                    let field = format!("{}/{index}", rule.field);
+                    let item = board_text::line(raw);
+                    match (item.is_empty(), item.contains('\n')) {
+                        (true, _) => return Err(SchemaError::new(field, EMPTY_ITEM)),
+                        (false, true) => return Err(SchemaError::new(field, rule.misshapen)),
+                        (false, false) => {}
+                    }
+                    lines.push(format!("{prefix}{}", linked(rule.shape, item)));
+                    Ok(lines)
+                })
+            });
+            lines
+                .transpose()
+                .map(|lines| lines.map(|lines| lines.join("\n")))
         };
         let bodies = [
-            paragraph(goal),
-            paragraph(why),
-            listed(OPEN, done_when),
-            listed(ITEM, links),
+            paragraph(goal_rule, goal)?,
+            paragraph(why_rule, why)?,
+            listed(done_rule, OPEN, done_when)?,
+            listed(links_rule, ITEM, links)?,
         ];
-        Self::assemble(PARTS.iter().zip(&bodies).filter_map(|(rule, body)| {
-            let body = body.as_deref().filter(|body| !body.is_empty())?;
-            Some((rule.heading, body))
-        }))
+        Ok(Self::assemble(PARTS.iter().zip(&bodies).filter_map(
+            |(rule, body)| body.as_deref().map(|body| (rule.heading, body)),
+        )))
     }
 
     /// The text `sections` make, each a heading and its body, in order.
@@ -410,7 +465,7 @@ fn shaped_lines(rule: &PartRule, body: &str) -> Result<(), SchemaError> {
     let misshapen = body.split('\n').position(|line| match rule.shape {
         Shape::Paragraph => line.trim().is_empty() || heading(line),
         Shape::Checklist => item(line, &[OPEN, DONE]).is_none(),
-        Shape::List => item(line, &[ITEM]).is_none(),
+        Shape::List => item(line, &[ITEM]).is_none_or(|(_, text)| !LINK.is_match(&text)),
     });
     match (misshapen, rule.shape) {
         (None, _) => Ok(()),
@@ -447,11 +502,20 @@ fn item(line: &str, prefixes: &[&str]) -> Option<(bool, String)> {
 /// The sentences of `goal`: one, and one more after each word that ends
 /// with `.`, `!` or `?` (past closing quotes and brackets) and comes
 /// before a word starting with a capital (so "e.g. the" is one sentence).
+/// An abbreviation of [`EntryRules::abbreviations`] or an initial (`X.`)
+/// ends none, so the count may fall short, never over.
 fn sentences(goal: &str) -> usize {
     let words: Vec<&str> = goal.split_whitespace().collect();
     let ends = |word: &str| {
-        word.trim_end_matches(['"', '\'', ')', ']', '\u{2019}', '\u{201d}'])
-            .ends_with(['.', '!', '?'])
+        let word = word.trim_end_matches(['"', '\'', ')', ']', '\u{2019}', '\u{201d}']);
+        let lower = word.to_lowercase();
+        let abbreviated = ENTRY_RULES.abbreviations.contains(&lower.as_str());
+        let mut chars = word.chars();
+        let initial = matches!(
+            (chars.next(), chars.next(), chars.next()),
+            (Some(letter), Some('.'), None) if letter.is_uppercase()
+        );
+        word.ends_with(['.', '!', '?']) && !abbreviated && !initial
     };
     let starts = |word: &str| word.chars().next().is_some_and(char::is_uppercase);
     let boundaries = words
@@ -478,6 +542,19 @@ pub fn entered_title(field: &str, title: &str) -> Result<(), SchemaError> {
             format!("is {chars} characters; the most is {max}: {SHORT_TITLE}"),
         )),
     }
+}
+
+/// The form a task's description is kept in (#2705 T2): what decides its
+/// file's layout, never its text's shape, so text an earlier build kept is
+/// kept as it was however it reads.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DescriptionForm {
+    /// Text as written: legacy, or none yet.
+    #[default]
+    Legacy,
+    /// Entered as its sections: its text is always [`Description::read`]
+    /// in them.
+    Sectioned,
 }
 
 /// How one write's title and description enter the board (#2705 T2).
@@ -510,6 +587,15 @@ impl Entry {
     /// # Errors
     /// Text never normalised, or (sectioned) not its sections or past an
     /// entry rule.
+    /// The form a description `text` entered this way is kept in:
+    /// sectioned only when it entered as sections and holds some.
+    pub fn form(self, text: &str) -> DescriptionForm {
+        match (self, text.is_empty()) {
+            (Self::Sectioned, false) => DescriptionForm::Sectioned,
+            (Self::Sectioned, true) | (Self::Legacy, _) => DescriptionForm::Legacy,
+        }
+    }
+
     pub fn description(self, text: &str) -> Result<(), SchemaError> {
         match self {
             Self::Sectioned => Description::entered(text).map(|_| ()),

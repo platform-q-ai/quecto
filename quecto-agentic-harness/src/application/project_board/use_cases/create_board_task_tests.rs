@@ -17,7 +17,14 @@ use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use std::sync::Arc;
 
 fn create(store: &MemoryBoardStore, clock: Arc<SetClock>) -> CreateBoardTask {
-    CreateBoardTask::new(Arc::new(store.client()), clock).unwrap()
+    CreateBoardTask::new(
+        Arc::new(store.client()),
+        clock,
+        std::sync::Arc::new(
+            crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+        ),
+    )
+    .unwrap()
 }
 
 /// Another writer's task, written straight to the store.
@@ -63,6 +70,9 @@ fn a_new_task_holds_only_its_own_fields() {
         TaskFields {
             status: TaskStatus::Draft,
             description: "## Goal\nWhy and how.\n\n## Done when\n- [ ] Done".into(),
+            // Entered as sections, it is kept in them (#2705 T2).
+            description_form:
+                crate::domain::project_board::entities::task_parts::DescriptionForm::Sectioned,
             created: at("10:00:00"),
             updated: at("10:00:00"),
             ..fields("a")
@@ -503,6 +513,45 @@ fn free_text_or_a_long_title_never_enters() {
     assert_eq!(legacy.unwrap().fields().description, "Why and how.");
 }
 
+/// Review round 1: an outcome or link a board file cannot hold is refused
+/// as it enters, on its own field, never at write.
+#[test]
+fn an_outcome_or_link_the_file_cannot_hold_is_refused_on_entry() {
+    let store = board();
+    let made = |description: &str| {
+        create(&store, SetClock::at("10:00:00")).execute(&NewBoardTask {
+            description: description.into(),
+            ..new_task("a")
+        })
+    };
+    for (description, field) in [
+        (
+            "## Goal\nShip.\n\n## Done when\n- [ ] Done\n- [ ] see <b>x</b>",
+            "done_when/1",
+        ),
+        (
+            "## Goal\nShip.\n\n## Done when\n- [ ] see https://x.io",
+            "done_when/0",
+        ),
+        (
+            "## Goal\nShip.\n\n## Done when\n- [ ] Done\n\n## Links\n- [www.x.io](https://x.io)",
+            "links/0",
+        ),
+    ] {
+        let refused = made(description);
+        assert!(
+            matches!(&refused, Err(ProjectBoardError::Invalid(error)) if error.field == field),
+            "{description}: {refused:?}"
+        );
+    }
+    assert_eq!(store.read().unwrap().tasks, vec![]);
+    let held = made(
+        "## Goal\nShip.\n\n## Done when\n- [ ] `cargo test` passes\n\n## Links\n- \
+                     [PR 1](https://github.com/o/r/pull/1)",
+    );
+    assert!(held.is_ok(), "{held:?}");
+}
+
 /// An id the board's other artifacts already name (a plan, run, change or
 /// review of a task by that id, or a discussion about it) is refused,
 /// naming the least of them: a new task would take over what they say.
@@ -680,7 +729,14 @@ fn a_write_notes_the_lock_races_its_store_met() {
         races: std::sync::atomic::AtomicU64::new(5),
         per_write: 2,
     };
-    let creator = CreateBoardTask::new(Arc::new(racing), SetClock::at("10:00:00")).unwrap();
+    let creator = CreateBoardTask::new(
+        Arc::new(racing),
+        SetClock::at("10:00:00"),
+        std::sync::Arc::new(
+            crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+        ),
+    )
+    .unwrap();
     let mut facts = crate::application::project_board::telemetry::OpFacts::default();
     creator
         .execute_noted(&new_task("a"), Some(&mut facts))
