@@ -64,6 +64,13 @@ use std::path::Path;
 
 use super::teardown_authority::{production_code, production_files, walk};
 
+// cfg(test) child constructs its parent's state and converts raw keys for characterization: https://github.com/platform-q-ai/quecto/issues/2729
+pub(super) const ACTIVE_SESSION_TEST_FILE: &str =
+    "src/application/sessions/services/active_session/tests.rs";
+// cfg(test) child uses its parent's retention port to characterize ledger retention: https://github.com/platform-q-ai/quecto/issues/2729
+const CONVERSATION_LEDGER_TEST_FILE: &str =
+    "src/application/sessions/services/conversation_ledger/tests.rs";
+
 /// The files the plural capability is made of (R1).
 const CANONICAL_FILES: &[&str] = &[
     // #2009 extends the existing owners with home discovery, not scoped keys.
@@ -1287,8 +1294,7 @@ fn ports_are_declared_only_in_the_capability_ports_file_and_contracted() {
 fn sessions_graph_nodes_are_constructed_only_in_composition() {
     for (constructor, site) in COMPOSED_CONSTRUCTORS {
         let test_exceptions = if *constructor == "ActiveSessionState::new(" {
-            // cfg(test) child constructs its parent's state for characterization: https://github.com/platform-q-ai/quecto/issues/2729
-            set(&["src/application/sessions/services/active_session/tests.rs"])
+            set(&[ACTIVE_SESSION_TEST_FILE])
         } else {
             BTreeSet::new()
         };
@@ -1966,8 +1972,7 @@ fn retained_context_has_exactly_one_owner_per_role() {
         set(&["src/application/sessions/ports/mod.rs"])
     );
     assert!(!RETENTION_PORT_HOLDERS.is_empty());
-    // cfg(test) child uses its parent's retention port to characterize ledger retention: https://github.com/platform-q-ai/quecto/issues/2729
-    let test_exceptions = set(&["src/application/sessions/services/conversation_ledger/tests.rs"]);
+    let test_exceptions = set(&[CONVERSATION_LEDGER_TEST_FILE]);
     let (test_holders, holders): (BTreeSet<_>, BTreeSet<_>) =
         production_files_calling("ContextSpillStore")
             .into_iter()
