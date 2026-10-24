@@ -32,11 +32,11 @@ pub struct ServeOptions {
     pub state: Option<PathBuf>,
 }
 
-/// `args` (after `board-server`) as `serve`'s options: `--listen` as
-/// often as wanted, each other at most once.
+/// `args` (after `board-server`) as `serve`'s options (only `--listen`
+/// repeats).
 /// # Errors
 /// Another action or option, one without its value or twice, an address
-/// off the allowlist, or one of `--socket` and `--repo` missing.
+/// off the allowlist, or no `--socket` or `--repo`.
 pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
     let refused = |why: String| Err(format!("board-server: {why}"));
     let Some((action, options)) = args.split_first() else {
@@ -104,12 +104,10 @@ pub struct Started {
     pub elapsed: Duration,
 }
 
-/// Binds `socket` and each of `tcp`, starts the runtime, tells `ready`,
-/// serves `handles` until the future `stop` makes completes, then removes
-/// the socket.
+/// Binds `socket` and `tcp`, starts the runtime, tells `ready`, serves
+/// until the future `stop` makes completes, then removes the socket.
 /// # Errors
-/// The socket or an address could not be bound, the runtime started, or
-/// it served.
+/// A bind, the runtime or the serving failed.
 pub fn serve<S, F>(
     handles: BoardServerHandles,
     socket: &Path,

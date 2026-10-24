@@ -1,8 +1,7 @@
 //! The board server's graph (epic #2705 B4, B5): the git store, read only
 //! (writes are B7), this machine's clock, peer credentials letting in this
-//! user only, the device tokens in a file under the state directory, and
-//! the TCP addresses the global config names. A SQLite store (B2) slots in
-//! here with no server change, and later keeps the tokens too.
+//! user only, the tokens file in the state directory, and the TCP addresses
+//! the global config names. A SQLite store (B2) slots in here unchanged.
 use std::path::Path;
 use std::sync::Arc;
 
@@ -21,9 +20,8 @@ pub use crate::interface::cli::board_server::{BoardServerEnvironment, BoardServe
 
 /// Builds the board server for `environment`'s clone and board remote.
 /// # Errors
-/// No git, no such remote, or one with no URL or board id; a config that
-/// does not load or names an address off the allowlist; a state directory
-/// or tokens file refused: each said, secrets and URL userinfo redacted.
+/// No git, remote, URL or board id; a bad config or address; a state
+/// directory or tokens file refused (secrets and URL userinfo redacted).
 pub fn build_board_server(
     environment: &BoardServerEnvironment,
 ) -> Result<BoardServerHandles, String> {
@@ -72,8 +70,7 @@ pub fn build_board_server(
     })
 }
 
-/// The addresses `board_server.listen` in the global config at `path`
-/// names; none when the file or the key is missing.
+/// The addresses `board_server.listen` names in the config at `path`.
 fn configured_listen(path: &Path) -> Result<Vec<ListenAddress>, String> {
     let shown = path.display();
     let text = path

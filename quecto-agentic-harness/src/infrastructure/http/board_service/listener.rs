@@ -1,13 +1,10 @@
 //! The board service's listener (epic #2705 B4, B5): HTTP/1.1 on a Unix
 //! socket and on TCP, parsed by hyper; it knows no board and no token. A
-//! Unix connection is let in only when the injected [`PeerCredentials`]
-//! read the one uid allowed (peer credentials are for the Unix socket
-//! alone); a TCP connection is let in for the handler to ask each request
-//! for a token: the handler is told each request's [`Transport`] and
-//! `Authorization`. Each request is held to the [`limits`] and handed to
-//! the injected [`ServiceHandler`] on a blocking thread. [`bind`] makes the
-//! socket safely: mode 0600, in a directory of mode 0700; [`bind_tcp`]
-//! binds the address it is given (its caller holds the allowlist).
+//! Unix peer is let in only as the uid the injected [`PeerCredentials`]
+//! allow; a TCP request is first put to the injected [`ServiceHandler`]'s
+//! gate. Each request is held to the [`limits`] and answered by the handler
+//! on a blocking thread. [`bind`] makes the socket mode 0600 in a 0700
+//! directory; [`bind_tcp`] binds the address it is given.
 //!
 //! Every reply this module or its handler makes is JSON with a typed
 //! `code`. The HTTP layer's own refusals, made by hyper's parser before
@@ -17,7 +14,6 @@ use std::convert::Infallible;
 use std::fs;
 use std::future::Future;
 use std::io;
-use std::net::IpAddr;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,6 +29,7 @@ use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::sync::{Semaphore, watch};
 
 use super::limits::{self, Refusal, WriteDeadline};
+use super::sources::{Sources, Unproven, source_of};
 
 pub use super::limits::Method as ServiceMethod;
 
@@ -43,31 +40,26 @@ pub struct ServiceRequest {
     /// The request target's path, without its query.
     pub path: String,
     pub body: Vec<u8>,
-    /// The transport it came over.
     pub transport: Transport,
-    /// Its one `Authorization` value; an empty one when it sent several or
-    /// one that is not text.
-    pub authorization: Option<String>,
+    /// Over TCP, who the handler's gate found the caller to be.
+    pub principal: Option<String>,
 }
 
-/// Which transport a request came over.
+/// A request's transport: the Unix socket (the server's own user), or TCP.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
-    /// The Unix socket: the peer is the server's own user.
     Local,
-    /// TCP: the peer is anyone who can reach the address.
     Tcp,
 }
 
-/// A handler's reply: a status, a JSON body, a 405's `Allow`, a 401's
-/// `WWW-Authenticate`, and whether the connection ends with it.
+/// A handler's reply: status, JSON body, `Allow`, `WWW-Authenticate`, and
+/// whether it ends the connection (`Connection: close`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceReply {
     pub status: u16,
     pub body: Vec<u8>,
     pub allow: Option<&'static str>,
     pub challenge: Option<&'static str>,
-    /// Answered `Connection: close`, then the connection is shut.
     pub close: bool,
 }
 
@@ -87,9 +79,11 @@ impl ServiceReply {
 
 /// What answers the service's requests, on a blocking thread.
 pub trait ServiceHandler: Send + Sync {
-    /// A TCP request's gate, asked before anything else of it is judged
-    /// or its body read: `None` lets it on, `Some` is its answer.
-    fn authenticate_remote(&self, authorization: Option<&str>) -> Option<ServiceReply>;
+    /// A TCP request's gate, given its one `Authorization`, asked before
+    /// anything else of it is judged: the caller's principal.
+    /// # Errors
+    /// The refusal to answer with.
+    fn authenticate_remote(&self, authorization: Option<&str>) -> Result<String, ServiceReply>;
     fn answer(&self, request: &ServiceRequest) -> ServiceReply;
     /// The methods `path` takes (an `Allow` value), or `None` for no route.
     fn allowed(&self, path: &str) -> Option<&'static str>;
@@ -127,12 +121,15 @@ pub struct ServiceParts {
     pub limits: ConnectionLimits,
 }
 
-/// Each connection's deadlines; tests shorten them.
+/// Each connection's deadlines and per-source cap; tests change them.
 #[derive(Debug, Clone, Copy)]
 pub struct ConnectionLimits {
     pub write_timeout: Duration,
     pub lifetime: Duration,
     pub grace: Duration,
+    /// How long a TCP connection has to authenticate its first request.
+    pub first_request: Duration,
+    pub per_source: usize,
 }
 
 impl ConnectionLimits {
@@ -140,6 +137,8 @@ impl ConnectionLimits {
         write_timeout: limits::WRITE_TIMEOUT,
         lifetime: limits::CONNECTION_LIFETIME,
         grace: limits::SHUTDOWN_GRACE,
+        first_request: limits::FIRST_REQUEST_TIMEOUT,
+        per_source: limits::MAX_UNPROVEN_PER_SOURCE,
     };
 }
 
@@ -168,10 +167,10 @@ pub enum Listener {
     Tcp(std::net::TcpListener),
 }
 
-/// Binds TCP on `address`, which its caller has judged allowed, giving the
-/// address bound (a port 0 resolved).
+/// Binds TCP on `address` (its caller holds the allowlist): the listener
+/// and the address bound.
 /// # Errors
-/// The bind: the address is in use or not this host's.
+/// The bind failed.
 pub fn bind_tcp(
     address: std::net::SocketAddr,
 ) -> Result<(std::net::TcpListener, std::net::SocketAddr), BindError> {
@@ -248,8 +247,7 @@ fn private_dir(dir: &Path) -> Result<(), BindError> {
 }
 
 /// Serves `listeners` until `stop` completes, at most
-/// [`limits::MAX_CONNECTIONS`] connections at once on each: TCP peers
-/// that hold every slot of theirs never lock out the Unix socket.
+/// [`limits::MAX_CONNECTIONS`] connections at once on each.
 /// # Errors
 /// A listener could not be handed to the runtime.
 pub async fn serve(
@@ -282,66 +280,14 @@ enum Accepting {
     Tcp(TcpListener),
 }
 
-/// An accepted connection, a TCP one with its peer's slot.
+/// An accepted connection, a TCP one with its place in its source's queue.
 enum Accepted {
     Unix(UnixStream),
-    Tcp(TcpStream, PeerSlot),
+    Tcp(TcpStream, Unproven),
 }
 
-/// The TCP connections open from each source address.
-type PeerCounts = Arc<std::sync::Mutex<std::collections::HashMap<IpAddr, usize>>>;
-
-/// The key a TCP peer's connections are counted under: loopback (all of
-/// 127.0.0.0/8, and ::1) is one source, since any local user can bind
-/// any of it; every other address is its own.
-fn source_of(ip: IpAddr) -> IpAddr {
-    match ip {
-        IpAddr::V4(v4) if v4.is_loopback() => IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-        IpAddr::V6(v6) if v6.is_loopback() => IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-        IpAddr::V4(_) | IpAddr::V6(_) => ip,
-    }
-}
-
-/// One of a source address's [`limits::MAX_CONNECTIONS_PER_PEER`] slots,
-/// given back when dropped.
-struct PeerSlot {
-    counts: PeerCounts,
-    ip: IpAddr,
-}
-
-impl PeerSlot {
-    /// A slot of `ip`'s, or `None` when it holds all its own.
-    fn take(counts: &PeerCounts, ip: IpAddr) -> Option<Self> {
-        // The map stays whole whatever panicked while it was held.
-        let mut held = counts
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let open = held.entry(ip).or_insert(0);
-        match *open < limits::MAX_CONNECTIONS_PER_PEER {
-            true => *open += 1,
-            false => return None,
-        }
-        Some(Self {
-            counts: Arc::clone(counts),
-            ip,
-        })
-    }
-}
-
-impl Drop for PeerSlot {
-    fn drop(&mut self) {
-        let mut held = self
-            .counts
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(open) = held.get_mut(&self.ip) {
-            *open = open.saturating_sub(1);
-            if *open == 0 {
-                held.remove(&self.ip);
-            }
-        }
-    }
-}
+/// A TCP connection's place until a request of it authenticates.
+type Pending = Arc<std::sync::Mutex<Option<Unproven>>>;
 
 impl Accepting {
     fn from_std(listener: Listener) -> io::Result<Self> {
@@ -357,15 +303,14 @@ impl Accepting {
         }
     }
 
-    /// The next connection; `None` for a TCP peer past its own limit,
-    /// whose connection is closed at once.
-    async fn accept(&self, peers: &PeerCounts) -> io::Result<Option<Accepted>> {
+    /// The next connection, a TCP one entered among its source's.
+    async fn accept(&self, sources: &Sources, most: usize) -> io::Result<Accepted> {
         match self {
-            Self::Unix(listener) => Ok(Some(Accepted::Unix(listener.accept().await?.0))),
+            Self::Unix(listener) => Ok(Accepted::Unix(listener.accept().await?.0)),
             Self::Tcp(listener) => {
                 let (stream, peer) = listener.accept().await?;
-                let source = source_of(peer.ip());
-                Ok(PeerSlot::take(peers, source).map(|slot| Accepted::Tcp(stream, slot)))
+                let unproven = sources.enter(source_of(peer.ip()), most);
+                Ok(Accepted::Tcp(stream, unproven))
             }
         }
     }
@@ -378,7 +323,7 @@ async fn accept(
     slots: Arc<Semaphore>,
     mut stopped: watch::Receiver<()>,
 ) {
-    let peers = PeerCounts::default();
+    let sources = Sources::default();
     loop {
         let slot = tokio::select! {
             _ = stopped.changed() => return,
@@ -390,12 +335,10 @@ async fn accept(
         };
         let accepted = tokio::select! {
             _ = stopped.changed() => return,
-            accepted = listener.accept(&peers) => accepted,
+            accepted = listener.accept(&sources, parts.limits.per_source) => accepted,
         };
         match accepted {
-            // A source past its own limit: its connection is dropped unread.
-            Ok(None) => tracing::debug!("board service: a TCP source is at its connection limit"),
-            Ok(Some(stream)) => {
+            Ok(stream) => {
                 let parts = Arc::clone(&parts);
                 tokio::spawn(async move {
                     admit(stream, &parts).await;
@@ -412,46 +355,80 @@ async fn accept(
     }
 }
 
-/// A connection by its transport, an allowlist: a Unix peer is served
-/// only as the allowed uid; a TCP peer is served, each request left to the
-/// handler to authenticate.
+/// A connection by its transport: a Unix peer only as the allowed uid.
 async fn admit(stream: Accepted, parts: &ServiceParts) {
     match stream {
         Accepted::Unix(stream) => match parts.peers.uid(&stream) {
-            Ok(uid) if uid == parts.uid => connection(stream, Transport::Local, parts).await,
+            Ok(uid) if uid == parts.uid => {
+                connection(stream, Transport::Local, None, parts).await;
+            }
             Ok(_) | Err(_) => refuse(stream).await,
         },
-        Accepted::Tcp(stream, slot) => {
+        Accepted::Tcp(stream, unproven) => {
             let _ = stream.set_nodelay(true);
-            connection(stream, Transport::Tcp, parts).await;
-            drop(slot);
+            connection(stream, Transport::Tcp, Some(unproven), parts).await;
         }
     }
 }
 
-/// One admitted connection, served request by request.
-async fn connection<S>(stream: S, transport: Transport, parts: &ServiceParts)
-where
+/// One admitted connection, served request by request; a TCP one is
+/// closed if it has not authenticated in its first-request time, or is
+/// evicted before.
+async fn connection<S>(
+    stream: S,
+    transport: Transport,
+    unproven: Option<Unproven>,
+    parts: &ServiceParts,
+) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let (handler, served) = (Arc::clone(&parts.handler), AtomicUsize::new(0));
+    let evicted = unproven.as_ref().map(|place| Arc::clone(&place.evicted));
+    let evicted = evicted.unwrap_or_default();
+    let mut awaiting = unproven.is_some();
+    let pending: Pending = Arc::new(std::sync::Mutex::new(unproven));
+    let (handler, served, gate) = (
+        Arc::clone(&parts.handler),
+        AtomicUsize::new(0),
+        Arc::clone(&pending),
+    );
     // The last request a connection takes is answered `Connection: close`.
     let service = hyper::service::service_fn(move |request| {
         let last = served.fetch_add(1, Ordering::Relaxed) + 1 >= limits::MAX_REQUESTS;
-        answer(Arc::clone(&handler), request, transport, last)
+        answer(
+            Arc::clone(&handler),
+            request,
+            transport,
+            last,
+            Arc::clone(&gate),
+        )
     });
     let io = TokioIo::new(WriteDeadline::new(stream, parts.limits.write_timeout));
     let builder = limits::http1_builder();
     let connection = builder.serve_connection(io, service);
-    tokio::pin!(connection);
+    let first = parts.limits.first_request;
+    let unproven_end = async move {
+        tokio::select! {
+            () = tokio::time::sleep(first) => {}
+            () = evicted.notified() => {}
+        }
+    };
+    let lifetime = tokio::time::sleep(parts.limits.lifetime);
+    tokio::pin!(connection, unproven_end, lifetime);
+    let still_unproven = || pending.lock().map_or(true, |place| place.is_some());
     // Past its lifetime a connection finishes what it is answering, then
     // closes. A peer that goes, or is too slow, ends its own connection.
-    let ended = tokio::select! {
-        ended = connection.as_mut() => ended,
-        () = tokio::time::sleep(parts.limits.lifetime) => {
-            connection.as_mut().graceful_shutdown();
-            // What it still answers is bounded too: past it, it is dropped.
-            tokio::time::timeout(parts.limits.grace, connection).await.unwrap_or(Ok(()))
+    let ended = loop {
+        tokio::select! {
+            ended = connection.as_mut() => break ended,
+            () = &mut unproven_end, if awaiting => match still_unproven() {
+                true => return,
+                false => awaiting = false,
+            },
+            () = &mut lifetime => {
+                connection.as_mut().graceful_shutdown();
+                // What it still answers is bounded too: past it, it is dropped.
+                break tokio::time::timeout(parts.limits.grace, connection).await.unwrap_or(Ok(()));
+            }
         }
     };
     if let Err(error) = ended {
@@ -483,8 +460,9 @@ async fn answer(
     request: Request<Incoming>,
     transport: Transport,
     last: bool,
+    pending: Pending,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let reply = admitted(handler, request, transport).await;
+    let reply = admitted(handler, request, transport, pending).await;
     let close = last || reply.close;
     let mut reply = response(reply);
     if close {
@@ -500,36 +478,16 @@ async fn admitted(
     handler: Arc<dyn ServiceHandler>,
     request: Request<Incoming>,
     transport: Transport,
+    pending: Pending,
 ) -> ServiceReply {
     let path = request.uri().path().to_string();
-    let authorization = authorization(request.headers());
-    // Over TCP the caller is authenticated first: until it is, nothing of
-    // its method, path or body is judged (or read). A refused caller's
-    // connection ends with the refusal, so it holds no slot past it.
-    match transport {
-        Transport::Tcp => {
-            let (gate, presented) = (Arc::clone(&handler), authorization.clone());
-            let gated =
-                tokio::task::spawn_blocking(move || gate.authenticate_remote(presented.as_deref()));
-            match gated.await {
-                Ok(None) => {}
-                Ok(Some(refusal)) => {
-                    return ServiceReply {
-                        close: true,
-                        ..refusal
-                    };
-                }
-                Err(_) => {
-                    let failed = error(500, "handler", "the request's handler failed");
-                    return ServiceReply {
-                        close: true,
-                        ..failed
-                    };
-                }
-            }
-        }
-        Transport::Local => {}
-    }
+    let principal = match transport {
+        Transport::Tcp => match gate(&handler, request.headers(), &pending).await {
+            Ok(principal) => Some(principal),
+            Err(refusal) => return refusal,
+        },
+        Transport::Local => None,
+    };
     // hyper has parsed `Content-Length` (refusing one that is no number):
     // the body's exact size is the length it declared.
     let length = hyper::body::Body::size_hint(request.body()).exact();
@@ -560,7 +518,7 @@ async fn admitted(
         path,
         body,
         transport,
-        authorization,
+        principal,
     };
     tokio::task::spawn_blocking(move || handler.answer(&request))
         .await
@@ -591,9 +549,30 @@ async fn read_body(body: Incoming, declared: u64) -> Result<Vec<u8>, ServiceRepl
     }
 }
 
-/// The request's one `Authorization` value: none when it sent none, and
-/// an empty one (which no handler takes) when it sent several or one that
-/// is not text.
+/// A TCP request's principal (its connection leaves its source's queue),
+/// or a refusal that ends the connection, before anything else is judged.
+async fn gate(
+    handler: &Arc<dyn ServiceHandler>,
+    headers: &header::HeaderMap,
+    pending: &Pending,
+) -> Result<String, ServiceReply> {
+    let (gate, presented) = (Arc::clone(handler), authorization(headers));
+    let gated = tokio::task::spawn_blocking(move || gate.authenticate_remote(presented.as_deref()));
+    let failed = || Err(error(500, "handler", "the request's handler failed"));
+    match gated.await.unwrap_or_else(|_| failed()) {
+        Ok(principal) => {
+            drop(pending.lock().map(|mut place| place.take()));
+            Ok(principal)
+        }
+        Err(refusal) => Err(ServiceReply {
+            close: true,
+            ..refusal
+        }),
+    }
+}
+
+/// The one `Authorization`; an empty one (which no handler takes) for
+/// several, or one not text.
 fn authorization(headers: &header::HeaderMap) -> Option<String> {
     let mut values = headers.get_all(header::AUTHORIZATION).iter();
     match (values.next(), values.next()) {

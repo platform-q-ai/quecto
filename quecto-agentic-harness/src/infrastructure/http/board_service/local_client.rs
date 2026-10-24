@@ -1,6 +1,5 @@
-//! A blocking client of the board server's Unix socket (epic #2705 B5),
-//! for the admin commands: one request a connection, its answer read to
-//! its end within bounds. B7's remote client replaces it.
+//! A blocking client of the board server's Unix socket for the admin
+//! commands (epic #2705 B5); B7's remote client replaces it.
 use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -14,11 +13,10 @@ pub struct LocalAnswer {
     pub body: Vec<u8>,
 }
 
-/// Sends `method path` with the JSON `body` on `socket` and reads the
-/// answer whole (at most a head and a 1 MiB body, within the timeouts).
+/// Sends `method path` with the JSON `body` on `socket`; the answer, read
+/// whole within the limits.
 /// # Errors
-/// No server answers on `socket`, it was too slow, or its answer is not
-/// HTTP.
+/// No server answers, too slowly, or not in HTTP.
 pub fn local_request(
     socket: &Path,
     method: Method,

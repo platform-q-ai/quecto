@@ -16,24 +16,17 @@ fn access() -> (Arc<MemoryBoardTokens>, BoardAccess) {
 #[test]
 fn a_remote_caller_is_a_device_only_with_a_held_token() {
     let (_, access) = access();
-    assert_eq!(access.authenticate(Caller::Local), Ok(Principal::Local));
-    assert_eq!(
-        access.authenticate(Caller::Remote(None)),
-        Err(Refused::Token)
-    );
+    assert_eq!(access.authenticate(None), Err(Refused::Token));
     let issued = access.add("laptop").unwrap();
     let name = Slug::parse("laptop").unwrap();
+    assert_eq!(access.authenticate(Some(&issued.secret)), Ok(name.clone()));
     assert_eq!(
-        access.authenticate(Caller::Remote(Some(&issued.secret))),
-        Ok(Principal::Device(name.clone()))
-    );
-    assert_eq!(
-        access.authenticate(Caller::Remote(Some("token-phone"))),
+        access.authenticate(Some("token-phone")),
         Err(Refused::Token)
     );
     assert_eq!(access.revoke("laptop"), Ok(name));
     assert_eq!(
-        access.authenticate(Caller::Remote(Some(&issued.secret))),
+        access.authenticate(Some(&issued.secret)),
         Err(Refused::Token)
     );
 }
@@ -62,13 +55,11 @@ fn tokens_that_cannot_be_read_refuse_as_unavailable() {
     let (tokens, access) = access();
     tokens.fail_with(TokenError::Unavailable("the disk is gone".into()));
     assert_eq!(
-        access.authenticate(Caller::Remote(Some("anything"))),
+        access.authenticate(Some("anything")),
         Err(Refused::Unavailable(TokenError::Unavailable(
             "the disk is gone".into()
         )))
     );
-    // A local caller never reads the tokens.
-    assert_eq!(access.authenticate(Caller::Local), Ok(Principal::Local));
 }
 
 #[test]

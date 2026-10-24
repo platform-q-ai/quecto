@@ -22,10 +22,16 @@ pub struct Counting {
 }
 
 impl ServiceHandler for Counting {
-    /// A TCP request whose `Authorization` is `Bearer refuse` is 401.
-    fn authenticate_remote(&self, authorization: Option<&str>) -> Option<ServiceReply> {
-        (authorization == Some("Bearer refuse"))
-            .then(|| ServiceReply::json(401, &serde_json::json!({"code": "token"})))
+    /// A TCP request whose `Authorization` is `Bearer refuse` is 401;
+    /// any other's principal is its `Authorization`, as sent.
+    fn authenticate_remote(&self, authorization: Option<&str>) -> Result<String, ServiceReply> {
+        match authorization {
+            Some("Bearer refuse") => Err(ServiceReply::json(
+                401,
+                &serde_json::json!({"code": "token"}),
+            )),
+            other => Ok(other.unwrap_or_default().to_string()),
+        }
     }
 
     fn answer(&self, request: &ServiceRequest) -> ServiceReply {
@@ -36,7 +42,7 @@ impl ServiceHandler for Counting {
                 "path": request.path,
                 "body": request.body.len(),
                 "tcp": request.transport == Transport::Tcp,
-                "authorization": request.authorization,
+                "principal": request.principal,
                 "pad": "x".repeat(self.pad),
             }),
         )
@@ -90,6 +96,11 @@ pub fn start_with(peer_uid: u32, pad: usize, limits: ConnectionLimits) -> Runnin
 /// Unix peers all read as `peer_uid`.
 pub fn start_tcp(peer_uid: u32) -> Running {
     started(peer_uid, 0, ConnectionLimits::PRODUCTION, true)
+}
+
+/// As [`start_tcp`], its connections held to `limits`.
+pub fn start_tcp_with(peer_uid: u32, limits: ConnectionLimits) -> Running {
+    started(peer_uid, 0, limits, true)
 }
 
 fn started(peer_uid: u32, pad: usize, limits: ConnectionLimits, tcp: bool) -> Running {

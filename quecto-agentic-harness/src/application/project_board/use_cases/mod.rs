@@ -24,7 +24,7 @@ mod task_pointers;
 mod update_draft_task;
 
 pub use accept_plan::AcceptPlan;
-pub use board_access::{BoardAccess, Caller, Principal, Refused, Scope};
+pub use board_access::{BoardAccess, Principal, Refused, Scope};
 pub use board_change::MAX_WRITE_ATTEMPTS;
 pub use bootstrap_project_board::BootstrapProjectBoard;
 pub use change_board_task::ChangeBoardTask;

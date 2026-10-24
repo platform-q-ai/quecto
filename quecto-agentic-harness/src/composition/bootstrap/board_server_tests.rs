@@ -98,7 +98,7 @@ fn get(routes: &BoardRoutes, path: &str) -> (u16, Value) {
         path: path.into(),
         body: vec![],
         transport: Transport::Local,
-        authorization: None,
+        principal: None,
     });
     (reply.status, serde_json::from_slice(&reply.body).unwrap())
 }
@@ -196,8 +196,7 @@ fn the_tokens_live_in_the_state_directory() {
     assert!(error.contains("another board server holds it"), "{error}");
     drop(handles);
     let again = build_board_server(&environment(&dir, &work, "origin")).unwrap();
-    let caller = crate::application::project_board::use_cases::Caller::Remote(Some(&issued.secret));
-    assert!(again.access.authenticate(caller).is_ok());
+    assert!(again.access.authenticate(Some(&issued.secret)).is_ok());
     let state = dir.path().join("elsewhere");
     let elsewhere = build_board_server(&BoardServerEnvironment {
         state: Some(state.clone()),

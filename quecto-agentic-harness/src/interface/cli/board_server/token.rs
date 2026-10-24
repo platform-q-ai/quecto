@@ -1,7 +1,6 @@
-//! `quecto board-server token add|revoke|list` (epic #2705 B5): a running
-//! server's device tokens, administered over its Unix socket only (the
-//! server refuses its admin routes over TCP). `add` prints the token once,
-//! alone on stdout; `list` gives names and dates, never a token.
+//! `quecto board-server token add|revoke|list` (epic #2705 B5), over the
+//! running server's Unix socket: `add` prints the token once, alone on
+//! stdout; `list` gives names and dates, never a token.
 use std::path::PathBuf;
 
 use serde_json::Value;
@@ -53,34 +52,20 @@ pub fn parse(args: &[String]) -> Result<TokenOptions, String> {
 }
 
 /// Whether `name` is shaped as a token name, an allowlist: 1 to 64 of
-/// `a-z`, `0-9` and `-`, the first a letter or digit (the server judges
-/// the rest of a slug's rules).
+/// `a-z`, `0-9` and `-`, the first a letter or digit.
 fn name_shaped(name: &str) -> bool {
+    let alnum = |byte: &u8| byte.is_ascii_lowercase() || byte.is_ascii_digit();
+    let body = |byte: &u8| alnum(byte) || *byte == b'-';
     let bytes = name.as_bytes();
-    let body = |byte: &u8| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-';
-    match bytes.split_first() {
-        Some((first, rest)) => {
-            bytes.len() <= 64
-                && (first.is_ascii_lowercase() || first.is_ascii_digit())
-                && rest.iter().all(body)
-        }
-        None => false,
-    }
+    bytes.len() <= 64 && bytes.first().is_some_and(alnum) && bytes.iter().all(body)
 }
 
 /// Runs `options` against the server on its socket: 0 when it did, else 1.
 pub fn run(options: &TokenOptions, stdout: &mut String, stderr: &mut String) -> i32 {
+    let named = |name: &str| serde_json::json!({ "name": name }).to_string();
     let (method, path, body) = match &options.action {
-        TokenAction::Add(name) => (
-            ServiceMethod::Post,
-            "/v1/admin/tokens",
-            serde_json::json!({ "name": name }).to_string(),
-        ),
-        TokenAction::Revoke(name) => (
-            ServiceMethod::Post,
-            "/v1/admin/tokens/revoke",
-            serde_json::json!({ "name": name }).to_string(),
-        ),
+        TokenAction::Add(name) => (ServiceMethod::Post, "/v1/admin/tokens", named(name)),
+        TokenAction::Revoke(name) => (ServiceMethod::Post, "/v1/admin/tokens/revoke", named(name)),
         TokenAction::List => (ServiceMethod::Get, "/v1/admin/tokens", String::new()),
     };
     let answer = match local_request(&options.socket, method, path, body.as_bytes()) {
@@ -98,9 +83,9 @@ pub fn run(options: &TokenOptions, stdout: &mut String, stderr: &mut String) -> 
     match (&options.action, answer.status) {
         (TokenAction::Add(_), 201) => {
             stdout.push_str(&format!("{}\n", text("token")));
+            let name = text("name");
             stderr.push_str(&format!(
-                "board-server: token '{}' added; it is shown only this once\n",
-                text("name")
+                "board-server: token '{name}' added; it is shown only this once\n"
             ));
             0
         }
@@ -120,11 +105,8 @@ pub fn run(options: &TokenOptions, stdout: &mut String, stderr: &mut String) -> 
             0
         }
         (_, status) => {
-            stderr.push_str(&format!(
-                "board-server: {} ({status} {})\n",
-                text("error"),
-                text("code")
-            ));
+            let (error, code) = (text("error"), text("code"));
+            stderr.push_str(&format!("board-server: {error} ({status} {code})\n"));
             1
         }
     }

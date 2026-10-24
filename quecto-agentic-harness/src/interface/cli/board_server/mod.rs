@@ -1,9 +1,7 @@
 //! `quecto board-server` (epic #2705 B4, B5): `serve` gives the board over
-//! HTTP/1.1 on a Unix socket, to this user only, and on any allowlisted
-//! TCP address to devices holding a token, until SIGINT or SIGTERM;
-//! `token` administers those tokens over the socket. Composition builds
-//! the graph ([`BoardServerBuilder`]); this owns the command line, the
-//! route table and the one tokio runtime.
+//! HTTP/1.1 on a Unix socket (this user only) and allowlisted TCP (devices
+//! with a token) until SIGINT or SIGTERM; `token` administers the tokens.
+//! Composition builds the graph ([`BoardServerBuilder`]).
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -31,8 +29,7 @@ pub struct BoardServerEnvironment {
     pub base_dir: PathBuf,
 }
 
-/// The board server's graph: its reads, access rules, peer reader, the
-/// uid let in, and the TCP addresses its config names.
+/// The board server's graph, and the TCP addresses its config names.
 pub struct BoardServerHandles {
     pub serve: ServeBoard,
     pub access: BoardAccess,
@@ -44,9 +41,8 @@ pub struct BoardServerHandles {
 /// Composition's builder of a board server.
 pub type BoardServerBuilder = fn(&BoardServerEnvironment) -> Result<BoardServerHandles, String>;
 
-/// `quecto board-server <args>`: `serve` gives 0 once stopped by a signal,
-/// 1 when it could not start or serve, its one line out as soon as it
-/// serves; `token` gives 0 when the server did as asked, else 1.
+/// `quecto board-server <args>`: 0 once `serve` is stopped by a signal or
+/// `token` did as asked; 1 when either could not.
 pub fn cmd_board_server(
     ctx: &CliContext,
     args: &[String],
@@ -109,11 +105,11 @@ pub fn cmd_board_server(
         began,
         serve::signalled,
         |started| {
-            let tcp: Vec<String> = started.tcp.iter().map(ToString::to_string).collect();
-            let tcp = match tcp.is_empty() {
-                true => String::new(),
-                false => format!(" and tcp {}", tcp.join(", ")),
-            };
+            let tcp: String = started
+                .tcp
+                .iter()
+                .map(|at| format!(" and tcp {at}"))
+                .collect();
             let line = format!(
                 "board-server: serving board {} on {}{tcp} (ready in {} ms)\n",
                 started.board.as_str(),

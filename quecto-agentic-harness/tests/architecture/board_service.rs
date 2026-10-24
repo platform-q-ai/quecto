@@ -23,6 +23,7 @@ const TRANSPORT: &[&str] = &[
     "src/infrastructure/http/board_service/listener.rs",
     "src/infrastructure/http/board_service/limits.rs",
     "src/infrastructure/http/board_service/local_client.rs",
+    "src/infrastructure/http/board_service/sources.rs",
 ];
 
 /// The crate paths the transport may reach.

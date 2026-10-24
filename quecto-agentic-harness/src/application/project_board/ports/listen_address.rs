@@ -1,7 +1,7 @@
 //! Where a board server listens over TCP (epic #2705 B5): an allowlist of
-//! loopback and Tailscale's ranges. Every other address is refused, the
-//! unspecified ones (`0.0.0.0`, `::`) first among them.
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+//! loopback and Tailscale's ranges; every other address (`0.0.0.0` and
+//! `::` first) is refused.
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 /// The addresses a board server may listen on, as its refusals say them.
 pub const ALLOWED: &str = "loopback (127.0.0.0/8, ::1) or a Tailscale address \
@@ -33,23 +33,14 @@ impl ListenAddress {
     }
 }
 
-/// Loopback, or inside Tailscale's IPv4 or IPv6 range.
+/// Loopback, Tailscale's IPv4 100.64.0.0/10, or its IPv6 fd7a:115c:a1e0::/48.
 fn allowed(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(ip) => ip.is_loopback() || tailscale_v4(ip),
-        IpAddr::V6(ip) => ip == Ipv6Addr::LOCALHOST || tailscale_v6(ip),
+        IpAddr::V4(ip) => ip.is_loopback() || matches!(ip.octets(), [100, 64..=127, _, _]),
+        IpAddr::V6(ip) => {
+            ip == Ipv6Addr::LOCALHOST || matches!(ip.segments(), [0xfd7a, 0x115c, 0xa1e0, ..])
+        }
     }
-}
-
-/// 100.64.0.0/10, Tailscale's carrier-grade NAT range.
-fn tailscale_v4(ip: Ipv4Addr) -> bool {
-    let [first, second, ..] = ip.octets();
-    first == 100 && second & 0b1100_0000 == 0b0100_0000
-}
-
-/// fd7a:115c:a1e0::/48, Tailscale's IPv6 range.
-fn tailscale_v6(ip: Ipv6Addr) -> bool {
-    matches!(ip.segments(), [0xfd7a, 0x115c, 0xa1e0, ..])
 }
 
 #[cfg(test)]

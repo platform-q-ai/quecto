@@ -86,7 +86,7 @@ fn answer(routes: &BoardRoutes, method: ServiceMethod, path: &str) -> (u16, Valu
         path: path.into(),
         body: vec![],
         transport: Transport::Local,
-        authorization: None,
+        principal: None,
     });
     let body = serde_json::from_slice(&reply.body)
         .unwrap_or_else(|error| panic!("{path}: {error}: {:?}", reply.body));
@@ -132,7 +132,7 @@ fn a_routes_405_names_its_methods() {
             path: path.into(),
             body: vec![],
             transport: Transport::Local,
-            authorization: None,
+            principal: None,
         });
         assert_eq!((reply.status, reply.allow), (405, Some("GET")), "{path}");
         assert_eq!(
@@ -197,12 +197,23 @@ fn sent(
     crate::infrastructure::http::board_service::listener::ServiceReply,
     Value,
 ) {
+    // Over TCP the listener asks the gate first, as it does live.
+    let principal = match transport {
+        Transport::Tcp => match routes.authenticate_remote(authorization) {
+            Ok(principal) => Some(principal),
+            Err(reply) => {
+                let body = serde_json::from_slice(&reply.body).unwrap();
+                return (reply, body);
+            }
+        },
+        Transport::Local => None,
+    };
     let reply = routes.answer(&ServiceRequest {
         method,
         path: path.into(),
         body: body.as_bytes().to_vec(),
         transport,
-        authorization: authorization.map(String::from),
+        principal,
     });
     let body = serde_json::from_slice(&reply.body).unwrap();
     (reply, body)
@@ -431,7 +442,7 @@ fn tokens_that_cannot_be_read_are_503() {
     let generic =
         serde_json::json!({"error": "the token store is unavailable", "code": "unavailable"});
     assert_eq!((reply.status, &body), (503, &generic));
-    let gated = routes.authenticate_remote(Some("Bearer x")).unwrap();
+    let gated = routes.authenticate_remote(Some("Bearer x")).unwrap_err();
     assert_eq!(gated.status, 503);
     assert_eq!(
         serde_json::from_slice::<Value>(&gated.body).unwrap(),
@@ -479,9 +490,12 @@ fn the_tcp_gate_lets_on_only_a_held_token() {
         r#"{"name":"laptop"}"#,
     );
     let bearer = format!("Bearer {}", added["token"].as_str().unwrap());
-    assert_eq!(routes.authenticate_remote(Some(&bearer)), None);
+    assert_eq!(
+        routes.authenticate_remote(Some(&bearer)),
+        Ok("laptop".into())
+    );
     for refused in [None, Some("Bearer token-phone"), Some(""), Some("Basic x")] {
-        let reply = routes.authenticate_remote(refused).unwrap();
+        let reply = routes.authenticate_remote(refused).unwrap_err();
         assert_eq!(
             (reply.status, reply.challenge),
             (401, Some("Bearer")),
@@ -490,28 +504,44 @@ fn the_tcp_gate_lets_on_only_a_held_token() {
     }
 }
 
-/// Review round 2: while the token store is down, its stderr line comes
-/// at most once a span, then says how many it held back.
+/// Review rounds 2 and 3: while the token store is down, its stderr line
+/// is written only when the failure changes.
 #[test]
-fn the_unavailable_line_is_throttled() {
-    let every = std::time::Duration::from_secs(30);
-    let start = std::time::Instant::now();
-    let at = |seconds: u64| start + std::time::Duration::from_secs(seconds);
-    let mut throttle = Throttle::default();
-    assert_eq!(
-        throttle.admit(at(0), every),
-        Some(0),
+fn the_unavailable_line_is_written_on_change_only() {
+    let mut last = String::new();
+    assert!(
+        changed(&mut last, "the disk is gone"),
         "the first is written"
     );
-    for second in 1..30 {
-        assert_eq!(throttle.admit(at(second), every), None, "{second}");
+    for _ in 0..100 {
+        assert!(!changed(&mut last, "the disk is gone"));
     }
-    assert_eq!(
-        throttle.admit(at(30), every),
-        Some(29),
-        "then with the count"
-    );
-    assert_eq!(throttle.admit(at(31), every), None);
-    assert_eq!(throttle.admit(at(90), every), Some(1));
-    assert_eq!(throttle.admit(at(200), every), Some(0));
+    assert!(changed(&mut last, "must be mode 0600"), "a new failure is");
+    assert!(changed(&mut last, "the disk is gone"));
+}
+
+/// Review round 3: `answer` trusts the principal the gate handed over:
+/// a TCP request without one, or with a name no token has, is 401.
+#[test]
+fn answer_takes_the_gates_principal() {
+    let (store, _) = written();
+    let routes = routes_of(serving(&store));
+    for principal in [None, Some("Not A Slug".to_string())] {
+        let reply = routes.answer(&ServiceRequest {
+            method: ServiceMethod::Get,
+            path: "/v1/status".into(),
+            body: vec![],
+            transport: Transport::Tcp,
+            principal: principal.clone(),
+        });
+        assert_eq!(reply.status, 401, "{principal:?}");
+    }
+    let reply = routes.answer(&ServiceRequest {
+        method: ServiceMethod::Get,
+        path: "/v1/status".into(),
+        body: vec![],
+        transport: Transport::Tcp,
+        principal: Some("laptop".into()),
+    });
+    assert_eq!(reply.status, 200);
 }

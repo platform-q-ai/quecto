@@ -1,7 +1,5 @@
-//! The board server's device tokens (epic #2705 B5): each device reaching
-//! the server over TCP holds a bearer token, made by `token add` and shown
-//! once. An adapter keeps only each token's digest, compares in constant
-//! time, and a revoked token is refused at once. Names are slugs.
+//! The board server's device tokens (epic #2705 B5): a bearer token per
+//! TCP device, shown once; an adapter keeps only digests.
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 
@@ -24,10 +22,7 @@ pub struct IssuedToken {
 
 impl std::fmt::Debug for IssuedToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("IssuedToken")
-            .field("record", &self.record)
-            .field("secret", &"<redacted>")
-            .finish()
+        write!(f, "IssuedToken({:?}, <secret>)", self.record)
     }
 }
 
@@ -45,19 +40,20 @@ impl std::fmt::Display for TokenError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BadName(why) | Self::Unavailable(why) => f.write_str(why),
-            Self::Exists(name) => write!(
-                f,
-                "a token named '{}' exists: revoke it first",
-                name.as_str()
-            ),
+            Self::Exists(name) => {
+                write!(
+                    f,
+                    "a token named '{}' exists: revoke it first",
+                    name.as_str()
+                )
+            }
             Self::NoSuchToken(name) => write!(f, "no token is named '{}'", name.as_str()),
             Self::Full => write!(f, "the server holds {MAX_TOKENS} tokens: revoke one first"),
         }
     }
 }
 
-/// Where a server's device tokens are kept (a file today; SQLite admin
-/// revisions later).
+/// Where a server's device tokens are kept (a file; SQLite later).
 pub trait BoardTokens: Send + Sync {
     /// Makes a token named `name`, made at `created`, keeping its digest.
     /// # Errors
@@ -69,7 +65,7 @@ pub trait BoardTokens: Send + Sync {
     /// No token has the name, or the store failed.
     fn revoke(&self, name: &Slug) -> Result<(), TokenError>;
 
-    /// The tokens held, by name.
+    /// The tokens held.
     /// # Errors
     /// The store failed.
     fn list(&self) -> Result<Vec<TokenRecord>, TokenError>;

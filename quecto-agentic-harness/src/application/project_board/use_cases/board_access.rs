@@ -1,8 +1,6 @@
 //! Who may ask a board server what (epic #2705 B5), each rule an allowlist:
-//! a caller on the Unix socket (already let in by its peer credentials) is
-//! local; a caller over TCP is a device only with a held token. Reads are
-//! for both; the admin routes (tokens) are for a local caller only. Like
-//! every server path, nothing here panics: each failure is a value.
+//! a Unix-socket caller is local; a TCP caller is a device only with a held
+//! token. Reads are for both, the admin (token) routes for local only.
 use std::sync::Arc;
 
 use crate::application::project_board::dto::ProjectBoardError;
@@ -10,13 +8,6 @@ use crate::application::project_board::ports::{
     BoardClock, BoardTokens, IssuedToken, TokenError, TokenRecord,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
-
-/// Who asks: a local caller, or a remote one and the token it presents.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Caller<'a> {
-    Local,
-    Remote(Option<&'a str>),
-}
 
 /// Who a request is from, once authenticated.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,14 +23,11 @@ pub enum Scope {
     Admin,
 }
 
-/// Why a request is refused.
+/// Why a request is refused: no held token, admin over TCP, or no tokens.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refused {
-    /// No token, or one the server does not hold (unknown or revoked).
     Token,
-    /// An admin route asked over TCP.
     LocalOnly,
-    /// The tokens could not be read.
     Unavailable(TokenError),
 }
 
@@ -54,19 +42,24 @@ impl BoardAccess {
         Self { tokens, clock }
     }
 
-    /// Who `caller` is.
+    /// The device (its token's name) a TCP caller presenting `token` is.
     /// # Errors
-    /// A remote caller with no held token, or tokens that cannot be read.
-    pub fn authenticate(&self, caller: Caller<'_>) -> Result<Principal, Refused> {
-        match caller {
-            Caller::Local => Ok(Principal::Local),
-            Caller::Remote(None) => Err(Refused::Token),
-            Caller::Remote(Some(presented)) => match self.tokens.verify(presented) {
-                Ok(Some(name)) => Ok(Principal::Device(name)),
-                Ok(None) => Err(Refused::Token),
-                Err(error) => Err(Refused::Unavailable(error)),
-            },
+    /// No held token, or tokens that cannot be read.
+    pub fn authenticate(&self, token: Option<&str>) -> Result<Slug, Refused> {
+        match token.map(|token| self.tokens.verify(token)) {
+            Some(Ok(Some(name))) => Ok(name),
+            None | Some(Ok(None)) => Err(Refused::Token),
+            Some(Err(error)) => Err(Refused::Unavailable(error)),
         }
+    }
+
+    /// The device the TCP gate named `name`.
+    /// # Errors
+    /// A name no token could have.
+    pub fn device(name: &str) -> Result<Principal, Refused> {
+        Slug::parse(name)
+            .map(Principal::Device)
+            .map_err(|_| Refused::Token)
     }
 
     /// Whether `principal` may use a route of `scope`.
@@ -82,14 +75,12 @@ impl BoardAccess {
 
     /// Makes a token named `name`, made now.
     /// # Errors
-    /// A name that is no slug, one taken, a full store, or the clock or
-    /// store failed.
+    /// A bad or taken name, a full store, or the clock or store failed.
     pub fn add(&self, name: &str) -> Result<IssuedToken, TokenError> {
         let name = named(name)?;
-        let now = self.clock.now().map_err(|error| {
-            TokenError::Unavailable(ProjectBoardError::Clock(error).to_string())
-        })?;
-        self.tokens.add(&name, &now)
+        let now = self.clock.now();
+        let now = now.map_err(|e| TokenError::Unavailable(ProjectBoardError::Clock(e).to_string()));
+        self.tokens.add(&name, &now?)
     }
 
     /// Revokes the token named `name`, giving the name.
@@ -111,9 +102,9 @@ impl BoardAccess {
 /// `name` as a token's name.
 fn named(name: &str) -> Result<Slug, TokenError> {
     Slug::parse(name).map_err(|_| {
+        let shown = name.escape_debug();
         TokenError::BadName(format!(
-            "a token name is 1 to 64 of a-z, 0-9 and inner '-' (got '{}')",
-            name.escape_debug()
+            "a token name is 1 to 64 of a-z, 0-9 and inner '-' (got '{shown}')"
         ))
     })
 }

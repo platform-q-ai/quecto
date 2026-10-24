@@ -1,22 +1,23 @@
-//! [`BoardTokens`] in a file (epic #2705 B5), until the SQLite store keeps
-//! them as admin revisions: `tokens.json`, mode 0600, in the server's state
-//! directory, mode 0700, both this user's. A token is 32 random bytes,
-//! base64url; only its SHA-256 is written, every write is atomic, and a
-//! presented token is compared with every digest in constant time. A file
-//! that is shared, not this user's or not as written is refused, never
-//! read as empty.
+//! [`BoardTokens`] in `tokens.json` (epic #2705 B5; SQLite admin revisions
+//! later): mode 0600, keeping each token's SHA-256 only, in the server's
+//! state directory (mode 0700, held locked). As the file's one writer the
+//! server reads it once, verifies from memory in constant time, and writes
+//! each change through relative to the locked directory, never by path. A
+//! file shared, foreign or not as written is refused, never read as empty.
+use std::ffi::{CStr, CString};
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 
 use base64::Engine;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::atomic_write::atomic_write;
 use crate::application::project_board::ports::{
     BoardTokens, IssuedToken, MAX_TOKENS, TokenError, TokenRecord,
 };
@@ -26,20 +27,12 @@ use crate::domain::shared::secret_compare::constant_time_eq;
 
 /// The tokens file's name in the state directory.
 pub const TOKENS_FILE: &str = "tokens.json";
+const TOKENS_NAME: &CStr = c"tokens.json";
 
 /// The most bytes a tokens file may hold (256 tokens take about 40 KiB).
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
-/// A digest: SHA-256.
-type Digested = [u8; 32];
-
-/// The file's shape, as written.
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Stored {
-    tokens: Vec<StoredToken>,
-}
-
+/// One entry of the file (a JSON array of them).
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredToken {
@@ -48,104 +41,120 @@ struct StoredToken {
     created: String,
 }
 
-/// A held token: its record and digest.
+/// A held token: its record and SHA-256, as 64 lowercase hex digits.
+#[derive(Debug, Clone)]
 struct Held {
     record: TokenRecord,
-    digest: Digested,
+    digest: String,
 }
 
 /// The device tokens in `<state>/tokens.json`.
 #[derive(Debug)]
 pub struct FileBoardTokens {
-    path: PathBuf,
-    /// Serialises this process's read-change-write of the file.
-    writing: Mutex<()>,
-    /// The state directory, opened and locked exclusively for this
-    /// adapter's life: no other server writes the file meanwhile.
+    /// The tokens as written; a change is written through, then kept.
+    held: Mutex<Vec<Held>>,
+    /// The state directory, opened and locked for this adapter's life.
     state: PathBuf,
     lock: fs::File,
 }
 
 impl FileBoardTokens {
-    /// The tokens in `state`, made mode 0700 if missing and locked
-    /// exclusively until this is dropped; a file there must read.
+    /// The tokens in `state` (made mode 0700, locked until this is dropped).
     /// # Errors
     /// A relative, shared or foreign directory, a lock another server
     /// holds, or a file refused.
     pub fn open(state: &Path) -> Result<Self, String> {
         private_dir(state)?;
-        let tokens = Self {
-            path: state.join(TOKENS_FILE),
-            writing: Mutex::new(()),
+        let mut tokens = Self {
+            held: Mutex::default(),
             state: state.to_path_buf(),
             lock: locked(state)?,
         };
-        tokens.held().map_err(|error| error.to_string())?;
+        *tokens
+            .held
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner) =
+            tokens.read().map_err(|error| error.to_string())?;
         Ok(tokens)
     }
 
-    /// The file's path.
-    pub fn path(&self) -> &Path {
-        &self.path
+    fn unavailable(&self, why: impl std::fmt::Display) -> TokenError {
+        let path = self.state.join(TOKENS_FILE);
+        TokenError::Unavailable(format!("the tokens file {}: {why}", path.display()))
+    }
+
+    /// `name` in the locked directory, opened never through a symlink.
+    fn open_at(&self, name: &CStr, flags: libc::c_int) -> io::Result<fs::File> {
+        let flags = flags | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: a directory descriptor this adapter owns, a NUL-ended name.
+        let fd = unsafe { libc::openat(self.lock.as_raw_fd(), name.as_ptr(), flags, 0o600) };
+        match fd >= 0 {
+            // SAFETY: `fd` was just opened and nothing else owns it.
+            true => Ok(unsafe { fs::File::from_raw_fd(fd) }),
+            false => Err(io::Error::last_os_error()),
+        }
     }
 
     /// The tokens the file holds: none while it is missing.
-    fn held(&self) -> Result<Vec<Held>, TokenError> {
-        self.still_locked()?;
-        let refused = |why: String| {
-            TokenError::Unavailable(format!("the tokens file {}: {why}", self.path.display()))
-        };
-        let meta = match fs::symlink_metadata(&self.path) {
-            Ok(meta) => meta,
+    fn read(&self) -> Result<Vec<Held>, TokenError> {
+        let file = match self.open_at(TOKENS_NAME, libc::O_RDONLY) {
+            Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(refused(error.to_string())),
+            Err(error) => return Err(self.unavailable(error)),
         };
-        match (
-            meta.file_type().is_file(),
-            meta.uid() == this_uid(),
-            meta.permissions().mode() & 0o777 == 0o600,
-            meta.len() <= MAX_FILE_BYTES,
-        ) {
-            (true, true, true, true) => {}
-            (false, _, _, _) => return Err(refused("not a regular file".into())),
-            (true, false, _, _) => return Err(refused("not owned by this user".into())),
-            (true, true, false, _) => return Err(refused("must be mode 0600".into())),
-            (true, true, true, false) => return Err(refused("past 1 MiB".into())),
+        let meta = file.metadata().map_err(|error| self.unavailable(error))?;
+        let mode = meta.permissions().mode() & 0o777;
+        match meta.is_file() && meta.uid() == this_uid() && mode == 0o600 {
+            true if meta.len() <= MAX_FILE_BYTES => {}
+            true => return Err(self.unavailable("past 1 MiB")),
+            false => return Err(self.unavailable("must be a file of this user's, mode 0600")),
         }
         let mut text = String::new();
-        fs::File::open(&self.path)
-            .and_then(|file| file.take(MAX_FILE_BYTES).read_to_string(&mut text))
-            .map_err(|error| refused(error.to_string()))?;
-        let stored: Stored =
-            serde_json::from_str(&text).map_err(|error| refused(error.to_string()))?;
-        stored
-            .tokens
-            .into_iter()
-            .map(|token| held(token).ok_or_else(|| refused("an entry is not as written".into())))
-            .collect()
+        let read = file.take(MAX_FILE_BYTES).read_to_string(&mut text);
+        read.map_err(|error| self.unavailable(error))?;
+        let stored: Vec<StoredToken> =
+            serde_json::from_str(&text).map_err(|e| self.unavailable(e))?;
+        let entry =
+            |token| held(token).ok_or_else(|| self.unavailable("an entry is not as written"));
+        stored.into_iter().map(entry).collect()
     }
 
-    /// Writes `held` as the file, atomically, mode 0600.
+    /// Writes `held` as the file: a temporary file renamed over it, both
+    /// in the locked directory.
     fn store(&self, held: &[Held]) -> Result<(), TokenError> {
-        let stored = Stored {
-            tokens: held
-                .iter()
-                .map(|held| StoredToken {
-                    name: held.record.name.as_str().to_string(),
-                    sha256: hex(&held.digest),
-                    created: held.record.created.as_str().to_string(),
-                })
-                .collect(),
-        };
-        let unavailable = |why: String| {
-            TokenError::Unavailable(format!("the tokens file {}: {why}", self.path.display()))
-        };
-        let text = serde_json::to_vec_pretty(&stored).map_err(|e| unavailable(e.to_string()))?;
-        atomic_write(&self.path, &text, Some(0o600)).map_err(|e| unavailable(e.to_string()))
+        let tokens = held.iter().map(|held| StoredToken {
+            name: held.record.name.as_str().to_string(),
+            sha256: held.digest.clone(),
+            created: held.record.created.as_str().to_string(),
+        });
+        let text = serde_json::to_vec_pretty(&tokens.collect::<Vec<_>>());
+        let text = text.map_err(|e| self.unavailable(e))?;
+        let temp = CString::new(format!(".{TOKENS_FILE}.{}.tmp", uuid::Uuid::new_v4()));
+        let temp = temp.map_err(|error| self.unavailable(error))?;
+        let dir = self.lock.as_raw_fd();
+        let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL;
+        let written = self.open_at(&temp, flags).and_then(|mut file| {
+            file.write_all(&text)?;
+            file.sync_all()?;
+            // SAFETY: names in the directory this adapter holds open.
+            match unsafe { libc::renameat(dir, temp.as_ptr(), dir, TOKENS_NAME.as_ptr()) } {
+                0 => Ok(()),
+                _ => Err(io::Error::last_os_error()),
+            }
+        });
+        match written {
+            // The rename has landed; a failed directory sync loses nothing.
+            Ok(()) => self.lock.sync_all().or(Ok(())),
+            Err(error) => {
+                // SAFETY: as above; a temporary file that is not there is fine.
+                let _ = unsafe { libc::unlinkat(dir, temp.as_ptr(), 0) };
+                Err(self.unavailable(error))
+            }
+        }
     }
 
-    /// Whether the state directory at its path is still the one locked: a
-    /// directory moved away and replaced would let another server in.
+    /// Whether the directory at the state path is still the one locked
+    /// (one moved away and replaced would let another server in).
     fn still_locked(&self) -> Result<(), TokenError> {
         let identity = |meta: fs::Metadata| (meta.dev(), meta.ino());
         let at_path = fs::symlink_metadata(&self.state).map(identity);
@@ -158,20 +167,23 @@ impl FileBoardTokens {
         }
     }
 
-    /// Runs `change` on the held tokens under the write lock.
+    /// Runs `change` on a copy of the tokens, writes it through, then keeps
+    /// it: a change that fails to land changes nothing.
     fn changing<T>(
         &self,
         change: impl FnOnce(&mut Vec<Held>) -> Result<T, TokenError>,
     ) -> Result<T, TokenError> {
-        // The lock guards no data, so a poisoned one is as good as any.
-        let _writing = self
-            .writing
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut held = self.held()?;
-        let changed = change(&mut held)?;
-        self.store(&held)?;
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        self.still_locked()?;
+        let mut next = held.clone();
+        let changed = change(&mut next)?;
+        self.store(&next)?;
+        *held = next;
         Ok(changed)
+    }
+
+    fn held(&self) -> std::sync::MutexGuard<'_, Vec<Held>> {
+        self.held.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -187,11 +199,9 @@ impl BoardTokens for FileBoardTokens {
                 (false, false) => return Err(TokenError::Full),
             }
             let mut bytes = [0u8; 32];
-            rand::rngs::OsRng
-                .try_fill_bytes(&mut bytes)
-                .map_err(|error| {
-                    TokenError::Unavailable(format!("no randomness for a token: {error}"))
-                })?;
+            let random = rand::rngs::OsRng.try_fill_bytes(&mut bytes);
+            random
+                .map_err(|e| TokenError::Unavailable(format!("no randomness for a token: {e}")))?;
             let secret = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
             let record = TokenRecord {
                 name: name.clone(),
@@ -199,7 +209,7 @@ impl BoardTokens for FileBoardTokens {
             };
             held.push(Held {
                 record: record.clone(),
-                digest: Sha256::digest(secret.as_bytes()).into(),
+                digest: sha256(&secret),
             });
             Ok(IssuedToken { record, secret })
         })
@@ -217,20 +227,19 @@ impl BoardTokens for FileBoardTokens {
     }
 
     fn list(&self) -> Result<Vec<TokenRecord>, TokenError> {
-        let mut records: Vec<TokenRecord> =
-            self.held()?.into_iter().map(|held| held.record).collect();
+        let mut records: Vec<_> = self.held().iter().map(|held| held.record.clone()).collect();
         records.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(records)
     }
 
     fn verify(&self, presented: &str) -> Result<Option<Slug>, TokenError> {
-        let presented = hex(&Sha256::digest(presented.as_bytes()).into());
+        let presented = sha256(presented);
         // Every digest is compared whole, in constant time and with no early
         // end, so the time taken says nothing of which (if any) matched.
         let mut found = None;
-        for held in self.held()? {
-            if constant_time_eq(&hex(&held.digest), &presented) {
-                found = Some(held.record.name);
+        for held in self.held().iter() {
+            if constant_time_eq(&held.digest, &presented) {
+                found = Some(held.record.name.clone());
             }
         }
         Ok(found)
@@ -239,38 +248,30 @@ impl BoardTokens for FileBoardTokens {
 
 /// A stored entry as a held token, when every field is as written.
 fn held(token: StoredToken) -> Option<Held> {
+    let hex = |byte: &u8| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte);
+    let digest = (token.sha256.len() == 64 && token.sha256.as_bytes().iter().all(hex))
+        .then_some(token.sha256)?;
     let name = Slug::parse(&token.name).ok()?;
     let created = Timestamp::parse(&token.created).ok()?;
-    let digest = unhex(&token.sha256)?;
     Some(Held {
         record: TokenRecord { name, created },
         digest,
     })
 }
 
-fn hex(digest: &Digested) -> String {
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+/// `text`'s SHA-256, as 64 lowercase hex digits.
+fn sha256(text: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(text.as_bytes());
+    let hex = digest
+        .iter()
+        .flat_map(|byte| [HEX[usize::from(byte >> 4)], HEX[usize::from(byte & 15)]]);
+    hex.map(char::from).collect()
 }
 
-/// 64 lowercase hex digits as a digest.
-fn unhex(text: &str) -> Option<Digested> {
-    let bytes = text.as_bytes();
-    let lower = |byte: &u8| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte);
-    match bytes.len() == 64 && bytes.iter().all(lower) {
-        true => {}
-        false => return None,
-    }
-    let mut digest = [0u8; 32];
-    for (slot, pair) in digest.iter_mut().zip(bytes.chunks_exact(2)) {
-        *slot = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(digest)
-}
-
-/// The state directory itself, opened (never through a symlink) and
-/// locked exclusively, never waiting: a lock no file removal undoes.
-// `File::try_lock` stabilized in 1.89 (the admission authority's
-// `SingletonLock` shares the toolchain-floor note).
+/// The state directory itself, opened never through a symlink and locked
+/// exclusively without waiting: no file removal undoes it.
+// `File::try_lock` stabilized in 1.89 (as the admission `SingletonLock` notes).
 #[expect(clippy::incompatible_msrv)]
 fn locked(state: &Path) -> Result<fs::File, String> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -290,35 +291,36 @@ fn locked(state: &Path) -> Result<fs::File, String> {
     }
 }
 
-/// `dir` as an absolute directory of mode 0700 of this user's, made so
-/// (with its parents) if missing.
+/// `dir` as an absolute directory of mode 0700 of this user's, made so if
+/// missing (one ending in `/` would follow a symlink).
 fn private_dir(dir: &Path) -> Result<(), String> {
     let refused = |why: &str| format!("the state directory {}: {why}", dir.display());
-    match dir.is_absolute() {
-        true => {}
-        false => return Err(refused("not absolute")),
+    match (
+        dir.is_absolute(),
+        dir.as_os_str().as_bytes().ends_with(b"/"),
+    ) {
+        (true, false) => {}
+        (false, _) => return Err(refused("not absolute")),
+        (true, true) => return Err(refused("must not end in '/'")),
     }
     match fs::symlink_metadata(dir) {
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            fs::DirBuilder::new()
+            let made = fs::DirBuilder::new()
                 .recursive(true)
                 .mode(0o700)
-                .create(dir)
-                .map_err(|error| refused(&error.to_string()))?;
+                .create(dir);
+            made.map_err(|error| refused(&error.to_string()))?;
         }
         Err(error) => return Err(refused(&error.to_string())),
     }
     let meta = fs::symlink_metadata(dir).map_err(|error| refused(&error.to_string()))?;
-    match (
-        meta.is_dir(),
-        meta.uid() == this_uid(),
-        meta.permissions().mode() & 0o777 == 0o700,
-    ) {
-        (true, true, true) => Ok(()),
-        (false, _, _) => Err(refused("not a directory (a symlink is not followed)")),
-        (true, false, _) => Err(refused("not owned by this user")),
-        (true, true, false) => Err(refused("must be mode 0700 (owner only)")),
+    let mode = meta.permissions().mode() & 0o777;
+    match meta.is_dir() && meta.uid() == this_uid() && mode == 0o700 {
+        true => Ok(()),
+        false => Err(refused(
+            "must be a directory of this user's, mode 0700 (a symlink is not followed)",
+        )),
     }
 }
 

@@ -16,8 +16,13 @@ fn opened() -> (tempfile::TempDir, FileBoardTokens) {
     (dir, tokens)
 }
 
+/// The file the tokens are in.
+fn tokens_path(tokens: &FileBoardTokens) -> PathBuf {
+    tokens.state.join(TOKENS_FILE)
+}
+
 fn sha256_hex(text: &str) -> String {
-    hex(&Sha256::digest(text.as_bytes()).into())
+    sha256(text)
 }
 
 /// B5 red: the file holds each token's SHA-256, never the token; it is
@@ -27,13 +32,13 @@ fn tokens_are_stored_hashed_in_a_private_file() {
     let (_dir, tokens) = opened();
     let issued = tokens.add(&name("laptop"), &at()).unwrap();
     assert_eq!(issued.secret.len(), 43, "32 bytes, base64url: {issued:?}");
-    let raw = std::fs::read_to_string(tokens.path()).unwrap();
+    let raw = std::fs::read_to_string(tokens_path(&tokens)).unwrap();
     assert!(!raw.contains(&issued.secret), "{raw}");
     assert!(raw.contains(&sha256_hex(&issued.secret)), "{raw}");
     assert!(raw.contains("laptop") && raw.contains("2026-10-24T12:00:00Z"));
     let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode(tokens.path()), 0o600);
-    assert_eq!(mode(tokens.path().parent().unwrap()), 0o700);
+    assert_eq!(mode(&tokens_path(&tokens)), 0o600);
+    assert_eq!(mode(tokens_path(&tokens).parent().unwrap()), 0o700);
 }
 
 #[test]
@@ -118,7 +123,6 @@ fn the_lock_is_the_directory_and_a_replaced_one_stops_writes() {
         tokens.revoke(&name("laptop")),
         Err(TokenError::Unavailable(_))
     ));
-    assert!(tokens.verify("x").is_err(), "nor reads another's tokens");
     second.add(&name("phone"), &at()).unwrap();
 }
 
@@ -159,16 +163,11 @@ fn tokens_outlive_the_adapter() {
 fn a_file_not_as_written_is_refused() {
     let (dir, tokens) = opened();
     tokens.add(&name("laptop"), &at()).unwrap();
-    let path = tokens.path().to_path_buf();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-    assert!(
-        matches!(tokens.verify("x"), Err(TokenError::Unavailable(why)) if why.contains("0600"))
-    );
+    let path = tokens_path(&tokens).to_path_buf();
     let state = dir.path().join("state").join("board");
     drop(tokens);
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     assert!(FileBoardTokens::open(&state).unwrap_err().contains("0600"));
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    let tokens = FileBoardTokens::open(&state).unwrap();
     for bad in [
         "not json",
         r#"{"tokens":[{"name":"Laptop","sha256":"00","created":"2026-10-24T12:00:00Z"}]}"#,
@@ -181,12 +180,55 @@ fn a_file_not_as_written_is_refused() {
             Some(0o600),
         )
         .unwrap();
-        assert!(
-            matches!(tokens.list(), Err(TokenError::Unavailable(_))),
-            "{bad}"
-        );
-        assert!(tokens.add(&name("phone"), &at()).is_err(), "{bad}");
+        let error = FileBoardTokens::open(&state).unwrap_err();
+        assert!(error.contains("the tokens file"), "{bad}: {error}");
     }
+    std::fs::remove_file(&path).unwrap();
+    std::os::unix::fs::symlink(dir.path().join("elsewhere"), &path).unwrap();
+    let error = FileBoardTokens::open(&state).unwrap_err();
+    assert!(
+        error.contains("the tokens file"),
+        "a symlink is not followed: {error}"
+    );
+}
+
+/// Review round 3: the server is the file's one writer, so it reads the
+/// file once and verifies from memory: a file changed behind it changes
+/// nothing it answers, and its next write puts its own set back.
+#[test]
+fn tokens_are_verified_from_memory_and_written_through() {
+    let (_dir, tokens) = opened();
+    let laptop = tokens.add(&name("laptop"), &at()).unwrap();
+    std::fs::write(tokens_path(&tokens), "not json").unwrap();
+    assert_eq!(tokens.verify(&laptop.secret), Ok(Some(name("laptop"))));
+    tokens.add(&name("phone"), &at()).unwrap();
+    let raw = std::fs::read_to_string(tokens_path(&tokens)).unwrap();
+    assert!(
+        raw.contains(&sha256_hex(&laptop.secret)) && raw.contains("phone"),
+        "{raw}"
+    );
+}
+
+/// Review round 3: a `--state` ending in `/` would follow a symlink, so it
+/// is refused.
+#[test]
+fn a_state_directory_ending_in_a_slash_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let slashed = PathBuf::from(format!("{}/", link.display()));
+    let error = FileBoardTokens::open(&slashed).unwrap_err();
+    assert!(error.contains("must not end in '/'"), "{error}");
+    assert!(
+        FileBoardTokens::open(&link)
+            .unwrap_err()
+            .contains("must be a directory")
+    );
+    let real_slashed = PathBuf::from(format!("{}/", real.display()));
+    assert!(FileBoardTokens::open(&real_slashed).is_err());
 }
 
 #[test]
@@ -201,7 +243,7 @@ fn a_shared_or_relative_state_directory_is_refused() {
     assert!(
         FileBoardTokens::open(&file)
             .unwrap_err()
-            .contains("not a directory")
+            .contains("must be a directory")
     );
     assert!(
         FileBoardTokens::open(Path::new("state"))
@@ -212,9 +254,16 @@ fn a_shared_or_relative_state_directory_is_refused() {
 
 #[test]
 fn digests_spell_as_lowercase_hex() {
-    let a = [0xa7u8; 32];
-    assert_eq!(hex(&a), "a7".repeat(32));
-    assert_eq!(unhex(&hex(&a)), Some(a));
-    assert_eq!(unhex(&"A".repeat(64)), None);
-    assert_eq!(unhex("00"), None);
+    assert_eq!(
+        sha256("abc"),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    let entry = |sha256: &str| StoredToken {
+        name: "laptop".into(),
+        sha256: sha256.into(),
+        created: "2026-10-24T12:00:00Z".into(),
+    };
+    assert!(held(entry(&sha256("x"))).is_some());
+    assert!(held(entry(&"A".repeat(64))).is_none());
+    assert!(held(entry("00")).is_none());
 }

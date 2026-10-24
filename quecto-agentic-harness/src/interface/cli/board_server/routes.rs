@@ -1,17 +1,15 @@
 //! The board service's route table (epic #2705 B4, B5), an allowlist:
-//! `GET /v1/status` and `GET /v1/time` (reads), and `GET`/`POST
-//! /v1/admin/tokens` and `POST /v1/admin/tokens/revoke` (admin); else 404,
-//! or 405 naming the methods a route takes. Over TCP every request needs a
-//! held bearer token (else 401, before any route is looked up), and admin
-//! routes are the Unix socket's alone (403 over TCP, whatever the token).
-use std::time::{Duration, Instant};
+//! reads `GET /v1/status` and `GET /v1/time`; admin `GET`/`POST
+//! /v1/admin/tokens` and `POST /v1/admin/tokens/revoke`, on the Unix socket
+//! only (403 over TCP); else 404, or 405 naming a route's methods.
+use std::sync::PoisonError;
 
 use serde_json::json;
 
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{BoardStoreError, ServeError, TokenError};
 use crate::application::project_board::use_cases::{
-    BoardAccess, Caller, Refused, Scope, ServeBoard,
+    BoardAccess, Principal, Refused, Scope, ServeBoard,
 };
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::http::board_service::listener::{
@@ -22,35 +20,8 @@ use crate::infrastructure::http::board_service::listener::{
 pub struct BoardRoutes {
     serve: ServeBoard,
     access: BoardAccess,
-    /// The token store's failures on stderr, at most one line a span.
-    unavailable: std::sync::Mutex<Throttle>,
-}
-
-/// At most one stderr line per this span while the token store is down.
-const LOG_EVERY: Duration = Duration::from_secs(30);
-
-/// A log line's throttle: one line a span, saying how many it held back.
-#[derive(Debug, Default)]
-pub(super) struct Throttle {
-    last: Option<Instant>,
-    suppressed: usize,
-}
-
-impl Throttle {
-    /// The lines held back since the last one, when one may be written at
-    /// `now`; `None` (one more held back) within `every` of the last.
-    pub(super) fn admit(&mut self, now: Instant, every: Duration) -> Option<usize> {
-        match self.last {
-            Some(last) if now.saturating_duration_since(last) < every => {
-                self.suppressed += 1;
-                None
-            }
-            Some(_) | None => {
-                self.last = Some(now);
-                Some(std::mem::take(&mut self.suppressed))
-            }
-        }
-    }
+    /// The token store's failure last said on stderr.
+    unavailable: std::sync::Mutex<String>,
 }
 
 /// A route of the table.
@@ -116,10 +87,8 @@ impl BoardRoutes {
         }
     }
 
-    /// A refused request's reply: 401 `token`, 403 `local_only`, or 503.
-    /// A TCP caller is never told why the tokens failed (paths, user,
-    /// board id): that goes to the server's stderr, at most one line a
-    /// span, and is said on the Unix socket.
+    /// A refused request's reply: 401 `token`, 403 `local_only`, or 503;
+    /// why the tokens failed is said on the Unix socket only.
     fn refusal(&self, refused: &Refused, transport: Transport) -> ServiceReply {
         match refused {
             Refused::Token => ServiceReply {
@@ -145,19 +114,14 @@ impl BoardRoutes {
         }
     }
 
-    /// The token store's failure on the server's stderr (no tracing
-    /// subscriber is set here), throttled so a peer cannot flood it.
+    /// The token store's failure on stderr, only when it changes.
     fn log_unavailable(&self, error: &TokenError) {
-        let mut throttle = self
+        let mut last = self
             .unavailable
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match throttle.admit(Instant::now(), LOG_EVERY) {
-            Some(0) => eprintln!("board-server: the token store is unavailable: {error}"),
-            Some(held) => eprintln!(
-                "board-server: the token store is unavailable: {error} ({held} more since the last line)"
-            ),
-            None => {}
+            .unwrap_or_else(PoisonError::into_inner);
+        if changed(&mut last, &error.to_string()) {
+            eprintln!("board-server: the token store is unavailable: {error}");
         }
     }
 
@@ -217,21 +181,21 @@ fn administer(answered: Result<(u16, serde_json::Value), TokenError>) -> Service
 }
 
 impl ServiceHandler for BoardRoutes {
-    /// A TCP caller with no held token is 401 whatever it asks.
-    fn authenticate_remote(&self, authorization: Option<&str>) -> Option<ServiceReply> {
-        let caller = Caller::Remote(authorization.and_then(bearer));
-        match self.access.authenticate(caller) {
-            Ok(_) => None,
-            Err(refused) => Some(self.refusal(&refused, Transport::Tcp)),
-        }
+    /// A TCP caller with no held token is 401; a held token's name is the
+    /// principal the listener hands to `answer`.
+    fn authenticate_remote(&self, authorization: Option<&str>) -> Result<String, ServiceReply> {
+        let device = self.access.authenticate(authorization.and_then(bearer));
+        let device = device.map_err(|refused| self.refusal(&refused, Transport::Tcp))?;
+        Ok(device.as_str().to_string())
     }
 
     fn answer(&self, request: &ServiceRequest) -> ServiceReply {
-        let caller = match request.transport {
-            Transport::Local => Caller::Local,
-            Transport::Tcp => Caller::Remote(request.authorization.as_deref().and_then(bearer)),
+        let principal = match (request.transport, request.principal.as_deref()) {
+            (Transport::Local, _) => Ok(Principal::Local),
+            (Transport::Tcp, Some(name)) => BoardAccess::device(name),
+            (Transport::Tcp, None) => Err(Refused::Token),
         };
-        let principal = match self.access.authenticate(caller) {
+        let principal = match principal {
             Ok(principal) => principal,
             Err(refused) => return self.refusal(&refused, request.transport),
         };
@@ -255,8 +219,7 @@ impl ServiceHandler for BoardRoutes {
     }
 }
 
-/// The token of an `Authorization: Bearer <token>` value (the scheme in
-/// any case), or `None` for any other value.
+/// The token of `Bearer <token>` (the scheme in any case), else `None`.
 fn bearer(value: &str) -> Option<&str> {
     let (scheme, token) = value.split_once(' ')?;
     let token_shaped = !token.is_empty() && token.bytes().all(|byte| byte.is_ascii_graphic());
@@ -275,6 +238,17 @@ fn named(body: &[u8], answer: impl FnOnce(&str) -> ServiceReply) -> ServiceReply
             "request",
             "the body must be {\"name\": \"<token name>\"}",
         ),
+    }
+}
+
+/// Whether `now` differs from `last`, which then becomes it.
+pub(super) fn changed(last: &mut String, now: &str) -> bool {
+    match last.as_str() == now {
+        true => false,
+        false => {
+            now.clone_into(last);
+            true
+        }
     }
 }
 
