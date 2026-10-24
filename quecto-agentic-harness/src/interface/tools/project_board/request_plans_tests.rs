@@ -448,13 +448,17 @@ fn a_handoff_is_read_and_resolves_the_approachs_entry() {
     assert_eq!(proposal(&bare, cli), (None, PlanEntry::Legacy));
     let detail = Some("Detail.\r\n".to_string());
     assert_eq!(proposal(&given, cli), (detail, PlanEntry::Capped));
+    given["handoff"] = json!("\r\n\r\n");
+    let blank = Some("\r\n\r\n".to_string());
+    assert_eq!(proposal(&given, cli), (blank, PlanEntry::Legacy));
     let edit = json!({"op": "edit_plan", "task": "a", "version": 1, "handoff": ""});
     let Ok(BoardRequest::EditPlan(edit)) = super::super::parse(&edit, cli) else {
         panic!("an edit giving only a handoff reads");
     };
     assert_eq!(
         (edit.handoff, edit.entry),
-        (Some(String::new()), PlanEntry::Capped)
+        (Some(String::new()), PlanEntry::Legacy),
+        "an empty handoff is none, so the CLI caps no approach (review round 1)"
     );
     let refused = refused(json!({"op": "edit_plan", "task": "a", "version": 1, "handoff": 7}));
     assert_eq!(refused.field, "handoff");

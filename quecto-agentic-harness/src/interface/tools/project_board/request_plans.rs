@@ -21,6 +21,7 @@ use crate::domain::project_board::entities::run::MAX_RUN_NUMBER;
 use crate::domain::project_board::entities::team::{
     MAX_DEADLINE_SECONDS, MAX_MEMBERS, MIN_DEADLINE_SECONDS, Role, RoleLimits, Team,
 };
+use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
 use crate::domain::project_board::value_objects::vocabulary::Effort;
@@ -34,7 +35,7 @@ pub(super) fn propose_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError
     Ok(BoardRequest::ProposePlan(PlanProposal {
         task: read.task()?,
         approach: read.text("approach")?.expect(present),
-        entry: PlanEntry::of(read.policy, handoff.is_some()),
+        entry: PlanEntry::of(read.policy, holds_handoff(handoff.as_deref())),
         handoff,
         items: items(read.value("items").expect(present))?,
         team: read.value("team").map(team).transpose()?.flatten(),
@@ -49,7 +50,7 @@ pub(super) fn edit_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         task: read.task()?,
         version: version(read.value("version").expect("a required field is present"))?,
         approach: read.text("approach")?,
-        entry: PlanEntry::of(read.policy, handoff.is_some()),
+        entry: PlanEntry::of(read.policy, holds_handoff(handoff.as_deref())),
         handoff,
         items: read.value("items").map(items).transpose()?,
         team: read.value("team").map(team).transpose()?,
@@ -107,6 +108,12 @@ pub(super) fn end_run(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
             .expect(present),
         expected_updated: read.timestamp("expected_updated")?,
     }))
+}
+
+/// Whether `handoff` gives a handoff once normalised as the board keeps
+/// it: `""` (or blank lines alone) is none, so it caps no approach.
+fn holds_handoff(handoff: Option<&str>) -> bool {
+    handoff.is_some_and(|text| !board_text::text(text).is_empty())
 }
 
 /// A plan's version, from 1, as `version` names it.

@@ -88,6 +88,14 @@ fn a_cli_plan_without_a_handoff_keeps_masters_limits() {
     let operations = board();
     let answer = as_cli(&*operations, &propose(&long, None));
     assert_eq!(answer["ok"], json!(true), "{answer}");
+    // An empty handoff is none (review round 1): no cap, and no handoff.
+    let answer = as_cli(&*operations, &propose(&long, Some("")));
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    let shown = as_cli(
+        &*operations,
+        &json!({"op": "show", "task": "a", "version": 2}),
+    );
+    assert_eq!(shown["plan"].get("handoff"), None, "{shown}");
     // Given a handoff, the CLI caps the approach as the tool does.
     let answer = as_cli(&*operations, &propose(&long, Some("Detail.")));
     assert_eq!(
@@ -135,7 +143,12 @@ fn a_handoff_is_shown_and_taken_away_by_an_empty_one() {
     let shown = run(&*operations, r#"{"op": "show", "task": "a", "version": 1}"#);
     assert_eq!(shown["plan"]["handoff"], json!("Detail\nhere."), "{shown}");
     let keys: Vec<&String> = shown["plan"].as_object().unwrap().keys().collect();
-    assert_eq!(keys[3..5], ["approach", "handoff"], "{shown}");
+    assert_eq!(
+        keys[3..6],
+        ["approach", "handoff", "handoff_chars"],
+        "{shown}"
+    );
+    assert_eq!(shown["plan"]["handoff_chars"], json!(12), "{shown}");
     let edit = json!({"op": "edit_plan", "task": "a", "version": 1, "handoff": ""});
     let answer = run(&*operations, &edit.to_string());
     assert_eq!(answer["ok"], json!(true), "{answer}");

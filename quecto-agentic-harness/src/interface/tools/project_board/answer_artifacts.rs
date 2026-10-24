@@ -112,8 +112,10 @@ fn skip_code(why: &SkipReason) -> &'static str {
 /// A plan in the board's own field names, as its file holds them, every
 /// field present (`null` or `[]` when unset), in a fixed order: who
 /// accepted it and when as `accepted_by` and `accepted_at`; its
-/// `handoff` (#2705 T3) after its approach only when it has one, so a
-/// plan without one answers as before.
+/// `handoff` (#2705 T3) after its approach, with its length in characters
+/// as `handoff_chars` (so a front end can say "has a handoff, N
+/// characters" without reading it), only when it has one, so a plan
+/// without one answers as before.
 pub(super) fn plan_json(plan: &Plan) -> Value {
     let plan = plan.fields();
     let items: Vec<Value> = plan.items.iter().map(item_json).collect();
@@ -139,6 +141,7 @@ pub(super) fn plan_json(plan: &Plan) -> Value {
                 shown.insert(key, value);
                 if after_approach {
                     shown.insert("handoff".into(), json!(handoff));
+                    shown.insert("handoff_chars".into(), json!(handoff.chars().count()));
                 }
             }
             Value::Object(shown)

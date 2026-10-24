@@ -484,14 +484,15 @@ task description's:
 | Front end | Entry |
 |---|---|
 | The agent `board` tool | Always capped |
-| `quecto board` (people, the Pocket relay) | Capped when the request gives `handoff`; otherwise as before T3: the schema's 65,536 characters |
+| `quecto board` (people, the Pocket relay) | Capped when the request gives a `handoff` that holds something once normalised (`""` is none, and caps nothing); otherwise as before T3: the schema's 65,536 characters |
 
 Only an approach that enters is checked: an edit that leaves the approach as
 the draft holds it (an items-only edit of a plan written before T3, say)
 keeps it, however long. Reading never checks the cap.
 
-`show` gives `handoff` after `approach` only when the plan has one, so a plan
-without one answers exactly as before. The agent tool cuts a long handoff as it
+`show` gives `handoff` after `approach`, and its length in characters as
+`handoff_chars` (the whole handoff's, even when the agent tool cuts it), only
+when the plan has one, so a plan without one answers exactly as before. The agent tool cuts a long handoff as it
 cuts the approach, after it: `handoff_more` characters left out, read on with
 `show(task, handoff_from: handoff_next)`. A page given `handoff_from` answers
 `handoff_from` and the handoff from that character (`null` for a plan with
@@ -515,14 +516,29 @@ for byte. A schema-1 file holding a Handoff section, or a schema-2 file without
 one, is refused. The file's line cap rose from 70,000 to 140,000, so an
 approach and a handoff at their most both fit.
 
-**Deploy order.** As for sectioned tasks: upgrade every reader first, the
-Pocket relay's host included, then let agents write handoffs. A quecto from
-before T3 reads only schema-1 plans; it sets a schema-2 plan aside with the
-reason "schema 2, written by a newer quecto; this quecto reads schema 1:
-upgrade quecto to read it". **Never `clear_set_aside` a schema-2 plan from an
-old build**: upgrade quecto there instead. The Pocket relay sends `show` and
-`accept_plan` only; it reads a plan's keys by allowlist, so a `handoff` key is
-not read, and its requests are unchanged.
+**Deploy order (strict).** Every quecto that reads the board (every Pocket
+relay host, every laptop, eccup) must be upgraded **before any agent writes a
+handoff**. A quecto from before T3 reads only schema-1 plans, and one plan with
+a handoff on the board breaks it:
+
+- its `list` fails for the **whole board**, not just that task: the plan's file
+  is set aside (`folder_set_aside` on `plans/…`), with the reason "schema 2,
+  written by a newer quecto; this quecto reads schema 1: upgrade quecto to read
+  it". The Pocket relay sends `list`, so an old relay shows no board at all;
+- its `show`, `propose_plan`, `edit_plan` and `accept_plan` on that task are
+  refused while the file is set aside.
+
+Each of those messages offers `clear_set_aside`. **Never follow that advice for
+a schema-2 plan**: it deletes the plan, handoff and all, from a board whose file
+is sound. Upgrade quecto on that host instead. (Deploy every host together;
+there is no two-step release.)
+
+Upgraded, the Pocket relay is unaffected: it sends `show` and `accept_plan` for
+plans, reads a plan's keys by allowlist (so `handoff` and `handoff_chars` are
+not read), and its requests are unchanged. Its accept page shows only the
+approach, so a person can accept a plan without seeing its handoff (up to
+65,536 characters) until the task page (P8–P10) shows it; `handoff_chars` lets
+it say "has a handoff (N characters)" without reading the text.
 
 ## Accepting or discarding a plan
 
