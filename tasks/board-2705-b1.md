@@ -8,10 +8,10 @@
 | Status | draft |
 | Parent | board-service-mvp-2705 |
 | Created | 2026-10-23T16:47:34Z |
-| Updated | 2026-10-24T00:11:49Z |
+| Updated | 2026-10-24T07:17:03Z |
 
 ## Description
-Operator-owned independent delivery for epic2705: GitRemoteRevisions split plus --board-id/--remote-url, contracted separate wiring and no-Git-spawn configured path preserving Git compatibility. Operator owns implementation/branches/PRs; excluded from this agent's lane, never launch agent B1 work. Layout2648 merge prerequisite remains; B3 is not a dependency of operator's independent lane. Latest explicit operator flag --remote-url supersedes older --url notes. Human-approved2713 sizing target750/max1500production lines, tests/fixtures/snapshots/lockfiles/generated excluded and separately reported, sized once planning/rejudged at remediation checkpoint or maximum exceeded. No playbook edits or live deployment/cutover by this agent; all owner safety restrictions remain.
+Externally delivered by operator as merged PR2715 for epic2705, confirmed by operator update: GitRemoteRevisions split plus --board-id/--remote-url, separate contracted wiring and configured no-Git path. Operator B6 also merged as PR2714. No implementation remains in this agent lane; preserve these interfaces and never duplicate ownership. Archived tracking item records fulfilled external dependency, not an agent implementation claim. Explicit --remote-url supersedes older --url notes. All parent safety restrictions remain.
 
 ## Depends on
 | Task |
