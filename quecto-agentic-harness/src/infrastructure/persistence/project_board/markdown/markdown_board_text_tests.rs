@@ -33,6 +33,44 @@ fn chat_at_an_edge(text: &str) -> bool {
     })
 }
 
+/// `text` as typed with plain spaces, its blank lines as entry leaves them:
+/// a line of spacing holding a chat space empty, and each run of blank
+/// lines holding one a single empty line; a leading run of spacing holding
+/// a chat space gone; every other chat space plain.
+fn typed_twin(text: &str) -> String {
+    let spaced = |c: char| matches!(c, ' ' | '\t') || CHAT.contains(&c);
+    let unified = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut lines: Vec<(String, bool)> = Vec::new();
+    for line in unified.split('\n') {
+        let rest = line.trim_start_matches(spaced);
+        let chat_blank = rest.is_empty() && line.contains(CHAT);
+        let lead = &line[..line.len() - rest.len()];
+        let kept = match (chat_blank, lead.contains(CHAT)) {
+            (true, _) => String::new(),
+            (false, true) => rest.replace(CHAT, " "),
+            (false, false) => line.replace(CHAT, " "),
+        };
+        let blank = kept.chars().all(|c| matches!(c, ' ' | '\t'));
+        match lines.last_mut() {
+            // A run of blank lines holding an emptied one is one empty line.
+            Some((last, chat))
+                if blank
+                    && last.chars().all(|c| matches!(c, ' ' | '\t'))
+                    && (*chat || chat_blank) =>
+            {
+                *last = String::new();
+                *chat = true;
+            }
+            _ => lines.push((kept, chat_blank)),
+        }
+    }
+    lines
+        .into_iter()
+        .map(|(line, _)| line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// What the normaliser may change: spacing, line ends and blank lines;
 /// every other character, in order, is the text's own.
 fn content(text: &str) -> String {
@@ -164,6 +202,15 @@ const CHAT_PIECES: &[&str] = &[
     "e\u{3000}f",
     "g\u{202f};",
     "h\u{a0}%",
+    // Browsers' runs of spaces, pasted empty paragraphs in a row and beside
+    // typed blank lines.
+    "\u{a0} \u{a0}",
+    "\n\u{a0} \u{a0} ",
+    "\n\u{a0}\t",
+    " \u{a0}\n",
+    "\n\u{a0}\n\u{a0}\n",
+    "\n\u{a0}\n\n",
+    "\n\n\u{3000}\n",
 ];
 
 /// One draw in this many is a chat-space piece.
@@ -194,7 +241,7 @@ impl Seeded {
 #[test]
 fn normalising_never_changes_what_a_reader_shows() {
     let mut seeded = Seeded(2481);
-    let (mut checked, mut held, mut plain) = (0, 0, 0);
+    let (mut checked, mut held, mut plain, mut edged, mut twins) = (0, 0, 0, 0, 0);
     for _ in 0..20_000 {
         let raw = seeded.text();
         let normal = board_text::text(&raw);
@@ -208,14 +255,29 @@ fn normalising_never_changes_what_a_reader_shows() {
         }
         checked += 1;
         // A chat space between words was made plain by the normaliser; one
-        // at a line's edge, removed, is the codec's to check (below).
-        if !chat_at_an_edge(&raw) {
-            plain += usize::from(raw.contains(CHAT));
-            assert_eq!(
-                shown_plain(&raw),
-                shown_plain(&normal),
-                "{raw:?} → {normal:?}"
-            );
+        // at a line's edge goes, and then the text is held whenever its
+        // plain-typed twin is.
+        match chat_at_an_edge(&raw) {
+            false => {
+                plain += usize::from(raw.contains(CHAT));
+                assert_eq!(
+                    shown_plain(&raw),
+                    shown_plain(&normal),
+                    "{raw:?} → {normal:?}"
+                );
+            }
+            true => {
+                edged += 1;
+                let twin = board_text::text(&typed_twin(&raw));
+                if blocks_of(&twin).is_ok() {
+                    twins += 1;
+                    let held = blocks_of(&normal);
+                    assert!(
+                        held.is_ok(),
+                        "{raw:?} → {normal:?}: {held:?}; twin {twin:?}"
+                    );
+                }
+            }
         }
         // What the codec holds, it holds as the normaliser wrote it.
         if let Ok(blocks) = blocks_of(&normal) {
@@ -224,8 +286,9 @@ fn normalising_never_changes_what_a_reader_shows() {
         }
     }
     assert!(
-        checked > 10_000 && held > 500 && plain > 200,
-        "{checked} checked, {held} held, {plain} with chat spaces made plain"
+        checked > 10_000 && held > 500 && plain > 200 && edged > 200 && twins > 20,
+        "{checked} checked, {held} held, {plain} with chat spaces made plain, \
+         {edged} with them at an edge, {twins} whose twin is held"
     );
 }
 
@@ -263,8 +326,11 @@ fn what_d4_leaves_is_refused_by_the_codec_with_its_line() {
 }
 
 /// Text the codec holds, chat spaces added only at its lines' edges or as
-/// whole lines (as rich-text paste writes indents and empty paragraphs),
-/// is held once normalised: entry removes each of them.
+/// whole lines (as rich-text paste and browsers write indents, runs of
+/// spaces and empty paragraphs), is held once normalised: a leading run
+/// holding one goes whole, mixed with plain spaces and tabs or not; a
+/// trailing one goes; and blank runs holding one, several in a row or
+/// beside a typed blank line, become one blank line (none inside a list).
 #[test]
 fn chat_spaces_at_line_edges_never_stop_text_being_held() {
     const LINES: &[&str] = &[
@@ -275,15 +341,25 @@ fn chat_spaces_at_line_edges_never_stop_text_being_held() {
         "Steps:",
     ];
     let mut seeded = Seeded(2705);
-    let edge = |seeded: &mut Seeded| -> String {
-        (0..seeded.below(3))
+    // A run of spacing holding at least one chat space.
+    let run = |seeded: &mut Seeded| -> String {
+        let mut run: Vec<char> = (0..seeded.below(4))
             .map(|_| match seeded.below(4) {
                 0 => ' ',
+                1 => '\t',
                 _ => CHAT[seeded.below(CHAT.len())],
             })
+            .collect();
+        let at = seeded.below(run.len() + 1);
+        run.insert(at, CHAT[seeded.below(CHAT.len())]);
+        run.into_iter().collect()
+    };
+    let chat_only = |seeded: &mut Seeded| -> String {
+        (0..seeded.below(3))
+            .map(|_| CHAT[seeded.below(CHAT.len())])
             .collect()
     };
-    for _ in 0..2_000 {
+    for _ in 0..3_000 {
         let mut lines: Vec<String> = Vec::new();
         let (mut in_list, mut blocks) = (false, 1 + seeded.below(4));
         while blocks > 0 {
@@ -294,15 +370,29 @@ fn chat_spaces_at_line_edges_never_stop_text_being_held() {
             for _ in 0..1 + seeded.below(3) {
                 let word = LINES[seeded.below(LINES.len())];
                 let marker = if list { "- " } else { "" };
-                // A whole line of chat spaces, inside a block only.
-                if seeded.below(4) == 0 && lines.last().is_some_and(|l| !l.is_empty()) {
-                    lines.push(format!("{}{}", edge(&mut seeded), CHAT[0]));
+                // Pasted empty paragraphs inside a block: one or several,
+                // beside a typed blank line or not.
+                if seeded.below(3) == 0 && lines.last().is_some_and(|l| !l.is_empty()) {
+                    for _ in 0..1 + seeded.below(3) {
+                        lines.push(run(&mut seeded));
+                    }
+                    if seeded.below(3) == 0 {
+                        lines.push(String::new());
+                    }
                 }
-                // Chat spaces only at the edges: a plain one there is the
-                // writer's own, which entry keeps.
-                let lead = edge(&mut seeded).replace(' ', "");
-                let tail = edge(&mut seeded).replace(' ', "");
+                // A leading run holding a chat space, or none; chat spaces
+                // only at the end (a plain one there is the writer's own).
+                let lead = match seeded.below(2) {
+                    0 => run(&mut seeded),
+                    _ => String::new(),
+                };
+                let tail = chat_only(&mut seeded);
                 lines.push(format!("{lead}{marker}{word}{tail}"));
+            }
+            // A pasted empty paragraph beside the typed blank line between
+            // blocks, sometimes.
+            if seeded.below(4) == 0 {
+                lines.push(run(&mut seeded));
             }
             lines.push(String::new());
         }
@@ -342,6 +432,61 @@ fn what_a_reader_shows_differently_is_left_as_written() {
                 assert!(!held, "{raw:?}: {refused}");
                 assert!(format!("{refused}").contains("line "), "{raw:?}: {refused}");
             }
+        }
+    }
+}
+
+/// Review round 2's pasted inputs through the codec: browsers' runs of
+/// spaces in a leading run go whole; empty paragraphs in a row, or beside
+/// a typed blank line, are one blank line (none in a tight list); a loose
+/// list stays loose; and a trailing chat space whose going would make
+/// markup (a hard break after a backslash, a setext underline, plain
+/// spacing) is made plain, so the codec refuses it with its line exactly
+/// as it refuses the text typed with plain spaces (the last rows).
+#[test]
+fn pasted_runs_gaps_and_line_ends_round_trip_or_are_refused_with_their_line() {
+    for (raw, kept, refused_at) in [
+        (
+            "Please see:\n\u{a0} \u{a0}- item one",
+            "Please see:\n- item one",
+            None,
+        ),
+        ("a\n\n\u{a0} \u{a0} x", "a\n\nx", None),
+        ("a\n\n\u{a0} \u{a0} \u{a0} \u{a0} \u{a0}x", "a\n\nx", None),
+        ("\u{a0}    code", "code", None),
+        ("\u{a0}\tx", "x", None),
+        ("Hi,\n\u{a0}\n\u{a0}\nRegards", "Hi,\n\nRegards", None),
+        ("- a\n\u{a0}\n\n- b", "- a\n- b", None),
+        ("a\n\n\u{a0}\n\nb", "a\n\nb", None),
+        ("- a\n\n- b\n\u{a0}\n- c", "- a\n\n- b\n\n- c", Some(3)),
+        (
+            "Path is C:\\dir\\\u{a0}\nnext",
+            "Path is C:\\dir\\ \nnext",
+            Some(1),
+        ),
+        ("a\n-\u{a0}\nb", "a\n- \nb", Some(2)),
+        ("a  \u{a0}\nb", "a   \nb", Some(1)),
+        ("a  \u{a0}", "a", None),
+        // Typed with plain spaces: refused alike.
+        ("- a\n\n- b\n\n- c", "- a\n\n- b\n\n- c", Some(3)),
+        (
+            "Path is C:\\dir\\ \nnext",
+            "Path is C:\\dir\\ \nnext",
+            Some(1),
+        ),
+        ("a\n- \nb", "a\n- \nb", Some(2)),
+        ("a   \nb", "a   \nb", Some(1)),
+    ] {
+        let normal = board_text::text(raw);
+        assert_eq!(normal, kept, "{raw:?}");
+        assert_eq!(board_text::text(&normal), normal, "{raw:?}");
+        match (blocks_of(&normal), refused_at) {
+            (Ok(blocks), None) => assert_eq!(text_of(&blocks), normal, "{raw:?}"),
+            (Err(refused), Some(line)) => assert!(
+                format!("{refused:?}").contains(&format!("line: {line}")),
+                "{raw:?}: {refused:?}"
+            ),
+            (outcome, _) => panic!("{raw:?}: {outcome:?}"),
         }
     }
 }

@@ -669,8 +669,8 @@ fn a_criterion_with_a_chat_space_is_held_once_normalised() {
 }
 
 /// An approach typed on a French keyboard is held once normalised, and so
-/// is a chat space beside a list marker (the approved #2705 plan, T1:
-/// entry makes every one between words plain); an em space is refused by the domain with the
+/// is a chat space beside a list marker (entry makes it plain: it is never
+/// meaningful there); an em space is refused by the domain with the
 /// approach's field, never by the file at write time.
 #[test]
 fn an_approach_with_chat_spaces_is_held_once_normalised() {

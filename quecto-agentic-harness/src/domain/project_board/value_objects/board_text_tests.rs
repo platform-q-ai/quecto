@@ -301,12 +301,25 @@ fn a_chat_space_between_words_is_made_plain_in_text() {
         ("- a\n\u{a0}\nb", "- a\n\nb"),
         ("- a\n \n- b", "- a\n \n- b"),
         ("```\n- a\n\u{a0}\n- b\n```", "```\n- a\n\n- b\n```"),
+        // A leading run holding one goes whole (a browser's run of spaces);
+        // in code it is an indent, made plain.
+        ("\u{a0} \u{a0}- x", "- x"),
+        ("a\n\n \u{a0}\tx", "a\n\nx"),
+        ("```\n\u{a0} x\n```", "```\n  x\n```"),
+        // A run of blank lines holding one is one; a list some typed blank
+        // line makes loose stays loose.
+        ("a\n\u{a0}\n \n\u{3000}\nb", "a\n\nb"),
+        ("- a\n\n- b\n\u{a0}\n- c", "- a\n\n- b\n\n- c"),
+        // One whose going would make markup is made plain, read as typed.
+        ("a\\\u{a0}\nb", "a\\ \nb"),
+        ("a\n-\u{a0}\nb", "a\n- \nb"),
+        ("a\n---\u{a0}\nb", "a\n---\nb"),
     ] {
         assert_eq!(settled(text, raw), kept, "{raw:?}");
     }
     // Each made plain, and nothing else changed, even where a plain space
-    // reads differently (the approved #2705 plan, T1: an NBSP there is
-    // never meaningful).
+    // reads differently (this PR's decision: an NBSP between words there
+    // is never meaningful, and refusing it blocks pasted text).
     for raw in [
         // A block marker or indentation it makes.
         "-\u{a0}x",

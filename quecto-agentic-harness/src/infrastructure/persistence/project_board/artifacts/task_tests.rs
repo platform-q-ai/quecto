@@ -632,8 +632,8 @@ fn a_pasted_description_with_chat_spaces_at_line_edges_is_held() {
 
 /// A description typed on a French keyboard, its chat spaces before `!`
 /// and `?`, is held once normalised, and so is a chat space beside a block
-/// marker or in a code span (the approved #2705 plan, T1: entry makes
-/// every one between words plain); an em space, which no keyboard puts between words, is
+/// marker or in a code span (entry makes every one between words plain:
+/// one there is never meaningful, and refusing it blocks pasted text); an em space, which no keyboard puts between words, is
 /// refused by the domain with the description's field, never by the file
 /// at write time.
 #[test]
