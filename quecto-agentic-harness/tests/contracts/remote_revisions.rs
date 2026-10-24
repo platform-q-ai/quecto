@@ -126,6 +126,20 @@ pub fn check_nothing_is_judged_while_the_remote_cannot_be_read(open: Open) {
     ));
 }
 
+/// The production adapter, opened on clone `clone`'s `origin` as a
+/// teardown opens it.
+fn git_opened(remote: &Remote, clone: usize, name: &str) -> Box<dyn RemoteRevisions> {
+    use quecto::infrastructure::persistence::project_board::remote_revisions::GitRemoteRevisions;
+    Box::new(GitRemoteRevisions::new(remote.git(clone, name), "origin").unwrap())
+}
+
+#[test]
+fn git_remote_revisions_keeps_the_contract() {
+    check_on_the_remote_only_when_a_branch_or_tag_there_reaches_it(git_opened);
+    check_nothing_is_judged_while_the_remote_cannot_be_read(git_opened);
+    check_text_that_names_no_commit_never_reads_the_remote(git_opened);
+}
+
 pub fn check_text_that_names_no_commit_never_reads_the_remote(open: Open) {
     let remote = Remote::new();
     let alice = open(&remote, 0, "Alice");

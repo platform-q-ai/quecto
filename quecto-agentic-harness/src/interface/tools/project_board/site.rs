@@ -28,7 +28,8 @@ pub enum Access {
 /// What a front end already knows of where its board is (#2705 B1), so
 /// composition need not ask git for it: the id the board's records name
 /// it by, and its remote's fetch URL. Each part left `None` is asked of
-/// git, as before; the caller that names one vouches for it.
+/// git, as before; the caller that names one vouches for it. Only a read
+/// takes it: a write asks git for the whole location.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KnownLocation {
     pub board_id: Option<BoardId>,

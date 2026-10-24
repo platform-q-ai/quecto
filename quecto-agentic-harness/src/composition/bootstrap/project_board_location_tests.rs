@@ -115,16 +115,127 @@ fn a_board_with_no_given_location_asks_git_for_it_as_before() {
     let (bin, log) = counting_git(dir.path());
     let reading = counted(&work, Access::Read, KnownLocation::default(), &bin);
     let handles = build_project_board_handles(&reading).unwrap();
-    let asked = calls(&log);
-    for spelt in [
-        "var GIT_COMMITTER_IDENT",
-        "remote get-url",
-        "rev-parse --show-toplevel",
-        "--git-common-dir",
-    ] {
-        assert!(any_call(&asked, spelt), "{spelt} in {asked:?}");
-    }
+    // Each call's own arguments, past the settings every call carries.
+    let asked: Vec<String> = calls(&log)
+        .iter()
+        .map(|call| {
+            let (_, own) = call
+                .split_once("maintenance.auto=false ")
+                .expect("every call carries the runner's settings");
+            own.to_owned()
+        })
+        .collect();
+    assert_eq!(
+        asked,
+        [
+            "var GIT_COMMITTER_IDENT",
+            "remote get-url origin",
+            "remote get-url -- origin",
+            "rev-parse --show-toplevel",
+            "rev-parse --path-format=absolute --git-common-dir",
+        ],
+        "exactly the calls composition made before #2705 B1, in order"
+    );
     assert_eq!(handles.board, Some(board));
+}
+
+/// A remote folder beside the clone that the clone does not configure.
+fn decoy(work: &Path) -> PathBuf {
+    sh(work, &["init", "-q", "--bare", "decoy"]);
+    work.join("decoy")
+}
+
+/// The decoy's branches, as git lists them.
+fn decoy_branches(decoy: &Path) -> String {
+    sh(decoy, &["for-each-ref", "--format=%(refname)"])
+}
+
+#[test]
+fn a_write_takes_no_location_on_trust() {
+    let (dir, work) = repository();
+    board_with_a(&work);
+    let decoy = decoy(&work);
+    let (bin, log) = counting_git(dir.path());
+    let mut writing = counted(&work, Access::Write, given_location(), &bin);
+    writing.remote = "decoy".into();
+    assert!(matches!(
+        build_project_board_handles(&writing),
+        Err(BuildError::NoSuchRemote(_))
+    ));
+    assert_eq!(decoy_branches(&decoy), "", "nothing written to the decoy");
+    let asked = calls(&log);
+    assert!(!any_call(&asked, "push"), "{asked:?}");
+}
+
+#[test]
+fn a_read_on_a_known_location_never_reads_an_unconfigured_remote_folder() {
+    let (dir, work) = repository();
+    board_with_a(&work);
+    let decoy = decoy(&work);
+    // Something on the decoy that a read of it would find.
+    sh(
+        &work,
+        &[
+            "push",
+            "-q",
+            "decoy",
+            "refs/remotes/origin/quecto/board:refs/heads/quecto/board",
+        ],
+    );
+    let (bin, log) = counting_git(dir.path());
+    let mut reading = counted(&work, Access::Read, given_location(), &bin);
+    reading.remote = "decoy".into();
+    assert!(matches!(
+        build_project_board_handles(&reading),
+        Err(BuildError::NoSuchRemote(_))
+    ));
+    let asked = calls(&log);
+    assert!(!any_call(&asked, "ls-remote"), "{asked:?}");
+    assert!(!any_call(&asked, "fetch"), "{asked:?}");
+    assert_ne!(decoy_branches(&decoy), "");
+}
+
+/// A whole location, as the pocket relay gives one.
+fn given_location() -> KnownLocation {
+    KnownLocation {
+        board_id: Some(BoardId::of_hex("0123456789abcdef").unwrap()),
+        remote_url: Some("https://github.com/acme/widgets.git".into()),
+    }
+}
+
+#[test]
+fn a_known_location_in_a_folder_that_is_no_repository_says_so_for_every_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut reading = environment(dir.path(), Access::Read);
+    reading.known = given_location();
+    let refused = build_project_board_handles(&reading).err();
+    let Some(BuildError::Unavailable(why)) = refused else {
+        panic!("{refused:?}");
+    };
+    assert!(!why.contains("ls-remote"), "{why}");
+    let site = crate::interface::tools::project_board::site::BoardSite {
+        repo: dir.path().to_path_buf(),
+        remote: "origin".into(),
+        known: given_location(),
+        build: Some(build_project_board_handles),
+        launcher: None,
+        swarm_session: None,
+    };
+    use crate::domain::project_board::value_objects::telemetry::{Client, FrontEnd};
+    use crate::interface::tools::project_board::recording::BoardCall;
+    let answered = |request: &str| {
+        let mut call = BoardCall::start(None, FrontEnd::Cli, Client::Cli);
+        crate::interface::tools::project_board::site::answer(&site, request, None, &mut call)
+    };
+    let (show, list) = (
+        answered(r#"{"op": "show", "task": "a"}"#),
+        answered(r#"{"op": "list"}"#),
+    );
+    assert_eq!(show["error"]["code"], json!("store_unavailable"), "{show}");
+    assert_eq!(
+        show["error"]["reason"], list["error"]["reason"],
+        "{show} {list}"
+    );
 }
 
 #[test]
@@ -144,8 +255,8 @@ fn each_given_part_skips_only_the_git_call_it_answers() {
     assert!(!any_call(&asked, "--show-toplevel"), "{asked:?}");
     assert!(any_call(&asked, "remote get-url"), "{asked:?}");
     std::fs::remove_file(&log).unwrap();
-    // A URL alone: the remote is never asked for it, and the id is made
-    // from the URL given.
+    // A URL alone: the remote is checked but never asked for its URL, and
+    // the id is made from the URL given.
     let given = "https://github.com/acme/widgets.git";
     let known = KnownLocation {
         board_id: None,
@@ -153,7 +264,8 @@ fn each_given_part_skips_only_the_git_call_it_answers() {
     };
     let handles = build_project_board_handles(&counted(&work, Access::Read, known, &bin)).unwrap();
     let asked = calls(&log);
-    assert!(!any_call(&asked, "remote get-url"), "{asked:?}");
+    assert!(!any_call(&asked, "remote get-url -- origin"), "{asked:?}");
+    assert!(any_call(&asked, "remote get-url origin"), "{asked:?}");
     assert!(any_call(&asked, "--show-toplevel"), "{asked:?}");
     assert_eq!(
         handles.board,

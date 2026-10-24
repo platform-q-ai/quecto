@@ -44,6 +44,7 @@ use crate::infrastructure::persistence::project_board::index::{
     BoardIndex, BoardRevisions, IndexError,
 };
 use crate::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
+use crate::infrastructure::persistence::project_board::remote_config::lists_remote;
 use crate::infrastructure::persistence::project_board::remote_revisions::GitRemoteRevisions;
 use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
@@ -84,6 +85,15 @@ fn build_with_warnings(
         )))),
         (Access::Write | Access::Read, None) | (Access::Read, Some(_)) => {}
     }
+    // A write takes no location on trust: git names it, and checks the
+    // remote is one the clone configures (#2705 B1). A read on a location
+    // known whole asks git nothing when the clone's own config file
+    // plainly lists the remote, so git never takes its name for a path.
+    let known = match environment.access {
+        Access::Write => KnownLocation::default(),
+        Access::Read => environment.known.clone(),
+    };
+    let unasked = located(&known) && lists_remote(&environment.repo, &environment.remote);
     let git = match environment.access {
         Access::Write => {
             let committer = match board_committer(&environment.vars) {
@@ -94,17 +104,15 @@ fn build_with_warnings(
             };
             Git::new(&environment.repo, vars, committer).map_err(write_refusal)?
         }
-        // A front end that knows where its board is asks git nothing to
-        // build a reader (#2705 B1).
-        Access::Read => match located(&environment.known) {
+        Access::Read => match unasked {
             true => Git::reader_unasked(&environment.repo, vars),
             false => Git::reader(&environment.repo, vars),
         }
         .map_err(|error| unavailable(format!("git cannot run here: {error}")))?,
     };
-    let opened = match &environment.known.remote_url {
-        Some(_) => GitBoardStore::on_given_remote(git, &environment.remote),
-        None => GitBoardStore::new(git, &environment.remote),
+    let opened = match unasked {
+        true => GitBoardStore::on_listed_remote(git, &environment.remote),
+        false => GitBoardStore::new(git, &environment.remote),
     };
     let board = opened.map_err(|error| match error {
         StoreOpenError::NoSuchRemote(why) => BuildError::NoSuchRemote(why),
@@ -113,10 +121,10 @@ fn build_with_warnings(
     // A start's undo writes past the call's cancel, so no run is stranded.
     let undo_store: Arc<dyn ProjectBoardStore> = Arc::new(board.without_cancel());
     let store = Arc::new(board.with_cancel(environment.cancelled.clone()));
-    let location = BoardLocation::resolve(&environment.known, &store, &environment.repo)
+    let location = BoardLocation::resolve(&known, &store, &environment.repo)
         .map_err(|error| unavailable(store_reason(&error)))?;
     let clock: Arc<dyn BoardClock> = Arc::new(ReferencedBoardClock::for_remote(&location.url));
-    let listings = Arc::new(listings_of(&store, located(&environment.known))?);
+    let listings = Arc::new(listings_of(&store, unasked)?);
     let prs = pull_request_states(&location.url, &environment.vars);
     // A success is judged by the revisions the board's own remote holds
     // (#2666), read by their own adapter on the store's remote.
@@ -206,9 +214,9 @@ fn located(known: &KnownLocation) -> bool {
 /// per composition, each part from what the front end knows, and only
 /// what it does not from git.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BoardLocation {
-    pub board: Option<BoardId>,
-    pub url: String,
+struct BoardLocation {
+    board: Option<BoardId>,
+    url: String,
 }
 
 impl BoardLocation {

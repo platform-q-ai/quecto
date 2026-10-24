@@ -35,6 +35,7 @@ use super::board_tree::{
 };
 use super::git::{Git, GitError, SHORT_OUTPUT, failed, quoted};
 use super::push_report::{PushReport, RefStatus, Rejection, ref_status, remote_rejection};
+use super::remote_config::lists_remote;
 use crate::application::project_board::ports::{
     BoardArtifact, BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite,
     ProjectBoardStore, SetAsideClear,
@@ -161,16 +162,19 @@ impl GitBoardStore {
         Ok(Self::opened(git, remote))
     }
 
-    /// The board on `remote`, a remote its caller vouches the repository
-    /// configures, as one that already knows the board's location does
-    /// (#2705 B1): its name is checked as [`Self::new`] checks it, but git
-    /// is not asked, so opening it starts no process.
+    /// The board on `remote`, opened with no git process when the clone's
+    /// own config file plainly lists it ([`lists_remote`], #2705 B1), so
+    /// git never takes the name for a path; otherwise checked as
+    /// [`Self::new`] checks it, asking git.
     ///
     /// # Errors
-    /// A name quecto does not accept as a remote's.
-    pub fn on_given_remote(git: Git, remote: &str) -> Result<Self, StoreOpenError> {
+    /// As [`Self::new`]'s.
+    pub fn on_listed_remote(git: Git, remote: &str) -> Result<Self, StoreOpenError> {
         remote_name(remote)?;
-        Ok(Self::opened(git, remote))
+        match lists_remote(git.repo(), remote) {
+            true => Ok(Self::opened(git, remote)),
+            false => Self::new(git, remote),
+        }
     }
 
     fn opened(git: Git, remote: &str) -> Self {
