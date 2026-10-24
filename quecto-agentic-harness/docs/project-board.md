@@ -503,7 +503,9 @@ A started task's coordinator brief carries the handoff verbatim as the data's
 without one briefs exactly as before. The handoff is counted in the brief's
 64 KiB, as the brief's data spells it. One past the room the rest of the brief
 leaves is cut to fit and ended with "… (cut here; the rest is in the plan on
-the board)", so a long handoff never stops a start; the brief already tells the
+the board)"; where not even that marker fits, the handoff is left out of the
+brief (`handoff_cut`), so a plan that starts without a handoff starts with one
+too. The brief already says the full plan is on the board and tells the
 coordinator to ask its parent for any part cut.
 
 The handoff, never its text's shape, picks the plan file's layout. A plan with
@@ -521,15 +523,20 @@ relay host, every laptop, eccup) must be upgraded **before any agent writes a
 handoff**. A quecto from before T3 reads only schema-1 plans, and one plan with
 a handoff on the board breaks it:
 
-- its `list` fails for the **whole board**, not just that task: the plan's file
-  is set aside (`folder_set_aside` on `plans/…`), with the reason "schema 2,
-  written by a newer quecto; this quecto reads schema 1: upgrade quecto to read
-  it". The Pocket relay sends `list`, so an old relay shows no board at all;
-- its `show`, `propose_plan`, `edit_plan` and `accept_plan` on that task are
-  refused while the file is set aside.
+- its `list`, `list_ready` and `list_takeable` fail for the **whole board**,
+  not just that task, with `folder_set_aside` on `plans/…`, whose message
+  offers `clear_set_aside` and never says to upgrade. The Pocket relay sends
+  `list`, so an old relay shows no board at all;
+- its `show(task)` still answers, with `may_be_incomplete: true`; the reason
+  "schema 2, written by a newer quecto; this quecto reads schema 1: upgrade
+  quecto to read it" appears only in that answer's `quarantined[].reason`;
+- its `show(task, version)` of the schema-2 version, and `propose_plan`,
+  `edit_plan`, `accept_plan` and `discard_plan` on that task, are refused with
+  `artifact_set_aside`;
+- writes to other tasks still work.
 
-Each of those messages offers `clear_set_aside`. **Never follow that advice for
-a schema-2 plan**: it deletes the plan, handoff and all, from a board whose file
+Those refusals offer `clear_set_aside`. **Never follow that advice for a
+schema-2 plan**: it deletes the plan, handoff and all, from a board whose file
 is sound. Upgrade quecto on that host instead. (Deploy every host together;
 there is no two-step release.)
 

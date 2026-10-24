@@ -19,8 +19,10 @@
 //!   where it was; then where the plan is in full.
 //! - **handoff** (#2705 T3): the plan's handoff verbatim, when it has
 //!   one, counted in the brief's size; one past the room the rest of the
-//!   brief leaves is cut to fit with the marker, never refused, so a long
-//!   handoff never stops a start. A plan without one briefs as before.
+//!   brief leaves is cut to fit with the marker, never refused (where not
+//!   even the marker fits, it is left out, the constraints' pointer sending
+//!   the coordinator to the board), so a handoff never stops a start that
+//!   would go without it. A plan without one briefs as before.
 //!
 //! A brief is only of a [`Started`] task, so of its accepted plan. The
 //! team is read field by field (a new field does not compile until it is
@@ -131,9 +133,10 @@ pub struct SwarmBrief {
     /// Whether the approach was cut to fit the constraints.
     pub approach_cut: bool,
     /// The plan's handoff (#2705 T3), verbatim, or as much as the brief
-    /// has room for, ended by [`CUT_MARKER`]; `None` for none.
+    /// has room for, ended by [`CUT_MARKER`]; `None` for none, or for one
+    /// left out whole (`handoff_cut`) where not even the marker fits.
     pub handoff: Option<String>,
-    /// Whether the handoff was cut to fit the brief.
+    /// Whether the handoff was cut, or left out, to fit the brief.
     pub handoff_cut: bool,
     pub criteria: Vec<RunCriterion>,
     /// `None`: the plan names no team, and the coordinator sizes its pool.
@@ -428,21 +431,25 @@ pub fn brief_of(started: &Started) -> Result<SwarmBrief, BriefRefusal> {
         coordinator: terms.coordinator,
         not_applied: terms.not_applied,
     };
+    // Judged without the handoff: a plan that starts without one starts
+    // with one too.
     let bare = brief.bytes();
-    let too_large = |bytes| Err(BriefRefusal::BriefTooLarge { bytes });
+    if bare > MAX_BRIEF_BYTES {
+        return Err(BriefRefusal::BriefTooLarge { bytes: bare });
+    }
     let Some(handoff) = planned.handoff.as_deref() else {
-        return match bare <= MAX_BRIEF_BYTES {
-            true => Ok(brief),
-            false => too_large(bare),
-        };
+        return Ok(brief);
     };
-    // The handoff takes the room the rest leaves: whole, or cut to fit.
-    let room = MAX_BRIEF_BYTES.saturating_sub(bare);
-    let Some((handoff, handoff_cut)) = handoff_within(handoff, room) else {
-        return too_large(bare + handoff_bytes(handoff));
+    // The handoff takes the room the rest leaves: whole, or cut to fit;
+    // where not even the cut marker fits, it is left out whole (cut), and
+    // the constraints' pointer sends the coordinator to the board for it.
+    let room = MAX_BRIEF_BYTES - bare;
+    let (handoff, handoff_cut) = match handoff_within(handoff, room) {
+        Some((handoff, cut)) => (Some(handoff), cut),
+        None => (None, true),
     };
     let brief = SwarmBrief {
-        handoff: Some(handoff),
+        handoff,
         handoff_cut,
         ..brief
     };

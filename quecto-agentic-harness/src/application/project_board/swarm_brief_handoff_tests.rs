@@ -29,6 +29,18 @@ fn person(name: &str) -> Identity {
 
 /// The brief of accepted plan v1 of a ready task, its handoff `handoff`.
 fn brief(handoff: Option<&str>) -> Result<SwarmBrief, BriefRefusal> {
+    let schema = PlanItem {
+        id: slug("schema"),
+        title: "Build the schema".into(),
+        criteria: vec![],
+        depends_on: vec![],
+    };
+    brief_with(handoff, vec![schema])
+}
+
+/// The brief of accepted plan v1 of a ready task, its handoff `handoff`
+/// and its task items `items`.
+fn brief_with(handoff: Option<&str>, items: Vec<PlanItem>) -> Result<SwarmBrief, BriefRefusal> {
     let task = Task::new(TaskFields {
         id: slug("board-store"),
         title: "Board store".into(),
@@ -55,12 +67,7 @@ fn brief(handoff: Option<&str>) -> Result<SwarmBrief, BriefRefusal> {
         state: PlanState::Accepted,
         approach: "Spike, then build.".into(),
         handoff: handoff.map(str::to_owned),
-        items: vec![PlanItem {
-            id: slug("schema"),
-            title: "Build the schema".into(),
-            criteria: vec![],
-            depends_on: vec![],
-        }],
+        items,
         team: None,
         proposed_by: person("Ada"),
         edited_by: None,
@@ -132,3 +139,66 @@ fn a_handoff_past_the_briefs_room_is_cut_to_fit_with_a_marker() {
     assert!(brief.handoff_cut && brief.bytes() <= MAX_BRIEF_BYTES);
     assert!(render(&brief).len() <= brief.bytes());
 }
+
+/// Task items whose brief, with no handoff, takes exactly `target` bytes:
+/// whole items of eight 400-character criteria, then one grown a
+/// criterion at a time (each byte of a criterion is a byte of the brief).
+fn items_briefing_at(target: usize) -> Vec<PlanItem> {
+    let bare = |items: &[PlanItem]| brief_with(None, items.to_vec()).unwrap().bytes();
+    let item = |index: usize, criteria: Vec<String>| PlanItem {
+        id: slug(&format!("item-{index}")),
+        title: format!("Build part {index}"),
+        criteria,
+        depends_on: vec![],
+    };
+    let full = |index: usize| {
+        let criteria = (0..8)
+            .map(|at| format!("{at} {}", "x".repeat(398)))
+            .collect();
+        item(index, criteria)
+    };
+    // A brief needs a task item.
+    let mut items = vec![full(0)];
+    while bare(&items) + 5_000 < target {
+        items.push(full(items.len()));
+    }
+    items.push(item(items.len(), vec!["c".into()]));
+    loop {
+        let left = target - bare(&items);
+        let criteria = &mut items.last_mut().unwrap().criteria;
+        let last = criteria.last_mut().unwrap();
+        match (left, last.len() + left <= 400) {
+            (0, _) => break,
+            (_, true) => last.push_str(&"y".repeat(left)),
+            (_, false) => {
+                let full = 400 - last.len();
+                last.push_str(&"y".repeat(full));
+                let next = criteria.len();
+                criteria.push(format!("{next}"));
+            }
+        }
+    }
+    items
+}
+
+/// Review round 2: a brief within a few bytes of its most, where not even
+/// the cut marker fits, starts with the handoff left out (cut): a plan
+/// that starts without a handoff starts with one too.
+#[test]
+fn a_handoff_with_no_room_left_is_left_out_and_the_start_allowed() {
+    let items = items_briefing_at(MAX_BRIEF_BYTES - 50);
+    assert_eq!(
+        brief_with(None, items.clone()).unwrap().bytes(),
+        MAX_BRIEF_BYTES - 50
+    );
+    let handoff = "h".repeat(200);
+    let brief = brief_with(Some(&handoff), items).unwrap();
+    assert_eq!((brief.handoff.as_deref(), brief.handoff_cut), (None, true));
+    assert!(brief.bytes() <= MAX_BRIEF_BYTES);
+    assert_eq!(brief.constraints.last().map(String::as_str), Some(POINTER));
+    let rendered = render(&brief);
+    assert_eq!(data(&rendered).get("handoff"), None, "{rendered}");
+}
+
+const POINTER: &str = "The full plan is on the project board (task board-store, plan v1); \
+                       ask your parent for any part cut here.";
