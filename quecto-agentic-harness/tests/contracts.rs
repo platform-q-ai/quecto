@@ -88,6 +88,8 @@ mod board_runs;
 mod board_tasks;
 #[path = "contracts/board_text_cells.rs"]
 mod board_text_cells;
+#[path = "contracts/board_tokens.rs"]
+mod board_tokens;
 #[path = "contracts/board_transaction.rs"]
 mod board_transaction;
 #[path = "contracts/board_usage.rs"]

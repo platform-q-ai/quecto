@@ -1,5 +1,6 @@
 //! The project board's use cases (#2476).
 mod accept_plan;
+mod board_access;
 mod board_change;
 pub mod board_view;
 mod bootstrap_project_board;
@@ -22,6 +23,7 @@ mod task_pointers;
 mod update_draft_task;
 
 pub use accept_plan::AcceptPlan;
+pub use board_access::{BoardAccess, Caller, Principal, Refused, Scope};
 pub use board_change::MAX_WRITE_ATTEMPTS;
 pub use bootstrap_project_board::BootstrapProjectBoard;
 pub use change_board_task::ChangeBoardTask;

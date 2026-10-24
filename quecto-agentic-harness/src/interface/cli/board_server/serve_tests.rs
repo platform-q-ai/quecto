@@ -1,8 +1,11 @@
 use super::*;
+use crate::application::project_board::use_cases::BoardAccess;
 use crate::infrastructure::http::board_service::listener::{
     PeerCredentials, SocketPeerCredentials, this_uid,
 };
 use crate::infrastructure::http::board_service::test_server::raw;
+use crate::infrastructure::test_support::memory_board_tokens::MemoryBoardTokens;
+use crate::infrastructure::time::board_clock::SystemBoardClock;
 use crate::interface::cli::board_server::routes::tests::{BOARD, serving, written};
 use std::sync::Arc;
 
@@ -16,6 +19,23 @@ fn served(
     tokio::sync::oneshot::Sender<()>,
     std::thread::JoinHandle<Result<(), String>>,
 ) {
+    let (dir, socket, _, stop, thread) = served_on(handles, &[]);
+    (dir, socket, stop, thread)
+}
+
+/// A served server: its temp dir, socket, TCP addresses, stop and thread.
+type ServedOn = (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    Vec<std::net::SocketAddr>,
+    tokio::sync::oneshot::Sender<()>,
+    std::thread::JoinHandle<Result<(), String>>,
+);
+
+/// Serves `handles` on a temp socket and `tcp`; gives the TCP addresses
+/// bound too.
+fn served_on(handles: BoardServerHandles, tcp: &[ListenAddress]) -> ServedOn {
+    let tcp = tcp.to_vec();
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("board").join("board.sock");
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
@@ -25,6 +45,7 @@ fn served(
         serve(
             handles,
             &at,
+            &tcp,
             std::time::Instant::now(),
             || async {
                 let _ = stopped.await;
@@ -37,7 +58,7 @@ fn served(
         .expect("the server starts");
     assert_eq!(started.socket, socket);
     assert_eq!(started.board.as_str(), BOARD);
-    (dir, socket, stop, thread)
+    (dir, socket, started.tcp, stop, thread)
 }
 
 /// `GET path` over `socket`, as curl sends it: the status and body.
@@ -47,10 +68,13 @@ fn get(socket: &std::path::Path, path: &str) -> (u16, String) {
 }
 
 fn handles(serve: crate::application::project_board::use_cases::ServeBoard) -> BoardServerHandles {
+    let tokens = Arc::new(MemoryBoardTokens::default());
     BoardServerHandles {
         serve,
+        access: BoardAccess::new(tokens, Arc::new(SystemBoardClock::default())),
         peers: Arc::new(SocketPeerCredentials) as Arc<dyn PeerCredentials>,
         uid: this_uid(),
+        listen: vec![],
     }
 }
 
@@ -105,6 +129,7 @@ fn a_socket_that_cannot_be_bound_is_refused_before_serving() {
     let error = serve(
         handles(serving(&store)),
         &file.join("board.sock"),
+        &[],
         std::time::Instant::now(),
         || async {},
         |_: &Started| panic!("never ready"),
@@ -194,4 +219,221 @@ fn the_start_up_line_survives_a_broken_stdout() {
     let mut written = Vec::new();
     announce(&mut written, "board-server: serving\n");
     assert_eq!(written, b"board-server: serving\n");
+}
+
+fn args(text: &str) -> Vec<String> {
+    text.split_whitespace().map(String::from).collect()
+}
+
+/// `--listen` is repeatable and `--state` taken once; each address is
+/// judged as it is parsed.
+#[test]
+fn serve_takes_listen_addresses_and_a_state_directory() {
+    let parsed = parse(&args(
+        "serve --socket /s --repo /r --listen 127.0.0.1:7979 --listen [::1]:7979 \
+         --listen 100.101.102.103:7979 --state /var/lib/board",
+    ))
+    .unwrap();
+    let listen: Vec<String> = parsed
+        .listen
+        .iter()
+        .map(|address| address.socket_addr().to_string())
+        .collect();
+    assert_eq!(
+        listen,
+        ["127.0.0.1:7979", "[::1]:7979", "100.101.102.103:7979"]
+    );
+    assert_eq!(
+        parsed.state,
+        Some(std::path::PathBuf::from("/var/lib/board"))
+    );
+    let bare = parse(&args("serve --socket /s --repo /r")).unwrap();
+    assert!(bare.listen.is_empty() && bare.state.is_none());
+    for refused in [
+        "serve --socket /s --repo /r --state /a --state /b",
+        "serve --socket /s --repo /r --listen",
+        "serve --socket /s --repo /r --listen localhost:7979",
+    ] {
+        assert!(parse(&args(refused)).is_err(), "{refused}");
+    }
+}
+
+/// B5 red: binding to `0.0.0.0` (or `::`, or any address off the
+/// allowlist) is refused at start, before anything is built or bound.
+#[test]
+fn binding_to_every_interface_is_refused_at_start() {
+    for address in ["0.0.0.0:7979", "[::]:7979", "192.168.1.20:7979"] {
+        let error = parse(&args(&format!(
+            "serve --socket /s --repo /r --listen {address}"
+        )))
+        .unwrap_err();
+        assert!(
+            error.contains(&format!("--listen {address} is refused")),
+            "{error}"
+        );
+        assert!(error.contains("100.64.0.0/10"), "{error}");
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("board").join("board.sock");
+    let ctx = crate::interface::cli::CliContext::default();
+    let (mut out, mut err) = (String::new(), String::new());
+    let command = format!(
+        "serve --socket {} --repo /r --listen 0.0.0.0:7979",
+        socket.display()
+    );
+    let code = super::super::cmd_board_server(&ctx, &args(&command), &mut out, &mut err);
+    assert_eq!(code, 1);
+    assert!(err.contains("--listen 0.0.0.0:7979 is refused"), "{err}");
+    assert!(
+        !err.contains("not composed"),
+        "refused before composition: {err}"
+    );
+    assert!(std::fs::symlink_metadata(&socket).is_err(), "nothing bound");
+}
+
+/// `GET path` over TCP with `authorization`: the status and body.
+fn tcp_get(
+    address: std::net::SocketAddr,
+    path: &str,
+    authorization: Option<&str>,
+) -> (u16, String) {
+    use std::io::{Read, Write};
+    let header = authorization
+        .map(|value| format!("Authorization: {value}\r\n"))
+        .unwrap_or_default();
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: board\r\n{header}Connection: close\r\n\r\n");
+    let mut stream = std::net::TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut answer = String::new();
+    let _ = stream.read_to_string(&mut answer);
+    let status = answer
+        .split(' ')
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+        .unwrap_or_else(|| panic!("no status line in {answer:?}"));
+    let body = answer
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body.to_string());
+    (status, body.unwrap_or_default())
+}
+
+/// `quecto board-server token <rest> --socket <socket>`: code, out, err.
+fn token(socket: &std::path::Path, rest: &str) -> (i32, String, String) {
+    let ctx = crate::interface::cli::CliContext::default();
+    let (mut out, mut err) = (String::new(), String::new());
+    let mut command = args(&format!("token {rest} --socket"));
+    command.push(socket.display().to_string());
+    let code = super::super::cmd_board_server(&ctx, &command, &mut out, &mut err);
+    (code, out, err)
+}
+
+/// B5 red, end to end on 127.0.0.1: over TCP no token is 401, a token
+/// added over the socket reads (200), admin over TCP is 403 even with it,
+/// and once revoked it is 401. `token add` prints the token once, alone on
+/// stdout; `token list` gives its name and date, never the token.
+#[test]
+fn tcp_reads_with_a_token_added_over_the_socket() {
+    let (store, _) = written();
+    let loopback = ListenAddress::parse("127.0.0.1:0").unwrap();
+    let (_dir, socket, tcp, stop, thread) = served_on(handles(serving(&store)), &[loopback]);
+    let [address] = tcp.as_slice() else {
+        panic!("one TCP address: {tcp:?}")
+    };
+    assert!(address.ip().is_loopback() && address.port() != 0);
+    let (status, body) = tcp_get(*address, "/v1/status", None);
+    assert_eq!(status, 401, "{body}");
+    assert!(body.contains(r#""code":"token""#), "{body}");
+
+    let (code, out, err) = token(&socket, "add laptop");
+    assert_eq!(code, 0, "{err}");
+    let secret = out.trim().to_string();
+    assert_eq!(out, format!("{secret}\n"), "the token alone on stdout");
+    assert!(!secret.is_empty());
+    assert_eq!(
+        (out.clone() + &err).matches(&secret).count(),
+        1,
+        "shown once"
+    );
+    assert!(
+        err.contains("token 'laptop' added; it is shown only this once"),
+        "{err}"
+    );
+
+    let bearer = format!("Bearer {secret}");
+    let (status, body) = tcp_get(*address, "/v1/status", Some(&bearer));
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains(BOARD), "{body}");
+    let (status, body) = tcp_get(*address, "/v1/admin/tokens", Some(&bearer));
+    assert_eq!(status, 403, "{body}");
+    assert!(body.contains(r#""code":"local_only""#), "{body}");
+
+    let (code, out, err) = token(&socket, "list");
+    assert_eq!(code, 0, "{err}");
+    assert!(out.starts_with("laptop\t"), "{out}");
+    assert!(!(out.clone() + &err).contains(&secret), "{out}{err}");
+    assert_eq!(token(&socket, "add laptop").0, 1, "a taken name");
+
+    let (code, out, err) = token(&socket, "revoke laptop");
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, "board-server: token 'laptop' revoked\n");
+    assert_eq!(tcp_get(*address, "/v1/status", Some(&bearer)).0, 401);
+    let (code, _, err) = token(&socket, "revoke laptop");
+    assert_eq!(code, 1);
+    assert!(
+        err.contains("no token is named 'laptop' (404 no_token)"),
+        "{err}"
+    );
+    let (code, out, err) = token(&socket, "list");
+    assert_eq!((code, out.as_str()), (0, ""));
+    assert!(err.contains("no tokens"), "{err}");
+    stop.send(()).unwrap();
+    thread.join().unwrap().unwrap();
+}
+
+#[test]
+fn token_commands_need_a_server_and_their_options() {
+    let dir = tempfile::tempdir().unwrap();
+    let (code, out, err) = token(&dir.path().join("none.sock"), "list");
+    assert_eq!((code, out.as_str()), (1, ""));
+    assert!(err.contains("no answer from a server on"), "{err}");
+    let ctx = crate::interface::cli::CliContext::default();
+    for refused in [
+        "token",
+        "token add",
+        "token add laptop",
+        "token add --socket /s",
+        "token remove laptop --socket /s",
+        "token list --socket /s extra",
+    ] {
+        let (mut out, mut err) = (String::new(), String::new());
+        let code = super::super::cmd_board_server(&ctx, &args(refused), &mut out, &mut err);
+        assert_eq!(code, 1, "{refused}");
+        assert!(err.contains(USAGE), "{refused}: {err}");
+    }
+}
+
+/// An address that cannot be bound stops the start, and the socket bound
+/// first is removed.
+#[test]
+fn an_address_in_use_is_refused_and_the_socket_removed() {
+    let (store, _) = written();
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = ListenAddress::parse(&taken.local_addr().unwrap().to_string()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("board").join("board.sock");
+    let error = serve(
+        handles(serving(&store)),
+        &socket,
+        &[address],
+        std::time::Instant::now(),
+        || async {},
+        |_: &Started| panic!("never ready"),
+    )
+    .unwrap_err();
+    assert!(error.starts_with("board-server: 127.0.0.1:"), "{error}");
+    assert!(std::fs::symlink_metadata(&socket).is_err());
 }

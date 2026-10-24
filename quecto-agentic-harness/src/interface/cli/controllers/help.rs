@@ -91,7 +91,11 @@ pub(in crate::interface::cli) fn help_text(out: &mut String) {
     );
     out.push_str("                  real control\n");
     out.push_str("  board-server serve --socket <path> --repo <clone> [--remote <name>]\n");
+    out.push_str("              [--listen <ip:port>]... [--state <dir>]\n");
     out.push_str("              Serve the board over HTTP on a Unix socket (this user only)\n");
+    out.push_str("              and on loopback or Tailscale TCP (a device token each)\n");
+    out.push_str("  board-server token add <name> | revoke <name> | list --socket <path>\n");
+    out.push_str("              Device tokens, over the Unix socket; add shows a token once\n");
     out.push_str("  container   Container runtimes for subagents\n");
     out.push_str(
         "              init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\n",

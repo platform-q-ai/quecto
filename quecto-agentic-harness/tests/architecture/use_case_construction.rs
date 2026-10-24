@@ -44,6 +44,7 @@ const USE_CASES: &[&str] = &[
     "AmendRunContract",
     "BindScope",
     "BlockTask",
+    "BoardAccess",
     "BootstrapMember",
     "BootstrapProjectBoard",
     "BootstrapRun",

@@ -1,9 +1,13 @@
-//! The board service's listener (epic #2705 B4): HTTP/1.1 on a Unix
-//! socket, parsed by hyper; it knows no board. A connection is let in only
-//! when the injected [`PeerCredentials`] read the one uid allowed; each
-//! request is held to the [`limits`] and handed to the injected
-//! [`ServiceHandler`] on a blocking thread. [`bind`] makes the socket
-//! safely: mode 0600, in a directory of mode 0700.
+//! The board service's listener (epic #2705 B4, B5): HTTP/1.1 on a Unix
+//! socket and on TCP, parsed by hyper; it knows no board and no token. A
+//! Unix connection is let in only when the injected [`PeerCredentials`]
+//! read the one uid allowed (peer credentials are for the Unix socket
+//! alone); a TCP connection is let in for the handler to ask each request
+//! for a token: the handler is told each request's [`Transport`] and
+//! `Authorization`. Each request is held to the [`limits`] and handed to
+//! the injected [`ServiceHandler`] on a blocking thread. [`bind`] makes the
+//! socket safely: mode 0600, in a directory of mode 0700; [`bind_tcp`]
+//! binds the address it is given (its caller holds the allowlist).
 //!
 //! Every reply this module or its handler makes is JSON with a typed
 //! `code`. The HTTP layer's own refusals, made by hyper's parser before
@@ -23,9 +27,9 @@ use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
 use hyper::{Request, Response, StatusCode, header};
 use hyper_util::rt::TokioIo;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::Semaphore;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
+use tokio::sync::{Semaphore, watch};
 
 use super::limits::{self, Refusal, WriteDeadline};
 
@@ -38,14 +42,30 @@ pub struct ServiceRequest {
     /// The request target's path, without its query.
     pub path: String,
     pub body: Vec<u8>,
+    /// The transport it came over.
+    pub transport: Transport,
+    /// Its one `Authorization` value; an empty one when it sent several or
+    /// one that is not text.
+    pub authorization: Option<String>,
 }
 
-/// A handler's reply: a status, a JSON body, and a 405's `Allow`.
+/// Which transport a request came over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    /// The Unix socket: the peer is the server's own user.
+    Local,
+    /// TCP: the peer is anyone who can reach the address.
+    Tcp,
+}
+
+/// A handler's reply: a status, a JSON body, a 405's `Allow` and a 401's
+/// `WWW-Authenticate`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceReply {
     pub status: u16,
     pub body: Vec<u8>,
     pub allow: Option<&'static str>,
+    pub challenge: Option<&'static str>,
 }
 
 impl ServiceReply {
@@ -56,6 +76,7 @@ impl ServiceReply {
             status,
             body,
             allow: None,
+            challenge: None,
         }
     }
 }
@@ -133,6 +154,26 @@ impl std::fmt::Display for BindError {
     }
 }
 
+/// A bound listener: the Unix socket, or a TCP address.
+#[derive(Debug)]
+pub enum Listener {
+    Unix(std::os::unix::net::UnixListener),
+    Tcp(std::net::TcpListener),
+}
+
+/// Binds TCP on `address`, which its caller has judged allowed, giving the
+/// address bound (a port 0 resolved).
+/// # Errors
+/// The bind: the address is in use or not this host's.
+pub fn bind_tcp(
+    address: std::net::SocketAddr,
+) -> Result<(std::net::TcpListener, std::net::SocketAddr), BindError> {
+    let refused = |error: io::Error| BindError::Refused(format!("{address}: {error}"));
+    let listener = std::net::TcpListener::bind(address).map_err(refused)?;
+    let bound = listener.local_addr().map_err(refused)?;
+    Ok((listener, bound))
+}
+
 /// Binds a Unix socket at `path`, mode 0600, in a directory of mode 0700
 /// (made if missing). Only a stale socket of this user's is replaced.
 /// # Errors
@@ -199,38 +240,94 @@ fn private_dir(dir: &Path) -> Result<(), BindError> {
     }
 }
 
-/// Serves `listener` until `stop` completes, at most
-/// [`limits::MAX_CONNECTIONS`] connections at once.
+/// Serves `listeners` until `stop` completes, at most
+/// [`limits::MAX_CONNECTIONS`] connections at once across them all.
 /// # Errors
-/// The listener could not be handed to the runtime.
+/// A listener could not be handed to the runtime.
 pub async fn serve(
-    listener: std::os::unix::net::UnixListener,
+    listeners: Vec<Listener>,
     parts: ServiceParts,
     stop: impl Future<Output = ()>,
 ) -> io::Result<()> {
-    listener.set_nonblocking(true)?;
-    let listener = UnixListener::from_std(listener)?;
+    let accepting = listeners
+        .into_iter()
+        .map(Accepting::from_std)
+        .collect::<io::Result<Vec<_>>>()?;
     let slots = Arc::new(Semaphore::new(limits::MAX_CONNECTIONS));
     let parts = Arc::new(parts);
-    tokio::pin!(stop);
+    let (stopping, stopped) = watch::channel(());
+    let mut loops = tokio::task::JoinSet::new();
+    for listener in accepting {
+        let (parts, slots) = (Arc::clone(&parts), Arc::clone(&slots));
+        loops.spawn(accept(listener, parts, slots, stopped.clone()));
+    }
+    stop.await;
+    // Each loop ends as it sees the stop, or the sender gone.
+    let _ = stopping.send(());
+    drop(stopping);
+    while loops.join_next().await.is_some() {}
+    Ok(())
+}
+
+/// A listener on the runtime.
+enum Accepting {
+    Unix(UnixListener),
+    Tcp(TcpListener),
+}
+
+/// An accepted connection.
+enum Accepted {
+    Unix(UnixStream),
+    Tcp(TcpStream),
+}
+
+impl Accepting {
+    fn from_std(listener: Listener) -> io::Result<Self> {
+        match listener {
+            Listener::Unix(listener) => {
+                listener.set_nonblocking(true)?;
+                Ok(Self::Unix(UnixListener::from_std(listener)?))
+            }
+            Listener::Tcp(listener) => {
+                listener.set_nonblocking(true)?;
+                Ok(Self::Tcp(TcpListener::from_std(listener)?))
+            }
+        }
+    }
+
+    async fn accept(&self) -> io::Result<Accepted> {
+        match self {
+            Self::Unix(listener) => Ok(Accepted::Unix(listener.accept().await?.0)),
+            Self::Tcp(listener) => Ok(Accepted::Tcp(listener.accept().await?.0)),
+        }
+    }
+}
+
+/// Accepts on `listener` while a slot is free, until `stopped` changes.
+async fn accept(
+    listener: Accepting,
+    parts: Arc<ServiceParts>,
+    slots: Arc<Semaphore>,
+    mut stopped: watch::Receiver<()>,
+) {
     loop {
         let slot = tokio::select! {
-            () = &mut stop => return Ok(()),
+            _ = stopped.changed() => return,
             slot = Arc::clone(&slots).acquire_owned() => match slot {
                 Ok(slot) => slot,
                 // The slots are never closed; were they, nothing more is served.
-                Err(_) => return Ok(()),
+                Err(_) => return,
             },
         };
         let accepted = tokio::select! {
-            () = &mut stop => return Ok(()),
+            _ = stopped.changed() => return,
             accepted = listener.accept() => accepted,
         };
         match accepted {
-            Ok((stream, _)) => {
+            Ok(stream) => {
                 let parts = Arc::clone(&parts);
                 tokio::spawn(async move {
-                    connection(stream, &parts).await;
+                    admit(stream, &parts).await;
                     drop(slot);
                 });
             }
@@ -244,18 +341,32 @@ pub async fn serve(
     }
 }
 
-/// One connection: refused unless its peer is the allowed uid, else
-/// served request by request.
-async fn connection(stream: UnixStream, parts: &ServiceParts) {
-    match parts.peers.uid(&stream) {
-        Ok(uid) if uid == parts.uid => {}
-        Ok(_) | Err(_) => return refuse(stream).await,
+/// A connection by its transport, an allowlist: a Unix peer is served
+/// only as the allowed uid; a TCP peer is served, each request left to the
+/// handler to authenticate.
+async fn admit(stream: Accepted, parts: &ServiceParts) {
+    match stream {
+        Accepted::Unix(stream) => match parts.peers.uid(&stream) {
+            Ok(uid) if uid == parts.uid => connection(stream, Transport::Local, parts).await,
+            Ok(_) | Err(_) => refuse(stream).await,
+        },
+        Accepted::Tcp(stream) => {
+            let _ = stream.set_nodelay(true);
+            connection(stream, Transport::Tcp, parts).await;
+        }
     }
+}
+
+/// One admitted connection, served request by request.
+async fn connection<S>(stream: S, transport: Transport, parts: &ServiceParts)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let (handler, served) = (Arc::clone(&parts.handler), AtomicUsize::new(0));
     // The last request a connection takes is answered `Connection: close`.
     let service = hyper::service::service_fn(move |request| {
         let last = served.fetch_add(1, Ordering::Relaxed) + 1 >= limits::MAX_REQUESTS;
-        answer(Arc::clone(&handler), request, last)
+        answer(Arc::clone(&handler), request, transport, last)
     });
     let io = TokioIo::new(WriteDeadline::new(stream, parts.limits.write_timeout));
     let builder = limits::http1_builder();
@@ -298,9 +409,10 @@ async fn refuse(mut stream: UnixStream) {
 async fn answer(
     handler: Arc<dyn ServiceHandler>,
     request: Request<Incoming>,
+    transport: Transport,
     last: bool,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let mut reply = response(admitted(handler, request).await);
+    let mut reply = response(admitted(handler, request, transport).await);
     if last {
         let close = header::HeaderValue::from_static("close");
         reply.headers_mut().insert(header::CONNECTION, close);
@@ -310,8 +422,13 @@ async fn answer(
 
 /// A request admitted by its head, its body read under its bound, then
 /// answered by the handler on a blocking thread.
-async fn admitted(handler: Arc<dyn ServiceHandler>, request: Request<Incoming>) -> ServiceReply {
+async fn admitted(
+    handler: Arc<dyn ServiceHandler>,
+    request: Request<Incoming>,
+    transport: Transport,
+) -> ServiceReply {
     let path = request.uri().path().to_string();
+    let authorization = authorization(request.headers());
     // hyper has parsed `Content-Length` (refusing one that is no number):
     // the body's exact size is the length it declared.
     let length = hyper::body::Body::size_hint(request.body()).exact();
@@ -341,6 +458,8 @@ async fn admitted(handler: Arc<dyn ServiceHandler>, request: Request<Incoming>) 
         method: admitted.method,
         path,
         body,
+        transport,
+        authorization,
     };
     tokio::task::spawn_blocking(move || handler.answer(&request))
         .await
@@ -371,6 +490,18 @@ async fn read_body(body: Incoming, declared: u64) -> Result<Vec<u8>, ServiceRepl
     }
 }
 
+/// The request's one `Authorization` value: none when it sent none, and
+/// an empty one (which no handler takes) when it sent several or one that
+/// is not text.
+fn authorization(headers: &header::HeaderMap) -> Option<String> {
+    let mut values = headers.get_all(header::AUTHORIZATION).iter();
+    match (values.next(), values.next()) {
+        (None, _) => None,
+        (Some(value), None) => Some(value.to_str().unwrap_or_default().to_string()),
+        (Some(_), Some(_)) => Some(String::new()),
+    }
+}
+
 /// An error reply with its typed `code`.
 fn error(status: u16, code: &str, why: &str) -> ServiceReply {
     ServiceReply::json(status, &serde_json::json!({ "error": why, "code": code }))
@@ -385,6 +516,10 @@ fn response(reply: ServiceReply) -> Response<Full<Bytes>> {
     headers.insert(header::CONTENT_TYPE, json);
     if let Some(allow) = reply.allow {
         headers.insert(header::ALLOW, header::HeaderValue::from_static(allow));
+    }
+    if let Some(challenge) = reply.challenge {
+        let challenge = header::HeaderValue::from_static(challenge);
+        headers.insert(header::WWW_AUTHENTICATE, challenge);
     }
     response
 }

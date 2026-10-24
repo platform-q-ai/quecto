@@ -1,6 +1,6 @@
 use super::*;
 use crate::infrastructure::http::board_service::test_server::{
-    SERVER_UID, raw, request, start, start_with, whole,
+    SERVER_UID, raw, request, start, start_tcp, start_with, whole,
 };
 use std::io::Write;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
@@ -324,4 +324,51 @@ fn a_live_socket_is_refused_and_a_stale_one_replaced() {
         Err(error) => Some(Err(error)),
     });
     assert!(matches!(rebound, Some(Ok(_))), "{rebound:?}");
+}
+
+/// Sends `request` over TCP to `address` and reads the answer to its end.
+fn over_tcp(address: std::net::SocketAddr, request: &[u8]) -> String {
+    use std::io::Read;
+    let mut stream = std::net::TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let _ = stream.write_all(request);
+    let mut answer = Vec::new();
+    let _ = stream.read_to_end(&mut answer);
+    String::from_utf8_lossy(&answer).to_string()
+}
+
+/// B5 red: peer credentials are the Unix socket's alone. A TCP peer is
+/// served (a Unix peer of the same uid is refused), each request handed on
+/// as TCP with its one `Authorization`; a Unix request is local.
+#[test]
+fn tcp_requests_reach_the_handler_as_tcp_with_their_authorization() {
+    let running = start_tcp(SERVER_UID + 1);
+    let address = running.tcp.unwrap();
+    assert!(address.ip().is_loopback());
+    let bearer = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer abc\r\n\
+                   Connection: close\r\n\r\n";
+    let answer = over_tcp(address, bearer);
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+    assert!(answer.contains(r#""tcp":true"#), "{answer}");
+    assert!(
+        answer.contains(r#""authorization":"Bearer abc""#),
+        "{answer}"
+    );
+    let twice = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer a\r\n\
+                  Authorization: Bearer b\r\nConnection: close\r\n\r\n";
+    assert!(over_tcp(address, twice).contains(r#""authorization":"""#));
+    let (status, body) = raw(&running.socket, &request("GET", 2, "", b""));
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(running.handler.calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn unix_requests_reach_the_handler_as_local() {
+    let running = start(SERVER_UID);
+    let (status, body) = raw(&running.socket, &request("GET", 2, "", b""));
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains(r#""tcp":false"#), "{body}");
+    assert!(body.contains(r#""authorization":null"#), "{body}");
 }

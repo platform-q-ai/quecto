@@ -1,19 +1,25 @@
-//! The board service's route table (epic #2705 B4), an allowlist: `GET
-//! /v1/status` and `GET /v1/time` (else 404, or 405 naming the method a
-//! route takes). The snapshot route is B11's.
+//! The board service's route table (epic #2705 B4, B5), an allowlist:
+//! `GET /v1/status` and `GET /v1/time` (reads), and `GET`/`POST
+//! /v1/admin/tokens` and `POST /v1/admin/tokens/revoke` (admin); else 404,
+//! or 405 naming the methods a route takes. Over TCP every request needs a
+//! held bearer token (else 401, before any route is looked up), and admin
+//! routes are the Unix socket's alone (403 over TCP, whatever the token).
 use serde_json::json;
 
 use crate::application::project_board::dto::ProjectBoardError;
-use crate::application::project_board::ports::{BoardStoreError, ServeError};
-use crate::application::project_board::use_cases::ServeBoard;
+use crate::application::project_board::ports::{BoardStoreError, ServeError, TokenError};
+use crate::application::project_board::use_cases::{
+    BoardAccess, Caller, Refused, Scope, ServeBoard,
+};
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::http::board_service::listener::{
-    ServiceHandler, ServiceMethod, ServiceReply, ServiceRequest,
+    ServiceHandler, ServiceMethod, ServiceReply, ServiceRequest, Transport,
 };
 
-/// The routes, over the server's reads of its board.
+/// The routes, over the server's reads of its board and its access rules.
 pub struct BoardRoutes {
     serve: ServeBoard,
+    access: BoardAccess,
 }
 
 /// A route of the table.
@@ -21,6 +27,8 @@ pub struct BoardRoutes {
 enum Route {
     Status,
     Time,
+    Tokens,
+    Revoke,
 }
 
 impl Route {
@@ -29,50 +37,124 @@ impl Route {
         match path {
             "/v1/status" => Some(Self::Status),
             "/v1/time" => Some(Self::Time),
+            "/v1/admin/tokens" => Some(Self::Tokens),
+            "/v1/admin/tokens/revoke" => Some(Self::Revoke),
             _ => None,
         }
     }
 
-    /// The one method it takes, and its `Allow` value.
-    fn method(self) -> (ServiceMethod, &'static str) {
+    /// The methods it takes, as an `Allow` value.
+    fn allow(self) -> &'static str {
         match self {
-            Self::Status | Self::Time => (ServiceMethod::Get, "GET"),
+            Self::Status | Self::Time => "GET",
+            Self::Tokens => "GET, POST",
+            Self::Revoke => "POST",
+        }
+    }
+
+    fn takes(self, method: ServiceMethod) -> bool {
+        match (self, method) {
+            (Self::Status | Self::Time | Self::Tokens, ServiceMethod::Get)
+            | (Self::Tokens | Self::Revoke, ServiceMethod::Post) => true,
+            (Self::Status | Self::Time, ServiceMethod::Post)
+            | (Self::Revoke, ServiceMethod::Get) => false,
+        }
+    }
+
+    fn scope(self) -> Scope {
+        match self {
+            Self::Status | Self::Time => Scope::Read,
+            Self::Tokens | Self::Revoke => Scope::Admin,
         }
     }
 }
 
+/// An admin request's body: the token's name.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Named {
+    name: String,
+}
+
 impl BoardRoutes {
-    pub fn new(serve: ServeBoard) -> Self {
-        Self { serve }
+    pub fn new(serve: ServeBoard, access: BoardAccess) -> Self {
+        Self { serve, access }
     }
 
-    fn route(&self, route: Route) -> ServiceReply {
-        let answered = match route {
-            Route::Status => self.serve.status().map(|status| {
+    /// Answers `request` on `route`, a method it takes.
+    fn route(&self, route: Route, request: &ServiceRequest) -> ServiceReply {
+        match (route, request.method) {
+            (Route::Status, _) => read(self.serve.status().map(|status| {
                 json!({
                     "role": status.role.as_str(),
                     "board": status.board.as_str(),
                     "head": status.head.map(|head| head.0),
                 })
+            })),
+            (Route::Time, _) => read(
+                self.serve
+                    .time()
+                    .map(|time| json!({ "time": time.as_str() })),
+            ),
+            (Route::Tokens, ServiceMethod::Get) => administer(self.access.list().map(|records| {
+                let tokens: Vec<_> = records
+                    .iter()
+                    .map(|token| json!({"name": token.name.as_str(), "created": token.created.as_str()}))
+                    .collect();
+                (200, json!({ "tokens": tokens }))
+            })),
+            (Route::Tokens, ServiceMethod::Post) => named(&request.body, |name| {
+                administer(self.access.add(name).map(|issued| {
+                    let record = &issued.record;
+                    let body = json!({"name": record.name.as_str(),
+                        "created": record.created.as_str(), "token": issued.secret});
+                    (201, body)
+                }))
             }),
-            Route::Time => self
-                .serve
-                .time()
-                .map(|time| json!({ "time": time.as_str() })),
-        };
-        match answered {
-            Ok(body) => ServiceReply::json(200, &body),
-            Err(error) => failed(&error),
+            (Route::Revoke, _) => named(&request.body, |name| {
+                administer(self.access.revoke(name).map(|name| {
+                    (200, json!({ "name": name.as_str(), "revoked": true }))
+                }))
+            }),
         }
+    }
+}
+
+/// A read's reply.
+fn read(answered: Result<serde_json::Value, ServeError>) -> ServiceReply {
+    match answered {
+        Ok(body) => ServiceReply::json(200, &body),
+        Err(error) => failed(&error),
+    }
+}
+
+/// An admin command's reply.
+fn administer(answered: Result<(u16, serde_json::Value), TokenError>) -> ServiceReply {
+    match answered {
+        Ok((status, body)) => ServiceReply::json(status, &body),
+        Err(error) => token_failed(&error),
     }
 }
 
 impl ServiceHandler for BoardRoutes {
     fn answer(&self, request: &ServiceRequest) -> ServiceReply {
+        let caller = match request.transport {
+            Transport::Local => Caller::Local,
+            Transport::Tcp => Caller::Remote(request.authorization.as_deref().and_then(bearer)),
+        };
+        let principal = match self.access.authenticate(caller) {
+            Ok(principal) => principal,
+            Err(refused) => return refusal(&refused),
+        };
         match Route::of(&request.path) {
-            Some(route) if route.method().0 == request.method => self.route(route),
+            Some(route) if route.takes(request.method) => {
+                match BoardAccess::authorize(&principal, route.scope()) {
+                    Ok(()) => self.route(route, request),
+                    Err(refused) => refusal(&refused),
+                }
+            }
             Some(route) => ServiceReply {
-                allow: Some(route.method().1),
+                allow: Some(route.allow()),
                 ..coded(405, "method", "method not allowed")
             },
             None => coded(404, "route", "no such route"),
@@ -80,13 +162,68 @@ impl ServiceHandler for BoardRoutes {
     }
 
     fn allowed(&self, path: &str) -> Option<&'static str> {
-        Route::of(path).map(|route| route.method().1)
+        Route::of(path).map(Route::allow)
+    }
+}
+
+/// The token of an `Authorization: Bearer <token>` value (the scheme in
+/// any case), or `None` for any other value.
+fn bearer(value: &str) -> Option<&str> {
+    let (scheme, token) = value.split_once(' ')?;
+    let token_shaped = !token.is_empty() && token.bytes().all(|byte| byte.is_ascii_graphic());
+    match scheme.eq_ignore_ascii_case("bearer") && token_shaped {
+        true => Some(token),
+        false => None,
+    }
+}
+
+/// `answer` of an admin body's name, or a 400 `request`.
+fn named(body: &[u8], answer: impl FnOnce(&str) -> ServiceReply) -> ServiceReply {
+    match serde_json::from_slice::<Named>(body) {
+        Ok(named) => answer(&named.name),
+        Err(_) => coded(
+            400,
+            "request",
+            "the body must be {\"name\": \"<token name>\"}",
+        ),
     }
 }
 
 /// An error reply with its typed `code`.
 fn coded(status: u16, code: &str, why: &str) -> ServiceReply {
     ServiceReply::json(status, &json!({ "error": why, "code": code }))
+}
+
+/// A refused request's reply: 401 `token`, 403 `local_only`, or 503.
+fn refusal(refused: &Refused) -> ServiceReply {
+    match refused {
+        Refused::Token => ServiceReply {
+            challenge: Some("Bearer"),
+            ..coded(
+                401,
+                "token",
+                "unauthorized: a valid bearer token is required",
+            )
+        },
+        Refused::LocalOnly => coded(
+            403,
+            "local_only",
+            "forbidden: admin routes are served on the Unix socket only",
+        ),
+        Refused::Unavailable(error) => coded(503, "unavailable", &error.to_string()),
+    }
+}
+
+/// A failed token command's reply, each error its status and code.
+fn token_failed(error: &TokenError) -> ServiceReply {
+    let (status, code) = match error {
+        TokenError::BadName(_) => (400, "token_name"),
+        TokenError::Exists(_) => (409, "token_exists"),
+        TokenError::Full => (409, "token_limit"),
+        TokenError::NoSuchToken(_) => (404, "no_token"),
+        TokenError::Unavailable(_) => (503, "unavailable"),
+    };
+    coded(status, code, &error.to_string())
 }
 
 /// A failed read's reply: 404 `no_board` while there is no board, else 503
