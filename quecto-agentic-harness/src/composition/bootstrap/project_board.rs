@@ -300,7 +300,9 @@ fn store_reason(error: &BoardStoreError) -> String {
         | BoardStoreError::WriteTooLarge(why)
         | BoardStoreError::Unavailable(why)
         | BoardStoreError::TooLarge(why)
-        | BoardStoreError::FolderSetAside { why, .. } => why.clone(),
+        | BoardStoreError::FolderSetAside { why, .. }
+        | BoardStoreError::MovedMalformed(why) => why.clone(),
+        BoardStoreError::Moved(moved) => moved.to_string(),
     }
 }
 

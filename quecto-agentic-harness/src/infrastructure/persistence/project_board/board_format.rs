@@ -28,6 +28,16 @@ const FORMAT_VERSION: u64 = 3;
 /// bytes: format 2 (tasks alone) as it is, and its own.
 const READ_FORMATS: [(&str, &[u8]); 2] = [("2", b"quecto-board 2\n"), ("3", FORMAT)];
 
+/// The fence's marker (epic #2705 B13): format 4, a board moved to a
+/// board server. Its `format` tree holds exactly this marker, a regular
+/// file, and [`MOVED_FILE`], a regular file naming where the board moved
+/// (`BoardMoved`'s grammar); this quecto neither reads nor writes such a
+/// board, and answers where it moved.
+pub const MOVED_FORMAT: &[u8] = b"quecto-board 4\n";
+/// The name of the fence's file in `format/` that says where the board
+/// moved.
+pub const MOVED_FILE: &str = "MOVED";
+
 /// The name of the format marker's tree at a board's root.
 pub const FORMAT_TREE: &str = "format";
 /// The name of the marker's file in it.

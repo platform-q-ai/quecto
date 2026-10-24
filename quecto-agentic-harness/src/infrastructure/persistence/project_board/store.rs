@@ -666,6 +666,9 @@ impl ProjectBoardStore for GitBoardStore {
 mod clear;
 #[path = "store_committer.rs"]
 mod committer;
+#[path = "store_fence.rs"]
+mod fence;
+pub use fence::Fence;
 #[path = "store_fetch_state.rs"]
 mod fetch_state;
 #[path = "store_fetch.rs"]

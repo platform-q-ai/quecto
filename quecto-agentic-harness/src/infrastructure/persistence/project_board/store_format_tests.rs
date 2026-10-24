@@ -162,10 +162,10 @@ fn a_board_without_a_format_marker_is_read_and_the_next_write_adds_it() {
 fn a_newer_format_asks_for_an_upgrade_before_anything_else() {
     let repos = Repos::new();
     created(&store(&repos.alice));
-    let mut padded = b"quecto-board 4\nwith more\n".to_vec();
+    let mut padded = b"quecto-board 5\nwith more\n".to_vec();
     padded.resize(4 * 1024, b'x');
     for entries in [
-        board_file(b"quecto-board 4\n"),
+        board_file(b"quecto-board 5\n"),
         vec![
             ("100755", "board", Object::Blob(padded.clone())),
             ("100644", "more", Object::Blob(b"x".to_vec())),
@@ -187,10 +187,10 @@ fn a_newer_format_asks_for_an_upgrade_before_anything_else() {
         );
     }
     // The refusal names every format this quecto reads.
-    let head = board_with(&repos, true, &[marker(board_file(b"quecto-board 4\n"))]);
+    let head = board_with(&repos, true, &[marker(board_file(b"quecto-board 5\n"))]);
     let refused = read(&repos, &head);
     assert!(
-        matches!(&refused, Err(BoardStoreError::Unavailable(why)) if why.contains("format 4") && why.contains("this quecto reads formats 2 and 3")),
+        matches!(&refused, Err(BoardStoreError::Unavailable(why)) if why.contains("format 5") && why.contains("this quecto reads formats 2 and 3")),
         "{refused:?}"
     );
     // Past what a u64 holds, it is still newer.
@@ -207,7 +207,7 @@ fn a_newer_format_asks_for_an_upgrade_before_anything_else() {
         "{read:?}"
     );
     // Before a task read refuses too: past the task-file bytes it takes.
-    let head = board_with(&repos, true, &[marker(board_file(b"quecto-board 4\n"))]);
+    let head = board_with(&repos, true, &[marker(board_file(b"quecto-board 5\n"))]);
     let mut bob = store(&repos.bob);
     bob.limits.board_bytes = 1;
     let read = bob.board_at(&head.0);
@@ -392,7 +392,7 @@ fn the_merged_board_shape_takes_a_marked_root_for_a_clash() {
 fn a_marker_past_what_is_read_names_an_upgrade_and_a_mend() {
     let repos = Repos::new();
     created(&store(&repos.alice));
-    let mut huge = b"quecto-board 4\n".to_vec();
+    let mut huge = b"quecto-board 5\n".to_vec();
     huge.resize(65 * 1024, b'x');
     let head = board_with(&repos, true, &[marker(board_file(&huge))]);
     let read = read(&repos, &head);
@@ -406,7 +406,7 @@ fn a_marker_past_what_is_read_names_an_upgrade_and_a_mend() {
 /// is never written, cleared or bootstrapped over.
 #[test]
 fn a_marker_this_quecto_does_not_read_refuses_every_change() {
-    for bytes in [&b"quecto-board 4\n"[..], b"quecto-board 1\n"] {
+    for bytes in [&b"quecto-board 5\n"[..], b"quecto-board 1\n"] {
         let repos = Repos::new();
         created(&store(&repos.alice));
         let head = board_with(&repos, true, &[marker(board_file(bytes))]);
@@ -437,3 +437,6 @@ fn a_marker_this_quecto_does_not_read_refuses_every_change() {
         assert_eq!(sh(&repos.remote(), &["rev-parse", BOARD_REF]), head.0);
     }
 }
+
+#[path = "store_moved_tests.rs"]
+mod moved;

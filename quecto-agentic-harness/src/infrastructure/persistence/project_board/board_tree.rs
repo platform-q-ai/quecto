@@ -97,15 +97,17 @@ const SYMLINK: &str = "120000";
 const GITLINK: &str = "160000";
 
 /// What a store error says, as text to quote in another.
-pub fn told(error: &BoardStoreError) -> &str {
+pub fn told(error: &BoardStoreError) -> std::borrow::Cow<'_, str> {
     match error {
-        BoardStoreError::NoBoard => "there is no board",
+        BoardStoreError::NoBoard => "there is no board".into(),
         BoardStoreError::Clash(why)
         | BoardStoreError::InvalidWrite(why)
         | BoardStoreError::WriteTooLarge(why)
         | BoardStoreError::Unavailable(why)
         | BoardStoreError::TooLarge(why)
-        | BoardStoreError::FolderSetAside { why, .. } => why,
+        | BoardStoreError::FolderSetAside { why, .. }
+        | BoardStoreError::MovedMalformed(why) => why.into(),
+        BoardStoreError::Moved(moved) => moved.to_string().into(),
     }
 }
 
@@ -648,8 +650,10 @@ use tasks::{TasksScan, load_tasks, scan_tasks};
 pub use writes::{FolderAfter, FolderFile, folder_file};
 #[path = "board_format.rs"]
 mod format;
-pub use format::{FORMAT, FORMAT_FILE, FORMAT_TREE};
+pub use format::{FORMAT, FORMAT_FILE, FORMAT_TREE, MOVED_FILE, MOVED_FORMAT};
 use format::{Marker, newer, read_format};
+#[path = "board_fence.rs"]
+pub mod fence;
 
 #[path = "board_reader.rs"]
 mod reader;
