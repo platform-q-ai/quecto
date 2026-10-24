@@ -404,3 +404,27 @@ mod declare_turn_outcome;
 #[cfg(feature = "test-support")]
 #[path = "contracts/project_board_sqlite_regression_red.rs"]
 mod project_board_sqlite_regression_red;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_sqlite_history_red.rs"]
+mod project_board_sqlite_history_red;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_history_fixture.rs"]
+mod project_board_history_fixture;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_history.rs"]
+mod project_board_history;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_history_orchestration.rs"]
+mod project_board_history_orchestration;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_history_safety.rs"]
+mod project_board_history_safety;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_history_native.rs"]
+mod project_board_history_native;

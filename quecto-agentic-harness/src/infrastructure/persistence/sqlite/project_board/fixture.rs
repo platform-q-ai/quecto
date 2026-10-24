@@ -195,12 +195,25 @@ impl SqliteProjectBoardStore {
         let mut c = self.connection.lock().map_err(unavailable)?;
         let tx = c.transaction().map_err(unavailable)?;
         let mut hash = Sha256::new();
-        for (table, order) in [
+        let mut tables = vec![
             ("objects", "oid"),
             ("tree_entries", "tree,ordinal"),
             ("revisions", "head"),
             ("state", "id"),
-        ] {
+        ];
+        // The RED baseline is schema2. Schema3 retains all original queries and
+        // adds every history table; SELECT * also includes all revision columns.
+        let version: i64 = tx
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(unavailable)?;
+        if version == 3 {
+            tables.extend([
+                ("git_objects", "oid"),
+                ("history_meta", "id"),
+                ("epochs", "epoch"),
+            ]);
+        }
+        for (table, order) in tables {
             let mut query = tx
                 .prepare(&format!("SELECT * FROM {table} ORDER BY {order}"))
                 .map_err(unavailable)?;

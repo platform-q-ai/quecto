@@ -145,3 +145,5 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
 #[cfg(test)]
 #[cfg(feature = "test-support")]
 mod project_board_sqlite_tests;
+
+pub mod history;
