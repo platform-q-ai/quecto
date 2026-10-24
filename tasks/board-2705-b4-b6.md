@@ -1,5 +1,5 @@
 <!-- quecto-task schema=1 -->
-# B4 only: UDS board server (B6 operator-owned)
+# Operator-owned B4: UDS board server
 
 | Field | Value |
 |---|---|
@@ -8,12 +8,12 @@
 | Status | draft |
 | Parent | board-service-mvp-2705 |
 | Created | 2026-10-23T16:47:46Z |
-| Updated | 2026-10-24T00:12:03Z |
+| Updated | 2026-10-24T07:16:54Z |
 
 ## Description
-Agent MVP stage B4 ONLY after B3 for epic2705; legacy task id retains b4-b6 but B6 is NOT in scope. Bounded hyper UDS board-server listener with injected handlers, peer UID/permissions; interface status/time/snapshot routes and composition-only use-case construction. Allowlisted methods/routes,1MiB body,32headers/8KiB,10s header/body timeouts,64connections. Operator independently owns BoardOperations/LocalBoardOperations refactor B6; never implement or duplicate it in B4. Integrate agreed interfaces or transport seams without taking operator port ownership. No host server/unit installation/start or live deployment. Human-approved2713 target750/max1500PRODUCTION lines, excluded tests/fixtures/snapshots/lockfiles/generated separately reported, sized once planning/rejudged only remediation checkpoint or maximum exceeded. No future TCP/members/follower scope; all parent safety restrictions remain.
+Operator-owned independent B4 for epic2705; legacy task id retains b4-b6, but B6 already merged as PR2714 and B1 as PR2715. Operator delivers quecto board-server over UDS: hyper listener, bounded methods/routes/body/headers/timeouts/connections, status/time/snapshot routes, peer-credential allowlist, and composition-only construction. It uses ProjectBoardStore and works with Git now and SQLite after B2; B3 is not its dependency. This agent consumes the merged B4 seam, never duplicates listener/route ownership. B7 must wait for this operator delivery to merge. Human-approved2713 production750target1500max, tests/fixtures/snapshots/lock/generated excluded/reported separately; size once planning/rejudge at remediation checkpoint or maximum exceeded. No live server/unit installation/start/deployment/cutover or protected playbook/relay/admission changes.
 
 ## Depends on
 | Task |
 |---|
-| board-2705-b3 |
+| board-2705-b1 |
