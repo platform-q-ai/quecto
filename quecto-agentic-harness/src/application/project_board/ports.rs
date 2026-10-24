@@ -743,9 +743,6 @@ pub trait BoardOperations: Send + Sync {
 
     /// The ends this front end owes as its session ends (#2655): each run
     /// its starts launched that the board still shows open; none for a
-    /// front end that launches none.
-    ///
-    /// # Errors
-    /// The board could not be read.
+    /// front end that launches none. Errs when the board cannot be read.
     fn left_runs(&self) -> Result<Vec<RunEnd>, ProjectBoardError>;
 }
