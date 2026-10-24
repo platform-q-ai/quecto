@@ -8,7 +8,7 @@
 | Status | draft |
 | Parent | issue-2708 |
 | Created | 2026-10-23T22:49:44Z |
-| Updated | 2026-10-23T23:57:32Z |
+| Updated | 2026-10-24T00:14:58Z |
 
 ## Description
-Smallest test-only automated CI prerequisite required by operator green-CI-before-merge and renewed instruction to continue guard/relay. Source-backed plan first; actual revision-bound PR/push tests/lint/architecture/contracts, least-privilege no deploy/live relay/state/units/admission/credentials/billing changes. CI gap primary review-p1/HANDOFF.md: PR139 has no hosted/external CI, local checks not greenCI. Operator continuation decision /home/shane-pocket/.quecto/artifacts/issue-2708/operator-followup.md. Fresh red configuration contract then delivery+independentreview, target300–500/max900 withoutpadding; CI firstserialmerge then recheckP1finalhead. Broader platform/Android work only if actually applicable, otherwise outofscope.
+Smallest test-only automated CI required by green-CI merge gate. Operator prefers FEWEST PRs: fold CI into existing PocketPR139 if inclusive612+CI≤900 rather than separate CI prerequisite PR. Fresh source planning plan-pocket-ci actual workflows/checks/security/semantic red or honest no-red rationale; no new parser crate/lockmachinery justforCI. Need real GitHub finalhead checks, not localtests=CLEAN. No deploy/live relay/state/units/admission/credentials/billing/settings changes. OriginalP1firstred588a remainsunchanged, newCIredadditionalcommitbeforeconfigimpl+freshfinalheadreview+realgreenCI thenserialmerge. Targetsmall/no padding. Source operator-followup.md+operator-simplification.md externalissue2708 artifacts; noopoperatorwordinggateofthiskind,listverbatiminPR. Broaderplatform/AndroidCI outofscope unlessactuallynecessary.
