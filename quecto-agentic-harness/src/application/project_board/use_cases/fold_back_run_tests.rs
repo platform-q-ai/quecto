@@ -481,3 +481,6 @@ fn a_noted_fold_back_tells_kinds_and_counts_and_an_unnoted_one_nothing() {
         }
     );
 }
+
+#[path = "fold_back_run_moves_tests.rs"]
+mod moves;

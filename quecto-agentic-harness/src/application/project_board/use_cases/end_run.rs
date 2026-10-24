@@ -261,6 +261,7 @@ impl EndRun {
                 };
                 Ok(EndedRun {
                     run: run.clone(),
+                    status: crate::domain::project_board::value_objects::vocabulary::TaskStatus::InProgress,
                     liveness,
                     report,
                     unchecked,

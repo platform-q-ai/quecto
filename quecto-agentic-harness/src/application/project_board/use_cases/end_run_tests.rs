@@ -139,9 +139,10 @@ fn run_1(store: &MemoryBoardStore) -> Run {
 }
 
 /// The holder ends the stranded run as stopped or failed: every item as
-/// todo (no swarm report), its cost unknown; then the task can leave them.
+/// todo (no swarm report), its cost unknown; the end itself releases the
+/// task back to ready (#2705 T5), so no move is left to make.
 #[test]
-fn the_holder_ends_a_stranded_run_and_can_then_release_the_task() {
+fn the_holder_ends_a_stranded_run_and_the_end_releases_the_task() {
     for (outcome, want) in [
         (RunEndOutcome::Stopped, RunOutcome::Stopped),
         (RunEndOutcome::Failed, RunOutcome::Failed),
@@ -168,18 +169,22 @@ fn the_holder_ends_a_stranded_run_and_can_then_release_the_task() {
             (Some(1), Some(want), Some(1), Some(TaskStatus::InProgress))
         );
         assert!(facts.claim.is_some_and(|claim| claim.holder_is_writer));
-        let release = ChangeBoardTask::new(
+        assert_eq!(facts.status_to, Some(TaskStatus::Ready));
+        let task = store.read().unwrap().tasks[0].clone();
+        assert_eq!(
+            (task.fields().status, task.fields().claim.clone()),
+            (TaskStatus::Ready, None)
+        );
+        let again = ChangeBoardTask::new(
             Arc::new(store.client_as(person("Ada"))),
             SetClock::at("10:31:00"),
         )
-        .unwrap();
-        let task = release
-            .execute(
-                &slug("board-store"),
-                &BoardOp::Move(TaskStatus::Ready, MoveReason::Absent),
-            )
-            .unwrap();
-        assert_eq!(task.fields().status, TaskStatus::Ready);
+        .unwrap()
+        .execute(
+            &slug("board-store"),
+            &BoardOp::Move(TaskStatus::Ready, MoveReason::Absent),
+        );
+        assert!(again.is_err(), "nothing is left to release: {again:?}");
     }
 }
 
@@ -614,3 +619,6 @@ mod lost;
 
 #[path = "end_run_left_tests.rs"]
 mod left;
+
+#[path = "end_run_moves_tests.rs"]
+mod moves;

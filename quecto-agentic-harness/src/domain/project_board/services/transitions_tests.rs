@@ -14,14 +14,13 @@ const ALL: [TaskStatus; 8] = [
 ];
 /// Written out independently of the production table (#2705 T4: the
 /// lifecycle makes the rest, `transitions_lifecycle_tests`).
-const ALLOWED: [(TaskStatus, TaskStatus); 12] = [
+const ALLOWED: [(TaskStatus, TaskStatus); 11] = [
     (Draft, Ready),
     (Draft, Archived),
     (Ready, Draft),
     (Ready, Claimed),
     (Ready, Archived),
     (Claimed, Ready),
-    (InProgress, Ready),
     (Review, Done),
     (Review, Ready),
     (Review, Archived),
@@ -39,13 +38,10 @@ const ANYONES: [(TaskStatus, TaskStatus); 6] = [
 ];
 /// The holder's while the claim is live, anyone's once it is not.
 const WHILE_LIVE: [(TaskStatus, TaskStatus); 1] = [(Review, Archived)];
-/// The moves that hand a task back to the board.
-const RELEASES: [(TaskStatus, TaskStatus); 4] = [
-    (Claimed, Ready),
-    (InProgress, Ready),
-    (Review, Ready),
-    (Blocked, Ready),
-];
+/// The moves that hand a task back to the board (#2705 T5: a task in
+/// progress goes back by its run's end).
+const RELEASES: [(TaskStatus, TaskStatus); 3] =
+    [(Claimed, Ready), (Review, Ready), (Blocked, Ready)];
 
 /// `move_with_reason` with no runs, changes or tasks, giving a reason to
 /// the one move that takes one (back to ready from review).
@@ -598,7 +594,7 @@ fn a_move_reads_only_what_can_hold_it() {
     let reads = |from, to| move_reads(&without_prs(task(from)), to, &ada, &now);
     let read = |runs, changes| Ok(MoveReads { runs, changes });
     assert_eq!(reads(Ready, Claimed), read(false, false));
-    assert_eq!(reads(InProgress, Ready), read(true, false));
+    assert_eq!(reads(Claimed, Ready), read(true, false));
     assert_eq!(reads(Review, Done), read(true, true));
     assert_eq!(reads(Review, Archived), read(true, true));
     assert_eq!(

@@ -195,6 +195,11 @@ fn a_listing_carries_each_tasks_summary() {
     let listed = shared(json!({"op": "list"}));
     assert_eq!(listed["ok"], json!(true), "{listed}");
     let items = |done: u32, blocked: u32| json!({"total": done + blocked, "todo": 0, "doing": 0, "review": 0, "done": done, "blocked": blocked});
+    // Where each item of the summary's plan stands, from the latest run.
+    let standing = |not_started: u32, done: u32, blocked: u32| {
+        let total = not_started + done + blocked;
+        json!({"total": total, "not_started": not_started, "todo": 0, "doing": 0, "review": 0, "done": done, "blocked": blocked})
+    };
     assert_eq!(
         summaries(&listed),
         [
@@ -212,7 +217,9 @@ fn a_listing_carries_each_tasks_summary() {
                         "deadline": "2026-10-10T10:00:00Z",
                         "items": items(1, 1),
                     },
+                    "items": standing(0, 1, 1),
                     "may_be_incomplete": false,
+                    "inconsistent": [],
                 })
             ),
             (
@@ -229,12 +236,23 @@ fn a_listing_carries_each_tasks_summary() {
                         "deadline": "2026-10-11T09:00:00Z",
                         "items": items(0, 0),
                     },
+                    // The draft never ran; a run going on a ready task
+                    // contradicts it (#2705 T5).
+                    "items": standing(2, 0, 0),
                     "may_be_incomplete": false,
+                    "inconsistent": ["run_going_outside_progress"],
                 })
             ),
             (
                 "c".to_string(),
-                json!({"subtitle": null, "plan": null, "run": null, "may_be_incomplete": true})
+                json!({
+                    "subtitle": null,
+                    "plan": null,
+                    "run": null,
+                    "items": null,
+                    "may_be_incomplete": true,
+                    "inconsistent": [],
+                })
             ),
         ]
     );
@@ -282,6 +300,7 @@ fn a_summary_agrees_with_show_and_show_is_unchanged() {
             keys,
             [
                 "head",
+                "inconsistent",
                 "may_be_incomplete",
                 "ok",
                 "op",
@@ -298,6 +317,7 @@ fn a_summary_agrees_with_show_and_show_is_unchanged() {
             "show's task is the task alone"
         );
         assert_eq!(shown["may_be_incomplete"], summary["may_be_incomplete"]);
+        assert_eq!(shown["inconsistent"], summary["inconsistent"], "{id}");
         let latest = shown["runs"].as_array().unwrap().last().cloned();
         match latest {
             None => assert_eq!(summary["run"], Value::Null),

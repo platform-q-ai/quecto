@@ -555,6 +555,7 @@ fn an_end_runs_answer_says_whether_its_swarm_was_looked_for() {
             "end_run",
             &BoardOutcome::RunEnded(EndedRun {
                 run: run(1, 1, 0),
+                status: TaskStatus::Ready,
                 liveness,
                 report: RunReport::Unreported,
                 unchecked: None,
@@ -565,6 +566,8 @@ fn an_end_runs_answer_says_whether_its_swarm_was_looked_for() {
     };
     let unchecked = answered(LivenessCheck::NotChecked);
     assert_eq!(unchecked["liveness"], json!("not_checked"));
+    // #2705 T5: where the run's end left its task.
+    assert_eq!(unchecked["status"], json!("ready"));
     assert_eq!(
         unchecked["liveness_note"],
         json!(
@@ -592,6 +595,7 @@ fn an_end_from_its_swarms_board_says_no_items_were_recorded_as_todo() {
             "end_run",
             &BoardOutcome::RunEnded(EndedRun {
                 run: run(1, 1, 0),
+                status: TaskStatus::Review,
                 liveness: LivenessCheck::Checked,
                 report,
                 unchecked: None,
@@ -624,6 +628,7 @@ fn a_lost_end_says_its_items_were_recorded_as_todo() {
             "end_run",
             &BoardOutcome::RunEnded(EndedRun {
                 run: lost.clone(),
+                status: TaskStatus::Ready,
                 liveness: LivenessCheck::Checked,
                 report,
                 unchecked: None,

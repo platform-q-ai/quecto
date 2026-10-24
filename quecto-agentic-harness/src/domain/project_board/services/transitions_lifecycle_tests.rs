@@ -14,14 +14,13 @@ const ALL: [TaskStatus; 8] = [
 ];
 
 /// Every move `move` makes, written out independently of the table.
-const ALLOWED: [(TaskStatus, TaskStatus); 12] = [
+const ALLOWED: [(TaskStatus, TaskStatus); 11] = [
     (Draft, Ready),
     (Draft, Archived),
     (Ready, Draft),
     (Ready, Claimed),
     (Ready, Archived),
     (Claimed, Ready),
-    (InProgress, Ready),
     (Review, Done),
     (Review, Ready),
     (Review, Archived),
@@ -30,11 +29,12 @@ const ALLOWED: [(TaskStatus, TaskStatus); 12] = [
 ];
 
 /// Every move the lifecycle makes, and the action `move` names for it.
-const LIFECYCLE: [(TaskStatus, TaskStatus, LifecycleAction); 9] = [
+const LIFECYCLE: [(TaskStatus, TaskStatus, LifecycleAction); 10] = [
     (Ready, InProgress, LifecycleAction::Start),
     (Claimed, InProgress, LifecycleAction::Start),
     (Review, InProgress, LifecycleAction::Start),
     (Blocked, InProgress, LifecycleAction::Start),
+    (InProgress, Ready, LifecycleAction::EndRun),
     (InProgress, Review, LifecycleAction::EndRun),
     (InProgress, Blocked, LifecycleAction::EndRun),
     (Claimed, Blocked, LifecycleAction::Release),
@@ -384,12 +384,11 @@ fn every_move_the_pocket_relay_sends_stays_accepted() {
             (Ready, &None)
         );
     }
-    // A Stop's release: claimed or in progress, held by the bot, its run
-    // ended (none going).
-    for from in [Claimed, InProgress] {
-        let next = moved(&held_by_bot(from), Ready, &unasked, "Bot", "10:00:00");
-        assert_eq!(next.map(|t| t.fields().status), Ok(Ready), "{from:?}");
-    }
+    // A Stop's release of a claimed task the bot holds, its run ended. A
+    // task in progress needs none (#2705 T5): the Stop's end_run moves it
+    // back to ready itself, so the relay reads it ready and moves nothing.
+    let next = moved(&held_by_bot(Claimed), Ready, &unasked, "Bot", "10:00:00");
+    assert_eq!(next.map(|t| t.fields().status), Ok(Ready));
     // Mark done of a review the bot holds, linking nothing.
     let done = moved(&held_by_bot(Review), Done, &unasked, "Bot", "10:00:00");
     assert_eq!(done.map(|t| t.fields().status), Ok(Done));
@@ -405,21 +404,26 @@ fn every_move_the_pocket_relay_sends_stays_accepted() {
     }
 }
 
-/// A Stop's release still waits for the run to end.
+/// #2705 T5 retires T4's interim release from progress: a run's end moves
+/// its task, so `move` names `end_run`, run going or not.
 #[test]
-fn a_release_from_progress_waits_for_its_run() {
-    let going = [open_run(1, 1)];
-    assert_eq!(
-        move_with_reason(
+fn a_task_in_progress_leaves_only_by_its_runs_end() {
+    let refused = Err(BoardRuleError::UseLifecycle {
+        from: InProgress,
+        to: Ready,
+        action: LifecycleAction::EndRun,
+    });
+    for runs in [vec![open_run(1, 1)], vec![]] {
+        let answer = move_with_reason(
             &held_by_bot(InProgress),
             (Ready, &MoveReason::Unasked),
             &person("Bot"),
-            (&going, &[]),
+            (&runs, &[]),
             &[],
             &at("10:00:00"),
-        ),
-        Err(BoardRuleError::RunOpen(1))
-    );
+        );
+        assert_eq!(answer, refused, "{} runs going", runs.len());
+    }
 }
 
 #[test]

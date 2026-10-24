@@ -13,12 +13,17 @@ use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::entities::task_parts::Entry;
 use crate::domain::project_board::services::artifacts_of;
+use crate::domain::project_board::services::run_outcomes::{
+    ItemStanding, inconsistencies, item_standings,
+};
 use crate::domain::project_board::services::transitions::MoveReason;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskKind, TaskStatus};
+use crate::domain::project_board::value_objects::vocabulary::{
+    Inconsistency, PlanState, TaskKind, TaskStatus,
+};
 
 /// A new task: only the task's own fields. Its plan and team are plan
 /// artifacts (#2481's artifact model), and its claim, runs, reviews, pull
@@ -468,6 +473,23 @@ impl ShownTask {
     /// Whether a file that may hold one of its plans or runs is set aside.
     pub fn may_be_incomplete(&self) -> bool {
         !self.set_aside.is_empty()
+    }
+
+    /// Where each task item of `plan` stands, in its order, from the
+    /// task's latest run (#2705 T5): `show` and a listing's summary read
+    /// them alike.
+    pub fn item_standings(&self, plan: &Plan) -> Vec<ItemStanding> {
+        item_standings(plan, self.latest_run())
+    }
+
+    /// The task's states that contradict its runs and plan (#2705 T5),
+    /// judged only from a whole read: with a file set aside, its runs may
+    /// be incomplete, and none is named.
+    pub fn inconsistent(&self) -> Vec<Inconsistency> {
+        match self.may_be_incomplete() {
+            false => inconsistencies(&self.task, &self.runs),
+            true => vec![],
+        }
     }
 }
 
