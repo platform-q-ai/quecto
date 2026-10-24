@@ -310,9 +310,14 @@ fn tree_bytes(entries: &BTreeMap<String, String>) -> usize {
         .iter()
         .map(|(name, meta)| {
             let mut fields = meta.split(' ');
-            let mode = fields.next().unwrap_or("").trim_start_matches('0');
+            let mode = fields.next().unwrap_or("");
             let oid = fields.nth(1).unwrap_or("");
-            mode.len() + 1 + name.len() + 1 + oid.len() / 2
+            raw_entry_bytes(mode, name.as_bytes(), oid)
         })
         .sum()
+}
+
+/// Logical tree size, including raw names and native object widths.
+pub(crate) fn raw_entry_bytes(mode: &str, name: &[u8], oid: &str) -> usize {
+    mode.trim_start_matches('0').len() + 1 + name.len() + 1 + oid.len() / 2
 }

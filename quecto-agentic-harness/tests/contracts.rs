@@ -218,6 +218,8 @@ mod project_board_kinds;
 mod project_board_op_log;
 #[path = "contracts/project_board_remote_revisions.rs"]
 mod project_board_remote_revisions;
+#[path = "contracts/project_board_sqlite.rs"]
+mod project_board_sqlite;
 #[path = "contracts/project_board_store.rs"]
 mod project_board_store;
 #[path = "contracts/remote_revisions.rs"]
@@ -369,6 +371,8 @@ mod uds_direct_child_routing;
 #[path = "contracts/workflow_run_source.rs"]
 mod workflow_run_source;
 
+#[path = "contracts/project_board_sqlite_delivery.rs"]
+mod project_board_sqlite_delivery;
 #[path = "contracts/relevance_judge.rs"]
 mod relevance_judge;
 #[path = "contracts/resume_decision_listing.rs"]
@@ -395,3 +399,6 @@ mod project_board_reader;
 
 #[path = "contracts/declare_turn_outcome.rs"]
 mod declare_turn_outcome;
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_sqlite_regression_red.rs"]
+mod project_board_sqlite_regression_red;
