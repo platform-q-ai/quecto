@@ -119,6 +119,43 @@ fn a_peer_of_another_uid_is_refused_before_the_handler() {
     assert_eq!(running.handler.calls.load(Ordering::SeqCst), 0);
 }
 
+/// Review round 4: the HTTP layer's own refusals (hyper's) have no body:
+/// 431 for a head past its bounds, 400 for one it cannot parse. Clients
+/// map them by status (`head_too_large`, `bad_request`).
+#[test]
+fn the_http_layers_refusals_are_bodyless() {
+    let running = start(SERVER_UID);
+    for (sent, status) in [
+        (request("GET", 33, "", b""), "431"),
+        (b"NOT HTTP AT ALL\r\n\r\n".to_vec(), "400"),
+        (request("POST", 3, "Content-Length: ten\r\n", b""), "400"),
+    ] {
+        let answer = whole(&running.socket, &sent);
+        assert!(
+            answer.starts_with(&format!("HTTP/1.1 {status}")),
+            "{answer}"
+        );
+        let body = answer.split_once("\r\n\r\n").map(|(_, body)| body);
+        assert_eq!(body, Some(""), "{answer}");
+    }
+    assert_eq!(running.handler.calls.load(Ordering::SeqCst), 0);
+}
+
+/// Review round 4: hyper merges two equal `Content-Length` headers into
+/// one length (and refuses unequal ones, bodyless), so `admit` judges the
+/// one length hyper read and never a header's text.
+#[test]
+fn two_equal_lengths_are_one_length() {
+    let running = start(SERVER_UID);
+    let twice = "Content-Length: 1\r\nContent-Length: 1\r\n";
+    let (status, body) = raw(&running.socket, &request("POST", 4, twice, b"a"));
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains(r#""body":1"#), "{body}");
+    let unequal = "Content-Length: 1\r\nContent-Length: 2\r\n";
+    let answer = whole(&running.socket, &request("POST", 4, unequal, b"ab"));
+    assert!(answer.starts_with("HTTP/1.1 400"), "{answer}");
+}
+
 /// Review round 3: every error reply the listener makes has a typed code.
 #[test]
 fn each_listener_refusal_has_its_code() {

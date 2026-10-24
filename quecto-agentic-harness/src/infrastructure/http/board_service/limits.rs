@@ -1,6 +1,7 @@
 //! The board service's limits (epic #2705 B4), each an allowlist: `GET`
 //! and `POST` (else 405); bodies of a declared `Content-Length` up to 1 MiB
-//! (else 411, 400 or 413); 32 headers in 8 KiB (431); 10 s for a head,
+//! (else 411 or 413; hyper's parser answers a malformed one 400, and too
+//! many headers 431, both bodyless); 32 headers in 8 KiB; 10 s for a head,
 //! which also ends an idle keep-alive, and 10 s for a body (408); 10 s for
 //! a peer to take any reply byte ([`WriteDeadline`]); 64 connections at
 //! once; and each connection at most 60 s or 1,000 requests, then it
@@ -44,7 +45,6 @@ pub enum Method {
 pub enum Refusal {
     Method,
     LengthRequired,
-    BadLength,
     TooLarge,
 }
 
@@ -54,7 +54,6 @@ impl Refusal {
         match self {
             Self::Method => (405, "method", "method not allowed"),
             Self::LengthRequired => (411, "length", "a body needs a Content-Length"),
-            Self::BadLength => (400, "length", "Content-Length is not a length"),
             Self::TooLarge => (413, "too_large", "the body is past 1 MiB"),
         }
     }
@@ -67,14 +66,16 @@ pub struct Admitted {
     pub body_bytes: u64,
 }
 
-/// Judges a request's head: `method` as sent, its `Content-Length`
-/// values, and whether it names a `Transfer-Encoding`.
+/// Judges a request's head: `method` as sent, the body length hyper read
+/// from its `Content-Length` (hyper itself refuses one that is no number,
+/// 400, and merges equal repeats), and whether it names a
+/// `Transfer-Encoding`.
 ///
 /// # Errors
 /// The first limit it breaks, method first.
 pub fn admit(
     method: &str,
-    lengths: &[&[u8]],
+    length: Option<u64>,
     transfer_encoding: bool,
 ) -> Result<Admitted, Refusal> {
     let method = match method {
@@ -82,25 +83,14 @@ pub fn admit(
         "POST" => Method::Post,
         _ => return Err(Refusal::Method),
     };
-    if transfer_encoding {
-        return Err(Refusal::LengthRequired);
-    }
-    let body_bytes = match lengths {
-        [] => 0,
-        [length] => decimal(length).ok_or(Refusal::BadLength)?,
-        // Two lengths are refused, even equal ones: one is all it takes.
-        _ => return Err(Refusal::BadLength),
+    let body_bytes = match (transfer_encoding, length) {
+        (false, Some(length)) => length,
+        (true, _) | (false, None) => return Err(Refusal::LengthRequired),
     };
     match body_bytes <= MAX_BODY_BYTES {
         true => Ok(Admitted { method, body_bytes }),
         false => Err(Refusal::TooLarge),
     }
-}
-
-/// `bytes` as a plain decimal number of at most 19 digits (so it fits).
-fn decimal(bytes: &[u8]) -> Option<u64> {
-    let plain = (1..=19).contains(&bytes.len()) && bytes.iter().all(u8::is_ascii_digit);
-    plain.then(|| std::str::from_utf8(bytes).ok()?.parse().ok())?
 }
 
 /// An HTTP/1.1 connection builder with the head limits and timeout set.

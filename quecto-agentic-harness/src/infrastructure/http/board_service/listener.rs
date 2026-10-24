@@ -4,6 +4,11 @@
 //! request is held to the [`limits`] and handed to the injected
 //! [`ServiceHandler`] on a blocking thread. [`bind`] makes the socket
 //! safely: mode 0600, in a directory of mode 0700.
+//!
+//! Every reply this module or its handler makes is JSON with a typed
+//! `code`. The HTTP layer's own refusals, made by hyper's parser before
+//! any of it runs, have no body: clients map them by status, 400 as
+//! `bad_request` and 431 as `head_too_large` (docs/board-server.md).
 use std::convert::Infallible;
 use std::fs;
 use std::future::Future;
@@ -307,14 +312,11 @@ async fn answer(
 /// answered by the handler on a blocking thread.
 async fn admitted(handler: Arc<dyn ServiceHandler>, request: Request<Incoming>) -> ServiceReply {
     let path = request.uri().path().to_string();
-    let headers = request.headers();
-    let lengths: Vec<&[u8]> = headers
-        .get_all(header::CONTENT_LENGTH)
-        .iter()
-        .map(|value| value.as_bytes())
-        .collect();
-    let chunked = headers.contains_key(header::TRANSFER_ENCODING);
-    let admitted = match limits::admit(request.method().as_str(), &lengths, chunked) {
+    // hyper has parsed `Content-Length` (refusing one that is no number):
+    // the body's exact size is the length it declared.
+    let length = hyper::body::Body::size_hint(request.body()).exact();
+    let chunked = request.headers().contains_key(header::TRANSFER_ENCODING);
+    let admitted = match limits::admit(request.method().as_str(), length, chunked) {
         Ok(admitted) => admitted,
         // A method outside the allowlist: 405 naming what its path takes.
         Err(Refusal::Method) => {

@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 use super::BoardServerHandles;
 use super::routes::BoardRoutes;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
-use crate::infrastructure::http::board_service::listener::{self, ConnectionLimits, ServiceParts};
+use crate::infrastructure::http::board_service::listener::{
+    ConnectionLimits, ServiceParts, bind, serve as listen,
+};
 
 pub const USAGE: &str =
     "usage: quecto board-server serve --socket <path> --repo <clone> [--remote <name>]";
@@ -88,7 +90,7 @@ where
     F: Future<Output = ()>,
 {
     let board = handles.serve.board().clone();
-    let bound = listener::bind(socket).map_err(|error| format!("board-server: {error}"))?;
+    let bound = bind(socket).map_err(|error| format!("board-server: {error}"))?;
     // Only this socket is removed at the end, never a newer server's.
     let ours = identity(socket);
     let parts = ServiceParts {
@@ -117,13 +119,19 @@ where
             board,
             elapsed: began.elapsed(),
         });
-        listener::serve(bound, parts, stop).await
+        listen(bound, parts, stop).await
     });
     // Requests in flight have a moment to finish; then the server goes.
     runtime.shutdown_timeout(Duration::from_secs(1));
     let removed = remove_socket(socket, ours);
     served.map_err(|error| format!("board-server: {error}"))?;
     removed
+}
+
+/// Writes the start-up `line` to `out`; a closed or broken `out` never
+/// stops the server (no panic, no error).
+pub fn announce(out: &mut impl std::io::Write, line: &str) {
+    let _ = out.write_all(line.as_bytes()).and_then(|()| out.flush());
 }
 
 /// The device and inode of the file at `path`.

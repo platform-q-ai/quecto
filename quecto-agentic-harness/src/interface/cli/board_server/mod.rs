@@ -78,13 +78,9 @@ pub fn cmd_board_server(
                 started.elapsed.as_millis()
             );
             // A server runs until stopped: its line cannot wait for the
-            // command's end. A closed stdout never stops it (no panic).
+            // command's end.
             match live {
-                true => {
-                    let mut out = std::io::stdout().lock();
-                    let _ = std::io::Write::write_all(&mut out, line.as_bytes())
-                        .and_then(|()| std::io::Write::flush(&mut out));
-                }
+                true => serve::announce(&mut std::io::stdout().lock(), &line),
                 false => stdout.push_str(&line),
             }
         },

@@ -173,3 +173,25 @@ fn the_command_refuses_bad_options_and_an_uncomposed_server() {
     assert!(err.contains("not composed"), "{err}");
     assert!(out.is_empty());
 }
+
+/// A writer that always fails, as a closed stdout does.
+struct Broken;
+
+impl std::io::Write for Broken {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::BrokenPipe.into())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::ErrorKind::BrokenPipe.into())
+    }
+}
+
+/// Review round 4: the start-up line on a broken stdout neither panics nor
+/// fails the server; on a working one it is written whole.
+#[test]
+fn the_start_up_line_survives_a_broken_stdout() {
+    announce(&mut Broken, "board-server: serving\n");
+    let mut written = Vec::new();
+    announce(&mut written, "board-server: serving\n");
+    assert_eq!(written, b"board-server: serving\n");
+}
