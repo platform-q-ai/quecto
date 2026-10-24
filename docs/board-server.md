@@ -17,10 +17,11 @@ until SIGINT or SIGTERM (epic #2705 B4, B5).
   request needs `Authorization: Bearer <token>`. Without one, or with an
   unknown or revoked token, the answer is 401 whatever the method, path
   or body: the token is checked before anything else about the request,
-  and before its body is read. The admin routes answer 403 over TCP,
-  whatever the token. Over TCP a token store failure is answered only
-  `the token store is unavailable` (the detail goes to the server's stderr, and is said on
-  the Unix socket).
+  and before its body is read, and the 401 closes the connection. The
+  admin routes answer 403 over TCP, whatever the token. Over TCP a token
+  store failure is answered only `the token store is unavailable`. The
+  detail is said on the Unix socket, and goes to the server's stderr at
+  most once every 30 s, with a count of the lines held back.
 - **Addresses, not interfaces.** `100.64.0.0/10` is matched by address,
   not by interface: an address in that range on a non-Tailscale interface
   would be allowed too. A token is still required on every TCP request.
@@ -49,10 +50,12 @@ bytes, base64url. Only its SHA-256 is kept, in `tokens.json` (mode 0600)
 in the state directory (mode 0700): `--state <dir>`, else
 `~/.quecto/board-server/<board id>/`. A token is compared in constant
 time. A server holds at most 256 tokens. The server holds an exclusive
-lock on `lock` in the state directory for its whole life, so a second
+lock on the state directory itself for its whole life, so a second
 server on the same state directory (say, a second clone of the same
-remote) is refused at start; give it its own `--state <dir>`. (After B2 the tokens move into
-the SQLite store as admin revisions.)
+remote) is refused at start; give it its own `--state <dir>`. If the
+directory is moved away and replaced while a server runs, that server
+refuses every token read and write. (After B2 the tokens move into the
+SQLite store as admin revisions.)
 
 ## Routes
 
@@ -113,5 +116,5 @@ hold for the Unix socket and TCP alike:
 - 10 s for a head, which also ends an idle keep-alive connection, and 10 s for a body;
 - 10 s for a peer to take any reply byte;
 - 64 connections at once on the socket, and 64 on each TCP address (TCP peers never take the socket's);
-- at most 8 TCP connections at once from one source address; a 9th is closed unanswered;
+- at most 8 TCP connections at once from one source address; a 9th is closed unanswered. All of loopback (`127.0.0.0/8` and `::1`) counts as one source, since any local user can bind any of it;
 - each connection at most 60 s or 1,000 requests, then 15 s to finish what it is answering before it is dropped.

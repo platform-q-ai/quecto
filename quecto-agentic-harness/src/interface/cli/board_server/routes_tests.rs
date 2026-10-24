@@ -489,3 +489,29 @@ fn the_tcp_gate_lets_on_only_a_held_token() {
         );
     }
 }
+
+/// Review round 2: while the token store is down, its stderr line comes
+/// at most once a span, then says how many it held back.
+#[test]
+fn the_unavailable_line_is_throttled() {
+    let every = std::time::Duration::from_secs(30);
+    let start = std::time::Instant::now();
+    let at = |seconds: u64| start + std::time::Duration::from_secs(seconds);
+    let mut throttle = Throttle::default();
+    assert_eq!(
+        throttle.admit(at(0), every),
+        Some(0),
+        "the first is written"
+    );
+    for second in 1..30 {
+        assert_eq!(throttle.admit(at(second), every), None, "{second}");
+    }
+    assert_eq!(
+        throttle.admit(at(30), every),
+        Some(29),
+        "then with the count"
+    );
+    assert_eq!(throttle.admit(at(31), every), None);
+    assert_eq!(throttle.admit(at(90), every), Some(1));
+    assert_eq!(throttle.admit(at(200), every), Some(0));
+}

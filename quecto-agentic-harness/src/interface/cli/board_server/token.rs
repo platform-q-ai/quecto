@@ -29,14 +29,19 @@ pub struct TokenOptions {
 pub fn parse(args: &[String]) -> Result<TokenOptions, String> {
     let refused = |why: &str| Err(format!("board-server: {why}"));
     let (action, rest) = match args {
-        [action, name, rest @ ..] if action == "add" && !name.starts_with('-') => {
+        [action, name, rest @ ..] if action == "add" && name_shaped(name) => {
             (TokenAction::Add(name.clone()), rest)
         }
-        [action, name, rest @ ..] if action == "revoke" && !name.starts_with('-') => {
+        [action, name, rest @ ..] if action == "revoke" && name_shaped(name) => {
             (TokenAction::Revoke(name.clone()), rest)
         }
         [action, rest @ ..] if action == "list" => (TokenAction::List, rest),
-        _ => return refused("token takes add <name>, revoke <name> or list"),
+        _ => {
+            return refused(
+                "token takes add <name>, revoke <name> or list \
+                 (a name is 1 to 64 of a-z, 0-9 and '-', starting with a letter or digit)",
+            );
+        }
     };
     match rest {
         [option, socket] if option == "--socket" => Ok(TokenOptions {
@@ -44,6 +49,22 @@ pub fn parse(args: &[String]) -> Result<TokenOptions, String> {
             socket: PathBuf::from(socket),
         }),
         _ => refused("token needs --socket <path> (and nothing else)"),
+    }
+}
+
+/// Whether `name` is shaped as a token name, an allowlist: 1 to 64 of
+/// `a-z`, `0-9` and `-`, the first a letter or digit (the server judges
+/// the rest of a slug's rules).
+fn name_shaped(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    let body = |byte: &u8| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-';
+    match bytes.split_first() {
+        Some((first, rest)) => {
+            bytes.len() <= 64
+                && (first.is_ascii_lowercase() || first.is_ascii_digit())
+                && rest.iter().all(body)
+        }
+        None => false,
     }
 }
 

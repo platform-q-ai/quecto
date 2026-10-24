@@ -27,9 +27,6 @@ use crate::domain::shared::secret_compare::constant_time_eq;
 /// The tokens file's name in the state directory.
 pub const TOKENS_FILE: &str = "tokens.json";
 
-/// The lock file's name in the state directory.
-const LOCK_FILE: &str = "lock";
-
 /// The most bytes a tokens file may hold (256 tokens take about 40 KiB).
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
@@ -63,13 +60,14 @@ pub struct FileBoardTokens {
     path: PathBuf,
     /// Serialises this process's read-change-write of the file.
     writing: Mutex<()>,
-    /// The state directory's lock, held exclusively for this adapter's
-    /// life: no other server writes the file meanwhile.
-    _lock: fs::File,
+    /// The state directory, opened and locked exclusively for this
+    /// adapter's life: no other server writes the file meanwhile.
+    state: PathBuf,
+    lock: fs::File,
 }
 
 impl FileBoardTokens {
-    /// The tokens in `state`, made mode 0700 if missing, its `lock` held
+    /// The tokens in `state`, made mode 0700 if missing and locked
     /// exclusively until this is dropped; a file there must read.
     /// # Errors
     /// A relative, shared or foreign directory, a lock another server
@@ -79,7 +77,8 @@ impl FileBoardTokens {
         let tokens = Self {
             path: state.join(TOKENS_FILE),
             writing: Mutex::new(()),
-            _lock: locked(state)?,
+            state: state.to_path_buf(),
+            lock: locked(state)?,
         };
         tokens.held().map_err(|error| error.to_string())?;
         Ok(tokens)
@@ -92,6 +91,7 @@ impl FileBoardTokens {
 
     /// The tokens the file holds: none while it is missing.
     fn held(&self) -> Result<Vec<Held>, TokenError> {
+        self.still_locked()?;
         let refused = |why: String| {
             TokenError::Unavailable(format!("the tokens file {}: {why}", self.path.display()))
         };
@@ -142,6 +142,20 @@ impl FileBoardTokens {
         };
         let text = serde_json::to_vec_pretty(&stored).map_err(|e| unavailable(e.to_string()))?;
         atomic_write(&self.path, &text, Some(0o600)).map_err(|e| unavailable(e.to_string()))
+    }
+
+    /// Whether the state directory at its path is still the one locked: a
+    /// directory moved away and replaced would let another server in.
+    fn still_locked(&self) -> Result<(), TokenError> {
+        let identity = |meta: fs::Metadata| (meta.dev(), meta.ino());
+        let at_path = fs::symlink_metadata(&self.state).map(identity);
+        match (at_path, self.lock.metadata().map(identity)) {
+            (Ok(found), Ok(locked)) if found == locked => Ok(()),
+            (Ok(_) | Err(_), _) => Err(TokenError::Unavailable(format!(
+                "the state directory {} was moved or replaced while this server held it",
+                self.state.display()
+            ))),
+        }
     }
 
     /// Runs `change` on the held tokens under the write lock.
@@ -253,25 +267,21 @@ fn unhex(text: &str) -> Option<Digested> {
     Some(digest)
 }
 
-/// `<state>/lock`, mode 0600, locked exclusively (never waiting).
+/// The state directory itself, opened (never through a symlink) and
+/// locked exclusively, never waiting: a lock no file removal undoes.
 // `File::try_lock` stabilized in 1.89 (the admission authority's
 // `SingletonLock` shares the toolchain-floor note).
 #[expect(clippy::incompatible_msrv)]
 fn locked(state: &Path) -> Result<fs::File, String> {
     use std::os::unix::fs::OpenOptionsExt;
-    let path = state.join(LOCK_FILE);
-    let refused = |why: String| format!("the state directory's lock {}: {why}", path.display());
-    let file = fs::OpenOptions::new()
+    let refused = |why: String| format!("the state directory {}: {why}", state.display());
+    let dir = fs::OpenOptions::new()
         .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(&path)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(state)
         .map_err(|error| refused(error.to_string()))?;
-    match file.try_lock() {
-        Ok(()) => Ok(file),
+    match dir.try_lock() {
+        Ok(()) => Ok(dir),
         Err(fs::TryLockError::WouldBlock) => Err(refused(
             "another board server holds it: one server per state directory (give this one --state <dir>)"
                 .into(),

@@ -51,3 +51,37 @@ fn anything_else_is_refused() {
         );
     }
 }
+
+/// Review round 2: a name is judged by an allowlist of its shape.
+#[test]
+fn a_name_is_shaped_by_an_allowlist() {
+    let longest = "a".repeat(64);
+    for allowed in ["laptop", "pixel-8", "8", "a-b-c", longest.as_str()] {
+        assert!(name_shaped(allowed), "{allowed}");
+        assert!(
+            parse(&args(&format!("add {allowed} --socket /s"))).is_ok(),
+            "{allowed}"
+        );
+    }
+    let too_long = "a".repeat(65);
+    for refused in [
+        "",
+        "-x",
+        "--socket",
+        "Laptop",
+        "my_laptop",
+        "a.b",
+        "a b",
+        "é",
+        too_long.as_str(),
+    ] {
+        assert!(!name_shaped(refused), "{refused}");
+        let command = vec![
+            "revoke".to_string(),
+            refused.to_string(),
+            "--socket".into(),
+            "/s".into(),
+        ];
+        assert!(parse(&command).is_err(), "{refused}");
+    }
+}

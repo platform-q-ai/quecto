@@ -4,6 +4,8 @@
 //! or 405 naming the methods a route takes. Over TCP every request needs a
 //! held bearer token (else 401, before any route is looked up), and admin
 //! routes are the Unix socket's alone (403 over TCP, whatever the token).
+use std::time::{Duration, Instant};
+
 use serde_json::json;
 
 use crate::application::project_board::dto::ProjectBoardError;
@@ -20,6 +22,35 @@ use crate::infrastructure::http::board_service::listener::{
 pub struct BoardRoutes {
     serve: ServeBoard,
     access: BoardAccess,
+    /// The token store's failures on stderr, at most one line a span.
+    unavailable: std::sync::Mutex<Throttle>,
+}
+
+/// At most one stderr line per this span while the token store is down.
+const LOG_EVERY: Duration = Duration::from_secs(30);
+
+/// A log line's throttle: one line a span, saying how many it held back.
+#[derive(Debug, Default)]
+pub(super) struct Throttle {
+    last: Option<Instant>,
+    suppressed: usize,
+}
+
+impl Throttle {
+    /// The lines held back since the last one, when one may be written at
+    /// `now`; `None` (one more held back) within `every` of the last.
+    pub(super) fn admit(&mut self, now: Instant, every: Duration) -> Option<usize> {
+        match self.last {
+            Some(last) if now.saturating_duration_since(last) < every => {
+                self.suppressed += 1;
+                None
+            }
+            Some(_) | None => {
+                self.last = Some(now);
+                Some(std::mem::take(&mut self.suppressed))
+            }
+        }
+    }
 }
 
 /// A route of the table.
@@ -78,7 +109,56 @@ struct Named {
 
 impl BoardRoutes {
     pub fn new(serve: ServeBoard, access: BoardAccess) -> Self {
-        Self { serve, access }
+        Self {
+            serve,
+            access,
+            unavailable: std::sync::Mutex::default(),
+        }
+    }
+
+    /// A refused request's reply: 401 `token`, 403 `local_only`, or 503.
+    /// A TCP caller is never told why the tokens failed (paths, user,
+    /// board id): that goes to the server's stderr, at most one line a
+    /// span, and is said on the Unix socket.
+    fn refusal(&self, refused: &Refused, transport: Transport) -> ServiceReply {
+        match refused {
+            Refused::Token => ServiceReply {
+                challenge: Some("Bearer"),
+                ..coded(
+                    401,
+                    "token",
+                    "unauthorized: a valid bearer token is required",
+                )
+            },
+            Refused::LocalOnly => coded(
+                403,
+                "local_only",
+                "forbidden: admin routes are served on the Unix socket only",
+            ),
+            Refused::Unavailable(error) => match transport {
+                Transport::Local => coded(503, "unavailable", &error.to_string()),
+                Transport::Tcp => {
+                    self.log_unavailable(error);
+                    coded(503, "unavailable", "the token store is unavailable")
+                }
+            },
+        }
+    }
+
+    /// The token store's failure on the server's stderr (no tracing
+    /// subscriber is set here), throttled so a peer cannot flood it.
+    fn log_unavailable(&self, error: &TokenError) {
+        let mut throttle = self
+            .unavailable
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match throttle.admit(Instant::now(), LOG_EVERY) {
+            Some(0) => eprintln!("board-server: the token store is unavailable: {error}"),
+            Some(held) => eprintln!(
+                "board-server: the token store is unavailable: {error} ({held} more since the last line)"
+            ),
+            None => {}
+        }
     }
 
     /// Answers `request` on `route`, a method it takes.
@@ -142,7 +222,7 @@ impl ServiceHandler for BoardRoutes {
         let caller = Caller::Remote(authorization.and_then(bearer));
         match self.access.authenticate(caller) {
             Ok(_) => None,
-            Err(refused) => Some(refusal(&refused, Transport::Tcp)),
+            Err(refused) => Some(self.refusal(&refused, Transport::Tcp)),
         }
     }
 
@@ -153,13 +233,13 @@ impl ServiceHandler for BoardRoutes {
         };
         let principal = match self.access.authenticate(caller) {
             Ok(principal) => principal,
-            Err(refused) => return refusal(&refused, request.transport),
+            Err(refused) => return self.refusal(&refused, request.transport),
         };
         match Route::of(&request.path) {
             Some(route) if route.takes(request.method) => {
                 match BoardAccess::authorize(&principal, route.scope()) {
                     Ok(()) => self.route(route, request),
-                    Err(refused) => refusal(&refused, request.transport),
+                    Err(refused) => self.refusal(&refused, request.transport),
                 }
             }
             Some(route) => ServiceReply {
@@ -201,35 +281,6 @@ fn named(body: &[u8], answer: impl FnOnce(&str) -> ServiceReply) -> ServiceReply
 /// An error reply with its typed `code`.
 fn coded(status: u16, code: &str, why: &str) -> ServiceReply {
     ServiceReply::json(status, &json!({ "error": why, "code": code }))
-}
-
-/// A refused request's reply: 401 `token`, 403 `local_only`, or 503. A
-/// TCP caller is never told why the tokens failed (paths, user, board id):
-/// that goes to the server's stderr and is said on the Unix socket only.
-fn refusal(refused: &Refused, transport: Transport) -> ServiceReply {
-    match refused {
-        Refused::Token => ServiceReply {
-            challenge: Some("Bearer"),
-            ..coded(
-                401,
-                "token",
-                "unauthorized: a valid bearer token is required",
-            )
-        },
-        Refused::LocalOnly => coded(
-            403,
-            "local_only",
-            "forbidden: admin routes are served on the Unix socket only",
-        ),
-        Refused::Unavailable(error) => match transport {
-            Transport::Local => coded(503, "unavailable", &error.to_string()),
-            Transport::Tcp => {
-                // The server's own stderr (no tracing subscriber is set here).
-                eprintln!("board-server: the token store is unavailable: {error}");
-                coded(503, "unavailable", "the token store is unavailable")
-            }
-        },
-    }
 }
 
 /// A failed token command's reply, each error its status and code.

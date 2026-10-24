@@ -89,13 +89,37 @@ fn a_second_server_on_one_state_directory_is_refused() {
     let error = FileBoardTokens::open(&state).unwrap_err();
     assert!(error.contains("another board server holds it"), "{error}");
     assert!(error.contains("--state"), "{error}");
-    let mode = std::fs::metadata(state.join(LOCK_FILE))
-        .unwrap()
-        .permissions()
-        .mode();
-    assert_eq!(mode & 0o777, 0o600);
     drop(tokens);
     assert!(FileBoardTokens::open(&state).is_ok());
+}
+
+/// Review round 2: deleting a lock file let a second server in. The lock
+/// is on the directory itself, so there is no file to delete; and a
+/// directory moved away and replaced (which a second server could then
+/// lock) stops the first one's writes.
+#[test]
+fn the_lock_is_the_directory_and_a_replaced_one_stops_writes() {
+    let (dir, tokens) = opened();
+    let state = dir.path().join("state").join("board");
+    tokens.add(&name("laptop"), &at()).unwrap();
+    let entries: Vec<_> = std::fs::read_dir(&state)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(entries, [TOKENS_FILE], "no lock file to remove");
+    std::fs::rename(&state, dir.path().join("state").join("moved")).unwrap();
+    let second = FileBoardTokens::open(&state).unwrap();
+    let refused = tokens.add(&name("phone"), &at()).unwrap_err();
+    assert!(
+        matches!(&refused, TokenError::Unavailable(why) if why.contains("moved or replaced")),
+        "{refused:?}"
+    );
+    assert!(matches!(
+        tokens.revoke(&name("laptop")),
+        Err(TokenError::Unavailable(_))
+    ));
+    assert!(tokens.verify("x").is_err(), "nor reads another's tokens");
+    second.add(&name("phone"), &at()).unwrap();
 }
 
 /// Within one server, parallel adds are serialised: every one is kept.

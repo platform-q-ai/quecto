@@ -364,15 +364,13 @@ fn tcp_requests_reach_the_handler_as_tcp_with_their_authorization() {
     assert_eq!(running.handler.calls.load(Ordering::SeqCst), 2);
 }
 
-/// TCP peers that hold every TCP slot never lock out the Unix socket: each
+/// TCP peers holding all they may never lock out the Unix socket: each
 /// listener has its own slots.
 #[test]
-fn tcp_peers_holding_every_slot_leave_the_socket_served() {
+fn tcp_peers_at_their_limit_leave_the_socket_served() {
     let running = start_tcp(SERVER_UID);
     let address = running.tcp.unwrap();
-    // 9 sources of 8 each: more than the listener's 64 slots.
-    let held: Vec<_> = (2..11)
-        .flat_map(|n| (0..limits::MAX_CONNECTIONS_PER_PEER).map(move |_| n))
+    let held: Vec<_> = (2..20)
         .map(|n| from_source(&format!("127.0.0.{n}"), address))
         .collect();
     std::thread::sleep(Duration::from_millis(200));
@@ -425,21 +423,21 @@ fn exchange(mut stream: std::net::TcpStream, request: &[u8]) -> String {
     String::from_utf8_lossy(&answer).to_string()
 }
 
-/// Review round 1: one TCP source holds at most 8 connections; its 9th is
-/// closed unanswered, while another source is still served.
+/// Review rounds 1 and 2: one TCP source holds at most 8 connections,
+/// and all of loopback is one source (any local user can bind any of
+/// 127.0.0.0/8): 8 spread over 127.0.0.2-9 leave a 9th from 127.0.0.10
+/// closed unanswered, until they go.
 #[test]
-fn one_tcp_source_holds_at_most_eight_connections() {
+fn loopback_sources_hold_at_most_eight_connections_together() {
     let running = start_tcp(SERVER_UID);
     let address = running.tcp.unwrap();
-    let held: Vec<_> = (0..limits::MAX_CONNECTIONS_PER_PEER)
-        .map(|_| from_source("127.0.0.1", address))
+    let held: Vec<_> = (2..2 + limits::MAX_CONNECTIONS_PER_PEER)
+        .map(|n| from_source(&format!("127.0.0.{n}"), address))
         .collect();
     std::thread::sleep(Duration::from_millis(200));
     let get = request("GET", 2, "", b"");
-    let ninth = exchange(from_source("127.0.0.1", address), &get);
+    let ninth = exchange(from_source("127.0.0.10", address), &get);
     assert_eq!(ninth, "", "the 9th is closed unanswered");
-    let other = exchange(from_source("127.0.0.2", address), &get);
-    assert!(other.starts_with("HTTP/1.1 200"), "{other}");
     drop(held);
     std::thread::sleep(Duration::from_millis(200));
     let again = exchange(from_source("127.0.0.1", address), &get);
@@ -471,4 +469,41 @@ fn an_unauthenticated_tcp_request_is_401_whatever_it_asks() {
     // The Unix socket has no gate: its peers are already let in.
     let (status, _) = raw(&running.socket, &request("GET", 3, refuse, b""));
     assert_eq!(status, 200);
+}
+
+/// Review round 2: loopback (127.0.0.0/8 and ::1) is one source; every
+/// other address is its own.
+#[test]
+fn loopback_is_one_source_and_other_addresses_their_own() {
+    let ip = |text: &str| text.parse::<IpAddr>().unwrap();
+    let local = source_of(ip("127.0.0.1"));
+    assert_eq!(source_of(ip("127.5.6.7")), local);
+    assert_eq!(source_of(ip("::1")), local);
+    assert_eq!(source_of(ip("100.64.1.2")), ip("100.64.1.2"));
+    assert_ne!(source_of(ip("100.64.1.2")), source_of(ip("100.64.1.3")));
+    assert_eq!(source_of(ip("fd7a:115c:a1e0::1")), ip("fd7a:115c:a1e0::1"));
+}
+
+/// Review round 2: a refused TCP request's connection ends with its 401
+/// (`Connection: close`, then shut), though the peer asked to keep it, so
+/// an unauthenticated peer holds no slot past its refusal; an admitted
+/// connection is kept alive.
+#[test]
+fn an_unauthenticated_connection_is_closed_after_its_401() {
+    let running = start_tcp(SERVER_UID);
+    let address = running.tcp.unwrap();
+    let kept = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer refuse\r\n\r\n";
+    let began = Instant::now();
+    let answer = exchange(from_source("127.0.0.1", address), kept);
+    assert!(answer.starts_with("HTTP/1.1 401"), "{answer}");
+    assert!(answer.contains("connection: close"), "{answer}");
+    assert!(
+        began.elapsed() < Duration::from_secs(5),
+        "closed at once: {:?}",
+        began.elapsed()
+    );
+    let close = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\nConnection: close\r\n\r\n";
+    let two = [KEPT_ALIVE, &close[..]].concat();
+    let answers = exchange(from_source("127.0.0.1", address), &two);
+    assert_eq!(answers.matches("HTTP/1.1 200").count(), 2, "{answers}");
 }

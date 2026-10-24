@@ -59,14 +59,16 @@ pub enum Transport {
     Tcp,
 }
 
-/// A handler's reply: a status, a JSON body, a 405's `Allow` and a 401's
-/// `WWW-Authenticate`.
+/// A handler's reply: a status, a JSON body, a 405's `Allow`, a 401's
+/// `WWW-Authenticate`, and whether the connection ends with it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceReply {
     pub status: u16,
     pub body: Vec<u8>,
     pub allow: Option<&'static str>,
     pub challenge: Option<&'static str>,
+    /// Answered `Connection: close`, then the connection is shut.
+    pub close: bool,
 }
 
 impl ServiceReply {
@@ -78,6 +80,7 @@ impl ServiceReply {
             body,
             allow: None,
             challenge: None,
+            close: false,
         }
     }
 }
@@ -288,6 +291,17 @@ enum Accepted {
 /// The TCP connections open from each source address.
 type PeerCounts = Arc<std::sync::Mutex<std::collections::HashMap<IpAddr, usize>>>;
 
+/// The key a TCP peer's connections are counted under: loopback (all of
+/// 127.0.0.0/8, and ::1) is one source, since any local user can bind
+/// any of it; every other address is its own.
+fn source_of(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V4(v4) if v4.is_loopback() => IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        IpAddr::V6(v6) if v6.is_loopback() => IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        IpAddr::V4(_) | IpAddr::V6(_) => ip,
+    }
+}
+
 /// One of a source address's [`limits::MAX_CONNECTIONS_PER_PEER`] slots,
 /// given back when dropped.
 struct PeerSlot {
@@ -350,7 +364,8 @@ impl Accepting {
             Self::Unix(listener) => Ok(Some(Accepted::Unix(listener.accept().await?.0))),
             Self::Tcp(listener) => {
                 let (stream, peer) = listener.accept().await?;
-                Ok(PeerSlot::take(peers, peer.ip()).map(|slot| Accepted::Tcp(stream, slot)))
+                let source = source_of(peer.ip());
+                Ok(PeerSlot::take(peers, source).map(|slot| Accepted::Tcp(stream, slot)))
             }
         }
     }
@@ -462,15 +477,17 @@ async fn refuse(mut stream: UnixStream) {
 }
 
 /// One request, its reply closing the connection when it is the `last`
-/// the connection takes.
+/// the connection takes or the reply asks to.
 async fn answer(
     handler: Arc<dyn ServiceHandler>,
     request: Request<Incoming>,
     transport: Transport,
     last: bool,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let mut reply = response(admitted(handler, request, transport).await);
-    if last {
+    let reply = admitted(handler, request, transport).await;
+    let close = last || reply.close;
+    let mut reply = response(reply);
+    if close {
         let close = header::HeaderValue::from_static("close");
         reply.headers_mut().insert(header::CONNECTION, close);
     }
@@ -487,16 +504,31 @@ async fn admitted(
     let path = request.uri().path().to_string();
     let authorization = authorization(request.headers());
     // Over TCP the caller is authenticated first: until it is, nothing of
-    // its method, path or body is judged (or read).
-    if transport == Transport::Tcp {
-        let (gate, presented) = (Arc::clone(&handler), authorization.clone());
-        match tokio::task::spawn_blocking(move || gate.authenticate_remote(presented.as_deref()))
-            .await
-        {
-            Ok(None) => {}
-            Ok(Some(refusal)) => return refusal,
-            Err(_) => return error(500, "handler", "the request's handler failed"),
+    // its method, path or body is judged (or read). A refused caller's
+    // connection ends with the refusal, so it holds no slot past it.
+    match transport {
+        Transport::Tcp => {
+            let (gate, presented) = (Arc::clone(&handler), authorization.clone());
+            let gated =
+                tokio::task::spawn_blocking(move || gate.authenticate_remote(presented.as_deref()));
+            match gated.await {
+                Ok(None) => {}
+                Ok(Some(refusal)) => {
+                    return ServiceReply {
+                        close: true,
+                        ..refusal
+                    };
+                }
+                Err(_) => {
+                    let failed = error(500, "handler", "the request's handler failed");
+                    return ServiceReply {
+                        close: true,
+                        ..failed
+                    };
+                }
+            }
         }
+        Transport::Local => {}
     }
     // hyper has parsed `Content-Length` (refusing one that is no number):
     // the body's exact size is the length it declared.
