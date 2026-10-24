@@ -70,6 +70,23 @@ fn status_over_a_temp_socket_answers_the_role_and_head() {
     assert!(std::fs::symlink_metadata(&socket).is_err());
 }
 
+/// Review round 2: a server that stops removes only the socket it bound,
+/// never a newer server's at the same path.
+#[test]
+fn stopping_leaves_a_newer_servers_socket() {
+    let (store, _) = written();
+    let (_dir, socket, stop, thread) = served(handles(serving(&store)));
+    std::fs::remove_file(&socket).unwrap();
+    let newer = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    stop.send(()).unwrap();
+    thread.join().unwrap().unwrap();
+    assert!(
+        std::fs::symlink_metadata(&socket).is_ok(),
+        "the newer socket stays"
+    );
+    drop(newer);
+}
+
 #[test]
 fn an_unknown_path_over_the_socket_is_404() {
     let (store, _) = written();

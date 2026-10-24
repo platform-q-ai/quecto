@@ -46,3 +46,31 @@ fn each_refusal_has_its_status() {
     .map(|refusal| refusal.verdict().0);
     assert_eq!(statuses, [405, 411, 400, 413]);
 }
+
+/// Review round 2: a peer that keeps taking bytes, each pause shorter
+/// than the limit but all of them longer, never times out: progress
+/// restarts the clock.
+#[tokio::test(start_paused = true)]
+async fn progress_restarts_the_write_clock() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (near, mut far) = tokio::io::duplex(8);
+    let mut writer = WriteDeadline::new(near, Duration::from_millis(100));
+    let writing = tokio::spawn(async move { writer.write_all(&[7; 48]).await });
+    let mut taken = [0; 48];
+    for chunk in taken.chunks_mut(8) {
+        tokio::time::sleep(Duration::from_millis(70)).await;
+        far.read_exact(chunk).await.unwrap();
+    }
+    assert!(writing.await.unwrap().is_ok(), "no write timed out");
+    assert_eq!(taken, [7; 48]);
+}
+
+/// A peer that takes nothing times the write out at the limit.
+#[tokio::test(start_paused = true)]
+async fn a_peer_that_takes_nothing_times_the_write_out() {
+    use tokio::io::AsyncWriteExt;
+    let (near, _far) = tokio::io::duplex(8);
+    let mut writer = WriteDeadline::new(near, Duration::from_millis(100));
+    let error = writer.write_all(&[7; 16]).await.unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+}

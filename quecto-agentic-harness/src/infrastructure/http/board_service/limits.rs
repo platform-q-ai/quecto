@@ -9,10 +9,11 @@
 //! - 10 s for a peer to take any of a reply's bytes ([`WriteDeadline`]): a
 //!   peer that sends requests but never reads its replies loses its
 //!   connection, so it never holds a connection slot for good;
-//! - 64 connections served at once; a further peer waits to be accepted.
+//! - 64 connections served at once; a further peer waits to be accepted;
+//! - a connection lives at most 60 s or 1,000 requests, whichever comes
+//!   first, then finishes what it is answering and closes, so 64 busy
+//!   peers cannot hold every slot for good.
 //!
-//! No connection's whole lifetime is capped: a peer that keeps reading
-//! and sending within these deadlines is served as long as it likes.
 //! [`admit`] judges a parsed head before any body is read.
 use std::future::Future;
 use std::io;
@@ -34,9 +35,11 @@ pub const MAX_BODY_BYTES: u64 = 1024 * 1024;
 pub const READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long a write may wait for the peer to take any byte.
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
-/// The most connections served at once; a further peer waits to be
-/// accepted.
+/// The most connections served at once.
 pub const MAX_CONNECTIONS: usize = 64;
+/// The longest a connection lives, and the most requests it takes.
+pub const CONNECTION_LIFETIME: Duration = Duration::from_secs(60);
+pub const MAX_REQUESTS: usize = 1_000;
 
 /// The methods the service takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

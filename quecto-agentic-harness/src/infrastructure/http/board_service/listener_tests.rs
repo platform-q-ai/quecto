@@ -1,7 +1,59 @@
 use super::*;
 use crate::infrastructure::http::board_service::test_server::{
-    SERVER_UID, raw, request, start, start_with,
+    SERVER_UID, raw, request, start, start_with, whole,
 };
+
+const KEPT_ALIVE: &[u8] = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\n\r\n";
+
+/// Review round 2: a connection lives at most its lifetime, then closes,
+/// though the peer would keep it (the head timeout alone takes 10 s).
+#[test]
+fn a_connection_closes_at_the_end_of_its_lifetime() {
+    let lifetime = Duration::from_millis(300);
+    let limits = ConnectionLimits {
+        lifetime,
+        ..ConnectionLimits::default()
+    };
+    let running = start_with(SERVER_UID, 0, limits);
+    let began = Instant::now();
+    let answer = whole(&running.socket, KEPT_ALIVE);
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+    assert!(
+        began.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        began.elapsed()
+    );
+}
+
+/// Review round 2: a connection takes at most `MAX_REQUESTS` requests; the
+/// last is answered `Connection: close` and the rest are never read.
+#[test]
+fn a_connection_closes_after_its_most_requests() {
+    let running = start(SERVER_UID);
+    let answer = whole(
+        &running.socket,
+        &KEPT_ALIVE.repeat(limits::MAX_REQUESTS + 1),
+    );
+    assert_eq!(answer.matches("HTTP/1.1 200").count(), limits::MAX_REQUESTS);
+    let last = answer.rsplit("HTTP/1.1 200").next().unwrap_or_default();
+    assert!(last.contains("connection: close"), "{last}");
+    assert_eq!(
+        running.handler.calls.load(Ordering::SeqCst),
+        limits::MAX_REQUESTS
+    );
+}
+
+/// Review round 2: a method outside the allowlist is 405 naming what its
+/// path takes, and 404 on a path no route has.
+#[test]
+fn a_refused_method_names_what_its_path_takes() {
+    let running = start(SERVER_UID);
+    let answer = whole(&running.socket, &request("DELETE", 2, "", b""));
+    assert!(answer.starts_with("HTTP/1.1 405"), "{answer}");
+    assert!(answer.contains("allow: GET, POST"), "{answer}");
+    let nowhere = b"DELETE /nowhere HTTP/1.1\r\nHost: board\r\nConnection: close\r\n\r\n";
+    assert_eq!(raw(&running.socket, nowhere).0, 404);
+}
 use std::io::Write;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::UnixStream as StdStream;
@@ -14,8 +66,12 @@ use std::time::Instant;
 /// answered soon after.
 #[test]
 fn peers_that_never_read_free_their_slots_for_a_fresh_client() {
-    let deadline = Duration::from_millis(500);
-    let running = start_with(SERVER_UID, 64 * 1024, deadline);
+    let write_timeout = Duration::from_millis(500);
+    let limits = ConnectionLimits {
+        write_timeout,
+        ..ConnectionLimits::default()
+    };
+    let running = start_with(SERVER_UID, 64 * 1024, limits);
     let one = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\n\r\n";
     let pipelined: Vec<u8> = one.repeat(200);
     let mut held = Vec::new();

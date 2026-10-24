@@ -74,13 +74,11 @@ impl ServeBoard {
     /// Another board, no board, the store's failure, or an artifact no
     /// file holds.
     pub fn snapshot(&self, board: &BoardId) -> Result<ServedSnapshot, ServeError> {
-        if *board != self.board {
-            return Err(ServeError::UnknownBoard);
+        let snapshot = match *board == self.board {
+            true => self.store.read(),
+            false => return Err(ServeError::UnknownBoard),
         }
-        let snapshot = self
-            .store
-            .read()
-            .map_err(|error| ServeError::Board(ProjectBoardError::Store(error)))?;
+        .map_err(|error| ServeError::Board(ProjectBoardError::Store(error)))?;
         let files = self.files.files(&snapshot).map_err(|error| match error {
             SnapshotFilesError::TooLarge(why) => ServeError::TooLarge(why),
             SnapshotFilesError::Unreadable(why) => ServeError::Files(why),

@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use super::BoardServerHandles;
 use super::routes::BoardRoutes;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
-use crate::infrastructure::http::board_service::limits;
-use crate::infrastructure::http::board_service::listener::{self, ServiceParts};
+
+use crate::infrastructure::http::board_service::listener::{self, ConnectionLimits, ServiceParts};
 
 /// How the command is used.
 pub const USAGE: &str =
@@ -39,8 +39,9 @@ pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
     let Some((action, options)) = args.split_first() else {
         return refused("an action is needed: serve".into());
     };
-    if action != "serve" {
-        return refused(format!("unknown action '{action}': the action is serve"));
+    match action.as_str() {
+        "serve" => {}
+        other => return refused(format!("unknown action '{other}': the action is serve")),
     }
     let (mut socket, mut repo, mut remote) = (None, None, None);
     let mut rest = options.iter();
@@ -54,8 +55,9 @@ pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
         let Some(value) = rest.next() else {
             return refused(format!("{option} needs a value"));
         };
-        if slot.replace(value.clone()).is_some() {
-            return refused(format!("{option} is given twice"));
+        match slot.replace(value.clone()) {
+            None => {}
+            Some(_) => return refused(format!("{option} is given twice")),
         }
     }
     match (socket, repo) {
@@ -98,11 +100,14 @@ where
 {
     let board = handles.serve.board().clone();
     let bound = listener::bind(socket).map_err(|error| format!("board-server: {error}"))?;
+    // The socket's identity: only it is removed at the end, never a newer
+    // server's socket bound at the same path since.
+    let ours = identity(socket);
     let parts = ServiceParts {
         handler: Arc::new(BoardRoutes::new(handles.serve)),
         peers: handles.peers,
         uid: handles.uid,
-        write_timeout: limits::WRITE_TIMEOUT,
+        limits: ConnectionLimits::default(),
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -112,7 +117,7 @@ where
     let runtime = match runtime {
         Ok(runtime) => runtime,
         Err(error) => {
-            let _ = remove_socket(socket);
+            let _ = remove_socket(socket, ours);
             return Err(format!("board-server: the runtime did not start: {error}"));
         }
     };
@@ -128,18 +133,24 @@ where
     });
     // Requests in flight have a moment to finish; then the server goes.
     runtime.shutdown_timeout(Duration::from_secs(1));
-    let removed = remove_socket(socket);
+    let removed = remove_socket(socket, ours);
     served.map_err(|error| format!("board-server: {error}"))?;
     removed
 }
 
-/// Removes the server's socket, and only a socket.
-fn remove_socket(socket: &Path) -> Result<(), String> {
-    use std::os::unix::fs::FileTypeExt;
-    match std::fs::symlink_metadata(socket) {
-        Ok(meta) if meta.file_type().is_socket() => std::fs::remove_file(socket)
+/// The device and inode of the file at `path`.
+fn identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    Some((meta.dev(), meta.ino()))
+}
+
+/// Removes the server's own socket: only the file it bound, by `ours`.
+fn remove_socket(socket: &Path, ours: Option<(u64, u64)>) -> Result<(), String> {
+    match (identity(socket), ours) {
+        (Some(found), Some(bound)) if found == bound => std::fs::remove_file(socket)
             .map_err(|error| format!("board-server: {}: {error}", socket.display())),
-        Ok(_) | Err(_) => Ok(()),
+        (Some(_) | None, _) => Ok(()),
     }
 }
 

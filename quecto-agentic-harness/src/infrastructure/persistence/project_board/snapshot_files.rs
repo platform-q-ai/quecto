@@ -8,7 +8,9 @@
 //! sum held to [`MAX_SNAPSHOT_BYTES`] before any is read.
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::board_tree::{MAX_BOARD_BYTES, MAX_TREE_BYTES, folder_file, object_id, task_file, told};
+use super::board_tree::{
+    FILTER_BYTES, MAX_BOARD_BYTES, MAX_TREE_BYTES, folder_file, object_id, task_file, told,
+};
 use super::cat_file::{Found, contents, objects};
 use super::git::Git;
 use crate::application::project_board::ports::{
@@ -153,38 +155,74 @@ impl SnapshotFiles for GitSnapshotFiles {
         }
         let found = objects(&self.git, wanted.iter().map(|file| file.object.as_str()))
             .map_err(|error| unreadable(told(&error).into()))?;
-        let blobs: BTreeMap<&str, usize> = found
-            .iter()
-            .filter_map(|(oid, found)| match found {
-                Found::Present(object) if object.kind == "blob" && !object.omitted => {
-                    Some((oid.as_str(), object.size))
+        // Each path is served whole, so the bound is the sum over paths (a
+        // blob two paths share counts twice). A set-aside blob past every
+        // read cap is served as none, as a partial clone (which never
+        // fetched it) must.
+        let (mut total, mut plan) = (0usize, Vec::with_capacity(wanted.len()));
+        for file in wanted {
+            let too_large = |why: &str, size: String| format!("{why}; too large to serve: {size}");
+            let (read, set_aside) = match (file.set_aside, found.get(&file.object)) {
+                (None, Some(Found::Present(blob))) if blob.kind == "blob" => {
+                    (Some(blob.size), None)
                 }
-                Found::Present(_) | Found::Missing => None,
-            })
-            .collect();
-        let total = blobs
-            .values()
-            .fold(0usize, |sum, size| sum.saturating_add(*size));
+                (None, _) => return Err(unreadable(format!("{} has no blob to read", file.path))),
+                (Some(why), Some(Found::Present(blob)))
+                    if blob.kind == "blob" && blob.size < FILTER_BYTES =>
+                {
+                    (Some(blob.size), Some(why))
+                }
+                (Some(why), Some(Found::Present(blob))) if blob.kind == "blob" => {
+                    (None, Some(too_large(&why, format!("{} bytes", blob.size))))
+                }
+                (Some(why), Some(Found::Present(_))) => (None, Some(why)),
+                (Some(why), Some(Found::Missing) | None) => {
+                    let least = format!("at least {FILTER_BYTES} bytes");
+                    (None, Some(too_large(&why, least)))
+                }
+            };
+            total = total.saturating_add(read.unwrap_or(0));
+            plan.push((file.path, file.object, read, set_aside));
+        }
         if total > self.most {
             return Err(SnapshotFilesError::TooLarge(format!(
                 "the board's files are {total} bytes; the most one snapshot serves is {}",
                 self.most
             )));
         }
-        let read: Vec<(&str, usize)> = blobs.iter().map(|(oid, size)| (*oid, *size)).collect();
-        let bytes = contents(&self.git, &read).map_err(|error| unreadable(told(&error).into()))?;
-        let mut files = Vec::with_capacity(wanted.len());
-        for file in wanted {
-            let held = bytes.get(&file.object).cloned();
-            // An artifact read always has its blob; only an entry set
-            // aside may hold none.
-            if held.is_none() && file.set_aside.is_none() {
-                return Err(unreadable(format!("{} has no blob to read", file.path)));
+        let mut uses: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+        for (_, oid, read, _) in &plan {
+            if let Some(size) = read {
+                uses.entry(oid.clone()).or_insert((0, *size)).0 += 1;
+            }
+        }
+        let read: Vec<(&str, usize)> = uses
+            .iter()
+            .map(|(oid, (_, size))| (oid.as_str(), *size))
+            .collect();
+        let mut bytes =
+            contents(&self.git, &read).map_err(|error| unreadable(told(&error).into()))?;
+        let mut files = Vec::with_capacity(plan.len());
+        for (path, oid, read, set_aside) in plan {
+            // Moved out on its last use, so no blob is held twice for long.
+            let held = match (read, uses.get_mut(&oid)) {
+                (Some(_), Some((1, _))) => bytes.remove(&oid),
+                (Some(_), Some((left, _))) => {
+                    *left -= 1;
+                    bytes.get(&oid).cloned()
+                }
+                (Some(_), None) | (None, _) => None,
+            };
+            match (read, &held) {
+                (Some(_), Some(_)) | (None, None) => {}
+                (Some(_), None) | (None, Some(_)) => {
+                    return Err(unreadable(format!("cat-file did not give {path}")));
+                }
             }
             files.push(BoardFile {
-                path: file.path,
+                path,
                 bytes: held,
-                set_aside: file.set_aside,
+                set_aside,
             });
         }
         files.sort_by(|a, b| (&a.path, &a.set_aside).cmp(&(&b.path, &b.set_aside)));

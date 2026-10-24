@@ -12,6 +12,7 @@ use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::timestamp::Timestamp;
 use quecto::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
 use quecto::infrastructure::persistence::project_board::artifacts::file_of;
+use quecto::infrastructure::persistence::project_board::board_tree::FILTER_BYTES;
 use quecto::infrastructure::persistence::project_board::snapshot_files::GitSnapshotFiles;
 use quecto::infrastructure::test_support::board_artifacts::{
     change, discussion, plan, review, run,
@@ -119,6 +120,56 @@ fn a_snapshot_past_the_bound_is_refused_as_too_large() {
     assert!(
         matches!(refused, Err(SnapshotFilesError::TooLarge(_))),
         "{refused:?}"
+    );
+}
+
+/// Review round 2: the bound is the sum over the paths served, so a blob
+/// three paths share counts three times.
+#[test]
+fn the_bound_counts_a_shared_blob_once_per_path() {
+    let remote = Remote::new();
+    board(&remote);
+    remote.put("tasks", "copy-1.md", b"not a task\n");
+    remote.put("tasks", "copy-2.md", b"not a task\n");
+    let snapshot = remote.client(0, "Alice").read().unwrap();
+    let files = GitSnapshotFiles::new(remote.git(0, "Alice"));
+    let served = files.clone().files(&snapshot).unwrap();
+    let copies = served
+        .iter()
+        .filter(|file| file.bytes.as_deref() == Some(&b"not a task\n"[..]))
+        .count();
+    assert_eq!(copies, 3, "broken.md and its two copies");
+    let total: usize = served
+        .iter()
+        .map(|file| file.bytes.as_ref().map_or(0, Vec::len))
+        .sum();
+    assert!(files.clone().bounded(total).files(&snapshot).is_ok());
+    let refused = files.bounded(total - 1).files(&snapshot);
+    assert!(
+        matches!(refused, Err(SnapshotFilesError::TooLarge(_))),
+        "{refused:?}"
+    );
+}
+
+/// Review round 2: a set-aside blob past every read cap is served with no
+/// bytes and why, as a partial clone (which never fetches it) serves it.
+#[test]
+fn a_set_aside_blob_past_every_cap_is_served_without_bytes() {
+    let remote = Remote::new();
+    board(&remote);
+    let huge = vec![b'x'; FILTER_BYTES];
+    remote.put("plans", "huge.bin", &huge);
+    let snapshot = remote.client(0, "Alice").read().unwrap();
+    let served = GitSnapshotFiles::new(remote.git(0, "Alice"))
+        .files(&snapshot)
+        .unwrap();
+    let file = served.iter().find(|file| file.path == "plans/huge.bin");
+    let file = file.unwrap_or_else(|| panic!("served: {served:?}"));
+    assert_eq!(file.bytes, None);
+    let why = file.set_aside.as_deref().unwrap_or_default();
+    assert!(
+        why.ends_with(&format!("too large to serve: {FILTER_BYTES} bytes")),
+        "{why}"
     );
 }
 

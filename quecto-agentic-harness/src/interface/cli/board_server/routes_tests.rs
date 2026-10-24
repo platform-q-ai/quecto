@@ -215,7 +215,7 @@ fn bytes_that_are_not_plain_text_are_sent_as_base64() {
 #[test]
 fn files_the_port_cannot_give_whole_are_500_never_a_panic() {
     let (store, _) = written();
-    for (files, says) in [
+    for (files, status_code, says) in [
         // One file for a board of two artifacts: the port's contract broken.
         (
             Told(Ok(vec![BoardFile {
@@ -223,22 +223,97 @@ fn files_the_port_cannot_give_whole_are_500_never_a_panic() {
                 bytes: Some(b"x".to_vec()),
                 set_aside: None,
             }])),
+            (500, "files"),
             "1 files for 2 artifacts",
         ),
+        // Review round 2: a board past one answer's bound has its own code.
         (
             Told(Err(SnapshotFilesError::TooLarge("past 64 MiB".into()))),
+            (413, "too_large"),
             "past 64 MiB",
         ),
         (
             Told(Err(SnapshotFilesError::Unreadable("no blob".into()))),
+            (500, "files"),
             "no blob",
         ),
     ] {
         let routes = BoardRoutes::new(serving_with(&store, Arc::new(files)));
         let (status, body) = get(&routes, &snapshot_path());
-        assert_eq!(status, 500, "{body}");
+        assert_eq!(
+            (status, body["code"].as_str().unwrap()),
+            status_code,
+            "{body}"
+        );
         assert!(body["error"].as_str().unwrap().contains(says), "{body}");
     }
+}
+
+/// Files that wait for a signal before answering (none, for an empty
+/// board), saying when they have begun.
+struct Slow {
+    begun: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
+    go: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl SnapshotFiles for Slow {
+    fn files(&self, _: &BoardSnapshot) -> Result<Vec<BoardFile>, SnapshotFilesError> {
+        self.begun.lock().unwrap().send(()).unwrap();
+        self.go.lock().unwrap().recv().unwrap();
+        Ok(vec![])
+    }
+}
+
+/// Review round 2: one snapshot at a time; a second waits its bound, then
+/// is answered 503 `busy`, and the gate opens again once the first ends.
+#[test]
+fn a_second_snapshot_at_once_waits_then_is_busy() {
+    let store = MemoryBoardStore::default();
+    store.bootstrap().unwrap();
+    let ((begun, began), (go, wait)) = (std::sync::mpsc::channel(), std::sync::mpsc::channel());
+    let slow = Slow {
+        begun: std::sync::Mutex::new(begun),
+        go: std::sync::Mutex::new(wait),
+    };
+    let routes = Arc::new(BoardRoutes {
+        serve: serving_with(&store, Arc::new(slow)),
+        snapshots: OneAtATime::default(),
+        wait: std::time::Duration::from_millis(50),
+    });
+    let first = {
+        let routes = Arc::clone(&routes);
+        std::thread::spawn(move || get(&routes, &snapshot_path()))
+    };
+    began.recv().unwrap();
+    let (status, body) = get(&routes, &snapshot_path());
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (503, Some("busy")),
+        "{body}"
+    );
+    go.send(()).unwrap();
+    assert_eq!(first.join().unwrap().0, 200);
+    go.send(()).unwrap();
+    assert_eq!(
+        get(&routes, &snapshot_path()).0,
+        200,
+        "the gate opened again"
+    );
+}
+
+/// Review round 2: a route's 405 names the methods it takes.
+#[test]
+fn a_routes_405_names_its_methods() {
+    let (store, _) = written();
+    let routes = BoardRoutes::new(serving(&store));
+    let reply = routes.answer(&ServiceRequest {
+        method: ServiceMethod::Post,
+        path: "/v1/status".into(),
+        body: vec![],
+    });
+    assert_eq!((reply.status, reply.allow), (405, Some("GET")));
+    assert_eq!(routes.allowed("/v1/time"), Some("GET"));
+    assert_eq!(routes.allowed("/v1/nothing"), None);
 }
 
 #[test]

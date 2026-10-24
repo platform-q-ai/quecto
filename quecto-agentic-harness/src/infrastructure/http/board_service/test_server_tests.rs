@@ -1,7 +1,8 @@
 //! A board service listener on a temp socket, for the transport's tests:
 //! a handler that counts its calls and peers read by an injected uid.
 use super::listener::{
-    PeerCredentials, ServiceHandler, ServiceParts, ServiceReply, ServiceRequest, bind, serve,
+    ConnectionLimits, PeerCredentials, ServiceHandler, ServiceParts, ServiceReply, ServiceRequest,
+    bind, serve,
 };
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream as StdStream;
@@ -32,6 +33,11 @@ impl ServiceHandler for Counting {
             }),
         )
     }
+
+    /// `/v1/thing` takes GET and POST; no other path is a route.
+    fn allowed(&self, path: &str) -> Option<&'static str> {
+        (path == "/v1/thing").then_some("GET, POST")
+    }
 }
 
 /// A peer-credential reader that reads every peer as its uid.
@@ -61,12 +67,12 @@ impl Drop for Running {
 
 /// A listener whose peers all read as `peer_uid`.
 pub fn start(peer_uid: u32) -> Running {
-    start_with(peer_uid, 0, super::limits::WRITE_TIMEOUT)
+    start_with(peer_uid, 0, ConnectionLimits::default())
 }
 
 /// A listener whose peers all read as `peer_uid`, its replies padded by
-/// `pad` bytes, its writes given up after `write_timeout`.
-pub fn start_with(peer_uid: u32, pad: usize, write_timeout: std::time::Duration) -> Running {
+/// `pad` bytes, its connections held to `limits`.
+pub fn start_with(peer_uid: u32, pad: usize, limits: ConnectionLimits) -> Running {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("board").join("board.sock");
     let listener = bind(&socket).unwrap();
@@ -78,7 +84,7 @@ pub fn start_with(peer_uid: u32, pad: usize, write_timeout: std::time::Duration)
         handler: Arc::clone(&handler) as Arc<dyn ServiceHandler>,
         peers: Arc::new(FixedUid(peer_uid)),
         uid: SERVER_UID,
-        write_timeout,
+        limits,
     };
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let thread = std::thread::spawn(move || {
@@ -104,16 +110,7 @@ pub fn start_with(peer_uid: u32, pad: usize, write_timeout: std::time::Duration)
 /// Sends `request` whole and reads the answer to its end: its status and
 /// body.
 pub fn raw(socket: &std::path::Path, request: &[u8]) -> (u16, String) {
-    let mut stream = StdStream::connect(socket).unwrap();
-    stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
-        .unwrap();
-    // A server that answers before reading the whole body may close
-    // first; the answer is what is judged.
-    let _ = stream.write_all(request);
-    let mut answer = Vec::new();
-    let _ = stream.read_to_end(&mut answer);
-    let text = String::from_utf8_lossy(&answer).to_string();
+    let text = whole(socket, request);
     let status = text
         .split(' ')
         .nth(1)
@@ -124,6 +121,21 @@ pub fn raw(socket: &std::path::Path, request: &[u8]) -> (u16, String) {
         .map(|(_, body)| body.to_string())
         .unwrap_or_default();
     (status, body)
+}
+
+/// Sends `request` whole and reads everything the server sends until it
+/// closes (or 10 s pass).
+pub fn whole(socket: &std::path::Path, request: &[u8]) -> String {
+    let mut stream = StdStream::connect(socket).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    // A server that answers before reading the whole body may close
+    // first; the answer is what is judged.
+    let _ = stream.write_all(request);
+    let mut answer = Vec::new();
+    let _ = stream.read_to_end(&mut answer);
+    String::from_utf8_lossy(&answer).to_string()
 }
 
 /// A request with `headers` header lines in all (`Host` and `Connection`

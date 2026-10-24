@@ -11,6 +11,7 @@ use std::io;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use http_body_util::{BodyExt, Full, Limited};
@@ -34,11 +35,13 @@ pub struct ServiceRequest {
     pub body: Vec<u8>,
 }
 
-/// A handler's reply: a status and a JSON body.
+/// A handler's reply: a status, a JSON body, and for a 405 the methods its
+/// path takes (`Allow`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceReply {
     pub status: u16,
     pub body: Vec<u8>,
+    pub allow: Option<&'static str>,
 }
 
 impl ServiceReply {
@@ -49,9 +52,11 @@ impl ServiceReply {
             true => status,
             false => 500,
         };
+        let body = value.to_string().into_bytes();
         Self {
             status,
-            body: value.to_string().into_bytes(),
+            body,
+            allow: None,
         }
     }
 }
@@ -60,6 +65,8 @@ impl ServiceReply {
 /// on a blocking thread.
 pub trait ServiceHandler: Send + Sync {
     fn answer(&self, request: &ServiceRequest) -> ServiceReply;
+    /// The methods `path` takes (an `Allow` value), or `None` for no route.
+    fn allowed(&self, path: &str) -> Option<&'static str>;
 }
 
 /// Reads who is at the other end of an accepted connection.
@@ -94,9 +101,25 @@ pub struct ServiceParts {
     pub handler: Arc<dyn ServiceHandler>,
     pub peers: Arc<dyn PeerCredentials>,
     pub uid: u32,
-    /// How long a write may wait for the peer to take any byte
-    /// ([`limits::WRITE_TIMEOUT`] in production).
+    pub limits: ConnectionLimits,
+}
+
+/// Each connection's deadlines ([`limits`]'s in production; tests shorten
+/// them): a write's wait for the peer, and the connection's lifetime.
+#[derive(Debug, Clone, Copy)]
+pub struct ConnectionLimits {
     pub write_timeout: Duration,
+    pub lifetime: Duration,
+}
+
+impl Default for ConnectionLimits {
+    fn default() -> Self {
+        let (write_timeout, lifetime) = (limits::WRITE_TIMEOUT, limits::CONNECTION_LIFETIME);
+        Self {
+            write_timeout,
+            lifetime,
+        }
+    }
 }
 
 /// Why a socket was not bound.
@@ -160,11 +183,10 @@ pub fn bind(path: &Path) -> Result<std::os::unix::net::UnixListener, BindError> 
     }
     let listener = std::os::unix::net::UnixListener::bind(path).map_err(io)?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(io)?;
-    let mode = fs::symlink_metadata(path).map_err(io)?.permissions().mode();
-    if mode & 0o777 != 0o600 {
-        return Err(io(io::Error::other("the socket did not take mode 0600")));
+    match fs::symlink_metadata(path).map_err(io)?.permissions().mode() & 0o777 {
+        0o600 => Ok(listener),
+        _ => Err(io(io::Error::other("the socket did not take mode 0600"))),
     }
-    Ok(listener)
 }
 
 /// `dir` as a directory of mode 0700 owned by this user: made so when
@@ -172,15 +194,14 @@ pub fn bind(path: &Path) -> Result<std::os::unix::net::UnixListener, BindError> 
 fn private_dir(dir: &Path) -> Result<(), BindError> {
     let refused = |why: &str| BindError::Directory(dir.to_path_buf(), why.to_string());
     let io = |error| BindError::Io(dir.to_path_buf(), error);
-    if let Err(error) = fs::symlink_metadata(dir) {
-        if error.kind() != io::ErrorKind::NotFound {
-            return Err(io(error));
-        }
-        match fs::DirBuilder::new().mode(0o700).create(dir) {
+    match fs::symlink_metadata(dir).map_err(|error| error.kind()) {
+        Ok(_) => {}
+        Err(io::ErrorKind::NotFound) => match fs::DirBuilder::new().mode(0o700).create(dir) {
             Ok(()) => fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).map_err(io)?,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(io(error)),
-        }
+        },
+        Err(kind) => return Err(io(kind.into())),
     }
     let meta = fs::symlink_metadata(dir).map_err(io)?;
     match (
@@ -248,16 +269,26 @@ async fn connection(stream: UnixStream, parts: &ServiceParts) {
         Ok(uid) if uid == parts.uid => {}
         Ok(_) | Err(_) => return refuse(stream).await,
     }
-    let handler = Arc::clone(&parts.handler);
-    let service = hyper::service::service_fn(move |request| answer(Arc::clone(&handler), request));
-    // A peer that goes, or is too slow, ends its own connection only.
-    if let Err(error) = limits::http1_builder()
-        .serve_connection(
-            TokioIo::new(WriteDeadline::new(stream, parts.write_timeout)),
-            service,
-        )
-        .await
-    {
+    let (handler, served) = (Arc::clone(&parts.handler), AtomicUsize::new(0));
+    // The last request a connection takes is answered `Connection: close`.
+    let service = hyper::service::service_fn(move |request| {
+        let last = served.fetch_add(1, Ordering::Relaxed) + 1 >= limits::MAX_REQUESTS;
+        answer(Arc::clone(&handler), request, last)
+    });
+    let io = TokioIo::new(WriteDeadline::new(stream, parts.limits.write_timeout));
+    let builder = limits::http1_builder();
+    let connection = builder.serve_connection(io, service);
+    tokio::pin!(connection);
+    // Past its lifetime a connection finishes what it is answering, then
+    // closes. A peer that goes, or is too slow, ends its own connection.
+    let ended = tokio::select! {
+        ended = connection.as_mut() => ended,
+        () = tokio::time::sleep(parts.limits.lifetime) => {
+            connection.as_mut().graceful_shutdown();
+            connection.await
+        }
+    };
+    if let Err(error) = ended {
         tracing::debug!(%error, "board service: connection ended");
     }
 }
@@ -279,12 +310,25 @@ async fn refuse(mut stream: UnixStream) {
     let _ = tokio::time::timeout(bound, stream.read(&mut sent)).await;
 }
 
-/// One request: admitted by its head, its body read under its bound, then
-/// answered by the handler on a blocking thread.
+/// One request, its reply closing the connection when it is the `last`
+/// the connection takes.
 async fn answer(
     handler: Arc<dyn ServiceHandler>,
     request: Request<Incoming>,
+    last: bool,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
+    let mut reply = response(admitted(handler, request).await);
+    if last {
+        let close = header::HeaderValue::from_static("close");
+        reply.headers_mut().insert(header::CONNECTION, close);
+    }
+    Ok(reply)
+}
+
+/// A request admitted by its head, its body read under its bound, then
+/// answered by the handler on a blocking thread.
+async fn admitted(handler: Arc<dyn ServiceHandler>, request: Request<Incoming>) -> ServiceReply {
+    let path = request.uri().path().to_string();
     let headers = request.headers();
     let lengths: Vec<&[u8]> = headers
         .get_all(header::CONTENT_LENGTH)
@@ -294,22 +338,30 @@ async fn answer(
     let chunked = headers.contains_key(header::TRANSFER_ENCODING);
     let admitted = match limits::admit(request.method().as_str(), &lengths, chunked) {
         Ok(admitted) => admitted,
-        Err(refusal) => return Ok(refused(refusal)),
+        // A method outside the allowlist: 405 naming what its path takes.
+        Err(Refusal::Method) => {
+            return match handler.allowed(&path) {
+                Some(allow) => ServiceReply {
+                    allow: Some(allow),
+                    ..error(405, Refusal::Method.verdict().1)
+                },
+                None => error(404, "no such route"),
+            };
+        }
+        Err(refusal) => return error(refusal.verdict().0, refusal.verdict().1),
     };
-    let path = request.uri().path().to_string();
     let body = match read_body(request.into_body(), admitted.body_bytes).await {
         Ok(body) => body,
-        Err(reply) => return Ok(response(reply)),
+        Err(reply) => return reply,
     };
     let request = ServiceRequest {
         method: admitted.method,
         path,
         body,
     };
-    let reply = tokio::task::spawn_blocking(move || handler.answer(&request))
+    tokio::task::spawn_blocking(move || handler.answer(&request))
         .await
-        .unwrap_or_else(|_| error(500, "the request's handler failed"));
-    Ok(response(reply))
+        .unwrap_or_else(|_| error(500, "the request's handler failed"))
 }
 
 /// The body, of `declared` bytes, read whole within the read timeout.
@@ -336,25 +388,16 @@ fn error(status: u16, why: &str) -> ServiceReply {
     ServiceReply::json(status, &serde_json::json!({ "error": why }))
 }
 
-fn refused(refusal: Refusal) -> Response<Full<Bytes>> {
-    let (status, why) = refusal.verdict();
-    let mut reply = response(error(status, why));
-    if refusal == Refusal::Method {
-        reply
-            .headers_mut()
-            .insert(header::ALLOW, header::HeaderValue::from_static("GET, POST"));
-    }
-    reply
-}
-
 fn response(reply: ServiceReply) -> Response<Full<Bytes>> {
     let status = StatusCode::from_u16(reply.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let mut response = Response::new(Full::new(Bytes::from(reply.body)));
     *response.status_mut() = status;
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        header::HeaderValue::from_static("application/json"),
-    );
+    let headers = response.headers_mut();
+    let json = header::HeaderValue::from_static("application/json");
+    headers.insert(header::CONTENT_TYPE, json);
+    if let Some(allow) = reply.allow {
+        headers.insert(header::ALLOW, header::HeaderValue::from_static(allow));
+    }
     response
 }
 
