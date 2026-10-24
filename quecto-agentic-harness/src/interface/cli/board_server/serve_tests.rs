@@ -135,3 +135,21 @@ fn serve_takes_exactly_its_options() {
         assert!(parse(&refused).is_err(), "{refused:?}");
     }
 }
+
+#[test]
+fn the_command_refuses_bad_options_and_an_uncomposed_server() {
+    let ctx = crate::interface::cli::CliContext::default();
+    let (mut out, mut err) = (String::new(), String::new());
+    let code = super::super::cmd_board_server(&ctx, &["serve".into()], &mut out, &mut err);
+    assert_eq!(code, 1);
+    assert!(err.contains("--socket <path> is required"), "{err}");
+    assert!(err.contains(USAGE), "{err}");
+    err.clear();
+    let args = ["serve", "--socket", "/s", "--repo", "/r"].map(String::from);
+    assert_eq!(
+        super::super::cmd_board_server(&ctx, &args, &mut out, &mut err),
+        1
+    );
+    assert!(err.contains("not composed"), "{err}");
+    assert!(out.is_empty());
+}

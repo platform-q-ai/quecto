@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use crate::application::project_board::use_cases::ServeBoard;
 use crate::infrastructure::http::board_service::listener::PeerCredentials;
+use crate::interface::cli::CliContext;
 
 pub mod routes;
 pub mod serve;
@@ -38,3 +39,69 @@ pub struct BoardServerHandles {
 
 /// Composition's builder of a board server.
 pub type BoardServerBuilder = fn(&BoardServerEnvironment) -> Result<BoardServerHandles, String>;
+
+/// `quecto board-server <args>`: serves until stopped; 0 when stopped by
+/// a signal, 1 when it could not start or serve. Its one line out says
+/// where it serves and how long it took to start, as soon as it can.
+pub fn cmd_board_server(
+    ctx: &CliContext,
+    args: &[String],
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
+    let began = std::time::Instant::now();
+    let options = match serve::parse(args) {
+        Ok(options) => options,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n{}\n", serve::USAGE));
+            return 1;
+        }
+    };
+    let Some(build) = ctx.board_server else {
+        stderr.push_str("board-server: the board server is not composed\n");
+        return 1;
+    };
+    let environment = BoardServerEnvironment {
+        repo: options.repo,
+        remote: options.remote,
+        vars: std::env::vars_os().collect(),
+    };
+    let handles = match build(&environment) {
+        Ok(handles) => handles,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            return 1;
+        }
+    };
+    let live = ctx.live_output;
+    let served = serve::serve(
+        handles,
+        &options.socket,
+        began,
+        serve::signalled,
+        |started| {
+            let line = format!(
+                "board-server: serving board {} on {} (ready in {} ms)\n",
+                started.board.as_str(),
+                started.socket.display(),
+                started.elapsed.as_millis()
+            );
+            match live {
+                // A server runs until stopped: its line cannot wait for
+                // the command's end.
+                true => {
+                    print!("{line}");
+                    let _ = std::io::Write::flush(&mut std::io::stdout());
+                }
+                false => stdout.push_str(&line),
+            }
+        },
+    );
+    match served {
+        Ok(()) => 0,
+        Err(error) => {
+            stderr.push_str(&format!("{error}\n"));
+            1
+        }
+    }
+}

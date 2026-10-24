@@ -287,6 +287,9 @@ pub struct CliContext {
     /// T3), into the day's `board-cli` log; without it the CLI records
     /// nothing.
     pub board_cli_recording: Option<board::CliRecordingBuilder>,
+    /// Composition's board server builder (epic #2705 B4); `quecto
+    /// board-server` refuses to run without it.
+    pub board_server: Option<board_server::BoardServerBuilder>,
     /// Output reaches the real terminal (`run`, not `run_with_output`): a
     /// one-shot run writes its answer out before it settles its children.
     pub live_output: bool,
@@ -387,6 +390,8 @@ pub struct CliComposition {
     pub project_board_recording: board::BoardToolRecordingBuilder,
     /// Composition's `cli_board_recording` (epic #2481 T3).
     pub board_cli_recording: board::CliRecordingBuilder,
+    /// Composition's `build_board_server` (epic #2705 B4).
+    pub board_server: board_server::BoardServerBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -467,6 +472,7 @@ fn composed_context(
         project_board: Some(composition.project_board),
         project_board_recording: Some(composition.project_board_recording),
         board_cli_recording: Some(composition.board_cli_recording),
+        board_server: Some(composition.board_server),
         swarm_board: Some(composition.swarm_board),
         swarm_board_wire: Some(composition.swarm_board_wire),
         swarm_board_log: Some(composition.swarm_board_log),
@@ -526,6 +532,9 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
                 controllers::container::cmd_container(ctx, &args[2..], &mut stdout, &mut stderr)
             }
             "board" => board::cmd_board(ctx, &args[2..], &mut stdout, &mut stderr),
+            "board-server" => {
+                board_server::cmd_board_server(ctx, &args[2..], &mut stdout, &mut stderr)
+            }
             "help" | "--help" | "-h" => {
                 controllers::help::help_text(&mut stdout);
                 0

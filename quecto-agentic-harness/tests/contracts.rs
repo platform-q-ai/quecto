@@ -350,6 +350,8 @@ mod shutdown_clock;
 mod shutdown_run_spawner;
 #[path = "contracts/shutdown_session_persistence.rs"]
 mod shutdown_session_persistence;
+#[path = "contracts/snapshot_files.rs"]
+mod snapshot_files;
 #[path = "contracts/started_runs.rs"]
 mod started_runs;
 #[path = "contracts/subagent_lifecycle_repository.rs"]
