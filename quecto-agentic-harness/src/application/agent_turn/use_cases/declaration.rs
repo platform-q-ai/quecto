@@ -110,7 +110,5 @@ impl crate::application::agent_turn::ports::DeclareTurnOutcome for TurnDeclarati
 }
 
 #[cfg(test)]
-// Preserve the original acceptance module byte-for-byte, including its boolean comparison.
-#[allow(clippy::bool_comparison)]
 #[path = "declaration_tests.rs"]
 mod issue_2708_declaration_tests;

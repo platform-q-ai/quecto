@@ -261,7 +261,7 @@ fn concurrent_current_and_stale_writes_preserve_current_receipt() {
         .into_iter()
         .map(|handle| handle.join().unwrap())
         .collect();
-    let valid = results.iter().find(|(stale, _)| *stale == false).unwrap();
+    let valid = results.iter().find(|entry| matches!(entry, (false, _))).unwrap();
     assert!(
         valid.1.is_ok(),
         "missing acceptance: concurrent current write must succeed: {:?}",
