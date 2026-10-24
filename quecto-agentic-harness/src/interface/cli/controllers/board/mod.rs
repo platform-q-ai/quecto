@@ -46,11 +46,14 @@
 //! such as an empty one) is skipped, quietly, since a key can carry a
 //! credential. The caller could already reach those keys through
 //! `GIT_CONFIG_GLOBAL`, so skipping them withholds no power it lacks; it
-//! keeps the scope to what the board uses it for. The set is read more
-//! strictly than git reads it: a count that is not empty or plain decimal
-//! 0 to 16 (quecto's own cap), or a setting missing its key or value,
-//! drops the set whole, and a write warns of it once on standard error,
-//! naming the variable, never a key or a value. An environment that sets
+//! keeps the scope to what the board uses it for. The identity is read
+//! however many other settings come with it (the pocket relay sets 41),
+//! from the first 1024 (quecto's own cap, which bounds the work): a count
+//! past it has the rest ignored, and a write warns that it does. The set
+//! is read more strictly than git reads it: a count that is not empty or
+//! plain decimal, or a setting it reads missing its key or value, drops
+//! the set whole, and a write warns of it once on standard error, naming
+//! the variable, never a key or a value. An environment that sets
 //! the scope for something else (a `safe.directory`, say) has those
 //! settings ignored, as before. No other `GIT_*` variable reaches git.
 //!

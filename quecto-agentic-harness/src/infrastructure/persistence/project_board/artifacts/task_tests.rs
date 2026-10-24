@@ -601,9 +601,11 @@ fn a_title_spaced_with_another_space_is_refused_by_the_domain() {
 }
 
 /// A description typed on a French keyboard, its chat spaces before `!`
-/// and `?`, is held once normalised; a chat space beside a block marker,
-/// which the normaliser leaves, and an em space are refused by the domain
-/// with the description's field, never by the file at write time.
+/// and `?`, is held once normalised, and so is a chat space beside a block
+/// marker or in a code span (epic #2705 decision 9: entry makes every one
+/// plain); an em space, which no keyboard puts between words, is
+/// refused by the domain with the description's field, never by the file
+/// at write time.
 #[test]
 fn a_description_with_chat_spaces_is_held_once_normalised() {
     let described = |description: &str| {
@@ -618,17 +620,20 @@ fn a_description_with_chat_spaces_is_held_once_normalised() {
     let held = described(&normal).unwrap();
     let file = encode::<TaskCodec>(&held).unwrap();
     assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(held));
-    for left in ["-\u{a0}x", "\u{a0}leading", "an em\u{2003}space"] {
-        let kept = board_text::text(left);
-        assert_eq!(
-            described(&kept).map(|_| ()),
-            Err(SchemaError::new(
-                "description",
-                format!("line 1: {PLAIN_SPACES_ONLY}")
-            )),
-            "{left:?}"
-        );
+    for (raw, kept) in [("-\u{a0}x", "- x"), ("x\u{a0}`a\u{a0}b`", "x `a b`")] {
+        let normal = board_text::text(raw);
+        assert_eq!(normal, kept, "{raw:?}");
+        let held = described(&normal).unwrap();
+        let file = encode::<TaskCodec>(&held).unwrap();
+        assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(held), "{raw:?}");
     }
+    assert_eq!(
+        described(&board_text::text("an em\u{2003}space")).map(|_| ()),
+        Err(SchemaError::new(
+            "description",
+            format!("line 1: {PLAIN_SPACES_ONLY}")
+        ))
+    );
 }
 
 /// #2668 review round 1: a task's title and description (a paragraph's

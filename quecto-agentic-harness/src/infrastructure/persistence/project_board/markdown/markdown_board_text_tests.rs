@@ -1,7 +1,9 @@
 //! The board text normaliser against a reader (#2481 D4): normalising
-//! text the domain accepts never changes what GitHub shows. comrak, with
-//! the oracle's GitHub options and raw HTML rendered, renders the text
-//! before and after, and the two agree exactly.
+//! text the domain accepts never changes what GitHub shows, past making
+//! every chat space plain (epic #2705 decision 9, which may change it on
+//! purpose). comrak, with the oracle's GitHub options and raw HTML
+//! rendered, renders the text, its chat spaces plain, before and after,
+//! and the two agree exactly.
 use super::*;
 use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::schema_error::markdown;
@@ -25,10 +27,10 @@ fn content(text: &str) -> String {
     .collect()
 }
 
-/// What GitHub shows for `text`, a chat space read as the plain space it
-/// looks like: the normaliser may make one plain, never change markup.
+/// What GitHub shows for `text` with each chat space made plain, as entry
+/// makes every one: the rest of the normaliser never changes markup.
 fn shown_plain(text: &str) -> String {
-    shown(text).replace(['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}'], " ")
+    shown(&text.replace(['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}'], " "))
 }
 
 /// Pieces of text from chat, imports and editors: what D4 fixes (CR,
@@ -111,7 +113,7 @@ const PIECES: &[&str] = &[
     "[^1]: ",
     "\n[^1]\n",
     // Addresses an autolink reads (S7 round 4), and markers beside which
-    // a chat space must stay.
+    // a chat space is made plain too.
     "www.a.co",
     "https://a.co",
     "a@b.co",
@@ -119,9 +121,9 @@ const PIECES: &[&str] = &[
 ];
 
 /// Pieces holding a chat space (no-break, narrow, figure, ideographic):
-/// beside letters and French punctuation, where the normaliser makes them
-/// plain, and beside markup, where it must not. Drawn one time in
-/// [`CHAT_ONE_IN`], so most texts still pass the domain's plain-space rule.
+/// beside letters and French punctuation, and beside markup, where the
+/// normaliser makes them plain all the same. Drawn one time in
+/// [`CHAT_ONE_IN`].
 const CHAT_PIECES: &[&str] = &[
     "\u{a0}",
     "\u{3000}",

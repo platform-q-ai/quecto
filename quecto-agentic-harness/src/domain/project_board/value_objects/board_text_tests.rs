@@ -39,14 +39,14 @@ fn trailing_spaces_go_only_where_no_hard_break_forms() {
     }
 }
 
-/// Inside a fence (```, ~~~, or longer) every line is kept as written.
+/// Inside a fence (```, ~~~, or longer) every line is kept as written,
+/// but for its chat spaces, made plain as everywhere.
 #[test]
 fn fenced_code_is_kept_as_written() {
     for raw in [
         "```\ncode  \n\nmore \n```",
         "~~~\ncode \n~~~",
         "````\n```\ncode \n````",
-        "```\na\u{a0}\n```",
         "  ```\n  code \n  ```",
     ] {
         assert_eq!(settled(text, raw), raw, "{raw:?}");
@@ -59,22 +59,28 @@ fn fenced_code_is_kept_as_written() {
 }
 
 /// What the review found a wider normaliser changed in what GitHub shows
-/// is left as written, for the codec to store or refuse.
+/// is left as written, for the codec to store or refuse; only its chat
+/// spaces are made plain (epic #2705 decision 9).
 #[test]
 fn what_a_reader_shows_differently_is_left_as_written() {
     for raw in [
         "\tcode",
         "- a\n\n  b",
-        "a\n\u{a0}\nb",
-        "`a\tb` `a\u{a0}b` `a\u{3000}b` `x\u{fe0f}`",
+        "`a\tb` `x\u{fe0f}`",
         "line  \nnext",
-        "\u{a0}- a",
         "A\u{fe0f} and a\tb",
         "a\n\n\n\nb",
         "   a",
         "    a \nb",
     ] {
         assert_eq!(settled(text, raw), raw, "{raw:?}");
+    }
+    for (raw, kept) in [
+        ("a\n\u{a0}\nb", "a\n \nb"),
+        ("`a\tb` `a\u{a0}b` `a\u{3000}b`", "`a\tb` `a b` `a b`"),
+        ("\u{a0}- a", " - a"),
+    ] {
+        assert_eq!(settled(text, raw), kept, "{raw:?}");
     }
 }
 
@@ -283,10 +289,11 @@ fn a_line_never_normalised_says_what_a_line_is() {
 
 /// In markdown text a space chat writes between words (no-break, narrow
 /// no-break, figure, ideographic: French keyboards put them before `!`,
-/// `?`, `:` and inside guillemets) becomes a plain space where nothing can
-/// change: in a prose line, past its first word, between characters a
-/// space beside them never makes markup of. Everywhere else it is left as
-/// written, for the domain to refuse.
+/// `?`, `:` and inside guillemets) becomes a plain space wherever it
+/// stands (epic #2705 decision 9): beside a block marker, beside markup,
+/// in code, links, addresses and math too, where a reader may show it
+/// differently. Another space (an em space) is left as written, for the
+/// domain to refuse.
 #[test]
 fn a_chat_space_between_words_is_made_plain_in_text() {
     for (raw, kept) in [
@@ -309,30 +316,32 @@ fn a_chat_space_between_words_is_made_plain_in_text() {
         // a fence's close, ends it.
         ("[a] b\n\nc\u{a0}!", "[a] b\n\nc !"),
         ("[a\n```\nx\n```\nc\u{a0}!", "[a\n```\nx\n```\nc !"),
-        // One neighbour a letter or digit is enough.
         ("\u{ab}\u{a0}oui\u{a0}\u{bb}", "\u{ab} oui \u{bb}"),
+        // A trailing one goes, as a plain trailing space does.
+        ("end\u{a0}", "end"),
     ] {
         assert_eq!(settled(text, raw), kept, "{raw:?}");
     }
+    // Each made plain, and nothing else changed, even where a plain space
+    // reads differently (decision 9: a chat space there is never meant).
     for raw in [
-        // A block marker or indentation it could make.
+        // A block marker or indentation it makes.
         "-\u{a0}x",
         "1.\u{a0}x",
         "\u{a0}leading",
         "#\u{a0}x",
         "> \u{a0}x",
-        // Markup a plain space beside it would make.
+        // Markup a plain space beside it makes.
         "a\u{a0}#",
         "- [\u{a0}] x",
         "a\u{a0}\u{a0}b",
-        "end\u{a0}",
         "a\u{a0}*b*",
         "\u{3e}1.\u{a0}x",
         "- [x]\u{a0}a",
         "*a*\u{a0}b",
-        // Code, links, references, addresses and math are kept as written:
-        // an autolink reads a chat space as part of the address, a
-        // reference label folds it apart from a plain space.
+        // Code, links, references, addresses and math (an autolink reads a
+        // chat space as part of the address, a reference label folds it
+        // apart from a plain space).
         "`a\u{a0}b`",
         "[a\u{a0}b](https://example.com)",
         "[a\u{a0}b]",
@@ -349,11 +358,11 @@ fn a_chat_space_between_words_is_made_plain_in_text() {
         "100%\u{a0}!",
         "```\na\u{a0}b\n```",
         "    a\u{a0}b",
-        // A space no keyboard puts between words.
-        "em\u{2003}space",
     ] {
-        assert_eq!(settled(text, raw), raw, "{raw:?}");
+        assert_eq!(settled(text, raw), raw.replace(CHAT_SPACES, " "), "{raw:?}");
     }
+    // A space no keyboard puts between words.
+    assert_eq!(settled(text, "em\u{2003}space"), "em\u{2003}space");
 }
 
 /// Epic #2705 T1 (decision 9): every chat space is made plain on entry,
@@ -401,7 +410,7 @@ mod changes {
 
     #[test]
     fn kept_text_has_no_changes() {
-        for raw in ["", "Why.\nHow.", "a\u{2028}b", "\tcode", "x\u{a0}`y`"] {
+        for raw in ["", "Why.\nHow.", "a\u{2028}b", "\tcode", "x `y`"] {
             told(text_changes, raw, &[]);
         }
         for raw in ["", "A title", "Ça va ?"] {
@@ -508,12 +517,15 @@ mod changes {
         assert_eq!(texts.contains(&ChatSpace), fewer_chat, "{raw:?}");
         let dropped = line_count(&normal) < line_count(raw);
         assert_eq!(texts.contains(&EdgeBlankLines), dropped, "{raw:?}");
-        // Trailing spacing removed: the spacing of the lines kept, plus the
+        // Trailing spacing removed: the spacing of the lines kept, their
         // chat spaces made plain, less the spacing the text holds now. (A
         // raw line ending in spacing is not enough: a hard break, code, a
         // backslash or a marked paragraph keeps it.)
         let spacing = |text: &str| count(text, &[' ', '\t']);
-        let unified = raw.replace("\r\n", "\n").replace('\r', "\n");
+        let unified = raw
+            .replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .replace(CHAT_SPACES, " ");
         let read: Vec<&str> = match unified.is_empty() {
             true => vec![],
             false => unified.split('\n').collect(),
@@ -524,8 +536,8 @@ mod changes {
             .unwrap_or(read.len());
         let end = (first + line_count(&normal)).min(read.len());
         let kept_spacing: usize = read[first..end].iter().map(|line| spacing(line)).sum();
-        let made_plain = count(raw, &CHAT_SPACES) - count(&normal, &CHAT_SPACES);
-        let trimmed = kept_spacing + made_plain > spacing(&normal);
+        assert_eq!(count(&normal, &CHAT_SPACES), 0, "{raw:?}");
+        let trimmed = kept_spacing > spacing(&normal);
         assert_eq!(texts.contains(&TrailingSpace), trimmed, "{raw:?}");
         for never in [LineBreak, Tab, EdgeSpace] {
             assert!(!texts.contains(&never), "{raw:?}");

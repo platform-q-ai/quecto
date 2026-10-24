@@ -246,20 +246,23 @@ fn a_key_that_is_not_utf8_is_skipped() {
 }
 
 /// A command-scope set read more strictly than git reads it (a count that
-/// is not plain decimal 0 to 16, a setting missing its key or its value) is
+/// is not plain decimal, a setting missing its key or its value) is
 /// dropped whole, named by its variable; a set at the cap passes, and a
 /// count of none passes nothing, as no set at all does.
 #[test]
 fn a_malformed_set_is_dropped_whole_naming_its_variable() {
     let repos = Repos::new();
-    let at_cap: Vec<(&str, &str)> = [
+    // The identity in the cap's last two settings is read.
+    let identity = [
         ("user.name", "quecto pocket"),
         ("user.email", "p@q.invalid"),
-    ]
-    .repeat(MAX_COMMAND_CONFIG / 2);
-    let reached = reaching_git(&repos, &command_config("16", &at_cap));
-    assert_eq!(seen(&reached), identity_scope(&at_cap));
-    assert_eq!(warning(os_vars(command_config("16", &at_cap))), None);
+    ];
+    let mut at_cap = vec![("core.pager", "cat"); MAX_COMMAND_CONFIG - 2];
+    at_cap.extend(identity);
+    let cap = MAX_COMMAND_CONFIG.to_string();
+    let reached = reaching_git(&repos, &command_config(&cap, &at_cap));
+    assert_eq!(seen(&reached), identity_scope(&identity));
+    assert_eq!(warning(os_vars(command_config(&cap, &at_cap))), None);
     // A count of none, or an empty one (git reads it so), is no set.
     for count in ["0", ""] {
         let none = command_config(count, &[]);
@@ -272,21 +275,10 @@ fn a_malformed_set_is_dropped_whole_naming_its_variable() {
         );
         assert_eq!(warning(os_vars(ignored)), None, "{count:?}");
     }
-    let past_cap = vec![("user.name", "quecto pocket"); MAX_COMMAND_CONFIG + 1];
     let one = [("user.name", "quecto pocket")];
     let count = CommandScopeWarning::Count;
-    let mut cases = vec![(count.clone(), command_config("17", &past_cap))];
-    for text in [
-        "x",
-        "-1",
-        "+1",
-        " 1",
-        "1 ",
-        "1k",
-        "0x1",
-        "١",
-        "99999999999999999999999",
-    ] {
+    let mut cases = Vec::new();
+    for text in ["x", "-1", "+1", " 1", "1 ", "1k", "0x1", "١"] {
         cases.push((count.clone(), command_config(text, &one)));
     }
     let missing = |variable: &str| CommandScopeWarning::Missing {
@@ -301,6 +293,12 @@ fn a_malformed_set_is_dropped_whole_naming_its_variable() {
     let mut skipped_no_value = command_config("2", &[one[0], ("core.pager", "less")]);
     skipped_no_value.retain(|(key, _)| key != "GIT_CONFIG_VALUE_1");
     cases.extend([
+        // A count past the cap, too many digits for a number included,
+        // still needs each setting it reads.
+        (
+            missing("GIT_CONFIG_KEY_1"),
+            command_config("99999999999999999999999", &one),
+        ),
         (missing("GIT_CONFIG_VALUE_0"), no_value),
         (missing("GIT_CONFIG_KEY_0"), no_key),
         (missing("GIT_CONFIG_KEY_1"), command_config("2", &one)),
@@ -335,7 +333,7 @@ fn a_malformed_sets_reason_quotes_no_key_or_value() {
     assert_eq!(
         warning(os_vars(vars)).unwrap().to_string(),
         "ignoring git's command-scope configuration (GIT_CONFIG_COUNT): \
-         GIT_CONFIG_COUNT is not plain decimal 0 to 16"
+         GIT_CONFIG_COUNT is not plain decimal"
     );
 }
 
@@ -359,4 +357,47 @@ fn an_identity_in_a_large_set_reaches_git() {
         seen(&reaching_git(&repos, &vars)),
         identity_scope(&identity)
     );
+}
+
+/// A set past the cap is read up to it: an identity among its first
+/// settings reaches git, one past them is never read, and either way it
+/// warns, in words that quote no key or value, that the rest is ignored.
+/// The work stays bounded by the cap, however large the count.
+#[test]
+fn a_set_past_the_cap_reads_its_first_settings_and_warns() {
+    let repos = Repos::new();
+    let identity = [
+        ("user.name", "quecto pocket"),
+        ("user.email", "pocket@quecto.invalid"),
+    ];
+    let mut early = identity.to_vec();
+    early.extend(vec![("core.pager", "cat"); MAX_COMMAND_CONFIG - 1]);
+    let mut late = vec![("core.pager", "cat"); MAX_COMMAND_CONFIG];
+    late.extend(identity);
+    let past = (MAX_COMMAND_CONFIG + 1).to_string();
+    let early_vars = command_config(&past, &early);
+    let why = warning(os_vars(early_vars.clone())).unwrap();
+    assert_eq!(why, CommandScopeWarning::PastCap);
+    assert_eq!(
+        why.to_string(),
+        "ignoring git's command-scope configuration (GIT_CONFIG_COUNT) past its first \
+         1024 settings"
+    );
+    assert_eq!(
+        seen(&reaching_git(&repos, &early_vars)),
+        identity_scope(&identity)
+    );
+    let late_vars = command_config(&(MAX_COMMAND_CONFIG + 2).to_string(), &late);
+    assert_eq!(
+        warning(os_vars(late_vars.clone())),
+        Some(CommandScopeWarning::PastCap)
+    );
+    assert_eq!(
+        command_scope(&reaching_git(&repos, &late_vars)),
+        BTreeMap::new()
+    );
+    // A count no `usize` holds reads only the cap's worth: the settings
+    // past it are never asked for.
+    let huge = command_config("18446744073709551616", &early);
+    assert_eq!(warning(os_vars(huge)), Some(CommandScopeWarning::PastCap));
 }
