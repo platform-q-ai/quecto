@@ -187,7 +187,10 @@ fn build_with_warnings(
         query: QueryBoard::new(store),
     };
     Ok(ProjectBoardHandles {
-        operations: RunBoardOperation::new(parts),
+        // The front ends reach the use case only through the port (#2705 B6).
+        operations: Box::new(super::project_board_operations::LocalBoardOperations::new(
+            RunBoardOperation::new(parts),
+        )),
         board: location.board,
     })
 }

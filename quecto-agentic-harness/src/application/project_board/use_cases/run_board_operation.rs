@@ -16,7 +16,9 @@
 //!
 //! Blocking: the store, the listings, the clock and the host all block, so
 //! callers run operations off the async workers.
-use crate::application::project_board::dto::{BoardListing, BoardOp, ProjectBoardError};
+use crate::application::project_board::dto::{
+    BoardListing, BoardOp, ProjectBoardError, SUMMARIES_LISTINGS_ONLY,
+};
 use crate::application::project_board::operations::{
     BoardOperationParts, BoardOutcome, BoardRequest, Completion, ListFilter, ListSummaries,
 };
@@ -25,6 +27,7 @@ use crate::application::project_board::task_summary::{Listed, SkipReason, Summar
 use crate::application::project_board::telemetry::{OpFacts, completion_facts_of};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
+use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::CompletionFacts;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -72,22 +75,25 @@ impl RunBoardOperation {
     /// `summaries` asks.
     ///
     /// # Errors
-    /// As [`Self::execute`]: never for a listing's summaries.
-    ///
-    /// # Panics
-    /// Summaries asked of a request that is no listing
-    /// ([`BoardRequest::is_listing`]): a front end refuses that first.
+    /// As [`Self::execute`], never for a listing's summaries; summaries
+    /// asked of a request that is no listing ([`BoardRequest::is_listing`])
+    /// are refused as invalid, before anything is read (a front end
+    /// refuses that first, as the request's).
     pub fn execute_noted_with(
         &self,
         request: &BoardRequest,
         facts: Option<&mut OpFacts>,
         summaries: ListSummaries,
     ) -> Result<BoardOutcome, ProjectBoardError> {
-        assert!(
-            summaries == ListSummaries::Omitted || request.is_listing(),
-            "summaries are asked only of a listing: {request:?}"
-        );
-        self.run(request, facts, summaries)
+        match (summaries, request.is_listing()) {
+            (ListSummaries::Omitted, _) | (ListSummaries::Wanted, true) => {
+                self.run(request, facts, summaries)
+            }
+            (ListSummaries::Wanted, false) => Err(ProjectBoardError::Invalid(SchemaError::new(
+                "summary",
+                SUMMARIES_LISTINGS_ONLY,
+            ))),
+        }
     }
 
     /// [`Self::execute`], noting in `facts` (epic #2481 T4), when given,

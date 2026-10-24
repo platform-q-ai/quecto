@@ -1,9 +1,9 @@
 use super::*;
 use crate::application::agent_turn::agent_loop::tool_panic_scope::{ToolScope, scoped};
 use crate::application::project_board::operations::NoPullRequestHost;
-use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
 use crate::application::project_board::ports::ProjectBoardStore;
 use crate::application::project_board::use_cases::QueryBoard;
+use crate::composition::bootstrap::project_board_operations::fixtures::{QueryListings, assembled};
 use crate::domain::project_board::value_objects::telemetry::OpOutcome;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
@@ -65,7 +65,7 @@ fn memory_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, Buil
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
     Ok(ProjectBoardHandles {
-        operations,
+        operations: Box::new(operations),
         board: None,
     })
 }
@@ -141,7 +141,7 @@ fn crowded_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, Bui
     for index in 0..300 {
         let request = json!({"op": "create", "task": format!("t{index}"), "title": "x".repeat(200), "description": "d".repeat(500), "status": "ready"});
         let created =
-            crate::interface::tools::project_board::run(&handles.operations, &request.to_string());
+            crate::interface::tools::project_board::run(&*handles.operations, &request.to_string());
         assert_eq!(created["ok"], json!(true), "{created}");
     }
     Ok(handles)
@@ -333,7 +333,7 @@ fn seeded_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, Buil
     );
     assert_eq!(created["ok"], json!(true), "{created}");
     Ok(ProjectBoardHandles {
-        operations,
+        operations: Box::new(operations),
         board: None,
     })
 }
@@ -351,7 +351,7 @@ async fn a_non_listing_answer_is_the_shared_paths() {
         let answer: Value =
             serde_json::from_str(&tool.execute(text).await.unwrap().content).unwrap();
         let shared = crate::interface::tools::project_board::run(
-            &seeded_board(&environment()).unwrap().operations,
+            &*seeded_board(&environment()).unwrap().operations,
             text,
         );
         assert_eq!(answer, shared, "{text}");
@@ -394,7 +394,7 @@ fn quarantined_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles,
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
     Ok(ProjectBoardHandles {
-        operations,
+        operations: Box::new(operations),
         board: None,
     })
 }
@@ -442,7 +442,7 @@ fn mixed_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, Build
         );
     }
     Ok(ProjectBoardHandles {
-        operations,
+        operations: Box::new(operations),
         board: None,
     })
 }

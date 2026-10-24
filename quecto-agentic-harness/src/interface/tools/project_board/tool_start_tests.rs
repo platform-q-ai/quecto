@@ -8,10 +8,10 @@ use super::super::site::{BuildError, ProjectBoardEnvironment, ProjectBoardHandle
 use super::BoardSite;
 use super::tests::{recorded_tool, site, tool};
 use crate::application::project_board::operations::NoPullRequestHost;
-use crate::application::project_board::operations::query_listings::QueryListings;
 use crate::application::project_board::ports::ProjectBoardStore;
 use crate::application::project_board::use_cases::QueryBoard;
 use crate::application::tools::ports::Tool;
+use crate::composition::bootstrap::project_board_operations::fixtures::QueryListings;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
@@ -23,8 +23,8 @@ use crate::interface::tools::project_board::recording::tests::Records;
 fn launching_board(
     environment: &ProjectBoardEnvironment,
 ) -> Result<ProjectBoardHandles, BuildError> {
-    use crate::application::project_board::operations::query_listings::assembled_launching;
     use crate::application::project_board::ports::BoardArtifact;
+    use crate::composition::bootstrap::project_board_operations::fixtures::assembled_launching;
     use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
     use crate::domain::project_board::entities::task::{Task, TaskFields};
     use crate::domain::project_board::entities::team::{Role, RoleLimits, Team};
@@ -112,7 +112,7 @@ fn launching_board(
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
     Ok(ProjectBoardHandles {
-        operations,
+        operations: Box::new(operations),
         board: None,
     })
 }

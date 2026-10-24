@@ -9,12 +9,12 @@ use std::sync::Arc;
 use super::tests::{site, tool};
 use crate::application::project_board::operations::ListSummaries;
 use crate::application::project_board::operations::NoPullRequestHost;
-use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
 use crate::application::project_board::ports::{
     ArtifactKey, BoardArtifact, BoardWrite, ProjectBoardStore,
 };
 use crate::application::project_board::use_cases::QueryBoard;
 use crate::application::tools::ports::Tool;
+use crate::composition::bootstrap::project_board_operations::fixtures::{QueryListings, assembled};
 use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
 use crate::domain::project_board::entities::run::{Run, RunFields, RunItem};
 use crate::domain::project_board::entities::team::{Role, RoleLimits, Team};
@@ -135,7 +135,7 @@ fn summarised_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, 
     assert!(matches!(written, Ok(BoardWrite::Written(_))), "{written:?}");
     store.quarantine_key(ArtifactKey::Run(slug("c"), 1), "runs/c.1.md", "malformed");
     Ok(ProjectBoardHandles {
-        operations,
+        operations: Box::new(operations),
         board: None,
     })
 }
@@ -159,7 +159,7 @@ fn shared_with(request: Value, summaries: ListSummaries) -> Value {
     let handles = summarised_board(&environment()).unwrap();
     let mut call = BoardCall::unrecorded();
     run_recorded_with(
-        &handles.operations,
+        &*handles.operations,
         &request.to_string(),
         summaries,
         &mut call,
@@ -322,7 +322,7 @@ fn a_listing_without_summaries_is_as_before() {
         let text = request.to_string();
         let mut call = BoardCall::unrecorded();
         let listed = run_recorded_with(
-            &handles.operations,
+            &*handles.operations,
             &text,
             ListSummaries::Omitted,
             &mut call,
@@ -346,7 +346,7 @@ fn a_listing_without_summaries_is_as_before() {
             assert_eq!(task.get("summary"), None, "{task}");
         }
         // `run` (every front end's way in before) is the same answer.
-        let ran = crate::interface::tools::project_board::run(&handles.operations, &text);
+        let ran = crate::interface::tools::project_board::run(&*handles.operations, &text);
         assert_eq!(ran, listed, "{request}");
     }
 }

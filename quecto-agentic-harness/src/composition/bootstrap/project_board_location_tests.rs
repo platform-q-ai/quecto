@@ -74,7 +74,7 @@ fn counted(
 /// and its remote's URL.
 fn board_with_a(work: &Path) -> (BoardId, String) {
     let writer = build_project_board_handles(&environment(work, Access::Write)).unwrap();
-    let ops = |request: Value| run(&writer.operations, &request.to_string());
+    let ops = |request: Value| run(&*writer.operations, &request.to_string());
     assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
     let created = ops(json!({"op": "create", "task": "a", "title": "A", "status": "ready"}));
     assert_eq!(created["ok"], json!(true), "{created}");
@@ -116,7 +116,7 @@ fn a_list_on_a_given_location_spawns_only_the_remote_check_to_compose() {
         "composition spawns one git: the check that the remote is configured"
     );
     assert_eq!(handles.board, Some(board), "the board id given");
-    let listed = run(&handles.operations, r#"{"op": "list"}"#);
+    let listed = run(&*handles.operations, r#"{"op": "list"}"#);
     assert_eq!(listed["tasks"][0]["id"], json!("a"), "{listed}");
     assert!(
         own_calls(&log).len() > 1,
@@ -272,7 +272,7 @@ fn a_write_names_the_board_and_remote_git_resolves() {
     let handles = build_project_board_handles(&writing).unwrap();
     assert_eq!(handles.board, Some(board), "the id git resolves");
     assert_ne!(handles.board, given_location().board_id);
-    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    let ops = |request: Value| run(&*handles.operations, &request.to_string());
     let claimed = ops(json!({"op": "move", "task": "a", "to": "claimed"}));
     assert_eq!(claimed["ok"], json!(true), "{claimed}");
     let linked = ops(json!({"op": "link_pr", "task": "a", "pr": 7}));

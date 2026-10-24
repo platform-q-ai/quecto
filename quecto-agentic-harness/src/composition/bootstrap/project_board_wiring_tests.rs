@@ -49,7 +49,7 @@ fn started(work: &std::path::Path, session: Option<&str>) -> ProjectBoardHandles
     writing.launcher = Some(Arc::new(Launches));
     writing.swarm_session = session.map(str::to_owned);
     let handles = build_project_board_handles(&writing).unwrap();
-    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    let ops = |request: Value| run(&*handles.operations, &request.to_string());
     assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
     let created = ops(json!({"op": "create", "task": "a", "title": "A", "status": "ready"}));
     assert_eq!(created["ok"], json!(true), "{created}");
@@ -88,7 +88,7 @@ fn kept_for(session: &str) {
 
 fn succeeded(handles: &ProjectBoardHandles) -> Value {
     let request = json!({"op": "end_run", "task": "a", "run": 1, "outcome": "succeeded"});
-    run(&handles.operations, &request.to_string())
+    run(&*handles.operations, &request.to_string())
 }
 
 #[test]
