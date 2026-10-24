@@ -1,7 +1,9 @@
 //! Real deterministic Git serialization and captured-lease publication.
+use super::board_tree::{Found, Reader};
 use super::git::{Git, GitEnvironment};
 use crate::application::project_board::ports::history::*;
-use std::collections::BTreeSet;
+use sha2::Digest;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 fn malformed(why: impl ToString) -> HistoryError {
     HistoryError::Malformed(why.to_string())
@@ -299,17 +301,498 @@ impl BoardHistorySink for GitBoardHistorySink {
     }
 }
 
-// RED-only callable seam; no Git capture or successful acceptance behavior.
-pub struct GitBoardHistorySource;
+const BOARD: &str = "refs/heads/quecto/board";
+const RAW: usize = 128 * 1024 * 1024;
+const META: usize = 32 * 1024 * 1024;
+
+/// Exact Git framing, independent of declared tree modes and repository filters.
+fn verify_raw(object: &HistoryObject, width: usize) -> HistoryResult<()> {
+    let frame = format!("{} {}\0", kind(object.kind), object.bytes.len());
+    let actual = match width {
+        40 => {
+            let mut hash = sha1::Sha1::new();
+            hash.update(frame.as_bytes());
+            hash.update(&object.bytes);
+            format!("{:x}", hash.finalize())
+        }
+        64 => {
+            let mut hash = sha2::Sha256::new();
+            hash.update(frame.as_bytes());
+            hash.update(&object.bytes);
+            format!("{:x}", hash.finalize())
+        }
+        _ => return Err(malformed("object format")),
+    };
+    if actual == object.oid {
+        Ok(())
+    } else {
+        Err(malformed("raw hash mismatch"))
+    }
+}
+
+struct Capture<'a> {
+    git: &'a Git,
+    width: usize,
+    raw: usize,
+    metadata: usize,
+    rows: usize,
+}
+impl Capture<'_> {
+    /// Metadata precedes bodies. The retained runner frame and body copies are
+    /// separately bounded by RAW + 128 bytes per admitted object, not RSS.
+    fn read(
+        &mut self,
+        ids: &[String],
+        expected: Option<HistoryKind>,
+    ) -> HistoryResult<Vec<HistoryObject>> {
+        for id in ids {
+            oid(id, self.width)?;
+        }
+        if (1..=32768).contains(&ids.len()) {
+        } else {
+            return Err(bounds("batch count"));
+        }
+        let refs: Vec<_> = ids.iter().map(String::as_str).collect();
+        let metadata = self
+            .git
+            .metadata(&refs)
+            .map_err(|e| malformed(format!("{e:?}")))?;
+        let mut plans = Vec::with_capacity(ids.len());
+        let mut frame_size = 0usize;
+        for id in ids {
+            let Some(Found::Present(meta)) = metadata.get(id) else {
+                return Err(malformed("missing local object"));
+            };
+            let (k, limit) = match meta.kind.as_str() {
+                "blob" => (HistoryKind::Blob, 64 * 1024 * 1024),
+                "tree" => (HistoryKind::Tree, 655360),
+                "commit" => (HistoryKind::Commit, 65536),
+                _ => return Err(HistoryError::Unsupported("actual object type".into())),
+            };
+            if expected.is_none_or(|e| e == k) {
+            } else {
+                return Err(malformed("unexpected structural object kind"));
+            }
+            if meta.size <= limit {
+            } else {
+                return Err(bounds("object size"));
+            }
+            charge(&mut self.raw, meta.size, RAW)?;
+            charge(&mut self.metadata, 512, META)?;
+            let header = format!("{id} {} {}\n", kind(k), meta.size);
+            let size = header
+                .len()
+                .checked_add(meta.size)
+                .and_then(|n| n.checked_add(1))
+                .ok_or_else(|| bounds("frame overflow"))?;
+            charge(&mut frame_size, size, RAW + 32768 * 128)?;
+            plans.push((id, k, meta.size, header));
+        }
+        let input: String = ids.iter().map(|id| format!("{id}\n")).collect();
+        let frame = self
+            .git
+            .ok_up_to(&["cat-file", "--batch"], Some(input.as_bytes()), frame_size)
+            .map_err(malformed)?;
+        if frame.len() == frame_size {
+        } else {
+            return Err(malformed("batch frame length"));
+        }
+        let mut rest = frame.as_slice();
+        let mut result = Vec::with_capacity(ids.len());
+        for (id, k, size, header) in plans {
+            let body = rest
+                .strip_prefix(header.as_bytes())
+                .ok_or_else(|| malformed("raw frame header"))?;
+            let bytes = body
+                .get(..size)
+                .ok_or_else(|| malformed("raw body length"))?;
+            if body.get(size) == Some(&b'\n') {
+            } else {
+                return Err(malformed("raw frame terminator"));
+            }
+            let mut object = HistoryObject {
+                oid: id.clone(),
+                kind: k,
+                bytes: bytes.to_vec(),
+                entries: vec![],
+            };
+            verify_raw(&object, self.width)?;
+            self.project(&mut object)?;
+            rest = &body[size + 1..];
+            result.push(object);
+        }
+        assert!(
+            rest.is_empty(),
+            "checked batch frames consume exact bounded output"
+        );
+        Ok(result)
+    }
+}
+
+impl Capture<'_> {
+    fn closure(
+        &mut self,
+        roots: BTreeSet<String>,
+    ) -> HistoryResult<BTreeMap<String, HistoryObject>> {
+        let mut objects = BTreeMap::new();
+        let mut pending = roots.clone();
+        let mut depth = 0usize;
+        while pending.first().is_some() {
+            if objects
+                .len()
+                .checked_add(pending.len())
+                .is_some_and(|n| n <= 32768)
+            {
+            } else {
+                return Err(bounds("object count"));
+            }
+            let ids: Vec<_> = pending.into_iter().collect();
+            let batch = self.read(&ids, None)?;
+            pending = BTreeSet::new();
+            for object in &batch {
+                if matches!(object.kind, HistoryKind::Blob | HistoryKind::Tree) {
+                } else {
+                    return Err(HistoryError::Unsupported("non-gitlink commit".into()));
+                }
+                if roots.contains(&object.oid) && object.kind == HistoryKind::Tree {
+                } else if roots.contains(&object.oid) {
+                    return Err(malformed("revision root is not tree"));
+                }
+                if object.kind == HistoryKind::Blob || depth <= 128 {
+                } else {
+                    return Err(bounds("tree depth"));
+                }
+                for row in &object.entries {
+                    if row.mode == "160000" {
+                        continue;
+                    }
+                    if objects.contains_key(&row.oid)
+                        || ids.binary_search(&row.oid).is_ok()
+                        || pending.contains(&row.oid)
+                    {
+                    } else {
+                        if objects
+                            .len()
+                            .checked_add(ids.len())
+                            .and_then(|n| n.checked_add(pending.len()))
+                            .is_some_and(|n| n < 32768)
+                        {
+                        } else {
+                            return Err(bounds("object count"));
+                        }
+                        pending.insert(row.oid.clone());
+                    }
+                }
+            }
+            for object in batch {
+                objects.insert(object.oid.clone(), object);
+            }
+            if objects
+                .len()
+                .checked_add(pending.len())
+                .is_some_and(|n| n <= 32768)
+            {
+            } else {
+                return Err(bounds("object count"));
+            }
+            depth = depth
+                .checked_add(1)
+                .ok_or_else(|| bounds("depth overflow"))?;
+        }
+        let mut heights = BTreeMap::new();
+        for root in roots {
+            height(&root, &objects, &mut heights, &mut BTreeSet::new(), 0)?;
+        }
+        Ok(objects)
+    }
+}
+
+impl Capture<'_> {
+    fn project(&mut self, object: &mut HistoryObject) -> HistoryResult<()> {
+        if object.kind == HistoryKind::Tree {
+            let (rows, metadata) = projection_budget(&object.bytes, self.width)?;
+            if metadata <= 4 * 655360 {
+            } else {
+                return Err(bounds("shared listing allocation"));
+            }
+            charge(&mut self.rows, rows, 65536)?;
+            charge(&mut self.metadata, metadata, META)?;
+            object.entries = self
+                .git
+                .listing(&object.oid, 4 * 655360)
+                .map_err(|e| malformed(format!("{e:?}")))?
+                .into_iter()
+                .map(|e| HistoryEntry {
+                    mode: e.mode,
+                    name: e.raw,
+                    oid: e.oid,
+                })
+                .collect();
+            if object.entries.len() == rows {
+            } else {
+                return Err(malformed("projection cardinality"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Scan only bounded structural wire spans before Reader allocates projection names.
+fn projection_budget(mut bytes: &[u8], width: usize) -> HistoryResult<(usize, usize)> {
+    let mut rows = 0;
+    let mut metadata = 0;
+    while let [_, ..] = bytes {
+        let space = bytes
+            .iter()
+            .position(|b| *b == b' ')
+            .ok_or_else(|| malformed("tree mode frame"))?;
+        if space > 0 && bytes[..space].iter().all(|b| (b'0'..=b'7').contains(b)) {
+        } else {
+            return Err(malformed("tree mode"));
+        }
+        bytes = &bytes[space + 1..];
+        let nul = bytes
+            .iter()
+            .position(|b| *b == 0)
+            .ok_or_else(|| malformed("tree name frame"))?;
+        if nul <= 4096 {
+        } else {
+            return Err(bounds("raw name"));
+        }
+        let length = nul
+            .checked_mul(4)
+            .and_then(|n| n.checked_add(128 + 6 + width))
+            .ok_or_else(|| bounds("projection metadata"))?;
+        charge(&mut rows, 1, 65536)?;
+        charge(&mut metadata, length, META)?;
+        bytes = bytes
+            .get(nul + 1 + width / 2..)
+            .ok_or_else(|| malformed("tree child frame"))?;
+    }
+    Ok((rows, metadata))
+}
+
+/// Commit metadata is retained raw; only structural and required-header framing
+/// is interpreted here. Encodings, signatures and extension headers are opaque.
+fn commit_links(bytes: &[u8], width: usize) -> HistoryResult<(String, Option<String>)> {
+    let end = bytes
+        .windows(2)
+        .position(|s| s == b"\n\n")
+        .ok_or_else(|| malformed("commit header"))?;
+    let lines: Vec<_> = bytes[..end].split(|b| *b == b'\n').collect();
+    if lines.first().is_some_and(|l| l.starts_with(b"tree "))
+        && lines.iter().all(|l| {
+            l.starts_with(b" ")
+                || l.iter()
+                    .position(|b| *b == b' ')
+                    .is_some_and(|n| n > 0 && l[..n].iter().all(|b| (33..=126).contains(b)))
+        })
+    {
+    } else {
+        return Err(malformed("commit header framing"));
+    }
+    for required in [b"author ".as_slice(), b"committer ".as_slice()] {
+        let identities: Vec<_> = lines
+            .iter()
+            .filter_map(|l| l.strip_prefix(required))
+            .collect();
+        if let [identity] = identities.as_slice() {
+            let fields: Vec<_> = identity.rsplitn(3, |b| *b == b' ').collect();
+            if let [zone, time, name] = fields.as_slice() {
+                if zone.len() == 5
+                    && matches!(zone[0], b'+' | b'-')
+                    && zone[1..].iter().all(u8::is_ascii_digit)
+                    && std::str::from_utf8(time)
+                        .ok()
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .is_some()
+                    && name.ends_with(b">")
+                    && name
+                        .windows(2)
+                        .position(|b| b == b" <")
+                        .is_some_and(|n| n > 0 && n + 3 < name.len())
+                {
+                    continue;
+                }
+            }
+        }
+        return Err(malformed("missing/invalid required identity header"));
+    }
+    let mut root = None;
+    let mut parent = None;
+    for line in lines {
+        if let Some(value) = line.strip_prefix(b"tree ") {
+            if root.is_none() {
+            } else {
+                return Err(malformed("duplicate tree header"));
+            }
+            let id = std::str::from_utf8(value).map_err(malformed)?;
+            oid(id, width)?;
+            root = Some(id.to_owned());
+        }
+        if let Some(value) = line.strip_prefix(b"parent ") {
+            if parent.is_none() {
+            } else {
+                return Err(HistoryError::Unsupported("linear history required".into()));
+            }
+            let id = std::str::from_utf8(value).map_err(malformed)?;
+            oid(id, width)?;
+            parent = Some(id.to_owned());
+        }
+    }
+    Ok((root.ok_or_else(|| malformed("missing root"))?, parent))
+}
+
+/// Validate all paths, including a cached subtree reached at a deeper position.
+fn height(
+    id: &str,
+    objects: &BTreeMap<String, HistoryObject>,
+    heights: &mut BTreeMap<String, usize>,
+    path: &mut BTreeSet<String>,
+    depth: usize,
+) -> HistoryResult<usize> {
+    let object = objects
+        .get(id)
+        .ok_or_else(|| malformed("missing closure"))?;
+    if object.kind == HistoryKind::Blob {
+        return Ok(0);
+    }
+    if depth <= 128 {
+    } else {
+        return Err(bounds("tree depth"));
+    }
+    if let Some(h) = heights.get(id) {
+        if depth.checked_add(*h).is_some_and(|n| n <= 128) {
+            return Ok(*h);
+        }
+        return Err(bounds("tree depth"));
+    }
+    if path.insert(id.into()) {
+    } else {
+        return Err(malformed("tree cycle"));
+    }
+    let mut h = 0;
+    for row in &object.entries {
+        if row.mode == "160000" {
+            continue;
+        }
+        let child = height(&row.oid, objects, heights, path, depth + 1)?;
+        if objects
+            .get(&row.oid)
+            .is_some_and(|o| o.kind == HistoryKind::Tree)
+        {
+            h = h.max(child.checked_add(1).ok_or_else(|| bounds("tree height"))?);
+        }
+    }
+    path.remove(id);
+    heights.insert(id.into(), h);
+    Ok(h)
+}
+
+pub struct GitBoardHistorySource {
+    repo: PathBuf,
+    remote: String,
+}
 impl GitBoardHistorySource {
-    pub fn new(_: PathBuf, _: String) -> Self {
-        Self
+    pub fn new(repo: PathBuf, remote: String) -> Self {
+        Self { repo, remote }
     }
 }
 impl BoardHistorySource for GitBoardHistorySource {
     fn capture(&self) -> HistoryResult<LinearHistory> {
-        Err(HistoryError::Unavailable(
-            "B source capture not implemented".into(),
-        ))
+        if (1..=200).contains(&self.remote.len()) {
+        } else {
+            return Err(bounds("source remote name"));
+        }
+        let git = git(&self.repo)?;
+        for key in ["extensions.partialclone", "remote\\..*\\.promisor"] {
+            let result = git
+                .local(&["config", "--get-regexp", key], None, 65536)
+                .map_err(malformed)?;
+            match result.status.code() {
+                Some(1) => {}
+                Some(0) => return Err(HistoryError::Unsupported("promisor history".into())),
+                _ => return Err(malformed("source configuration")),
+            }
+        }
+        if git
+            .text(&["rev-parse", "--is-shallow-repository"], None)
+            .map_err(malformed)?
+            == "false"
+        {
+        } else {
+            return Err(HistoryError::Unsupported("shallow history".into()));
+        }
+        let (algorithm, width) = match git
+            .text(&["rev-parse", "--show-object-format"], None)
+            .map_err(malformed)?
+            .as_str()
+        {
+            "sha1" => (HistoryAlgorithm::Sha1, 40),
+            "sha256" => (HistoryAlgorithm::Sha256, 64),
+            _ => return Err(HistoryError::Unsupported("object format".into())),
+        };
+        // Only this call resolves the source ref. Everything below follows IDs.
+        let head = git
+            .text(&["rev-parse", "--verify", BOARD], None)
+            .map_err(malformed)?;
+        oid(&head, width)?;
+        let mut capture = Capture {
+            git: &git,
+            width,
+            raw: 0,
+            metadata: 0,
+            rows: 0,
+        };
+        let mut commits = Vec::new();
+        let mut seen = BTreeSet::new();
+        let mut next = Some(head.clone());
+        let mut pending = BTreeSet::new();
+        while let Some(id) = next {
+            if commits.len() < 4096 {
+            } else {
+                return Err(bounds("commit count"));
+            }
+            if seen.insert(id.clone()) {
+            } else {
+                return Err(malformed("commit cycle"));
+            }
+            let mut batch = capture.read(&[id], Some(HistoryKind::Commit))?;
+            let original = batch.pop().ok_or_else(|| malformed("missing commit"))?;
+            let (root, parent) = commit_links(&original.bytes, width)?;
+            next = parent;
+            pending.insert(root.clone());
+            commits.push((root, original));
+        }
+        let objects = capture.closure(pending)?;
+        commits.reverse();
+        let revisions = commits
+            .into_iter()
+            .enumerate()
+            .map(|(i, (root, original))| HistoryRevision {
+                sequence: i as u64 + 1,
+                parent: if i == 0 { None } else { Some(i as u64) },
+                root,
+                writer: crate::domain::project_board::entities::claim::Identity {
+                    name: "Imported Git".into(),
+                    email: "history@quecto.invalid".into(),
+                },
+                message: String::new(),
+                at: 0,
+                original: Some(original),
+            })
+            .collect();
+        Ok(LinearHistory {
+            algorithm,
+            source_ref: BOARD.into(),
+            source_remote: self.remote.clone(),
+            source_head: head,
+            revisions,
+            objects: objects.into_values().collect(),
+        })
     }
 }
+
+#[cfg(test)]
+#[path = "history_tests.rs"]
+mod tests;
