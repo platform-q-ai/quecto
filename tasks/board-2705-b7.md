@@ -8,12 +8,13 @@
 | Status | draft |
 | Parent | board-service-mvp-2705 |
 | Created | 2026-10-23T16:47:59Z |
-| Updated | 2026-10-24T03:03:02Z |
+| Updated | 2026-10-24T07:16:57Z |
 
 ## Description
-Agent B7 after B4-only server (legacy board-2705-b4-b6). Operator B6 external merge gate is now SATISFIED: PR2714 merged2026-10-24T02:30:59Z, commit5e2eca19285f040750d91ace51d6cfbb70b8b5cd, primary GitHub verified; confirm integrated interface when reached, never rebuild operator B6. ServeBoardOperation executes per-board operation in ONE SQLite transaction with atomic persisted write_id result replay; remote blocking client/RemoteBoardOperations via UDS, time gate and explicit committer. Use operator B1 GitRemoteRevisions/--board-id/--remote-url and B6 interfaces without duplicate ownership. Operator also owns T1 entry fixes and git-store format4/MOVED/fence builder/parser; don't implement those. No client whole-board-write decode/CAS retry workaround; transport retries idempotent. B7 owns request replay, no TCP required before B5-lite. Fresh red/green/independent review/required head-bound CI; human-approved2713 target750/max1500production, tests/fixtures/snapshots/lock/generated excluded/reported, size once planning/rejudge only remediation checkpoint/max exceeded. All safety restrictions remain.
+Agent B7 only after B3 and OPERATOR-owned B4 UDS server have merged. Operator B1 PR2715 and B6 PR2714 are merged; git-side B13 PR2718 is merged. Consume their actual interfaces, never duplicate B1/B6/B4 listener/status/time/snapshot/peer-credential or T1/format4-MOVED/parser/pure-fence-builder ownership. ServeBoardOperation executes per-board operation in ONE SQLite transaction with atomic persisted write_id result replay; remote blocking client/RemoteBoardOperations over UDS, time gate and explicit committer. Use --board-id/--remote-url and existing BoardOperations. No client whole-board-write decode/CAS retry workaround; transport retries are idempotent. B7 owns request replay; TCP follows in B5-lite. Fresh red/green/independent exact-head review and required CI; human-approved2713 production750target1500max, tests/fixtures/snapshots/lock/generated excluded/reported, size once planning/rejudge only remediation checkpoint or maximum exceeded. All owner safety restrictions remain.
 
 ## Depends on
 | Task |
 |---|
+| board-2705-b3 |
 | board-2705-b4-b6 |
