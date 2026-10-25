@@ -30,6 +30,7 @@ pub(in super::super) fn open(
     mode: u32,
 ) -> io::Result<File> {
     let value = name(value)?;
+    // SAFETY: the borrowed directory fd stays open; value is a live NUL-terminated CString.
     let fd = unsafe {
         libc::openat(
             directory.as_raw_fd(),
@@ -39,6 +40,7 @@ pub(in super::super) fn open(
         )
     };
     if fd >= 0 {
+        // SAFETY: successful openat returned a fresh owned fd, transferred exactly once to File.
         Ok(unsafe { File::from_raw_fd(fd) })
     } else {
         Err(io::Error::last_os_error())
@@ -72,6 +74,7 @@ pub(in super::super) fn check(directory: &File, file: &AdmittedBackupFile) -> io
 pub(in super::super) fn remove(directory: &File, file: &AdmittedBackupFile) -> io::Result<()> {
     check(directory, file)?;
     let file = name(&file.name)?;
+    // SAFETY: the held directory fd and validated single-component CString remain live for unlinkat.
     let result = unsafe { libc::unlinkat(directory.as_raw_fd(), file.as_ptr(), 0) };
     if result == 0 {
         Ok(())
@@ -82,6 +85,7 @@ pub(in super::super) fn remove(directory: &File, file: &AdmittedBackupFile) -> i
 pub(in super::super) fn link(directory: &File, from: &str, to: &str) -> io::Result<()> {
     let from = name(from)?;
     let to = name(to)?;
+    // SAFETY: both CStrings and the borrowed directory fd remain live throughout linkat.
     let result = unsafe {
         libc::linkat(
             directory.as_raw_fd(),
@@ -126,6 +130,7 @@ pub(in super::super) fn private_destination(
         let text = component.as_os_str().to_str().ok_or_else(unsafe_path)?;
         handle = open(&handle, text, libc::O_RDONLY | libc::O_DIRECTORY, 0)?;
         let meta = handle.metadata()?;
+        // SAFETY: geteuid takes no pointers and has no caller preconditions.
         let uid = unsafe { libc::geteuid() };
         if (meta.uid() == 0 || meta.uid() == uid)
             && (meta.mode() & 0o022 == 0 || (meta.uid() == 0 && meta.mode() & libc::S_ISVTX != 0))
@@ -141,6 +146,7 @@ pub(in super::super) fn private_destination(
         return Err(unsafe_path());
     }
     let leaf_c = name(leaf)?;
+    // SAFETY: the held parent fd and validated leaf CString remain live throughout mkdirat.
     let made = unsafe { libc::mkdirat(handle.as_raw_fd(), leaf_c.as_ptr(), 0o700) };
     if made == 0 || io::Error::last_os_error().kind() == io::ErrorKind::AlreadyExists {
     } else {
@@ -148,6 +154,7 @@ pub(in super::super) fn private_destination(
     }
     let destination = open(&handle, leaf, libc::O_RDONLY | libc::O_DIRECTORY, 0)?;
     let meta = destination.metadata()?;
+    // SAFETY: geteuid takes no pointers and has no caller preconditions.
     if meta.uid() == unsafe { libc::geteuid() } && meta.mode() & 0o777 == 0o700 {
     } else {
         return Err(unsafe_path());
@@ -183,12 +190,14 @@ pub(in super::super) fn lock(directory: &File, board: &str) -> io::Result<File> 
     let meta = handle.metadata()?;
     if meta.is_file()
         && meta.nlink() == 1
+        // SAFETY: geteuid takes no pointers and has no caller preconditions.
         && meta.uid() == unsafe { libc::geteuid() }
         && meta.mode() & 0o777 == 0o600
     {
     } else {
         return Err(unsafe_path());
     }
+    // SAFETY: handle owns a live fd for flock; its File keeps the acquired lock alive on success.
     let result = unsafe { libc::flock(handle.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if result == 0 {
         Ok(handle)
