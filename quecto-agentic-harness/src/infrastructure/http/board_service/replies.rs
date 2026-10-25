@@ -106,6 +106,8 @@ async fn pump(streamed: Streamed, out: mpsc::Sender<Bytes>, conn: Driven) {
                     }
                 }
                 () = tokio::time::sleep_until(ends) => break,
+                // Its reader went: the places and subscription go now.
+                () = out.closed() => break,
             }
         }
         let held = match principal.as_deref().map(|p| conn.answers.admit(p)) {
@@ -137,11 +139,12 @@ async fn pump(streamed: Streamed, out: mpsc::Sender<Bytes>, conn: Driven) {
     drop(place);
 }
 
-/// Whether `bytes` went to the body before `ends` (and its reader is there).
+/// Whether `bytes` went to the body before `ends`, its reader still there.
 async fn sent(out: &mpsc::Sender<Bytes>, bytes: Bytes, ends: tokio::time::Instant) -> bool {
     tokio::select! {
         sent = out.send(bytes) => sent.is_ok(),
         () = tokio::time::sleep_until(ends) => false,
+        () = out.closed() => false,
     }
 }
 

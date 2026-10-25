@@ -228,7 +228,10 @@ impl BoardRoutes {
                 Ok(feed) => super::feed::revisions(feed, request),
                 Err(reply) => reply,
             },
-            // The listener streams every GET of it; anything else is refused.
+            // Never reached through the listener, which hands every GET of
+            // `events` to `stream` (`streams` says so, and the route takes GET
+            // alone). It stays for a caller of `answer` itself, such as a test
+            // or a future front end, which is told to read the feed as a stream.
             (Route::Events, _) => coded(400, "stream", "the change feed is read as a stream"),
             (Route::Status, _) => read(self.serve.status().map(|status| {
                 json!({

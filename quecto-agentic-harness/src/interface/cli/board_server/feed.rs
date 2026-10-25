@@ -154,7 +154,8 @@ fn batch_json(batch: &RevisionBatch) -> Value {
 }
 
 /// The query's `key=<digits>` pairs, each key of `keys` at most once; any
-/// other key, a repeat or a value not a number is refused (400 `query`).
+/// other key, a repeat or a value not 1 to 64 digits is refused (400
+/// `query`). A value past `u64` reads as `u64::MAX`: out of any range.
 fn numbers<'k>(
     query: Option<&str>,
     keys: &[&'k str],
@@ -167,7 +168,7 @@ fn numbers<'k>(
     for pair in pairs {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
         let known = keys.iter().find(|known| **known == key);
-        let (Some(key), Some(value)) = (known, number(value)) else {
+        let (Some(key), Some(value)) = (known, digits(value)) else {
             let keys = keys.join(", ");
             let why = format!("the query takes only {keys}, each once, as a number");
             return Err(refused("query", &why));
@@ -177,6 +178,12 @@ fn numbers<'k>(
         }
     }
     Ok(found)
+}
+
+/// `text` as a query number: 1 to 64 ASCII digits, `u64::MAX` past it.
+fn digits(text: &str) -> Option<u64> {
+    let shaped = (1..=64).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_digit());
+    shaped.then(|| text.parse().unwrap_or(u64::MAX))
 }
 
 /// `text` as a number: 1 to 20 ASCII digits that fit a `u64`.

@@ -322,3 +322,13 @@ fn both_feed_routes_over_tcp_without_a_principal_are_401() {
     assert_eq!((reply.status, body["code"].as_str()), (401, Some("token")));
     assert!(feed.limits.lock().unwrap().is_empty(), "nothing was read");
 }
+
+/// Review (#2756 L4): `answer` asked for the events route itself (never
+/// the listener, which streams it) says to read it as a stream.
+#[test]
+fn the_events_route_answered_whole_says_to_stream_it() {
+    let (routes, _) = routes(3);
+    let reply = routes.answer(&request(&format!("/v1/boards/{BOARD}/events"), None, None));
+    let body: Value = serde_json::from_slice(&reply.body).unwrap();
+    assert_eq!((reply.status, body["code"].as_str()), (400, Some("stream")));
+}
