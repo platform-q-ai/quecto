@@ -170,7 +170,12 @@ fn a_slow_host_holds_up_no_other_write_or_read() {
     host.delay_ms.store(3000, Ordering::SeqCst);
     let completing = {
         let operations = Arc::clone(&operations);
-        std::thread::spawn(move || serve(&operations, json!({"op": "complete", "task": "a"})))
+        std::thread::spawn(move || {
+            serve(
+                &operations,
+                json!({"op": "done_without_run", "task": "a", "reason": "r"}),
+            )
+        })
     };
     std::thread::sleep(Duration::from_millis(300));
     let began = Instant::now();
@@ -189,7 +194,7 @@ fn a_slow_host_holds_up_no_other_write_or_read() {
     );
     assert!(took < Duration::from_millis(1500), "held up {took:?}");
     let completed = completing.join().expect("the completion").expect("served");
-    assert_eq!(completed["op"], json!("complete"), "{completed}");
+    assert_eq!(completed["op"], json!("done_without_run"), "{completed}");
 }
 
 /// B7 round 2: a write is admitted before its host reads, so 16 slow
@@ -206,7 +211,10 @@ fn writes_are_admitted_before_their_host_reads() {
             let operations = Arc::clone(&operations);
             std::thread::spawn(move || {
                 let began = Instant::now();
-                let served = serve(&operations, json!({"op": "complete", "task": "a"}));
+                let served = serve(
+                    &operations,
+                    json!({"op": "done_without_run", "task": "a", "reason": "r"}),
+                );
                 (served, began.elapsed())
             })
         })
@@ -233,7 +241,10 @@ fn writes_are_admitted_before_their_host_reads() {
         admitted,
         "one read per write admitted"
     );
-    let absent = serve(&operations, json!({"op": "complete", "task": "nosuch"}));
+    let absent = serve(
+        &operations,
+        json!({"op": "done_without_run", "task": "nosuch", "reason": "r"}),
+    );
     assert_eq!(absent.expect("served")["ok"], json!(false));
     assert_eq!(
         host.calls.load(Ordering::SeqCst),
@@ -251,7 +262,10 @@ fn the_host_reads_share_one_budget() {
     let (_dir, operations) = board(&remote, &host, Duration::from_millis(1000), &[1, 2, 3, 4]);
     host.delay_ms.store(400, Ordering::SeqCst);
     let began = Instant::now();
-    let completed = serve(&operations, json!({"op": "complete", "task": "a"}));
+    let completed = serve(
+        &operations,
+        json!({"op": "done_without_run", "task": "a", "reason": "r"}),
+    );
     let completed = completed.expect("answered, not failed");
     assert!(
         began.elapsed() < Duration::from_secs(3),
@@ -274,13 +288,13 @@ fn a_replay_reads_no_host() {
     let (remote, host) = (Remote::new(), Arc::new(SlowHost::default()));
     let (_dir, operations) = board(&remote, &host, Duration::from_secs(30), &[7]);
     let id = "0b7a1c0d-e000-4000-8000-0000000000bb";
-    let complete = json!({"op": "complete", "task": "a"});
-    let first = served_as(&operations, complete.clone(), id).expect("served");
+    let done = json!({"op": "done_without_run", "task": "a", "reason": "r"});
+    let first = served_as(&operations, done.clone(), id).expect("served");
     assert_eq!(host.calls.load(Ordering::SeqCst), 1);
     let Transacted::Answered(answer) = first else {
         panic!("{first:?}")
     };
-    let again = served_as(&operations, complete, id).expect("served");
+    let again = served_as(&operations, done, id).expect("served");
     assert_eq!(again, Transacted::Replayed(answer));
     let other = json!({"op": "create", "task": "b", "title": "B"});
     assert_eq!(
