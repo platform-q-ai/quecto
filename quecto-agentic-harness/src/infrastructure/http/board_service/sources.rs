@@ -95,7 +95,9 @@ impl Drop for Unproven {
 
 /// Each principal's share of something TCP callers hold (answers, or
 /// connections): at most `per` at once each. A principal is a held
-/// token's name: one entry for each name let in since the server began.
+/// token's name, so the map keeps one entry for each admin-issued token
+/// name let in, for the server's life: bounded by the token store (and
+/// the admin who issues names), so it is never pruned.
 #[derive(Debug)]
 pub(super) struct Shares {
     each: Mutex<HashMap<String, Arc<Semaphore>>>,

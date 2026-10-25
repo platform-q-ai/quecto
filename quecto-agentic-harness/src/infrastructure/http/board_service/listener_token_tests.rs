@@ -225,7 +225,7 @@ fn slow_bodies_on_a_full_token_never_fill_the_slots() {
         .collect();
     std::thread::sleep(Duration::from_millis(300));
     let began = Instant::now();
-    let mut beta = from_source("127.0.0.1", address);
+    let beta = from_source("127.0.0.1", address);
     beta.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     let answer = exchange(beta, &closing_as("beta"));
     assert!(answer.starts_with("HTTP/1.1 200"), "{answer:?}");
