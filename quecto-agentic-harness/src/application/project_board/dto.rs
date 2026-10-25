@@ -91,10 +91,6 @@ pub enum BoardOp {
     /// mover gives (#2705 T4: back to ready from review takes one);
     /// `Move(Claimed, _)` claims a ready task.
     Move(TaskStatus, MoveReason),
-    /// A start's own undo (#2705 T4): an in-progress task back in the
-    /// review or blocked status its start moved it from. No op names it:
-    /// only the start use case makes it.
-    UndoStart(TaskStatus),
     /// The holder links a pull request.
     AddPr(u64),
     /// The holder unlinks a pull request deliberately (a wrong or
@@ -112,7 +108,6 @@ impl BoardOp {
             Self::Renew => format!("board: renew {id}"),
             Self::TakeOver => format!("board: take over {id}"),
             Self::Move(to, _) => format!("board: move {id} to {}", to.as_str()),
-            Self::UndoStart(to) => format!("board: undo the start of {id} to {}", to.as_str()),
             Self::AddPr(pr) => format!("board: link pull request {pr} to {id}"),
             Self::RemovePr(pr) => format!("board: unlink pull request {pr} from {id}"),
         }
@@ -519,21 +514,14 @@ impl IdUser {
     }
 }
 
-/// A held task's status a start's undo moved it back to, or tried to
-/// (S4c): a task started from review or blocked returns there once its
-/// run has ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Restored {
-    pub status: TaskStatus,
-    pub moved: bool,
-}
-
 /// Where a start's undo left its run (S4c).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunAfterUndo {
-    /// The undo folded it back as failed.
+    /// The undo folded it back as failed, which moved the task back to
+    /// ready, releasing it (#2705 T5).
     Folded,
-    /// It had ended already (another writer ended it).
+    /// It had ended already (another writer ended it, and its end moved
+    /// the task).
     EndedAlready,
     /// It could not be folded back: it is still open, for `end_run`.
     Open,
@@ -545,6 +533,17 @@ impl RunAfterUndo {
             Self::Folded => "folded",
             Self::EndedAlready => "ended_already",
             Self::Open => "open",
+        }
+    }
+
+    /// Whether the undo released the task (#2705 T5): its fold-back moved
+    /// the task back to ready; a run left open keeps it in progress, held;
+    /// one another writer ended moved it as that end says (`None`).
+    pub fn released(self) -> Option<bool> {
+        match self {
+            Self::Folded => Some(true),
+            Self::Open => Some(false),
+            Self::EndedAlready => None,
         }
     }
 }
@@ -685,18 +684,18 @@ pub enum ProjectBoardError {
     /// The task and run `run` were written, but the coordinator did not
     /// launch (`reason`, as the launch said, or the call cancelled before
     /// it). The start was undone as far as it could be: the run where the
-    /// undo left it (`run_state`); when the start took the claim, whether
-    /// the task went back to ready, releasing it (`released`); and, for a
-    /// task held in review or blocked before, whether it went back there
-    /// (`restored`). With `still_running` (a coordinator that came up wrong
-    /// and could not be stopped) nothing was undone: the run is open and
-    /// the claim held.
+    /// undo left it (`run_state`), and whether that released the task
+    /// (`released`, #2705 T5): true when the undo folded the run back as
+    /// failed, which moves the task back to ready in the same write; false
+    /// when the run is left open, the task in progress and held; `None`
+    /// when another writer ended the run first, its end moving the task.
+    /// With `still_running` (a coordinator that came up wrong and could not
+    /// be stopped) nothing was undone: the run is open and the claim held.
     LaunchFailed {
         reason: String,
         run: u32,
         run_state: RunAfterUndo,
         released: Option<bool>,
-        restored: Option<Restored>,
         still_running: Option<String>,
     },
 }

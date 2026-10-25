@@ -28,10 +28,14 @@ use crate::domain::project_board::value_objects::vocabulary::{PlanState, RunOutc
 /// it: its `head`; the whole `task`; `plan`, the version `version` names
 /// whole (#2481 M4b), or with none named the task's accepted plan
 /// (`null` while it has none, or while its file is set aside);
+/// `item_states`, each of its task items' state ([`item_states_json`],
+/// #2705 T5; `null` with no plan);
 /// `plans`, each version in brief, by version; `runs`, by number, each in
 /// brief but the latest readable one, whole; `may_be_incomplete`,
-/// whether a file that may hold one of its plans or runs is set aside, and
-/// `quarantined`, those files, as a listing shows them.
+/// whether a file that may hold one of its plans or runs is set aside;
+/// `quarantined`, those files, as a listing shows them; and
+/// `inconsistent`, the task's states that contradict its runs and plan
+/// (`ShownTask::inconsistent`, #2705 T5), named and never rewritten.
 pub(super) fn shown_fields(shown: &ShownTask, version: Option<u32>) -> Map<String, Value> {
     let latest = shown.latest_run().map(|run| run.fields().number);
     let runs = shown
@@ -42,10 +46,15 @@ pub(super) fn shown_fields(shown: &ShownTask, version: Option<u32>) -> Map<Strin
             false => run_brief_json(run),
         });
     let plan = shown.plan(version);
+    let inconsistent: Vec<&str> = shown.inconsistent().iter().map(|i| i.as_str()).collect();
     Map::from_iter([
         ("head".to_string(), head_json(&shown.head)),
         ("task".to_string(), task_json(&shown.task)),
         ("plan".to_string(), plan.map_or(Value::Null, plan_json)),
+        (
+            "item_states".to_string(),
+            plan.map_or(Value::Null, |plan| item_states_json(plan, shown)),
+        ),
         (
             "plans".to_string(),
             Value::Array(shown.plans.iter().map(plan_brief_json).collect()),
@@ -59,7 +68,23 @@ pub(super) fn shown_fields(shown: &ShownTask, version: Option<u32>) -> Map<Strin
             "quarantined".to_string(),
             quarantined_list(&shown.set_aside),
         ),
+        ("inconsistent".to_string(), json!(inconsistent)),
     ])
+}
+
+/// Each task item of `plan`, in its order, as `{"id", "state"}`: its
+/// state from the task's latest run (#2705 T5: `not_started` with none).
+/// Beside the plan, never in it, so its items go back to `edit_plan` as
+/// `show` gives them.
+fn item_states_json(plan: &Plan, shown: &ShownTask) -> Value {
+    let standings = shown.item_standings(plan);
+    let items = &plan.fields().items;
+    assert_eq!(items.len(), standings.len(), "one state per task item");
+    let states = items
+        .iter()
+        .zip(standings)
+        .map(|(item, standing)| json!({"id": slug_json(&item.id), "state": standing.as_str()}));
+    Value::Array(states.collect())
 }
 
 /// A listing's `head`, its `tasks` and the files set aside as
@@ -320,8 +345,10 @@ fn run_state(outcome: Option<RunOutcome>) -> &'static str {
 /// `version` and `state` (`draft` or `accepted`), its latest readable
 /// `run` (`number`, `plan_version`, `state`, `started` and `ended` as
 /// `show` gives them, its `deadline`, and its task `items` counted by
-/// state), each `null` when it has none, and `may_be_incomplete`, as
-/// `show` says it.
+/// state), each `null` when it has none; `items`, the current plan's task
+/// items counted by the state `show` gives each (`not_started` among
+/// them, #2705 T5; `null` with no plan); and `may_be_incomplete` and
+/// `inconsistent`, as `show` says them.
 fn summary_json(summary: &TaskSummary) -> Value {
     let plan = summary.plan.as_ref().map(|plan| {
         assert!(
@@ -349,11 +376,26 @@ fn summary_json(summary: &TaskSummary) -> Value {
             },
         })
     });
+    let items = summary.items.map(|counts| {
+        let started = counts.started;
+        json!({
+            "total": counts.total(),
+            "not_started": counts.not_started,
+            "todo": started.todo,
+            "doing": started.doing,
+            "review": started.review,
+            "done": started.done,
+            "blocked": started.blocked,
+        })
+    });
+    let inconsistent: Vec<&str> = summary.inconsistent.iter().map(|i| i.as_str()).collect();
     json!({
         "subtitle": summary.subtitle,
         "plan": plan,
         "run": run,
+        "items": items,
         "may_be_incomplete": summary.may_be_incomplete,
+        "inconsistent": inconsistent,
     })
 }
 

@@ -78,7 +78,7 @@ pub fn running(task: &Slug, run: u32) -> String {
          call end_run again; after three tries, tell the user here and stop. On \
          \"claim_expired\", renew(task \"{task}\") and call it again. Then, if the run \
          succeeded, link_pr(task \"{task}\", pr) for the run's pull request, if it opened one; \
-         otherwise move(task \"{task}\", to \"ready\"). Say how it went."
+         the run's end has moved the task. Say how it went."
     )
 }
 
@@ -89,9 +89,8 @@ pub fn undo(task: &Slug) -> String {
     format!(
         "On \"launch_failed\", undo by its fields: stop any coordinator still_running names \
          with agent_cmd kill; with run_state \"open\", call end_run(task \"{task}\", the run it \
-         names, outcome \"failed\"); then, if released is false, move(task \"{task}\", to \
-         \"ready\"), or, if released is null and restored.moved is false, tell the user the \
-         task stays in progress; say why the launch failed, and stop."
+         names, outcome \"failed\"), which moves the task back to ready; say why the launch \
+         failed, and stop."
     )
 }
 

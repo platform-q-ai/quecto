@@ -2,6 +2,7 @@
 //! `board_fold_back` record; and the ended swarm's board it folds back
 //! from, as the run reports port answers it (#2481 S4c follow-up).
 use crate::domain::project_board::entities::run::Run;
+use crate::domain::project_board::services::run_outcomes::StopKind;
 use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::telemetry::{
     FoldBackRecord, ItemCounts, RunOutcomeKind,
@@ -126,6 +127,18 @@ impl SwarmEnd {
             Self::Succeeded => RunOutcome::Succeeded,
             Self::Failed | Self::BudgetExhausted => RunOutcome::Failed,
             Self::Blocked | Self::Cancelled => RunOutcome::Stopped,
+        }
+    }
+
+    /// How a run that ended so stopped, when it stopped: blocked, or
+    /// cancelled (any other end is no stop, and moves its task by its
+    /// outcome alone, #2705 T5).
+    pub fn stop(self) -> StopKind {
+        match self {
+            Self::Blocked => StopKind::Blocked,
+            Self::Succeeded | Self::Failed | Self::BudgetExhausted | Self::Cancelled => {
+                StopKind::Cancelled
+            }
         }
     }
 }

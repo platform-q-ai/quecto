@@ -7,9 +7,7 @@ use crate::domain::project_board::services::fixtures_tests::{
     at, open_run, plan, task, without_claim,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
-use crate::domain::project_board::value_objects::vocabulary::{
-    PlanState, Resolution, TaskStatus::*,
-};
+use crate::domain::project_board::value_objects::vocabulary::{PlanState, Resolution};
 
 /// Run `number` of plan `version`, ended at 10:00 as `outcome`, its items
 /// standing as `items` says.

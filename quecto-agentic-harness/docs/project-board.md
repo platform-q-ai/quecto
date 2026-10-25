@@ -293,7 +293,9 @@ anything is built.
     "deadline": "2026-10-11T09:00:00Z" | null,
     "items": { "total": 5, "todo": 1, "doing": 2, "review": 0, "done": 2, "blocked": 0 }
   },
-  "may_be_incomplete": false
+  "items": null | { "total": 5, "not_started": 0, "todo": 1, "doing": 2, "review": 0, "done": 2, "blocked": 0 },
+  "may_be_incomplete": false,
+  "inconsistent": []
 }
 ```
 
@@ -304,7 +306,9 @@ anything is built.
 | `run` | The task's latest readable run: `number`, `plan_version`, `state`, `started` and `ended` as `show` gives them; `deadline`; and `items`, how many of its task items stand in each state (`todo`, `doing`, `review`, `done`, `blocked`) and in all. `null` when it has none |
 | `items` of a running run | All `0`: a run records its task items on the board when it ends (folded back from its swarm, or ended by hand), so while it runs the board holds none. Its swarm's own board has them live |
 | `deadline` | Nominal: the run's `started` plus the `deadline_seconds` of the team of the plan the run ran, or a day when the team names none (or the plan names no team), the deadline a start briefs the swarm with. The swarm's own deadline starts a little later, when its coordinator creates it. `null` when it is unknown: the plan the run ran is not readable on the board |
+| `items` (top level) | The task items of `plan`, counted by the state `show`'s `item_states` gives each (#2705 T5): `not_started`, or as the latest run recorded it. `null` when there is no `plan`. Page and chat read item states from this one source |
 | `may_be_incomplete` | As `show` gives it: a file that may hold one of the task's plans or runs is set aside |
+| `inconsistent` | As `show` gives it (#2705 T5) |
 
 Summaries cost a whole read of the board (a fetch), made after the listing,
 and are taken only from the board the listing was read at, so a summary always
@@ -335,10 +339,12 @@ failure refuses it, as before.
 | Field | Meaning |
 |---|---|
 | `plan` | The task's accepted plan, whole: the version the task names, when the board holds it accepted. `null` while it has none, or while its file is set aside |
+| `item_states` | Each task item of `plan`, in its order, as `{"id", "state"}` (#2705 T5): the state the task's latest run recorded for it (`todo`, `doing`, `review`, `done`, `blocked`; `todo` while that run is still going, as it records its items when it ends), or `not_started` while the task has no run or its latest run ran another version of the plan. `null` with no `plan`. Kept beside the plan, never in it, so the plan's items go back to `edit_plan` as `show` gives them |
 | `plans` | Each version of the task's plan, by version, in brief: `version`, `state`, `proposed_by`, `updated` |
 | `runs` | Each readable run of the task, by number: the latest readable one whole (its task items, owners and evidence), every other in brief (`number`, `plan_version`, `state`, `started`, `ended`, `cost_tokens`). A run's owners and evidence have credentials redacted, as text from outside the board does |
 | `may_be_incomplete` | Whether a file that may hold one of the task's plans or runs is set aside: one of the task's own, or a kept file whose name spells none in `plans/` or `runs/`. Its plans and runs may then be missing one |
 | `quarantined` | Those files, as a listing's `quarantined` shows them; one of a plan or run also names its `kind`, `task` and `number` |
+| `inconsistent` | The task's states that contradict its runs and plan (#2705 T5), legacy states the lifecycle never makes: `done_without_plan` (done and completed with no plan accepted and no run, such as a swarm spawned by hand; a task done without a run says so in its resolution instead), `in_progress_without_run` (in progress with no run going), `run_going_outside_progress` (a run going while the task is in any other status). `[]` when there is none, and always `[]` while `may_be_incomplete` (the runs read may not be all of them). A read names them and never rewrites them |
 
 `show(task, version)` gives that version of the task's plan as `plan`, whole and
 in the same shape, whatever its state, a draft included (#2481 M4b), in place of
@@ -366,7 +372,9 @@ is then counted, not shown. A cut answer keeps, in order:
    (`latest_run_items_more` left out), then older runs in brief (`runs_more`
    left out); no run when the latest does not fit;
 3. the newest plan versions (`plans_more` left out);
-4. the files set aside (`quarantined_more` left out).
+4. the files set aside (`quarantined_more` left out);
+5. the leading `item_states` that fit (`item_states_more` left out): the
+   latest run, kept before them, shows its own items' states already.
 
 A plan at the board's limits, with every run and version, is about 1.6 MB whole.
 
@@ -618,15 +626,15 @@ and the answer lists them as `not_applied`.
   then nothing is launched; or during the launch, then the launch is dropped
   and a coordinator that came up anyway is stopped), or the launch fails
   unexpectedly, the start is undone as far as it can be: the run is folded
-  back as `failed`, and, once the run has ended, a task the start claimed moves
-  back to ready, releasing it, and one held in review or blocked goes back
-  there (one claimed or in progress stays in progress). The undo writes even
-  when the call was cancelled. `launch_failed` gives the launch's `reason`, the
-  `run`, `run_state` (`folded` when the undo folded it back, `ended_already`
-  when another writer had ended it, `open` when it could not be folded back:
-  end it with `end_run`, below), whether the claim was `released` (`null` when
-  the start did not take it), and `restored` (`null`, or the `status` the task
-  was held in and whether it `moved` back there).
+  back as `failed`, which moves the task back to ready, releasing it, in the
+  same write, whatever status the start took it from (#2705 T5: a run's end
+  moves its task, "Ending a run", below). The undo writes even when the call
+  was cancelled. `launch_failed` gives the launch's `reason`, the `run`,
+  `run_state` (`folded` when the undo folded it back, `ended_already` when
+  another writer had ended it, `open` when it could not be folded back: end
+  it with `end_run`, below), and `released` (`true` when the undo released
+  the task, `false` while the run is open and the task held, `null` when
+  another writer's end moved it).
 - A coordinator that came up outside a container is stopped, and the start
   undone. A launch waits for spawn at most 15 minutes.
 - Nothing is undone while a coordinator may still be running: one that came
@@ -691,7 +699,8 @@ holder only once its runs have ended. Its claim holder ends it, in this order:
 3. Stop the coordinator with `agent_cmd kill`. Until it has stopped, `end_run`
    answers `run_live`, naming the coordinator's `agent` to kill.
 4. `end_run(task, run, outcome, expected_updated)` with `succeeded`, `stopped`
-   or `failed`.
+   or `failed`. The end moves the task (see "Where a run's end leaves its
+   task", below).
 5. Renew the claim before it lapses: it lasts 2 hours, and nothing renews it
    while the swarm runs. If it has expired, renew it if it is yours
    (`renew`), or take the task over if it is another's (`take_over`), then
@@ -877,7 +886,35 @@ one the task does not have (`no_such_run`). The answer gives the `run`, as
 `show` gives a run in full, `liveness`, and, for a run ended with no swarm board
 kept (as lost too), `items_recorded`: "items recorded as todo: no swarm report".
 A run recorded from its swarm's board carries no `items_recorded`: its items
-show where each stood. `quecto board end-run` takes the same fields.
+show where each stood. `quecto board end-run` takes the same fields. The
+answer's `status` is where the end left the task.
+
+### Where a run's end leaves its task
+
+A run's end writes its task's status in the same commit as the run (#2705 T5),
+whether `end_run` ends it or a fold-back (a start's undo included):
+
+| The run ended | The task |
+|---|---|
+| `succeeded` | review, its holder keeping the claim |
+| `stopped`, its swarm's kept board ended blocked | blocked, its holder keeping the claim |
+| `stopped` otherwise (cancelled, or no board kept), `failed` or `lost` | ready, its claim released |
+
+Only a held task moves (claimed, in progress, in review or blocked); a task in
+any other status, or already where the end moves it, is left, and the run is
+written alone. Nothing follows the end: `move` refuses in_progress to ready,
+review or blocked (`use_lifecycle`, `end_run`). An `end_run` of a run that
+has ended answers `run_ended` before any claim is checked, as the end may
+have released the claim.
+
+The Pocket relay's Stop (quecto-pocket `stop_board_run`) ends the run as
+`stopped` through `quecto board end-run`, which keeps no board, so the task
+goes back to ready, released. It then reads the task again and moves it back
+to ready only while it is still in progress or claimed: it finds it ready and
+moves nothing. A legacy task left in progress with no run going (a run ended
+by an older quecto) shows `in_progress_without_run` in `show`; no `move`
+releases it, and starting it again (`start`, from in progress, by its holder)
+then ending that run moves it on.
 
 ## Status moves
 
@@ -889,7 +926,6 @@ lifecycle makes the rest. Every move `move` makes:
 | draft to ready, ready to draft | Anyone |
 | ready to claimed | Anyone, taking a two-hour claim |
 | claimed to ready | Its holder, the claim live or lapsed (a release) |
-| in_progress to ready | Its holder, the claim live or lapsed, once its run has ended: the Pocket relay's Stop releases a stopped run's task so, until a run's end moves its task itself (#2705 T5) |
 | review to done | Its holder, the task linking no pull request or change (Mark done) |
 | review to ready | Its holder while the claim is live, anyone once it is not, with a `reason` |
 | blocked to ready | Its holder while the claim is live, anyone once it is not |
@@ -902,14 +938,14 @@ lifecycle makes answers the rule `use_lifecycle`, with `action`, `from` and
 | Move | `action` |
 |---|---|
 | ready, claimed, review or blocked to in_progress | `start`: `start(task, plan_version)` is the only way to in progress |
-| in_progress to review or blocked | `end_run`: the task's run decides it |
+| in_progress to ready, review or blocked | `end_run`: the task's run decides it (#2705 T5) |
 | claimed to blocked | `release`: blocking is a run's outcome, so work without a run is released with `move(task, to ready)` |
 | ready or claimed to done | `done_without_run` |
 
 Every other pair answers `not_allowed`. A merged pull request completes a task
 only from review (Claiming and completing a task, below). A start undone
-after its coordinator did not launch takes its task back to review or blocked
-by the start's own undo, never by `move`.
+after its coordinator did not launch takes its task back to ready by its
+run's end, never by `move`.
 
 ### A reason to move back
 
@@ -975,7 +1011,7 @@ those not done yet in `tasks`, and those not on the board (or set aside) in
 `missing`.
 
 Only the claim's holder renews it, releases it (`move(task, to ready)` from
-claimed or in progress) and links or unlinks a pull request: anyone else is
+claimed; a task in progress is released by its run's end) and links or unlinks a pull request: anyone else is
 refused (`not_holder`), and once the claim has expired that refusal carries
 `expired: true` and says to take the task over first with `take_over(task)`,
 on every holder-only action alike (#2683). A link is judged on the task first:

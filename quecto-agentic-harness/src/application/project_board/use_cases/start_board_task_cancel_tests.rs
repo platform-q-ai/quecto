@@ -117,7 +117,6 @@ fn a_start_cancelled_before_its_launch_launches_nothing_and_is_undone() {
             run: 1,
             run_state: RunAfterUndo::Folded,
             released: Some(true),
-            restored: None,
             still_running: None,
         })
     );
@@ -178,98 +177,8 @@ fn a_launch_that_panics_is_undone() {
             run: 1,
             run_state: RunAfterUndo::Folded,
             released: Some(true),
-            restored: None,
             still_running: None,
         })
     );
     assert_undone(&store);
-}
-
-/// Review round 2: a task held in review or blocked whose start failed to
-/// launch goes back there once its run is folded back; one claimed stays
-/// in progress (no row of the table moves it back), still held.
-#[test]
-fn a_held_start_undone_goes_back_to_its_status() {
-    use crate::application::project_board::dto::Restored;
-    use crate::application::project_board::use_cases::fixtures_tests::at;
-    use crate::domain::project_board::entities::claim::Claim;
-    use crate::domain::project_board::entities::task::TaskFields;
-    for (from, restored, after) in [
-        (
-            TaskStatus::Review,
-            Some(Restored {
-                status: TaskStatus::Review,
-                moved: true,
-            }),
-            TaskStatus::Review,
-        ),
-        (
-            TaskStatus::Blocked,
-            Some(Restored {
-                status: TaskStatus::Blocked,
-                moved: true,
-            }),
-            TaskStatus::Blocked,
-        ),
-        (TaskStatus::Claimed, None, TaskStatus::InProgress),
-    ] {
-        let held = move |fields: TaskFields| TaskFields {
-            status: from,
-            claim: Some(Claim {
-                holder: person("Ada"),
-                since: at("09:00:00"),
-                expires: at("11:00:00"),
-            }),
-            ..fields
-        };
-        let store = seeded(held, vec![plan(1, PlanState::Accepted)], vec![]);
-        let refused = super::starter(&store, Some(Launcher::failing())).execute(&confirmed(1));
-        match refused {
-            Err(ProjectBoardError::LaunchFailed {
-                run_state: RunAfterUndo::Folded,
-                released: None,
-                restored: got,
-                still_running: None,
-                ..
-            }) => assert_eq!(got, restored, "{from:?}"),
-            other => panic!("{from:?}: {other:?}"),
-        }
-        let (task, runs) = task_and_runs(&store);
-        assert_eq!(task.fields().status, after, "{from:?}");
-        assert!(task.fields().claim.is_some(), "still held");
-        assert_eq!(runs[0].fields().outcome, Some(RunOutcome::Failed));
-    }
-    let moved_back = ProjectBoardError::LaunchFailed {
-        reason: "x".into(),
-        run: 1,
-        run_state: RunAfterUndo::Folded,
-        released: None,
-        restored: Some(Restored {
-            status: TaskStatus::Review,
-            moved: true,
-        }),
-        still_running: None,
-    };
-    assert_eq!(
-        moved_back.to_string(),
-        "the coordinator did not launch: x; run 1 was folded back as failed, and the task is \
-         back in review"
-    );
-    let stuck = ProjectBoardError::LaunchFailed {
-        reason: "x".into(),
-        run: 1,
-        run_state: RunAfterUndo::Folded,
-        released: None,
-        restored: Some(Restored {
-            status: TaskStatus::Blocked,
-            moved: false,
-        }),
-        still_running: None,
-    };
-    assert!(
-        stuck
-            .to_string()
-            .ends_with("but the task could not be moved back to blocked: it stays in progress, and you still hold it"),
-        "{stuck}"
-    );
 }

@@ -35,12 +35,16 @@
 //! claim expired takes the task over first), recording what is known of
 //! it as a held end does: its swarm's kept board, or every item as todo
 //! (#2657). With `expected_updated`, the
-//! task must still be as the caller read it. Only the run is written: the
-//! task is left for its holder to move. Blocking: a lost write pauses the
-//! calling thread before it is tried again.
+//! task must still be as the caller read it. The end moves the task in the
+//! same write (#2705 T5, `run_outcomes::task_after_end`): a success to
+//! review, a stop whose kept board ended blocked to blocked, any other end
+//! back to ready with its claim released. Blocking: a lost write pauses
+//! the calling thread before it is tried again.
 use std::sync::Arc;
 
-use super::board_change::{When, checked_now, checked_writer, commit_run, task_on};
+use super::board_change::{
+    When, checked_now, checked_writer, commit_run, run_end_writes, task_on, written_run_end,
+};
 use super::board_view;
 use crate::application::project_board::dto::{
     EndedRun, LivenessCheck, ProjectBoardError, RunEnd, RunEndOutcome, RunReport,
@@ -60,12 +64,14 @@ use crate::application::project_board::telemetry::{OpFacts, ReportSeen, counted,
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::services::claims::claim_facts;
+use crate::domain::project_board::services::run_outcomes::{StopKind, task_after_end};
 use crate::domain::project_board::services::runs::{
     HeldEnd, Reported, end_held, end_lost, run_and_plan,
 };
 use crate::domain::project_board::value_objects::code_ref::CommitId;
-use crate::domain::project_board::value_objects::rule_error::SwarmReport;
+use crate::domain::project_board::value_objects::rule_error::{BoardRuleError, SwarmReport};
 use crate::domain::project_board::value_objects::telemetry::RunOutcomeKind;
+use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
 pub struct EndRun {
     store: Arc<dyn ProjectBoardStore>,
@@ -171,12 +177,12 @@ impl EndRun {
         // time it is written.
         let mut asked = None;
         self.asked_ahead(request, report.as_ref(), &mut asked);
-        let mut items = None;
+        let (mut items, mut after) = (None, None);
         let mut written = self.write(
             request,
             &message,
             report.as_ref(),
-            (Evidence::Kept, &mut asked, &mut items),
+            (Evidence::Kept, &mut asked, &mut items, &mut after),
             &mut facts,
         );
         // Only a run past the board's bytes is ended again, smaller (an
@@ -189,7 +195,7 @@ impl EndRun {
                 request,
                 &message,
                 report.as_ref(),
-                (Evidence::Left, &mut asked, &mut items),
+                (Evidence::Left, &mut asked, &mut items, &mut after),
                 &mut facts,
             );
             if let (Some(facts), Some((attempts, lost, races))) = (facts.as_deref_mut(), first) {
@@ -209,10 +215,18 @@ impl EndRun {
                 (Some(_), None) => ReportSeen::NoneKept,
             });
         }
+        // Where the end left the task (#2705 T5): moved, or as it was read.
+        if let (Some(facts), Ok(_)) = (facts.as_deref_mut(), &written) {
+            facts.status_to = after;
+        }
         // A kept swarm board folded onto the run (the end says so: `items`
         // holds what it folded): its own fold-back record (#2667).
-        if let (Some(facts), Some(started), Some(items), Some(_), Ok([BoardArtifact::Run(run)])) =
-            (facts, started, items, &report, written.as_deref())
+        let run_written = written
+            .as_deref()
+            .ok()
+            .map(|artifacts| written_run_end(artifacts).1);
+        if let (Some(facts), Some(started), Some(items), Some(_), Some(run)) =
+            (facts, started, items, &report, run_written)
         {
             assert_eq!(
                 run.fields().items,
@@ -227,63 +241,60 @@ impl EndRun {
                 elapsed: self.clock.elapsed().saturating_sub(started),
             });
         }
-        match written?.as_slice() {
-            [BoardArtifact::Run(run)] => {
-                assert_eq!(
-                    run.fields().number,
-                    number,
-                    "the run ended is the one named"
-                );
-                // Whether this front end looked for the swarm still running.
-                let liveness = match self.liveness {
-                    Some(_) => LivenessCheck::Checked,
-                    None => LivenessCheck::NotChecked,
-                };
-                // A board recorded need not be kept: the run has ended.
-                // A loss records the kept board too (#2657).
-                let report = match (&report, &self.reports) {
-                    (Some(_), Some(reports)) => {
-                        reports.recorded(id, number);
-                        RunReport::Kept
-                    }
-                    (None, _) | (_, None) => RunReport::Unreported,
-                };
-                // How many evidence revisions a success left unchecked, so a
-                // silent pass shows (#2666 round 2).
-                let unchecked = match (request.outcome, &asked) {
-                    (RunEndOutcome::Succeeded, Some((_, Ok(judged)))) => {
-                        Some(u64::try_from(judged.unchecked).unwrap_or(u64::MAX))
-                    }
-                    (RunEndOutcome::Succeeded, Some((_, Err(_))) | None)
-                    | (RunEndOutcome::Stopped | RunEndOutcome::Failed | RunEndOutcome::Lost, _) => {
-                        None
-                    }
-                };
-                Ok(EndedRun {
-                    run: run.clone(),
-                    status: crate::domain::project_board::value_objects::vocabulary::TaskStatus::InProgress,
-                    liveness,
-                    report,
-                    unchecked,
-                })
+        let written = written?;
+        let (_, run) = written_run_end(&written);
+        assert_eq!(
+            run.fields().number,
+            number,
+            "the run ended is the one named"
+        );
+        let status = after.expect("a written end read its task");
+        // Whether this front end looked for the swarm still running.
+        let liveness = match self.liveness {
+            Some(_) => LivenessCheck::Checked,
+            None => LivenessCheck::NotChecked,
+        };
+        // A board recorded need not be kept: the run has ended.
+        // A loss records the kept board too (#2657).
+        let report = match (&report, &self.reports) {
+            (Some(_), Some(reports)) => {
+                reports.recorded(id, number);
+                RunReport::Kept
             }
-            other => panic!("an end_run writes its run alone, not {other:?}"),
-        }
+            (None, _) | (_, None) => RunReport::Unreported,
+        };
+        // How many evidence revisions a success left unchecked, so a
+        // silent pass shows (#2666 round 2).
+        let unchecked = match (request.outcome, &asked) {
+            (RunEndOutcome::Succeeded, Some((_, Ok(judged)))) => {
+                Some(u64::try_from(judged.unchecked).unwrap_or(u64::MAX))
+            }
+            (RunEndOutcome::Succeeded, Some((_, Err(_))) | None)
+            | (RunEndOutcome::Stopped | RunEndOutcome::Failed | RunEndOutcome::Lost, _) => None,
+        };
+        Ok(EndedRun {
+            run: run.clone(),
+            status,
+            liveness,
+            report,
+            unchecked,
+        })
     }
 
     /// One pass at ending the run, as `request` says, with `report`'s
     /// items, owners and cost when there is one (its evidence kept or left
-    /// out as `evidence` says), noting in `facts`, when given, the write's
-    /// attempts and the task as last read. A success over a kept report
-    /// counts the revisions its evidence names that the remote does not
-    /// hold, asking the remote only for revisions `asked` holds no answer
-    /// for.
+    /// out as `evidence` says), and its task moved as the end says (#2705
+    /// T5), keeping in `after` the status the end leaves it in; noting in
+    /// `facts`, when given, the write's attempts and the task as last read.
+    /// A success over a kept report counts the revisions its evidence
+    /// names that the remote does not hold, asking the remote only for
+    /// revisions `asked` holds no answer for.
     fn write(
         &self,
         request: &RunEnd,
         message: &str,
         report: Option<&SwarmRunView>,
-        (evidence, asked, kept): (Evidence, &mut Asked, &mut Option<FoldBackItems>),
+        (evidence, asked, kept, after): (Evidence, &mut Asked, &mut Kept, &mut After),
         facts: &mut Option<&mut OpFacts>,
     ) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
         let id = &request.task;
@@ -297,7 +308,7 @@ impl EndRun {
             facts.as_deref_mut(),
             |board, when| {
                 // This attempt's read, or none: never an earlier one's.
-                read = None;
+                (read, *after) = (None, None);
                 let task = task_on(board, id)?;
                 if noting {
                     read = Some((task.fields().status, claim_facts(task, actor, &when.now)));
@@ -308,7 +319,12 @@ impl EndRun {
                 let (ended, folded) =
                     self.ended(request, report, (evidence, &mut *asked), board, when)?;
                 *kept = folded;
-                Ok(vec![BoardArtifact::Run(ended)])
+                // The run's end moves its task, in the same write (#2705
+                // T5): a stop to blocked only when its swarm ended blocked.
+                let stop = report.map_or(StopKind::Cancelled, |view| view.end.stop());
+                let moved = task_after_end(task, &ended, stop, &when.now)?;
+                *after = Some(moved.as_ref().unwrap_or(task).fields().status);
+                Ok(run_end_writes(ended, moved))
             },
         );
         if let Some(facts) = facts.as_deref_mut() {
@@ -349,6 +365,12 @@ impl EndRun {
         let runs = board_view::runs_of(board, id)?;
         let plans = board_view::plans_of(board, id)?;
         let (run, plan) = run_and_plan(&runs, &plans, number)?;
+        // A run that has ended says so first, whoever asks: its end may
+        // have released the claim the rules below ask for (#2705 T5).
+        match run.is_open() {
+            true => {}
+            false => return Err(ProjectBoardError::Rule(BoardRuleError::RunEnded(number))),
+        }
         // The items folded from the board its swarm left, when one was
         // kept: every outcome folds them, a loss too (#2657, #2667).
         let folded = report.map(|view| run_items(plan, view, &*self.cells, evidence));
@@ -521,6 +543,12 @@ struct Judged {
 /// The evidence the remote was asked about, and how it judged it or why
 /// it could not.
 type Asked = Option<(EvidenceRevisions, Result<Judged, ProjectBoardError>)>;
+
+/// The items an attempt folded from the board its swarm left, if kept.
+type Kept = Option<FoldBackItems>;
+
+/// The status an attempt's end leaves its task in (#2705 T5).
+type After = Option<TaskStatus>;
 
 #[cfg(test)]
 #[path = "end_run_tests.rs"]

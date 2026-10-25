@@ -21,7 +21,7 @@ fn answered_task(task: Task, plans: Vec<Plan>, runs: Vec<Run>) -> Value {
 #[test]
 fn items_with_no_run_read_not_started() {
     let answer = answered(shown(vec![plan(2, PlanState::Accepted)], vec![], vec![]));
-    assert_eq!(answer["plan"]["items"][0]["state"], json!("not_started"));
+    assert_eq!(answer["item_states"][0]["state"], json!("not_started"));
     assert_eq!(answer["inconsistent"], json!([]));
 }
 
@@ -32,7 +32,7 @@ fn items_read_their_state_from_the_latest_run() {
         vec![run(1, 2, RunOutcome::Failed, &[])],
         vec![],
     ));
-    assert_eq!(answer["plan"]["items"][0]["state"], json!("done"));
+    assert_eq!(answer["item_states"][0]["state"], json!("done"));
 }
 
 /// The land-layout-2652 case: done, no plan accepted, no run.

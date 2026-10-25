@@ -74,7 +74,7 @@ fn summarized(
         .iter()
         .map(|task| task.fields().id.as_str().to_string());
     let summaries = rows.into_iter().map(|row| match row {
-        RowSummary::Summary(summary) => summary,
+        RowSummary::Summary(summary) => *summary,
         RowSummary::Skipped(why) => panic!("a row skipped: {why}"),
     });
     Some(ids.zip(summaries).collect())
@@ -104,7 +104,7 @@ fn each_listed_task_is_summarised_in_its_order() {
     let again = read(&store, &listing(&store));
     let rows = entries
         .into_iter()
-        .map(|(_, summary)| RowSummary::Summary(summary))
+        .map(|(_, summary)| RowSummary::Summary(Box::new(summary)))
         .collect();
     assert_eq!(again, Summarized::Rows(rows));
 }

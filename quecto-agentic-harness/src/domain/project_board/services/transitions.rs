@@ -67,12 +67,9 @@ const TRANSITIONS: &[(TaskStatus, TaskStatus, Actor, ClaimEffect, Takes)] = &[
     // ([`held_by_links`], as it holds a draft's or a ready one's
     // archive); the claim goes with it.
     (Review,     Archived,   Actor::HolderWhileLive, ClaimEffect::Clear, Takes::Nothing),
-    // Release: the task goes back to the board. From progress only once
-    // its run has ended (`may_move_with`): the Pocket relay's Stop
-    // releases a stopped run's task so, until a run's end moves its task
-    // itself (#2705 T5).
+    // Release: the task goes back to the board. A task in progress goes
+    // back by its run's end (#2705 T5), never by `move`.
     (Claimed,    Ready,      Actor::Releaser,        ClaimEffect::Clear, Takes::Nothing),
-    (InProgress, Ready,      Actor::Releaser,        ClaimEffect::Clear, Takes::Nothing),
     // Back to ready from review says why.
     (Review,     Ready,      Actor::HolderWhileLive, ClaimEffect::Clear, Takes::Reason),
     (Blocked,    Ready,      Actor::HolderWhileLive, ClaimEffect::Clear, Takes::Nothing),
@@ -81,15 +78,17 @@ const TRANSITIONS: &[(TaskStatus, TaskStatus, Actor, ClaimEffect, Takes)] = &[
 /// Every move the task's lifecycle makes, never `move` (#2705 T4), and the
 /// action that makes it or is the way on, which `move`'s refusal names:
 /// `start` is the only way to in progress; a run's end decides where a
-/// task in progress goes; work without a run is released, never blocked
-/// (blocking is a run's outcome); and work done without a run is finished
-/// by `done_without_run`. A pair in neither table is no move at all.
+/// task in progress goes (`run_outcomes::task_after_end`, #2705 T5);
+/// work without a run is released, never blocked (blocking is a run's
+/// outcome); and work done without a run is finished by
+/// `done_without_run`. A pair in neither table is no move at all.
 #[rustfmt::skip] // One readable rule per row.
 const LIFECYCLE: &[(TaskStatus, TaskStatus, LifecycleAction)] = &[
     (Ready,      InProgress, LifecycleAction::Start),
     (Claimed,    InProgress, LifecycleAction::Start),
     (Review,     InProgress, LifecycleAction::Start),
     (Blocked,    InProgress, LifecycleAction::Start),
+    (InProgress, Ready,      LifecycleAction::EndRun),
     (InProgress, Review,     LifecycleAction::EndRun),
     (InProgress, Blocked,    LifecycleAction::EndRun),
     (Claimed,    Blocked,    LifecycleAction::Release),

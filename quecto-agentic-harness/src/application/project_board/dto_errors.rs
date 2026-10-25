@@ -2,7 +2,7 @@
 //! words), moved beside `dto.rs` unchanged as it grew past its room.
 use std::fmt;
 
-use super::{IdUser, ProjectBoardError, Restored, RunAfterUndo};
+use super::{IdUser, ProjectBoardError, RunAfterUndo};
 use crate::application::project_board::ports::{
     BoardClockError, BoardStoreError, PullRequestStatesError,
 };
@@ -132,8 +132,7 @@ impl fmt::Display for ProjectBoardError {
                 reason,
                 run,
                 run_state,
-                released,
-                restored,
+                released: _,
                 still_running,
             } => {
                 write!(f, "the coordinator did not launch: {reason}; ")?;
@@ -146,43 +145,20 @@ impl fmt::Display for ProjectBoardError {
                          then end the run with end_run(task, run {run}, outcome failed)"
                     );
                 }
+                // The run's end moves its task (#2705 T5): nothing else.
                 match run_state {
-                    RunAfterUndo::Folded => write!(f, "run {run} was folded back as failed")?,
-                    RunAfterUndo::EndedAlready => write!(f, "run {run} had already ended")?,
+                    RunAfterUndo::Folded => write!(
+                        f,
+                        "run {run} was folded back as failed, and the task is ready again"
+                    ),
+                    RunAfterUndo::EndedAlready => {
+                        write!(f, "run {run} had already ended, and its end moved the task")
+                    }
                     RunAfterUndo::Open => write!(
                         f,
-                        "run {run} could not be folded back: it is still open; end it with \
-                         end_run(task, run {run}, outcome failed)"
-                    )?,
-                }
-                match (released, restored) {
-                    (Some(true), _) => f.write_str(", and the task is ready again"),
-                    (Some(false), _) => f.write_str(
-                        ", but the task could not be moved back to ready: you still hold it; \
-                         once its run has ended, move it with move(task, to ready)",
+                        "run {run} could not be folded back: it is still open, and you still \
+                         hold the task; end it with end_run(task, run {run}, outcome failed)"
                     ),
-                    (
-                        None,
-                        Some(Restored {
-                            status,
-                            moved: true,
-                        }),
-                    ) => {
-                        write!(f, ", and the task is back in {}", status.as_str())
-                    }
-                    (
-                        None,
-                        Some(Restored {
-                            status,
-                            moved: false,
-                        }),
-                    ) => write!(
-                        f,
-                        ", but the task could not be moved back to {status}: it stays in \
-                         progress, and you still hold it",
-                        status = status.as_str()
-                    ),
-                    (None, None) => f.write_str(", and you still hold the task"),
                 }
             }
         }

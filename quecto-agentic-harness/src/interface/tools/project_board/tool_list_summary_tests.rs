@@ -301,6 +301,7 @@ fn a_summary_agrees_with_show_and_show_is_unchanged() {
             [
                 "head",
                 "inconsistent",
+                "item_states",
                 "may_be_incomplete",
                 "ok",
                 "op",
@@ -446,12 +447,14 @@ fn a_duplicate_artifact_skips_its_own_rows_summary() {
         RowSummary::Skipped(Box::new(ProjectBoardError::Duplicate {
             key: ArtifactKey::Plan(slug("a"), 1),
         })),
-        RowSummary::Summary(TaskSummary {
+        RowSummary::Summary(Box::new(TaskSummary {
             subtitle: None,
             plan: None,
             run: None,
+            items: None,
             may_be_incomplete: false,
-        }),
+            inconsistent: vec![],
+        })),
     ];
     let answer = answered(Listed::summarized(listing_of_two(), rows));
     assert_eq!(answer.get("summary_skipped"), None, "{answer}");
@@ -462,7 +465,7 @@ fn a_duplicate_artifact_skips_its_own_rows_summary() {
     assert_eq!(tasks[1]["id"], json!("b"));
     assert_eq!(
         tasks[1]["summary"],
-        json!({"subtitle": null, "plan": null, "run": null, "may_be_incomplete": false})
+        json!({"subtitle": null, "plan": null, "run": null, "items": null, "may_be_incomplete": false, "inconsistent": []})
     );
     assert_eq!(tasks[1].get("summary_skipped"), None, "{answer}");
 }

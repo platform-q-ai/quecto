@@ -61,13 +61,16 @@ fn a_run_another_writer_ended_is_left_as_it_ended_and_the_claim_released() {
             reason: "no container runtime".into(),
             run: 1,
             run_state: RunAfterUndo::EndedAlready,
-            released: Some(true),
-            restored: None,
+            released: None,
             still_running: None,
         })
     );
+    // The other writer's end (a cancel) released the task (#2705 T5).
     let (task, runs) = task_and_runs(&store);
-    assert_eq!(task.fields().status, TaskStatus::Ready);
+    assert_eq!(
+        (task.fields().status, &task.fields().claim),
+        (TaskStatus::Ready, &None)
+    );
     assert_eq!(
         runs[0].fields().outcome,
         Some(RunOutcome::Stopped),
@@ -76,7 +79,7 @@ fn a_run_another_writer_ended_is_left_as_it_ended_and_the_claim_released() {
     assert_eq!(
         refused.unwrap_err().to_string(),
         "the coordinator did not launch: no container runtime; run 1 had already ended, and \
-         the task is ready again"
+         its end moved the task"
     );
 }
 
@@ -117,7 +120,6 @@ fn a_coordinator_that_may_still_run_leaves_the_start_as_it_is() {
             run: 1,
             run_state: RunAfterUndo::Open,
             released: Some(false),
-            restored: None,
             still_running: Some("7f3a".into()),
         })
     );
@@ -202,7 +204,6 @@ fn a_coordinator_seen_running_after_a_failed_launch_leaves_the_start_as_it_is() 
                 run: 1,
                 run_state,
                 released,
-                restored: None,
                 still_running,
             }),
             "running: {running}"

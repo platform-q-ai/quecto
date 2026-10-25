@@ -21,7 +21,9 @@
 //!    older runs in brief (`runs_more`); none when the latest is left out;
 //! 3. the `plans` in brief, newest first (`plans_more`);
 //! 4. the files set aside, `quarantined`, in their order
-//!    (`quarantined_more`).
+//!    (`quarantined_more`);
+//! 5. the plan's task items' `item_states` (#2705 T5), the leading ones
+//!    that fit (`item_states_more`).
 //!
 //! A page of the plan (`show` given `approach_from` or `items_from`) is
 //! cut the same way: its approach, then its items, with their counts and
@@ -71,6 +73,7 @@ pub(super) fn capped(answer: Value) -> Value {
 /// A whole `show` past the cap, cut as the module says.
 fn capped_show(mut answer: Value) -> Value {
     let plan = answer["plan"].take();
+    let states = answer["item_states"].take();
     let runs = taken(&mut answer, "runs");
     let plans = taken(&mut answer, "plans");
     let files = taken(&mut answer, "quarantined");
@@ -79,11 +82,13 @@ fn capped_show(mut answer: Value) -> Value {
         .last()
         .and_then(|run| run["items"].as_array())
         .map_or(0, Vec::len);
+    let state_count = states.as_array().map_or(0, Vec::len);
     // The markers at their widest: every count at most its whole.
     let mut markers = json!({
         "plan_truncated": true,
         "approach_more": approach_chars, "approach_next": approach_chars,
         "items_more": items, "items_next": items,
+        "item_states_more": state_count,
         "latest_run_items_more": latest_items,
         "runs_more": runs.len(),
         "plans_more": plans.len(),
@@ -123,6 +128,16 @@ fn capped_show(mut answer: Value) -> Value {
     let shown = fitted(files, &mut room);
     noted(&mut answer, "quarantined_more", total - shown.len());
     answer["quarantined"] = Value::Array(shown);
+    // The plan's task items' states last (#2705 T5): the latest run shows
+    // its own items' states already. The leading ones that fit.
+    answer["item_states"] = match states {
+        Value::Array(states) => {
+            let shown = fitted(states, &mut room);
+            noted(&mut answer, "item_states_more", state_count - shown.len());
+            Value::Array(shown)
+        }
+        none => none,
+    };
     within_cap(&answer, used);
     answer
 }

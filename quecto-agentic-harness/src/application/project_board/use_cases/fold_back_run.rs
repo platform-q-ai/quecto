@@ -1,8 +1,8 @@
 //! A started task's run folded back once its swarm has ended (S4, #2479):
 //! how it ended, where each task item of its plan stood, with owners and
 //! evidence, and what it cost, mapped as [`fold_back`](super::super::fold_back)
-//! says. The run is written alone, in one commit: the task is left as it
-//! is, for its holder (or the playbook) to move.
+//! says. The run's end moves its task as its swarm ended (#2705 T5:
+//! `run_outcomes::task_after_end`), task and run in one commit.
 //!
 //! A run folds back once. One that has ended already (folded back, or
 //! ended as lost by the merge that completed its task) is
@@ -14,18 +14,19 @@
 //! the calling thread.
 use std::sync::Arc;
 
-use super::board_change::{checked_writer, commit_run, task_on};
+use super::board_change::{checked_writer, commit_run, run_end_writes, task_on, written_run_end};
 use super::board_view;
 use crate::application::project_board::dto::{FoldBackFacts, FoldedBack, ProjectBoardError};
 use crate::application::project_board::fold_back::{
     Evidence, FoldBackItems, SwarmRunView, cost_of, run_items,
 };
 use crate::application::project_board::ports::{
-    BoardArtifact, BoardClock, BoardStoreError, BoardTextCells, FoldBackOutcome, FoldBackRecorder,
+    BoardClock, BoardStoreError, BoardTextCells, FoldBackOutcome, FoldBackRecorder,
     ProjectBoardStore,
 };
 use crate::application::project_board::telemetry::{OpFacts, counted, summed};
 use crate::domain::project_board::entities::run::Run;
+use crate::domain::project_board::services::run_outcomes::task_after_end;
 use crate::domain::project_board::services::runs::{fold_back, run_and_plan};
 use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
@@ -165,19 +166,22 @@ impl FoldBackRun {
         let mut kept = None;
         let (store, clock) = (&*self.store, &*self.clock);
         let written = commit_run(store, clock, &message, write, |board, when| {
-            task_on(board, id)?;
+            let task = task_on(board, id)?;
             let runs = board_view::runs_of(board, id)?;
             let plans = board_view::plans_of(board, id)?;
             let (run, plan) = run_and_plan(&runs, &plans, number)?;
             let items = run_items(plan, view, &*self.cells, evidence);
             let cost = Some(cost_of(view));
             let folded = fold_back(run, plan, outcome, cost, items.items.clone(), &when.now)?;
+            // The run's end moves its task, in the same write (#2705 T5).
+            let moved = task_after_end(task, &folded, view.end.stop(), &when.now)?;
             // This attempt's items, never an earlier one's.
             kept = Some(items);
-            Ok(vec![BoardArtifact::Run(folded)])
+            Ok(run_end_writes(folded, moved))
         })?;
         let items = kept.expect("a written fold-back mapped its items");
-        Ok((written_run(written), items))
+        let (_, run) = written_run_end(&written);
+        Ok((run.clone(), items))
     }
 }
 
@@ -209,14 +213,6 @@ fn noted(
         facts.bytes = Some(counted(fields.text_bytes()));
     }
     result
-}
-
-/// The run a fold-back wrote: [`commit_run`] holds it to one run alone.
-fn written_run(artifacts: Vec<BoardArtifact>) -> Run {
-    match artifacts.as_slice() {
-        [BoardArtifact::Run(run)] => run.clone(),
-        other => panic!("a fold-back writes its run alone, not {other:?}"),
-    }
 }
 
 #[cfg(test)]

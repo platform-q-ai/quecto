@@ -165,7 +165,6 @@ fn show_answers_the_accepted_plan_each_version_and_the_runs() {
                 "title": "Build it",
                 "criteria": ["it is built"],
                 "depends_on": [],
-                "state": "done",
             }],
             "team": {
                 "roles": [{
@@ -185,6 +184,7 @@ fn show_answers_the_accepted_plan_each_version_and_the_runs() {
             "created": "2026-10-10T08:00:00Z",
             "updated": "2026-10-10T08:30:00Z",
         },
+        "item_states": [{"id": "build", "state": "done"}],
         "plans": [
             {"version": 1, "state": "superseded", "proposed_by": identity, "updated": "2026-10-10T08:30:00Z"},
             {"version": 2, "state": "accepted", "proposed_by": identity, "updated": "2026-10-10T08:30:00Z"},

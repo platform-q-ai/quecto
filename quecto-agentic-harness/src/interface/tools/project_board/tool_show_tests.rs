@@ -301,6 +301,11 @@ fn the_task_is_whole_and_the_rest_counted() {
     assert_eq!(cut["runs_more"], json!(MAX_RUN_NUMBER));
     assert_eq!(cut["plans_more"], json!(MAX_PLAN_VERSION));
     assert_eq!(cut["quarantined_more"], json!(200));
+    // #2705 T5: its task items' states are counted too.
+    assert_eq!(
+        (&cut["item_states"], &cut["item_states_more"]),
+        (&json!([]), &json!(MAX_ITEMS))
+    );
     // The task and the answer's own fields, nothing more.
     let task = bytes(&cut["task"]);
     assert!(bytes(&cut) - task < 1_024, "{}", bytes(&cut) - task);

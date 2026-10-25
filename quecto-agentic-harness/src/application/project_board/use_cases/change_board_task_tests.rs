@@ -503,7 +503,7 @@ fn linking(task: &str, number: u32, pr: u64) -> Change {
 #[test]
 fn a_task_whose_run_is_going_is_not_released() {
     let store = board();
-    seed(&store, held_by_ada(TaskStatus::InProgress));
+    seed(&store, held_by_ada(TaskStatus::Claimed));
     seed_artifacts(
         &store,
         vec![BoardArtifact::Run(board_artifacts::run("a", 1))],
@@ -568,7 +568,7 @@ fn a_move_that_reads_a_set_aside_run_or_change_of_its_task_waits() {
         (
             ArtifactKey::Run(slug("a"), 1),
             "runs/a.1.md",
-            TaskStatus::InProgress,
+            TaskStatus::Claimed,
             TaskStatus::Ready,
         ),
         (
