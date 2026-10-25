@@ -77,7 +77,9 @@ impl ServeBoardOperation {
                 None => {}
             }
         }
-        let over = self.operations.prepare(request, sent, &*self.store.reads());
+        let over = self
+            .operations
+            .prepare(request, sent, &*self.store.reads())?;
         let mut run = |store| {
             let operations = over(store).map_err(|error| error.to_string());
             operations.and_then(|operations| present(&*operations))

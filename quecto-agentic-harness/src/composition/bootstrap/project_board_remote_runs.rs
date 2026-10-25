@@ -135,7 +135,14 @@ impl RemoteRuns {
         let facts = RunFacts::gathered((&end.task, end.run), liveness, reports);
         // Within the request's bytes, the rest of the body left room for.
         let succeeds = end.outcome == RunEndOutcome::Succeeded;
-        let facts = facts.fitting(succeeds, MAX_BODY_BYTES as usize - 64 * 1024);
+        let facts = match facts.fitting(succeeds, MAX_BODY_BYTES as usize - 64 * 1024) {
+            Ok(facts) => facts,
+            Err(why) => {
+                let facts = (asked.1 == OpNoting::Noted).then(OpFacts::default);
+                let result = Err(ProjectBoardError::Refused(why));
+                return BoardExecution { result, facts };
+            }
+        };
         let wire = serde_json::to_value(&facts).unwrap_or(Value::Null);
         let execution =
             self.remote

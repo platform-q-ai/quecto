@@ -24,7 +24,7 @@ use crate::application::project_board::dto::{ProjectBoardError, RunAfterUndo};
 use crate::application::project_board::ports::{
     BegunStarts, CoordinatorLaunch, LaunchRefused, LaunchedCoordinator, RunLiveness,
 };
-use crate::application::project_board::start::{Begun, StartFacts};
+use crate::application::project_board::start::{Begun, StartFacts, StartUndo};
 
 /// Why a start launched nothing when its call was cancelled after its
 /// write.
@@ -166,11 +166,17 @@ impl LaunchBegunRun {
             liveness.and_then(|liveness| liveness.running_coordinator(task, run))
         });
         let undo = begun.undo(&reason);
-        let (run_state, fold_back) = match &still_running {
+        let (run_state, fold_back, refused) = match &still_running {
             // Never fold back, nor release, under a swarm that may run.
-            Some(_) => (RunAfterUndo::Open, None),
+            Some(_) => (RunAfterUndo::Open, None, None),
             None => self.runs.undo(&undo, facts.is_some()),
         };
+        // A board that refused the undo says why, beside the launch's reason.
+        let reason = match refused {
+            Some(why) => format!("{}; the board refused its undo: {why}", undo.reason),
+            None => undo.reason.clone(),
+        };
+        let undo = StartUndo { reason, ..undo };
         if let Some(facts) = facts {
             facts.run_state = Some(run_state);
             facts.released = undone_task(run_state, begun.from).0;

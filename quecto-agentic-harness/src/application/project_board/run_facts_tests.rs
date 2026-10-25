@@ -189,55 +189,86 @@ fn kept(items: Vec<SwarmItemView>) -> RunFacts {
     }
 }
 
-/// Review round 1: the server reads the remote only for the commits the
-/// evidence of the plan's items names, at most `MAX_ITEMS × MAX_PER_ITEM`.
+/// Review rounds 1 and 2: the server reads the remote only for the commits
+/// the evidence of the plan's items names; past `MAX_ITEMS × MAX_PER_ITEM`
+/// it refuses up front, saying so.
 #[test]
-fn only_the_plans_evidence_is_named_and_at_most_its_bound() {
+fn only_the_plans_evidence_is_named_and_past_its_bound_refused() {
     use crate::application::project_board::fold_back::tests::{plan, swarm_item};
-    use crate::domain::project_board::entities::task_parts::{MAX_ITEMS, MAX_PER_ITEM};
     let done = SwarmItemState::Completed;
     let facts = kept(vec![
         swarm_item("api: Build the api", done, None, &[("c", "abc123abc123")]),
         swarm_item("extra: Not planned", done, None, &[("c", "0ff0ff0ff0ff")]),
     ]);
-    assert_eq!(facts.named_commits(&plan()), ["abc123abc123"]);
+    assert_eq!(
+        facts.named_commits(&plan()),
+        Ok(vec!["abc123abc123".into()])
+    );
     let many: Vec<String> = (0..3000).map(|n| format!("{n:012x}")).collect();
     let evidence: Vec<(&str, &str)> = many.iter().map(|id| ("c", id.as_str())).collect();
-    let facts = kept(vec![swarm_item(
-        "store: Build the store",
-        done,
-        None,
-        &evidence,
-    )]);
-    assert_eq!(facts.named_commits(&plan()).len(), MAX_ITEMS * MAX_PER_ITEM);
+    let store = "store: Build the store";
+    let facts = kept(vec![swarm_item(store, done, None, &evidence)]);
+    let refused = facts.named_commits(&plan()).unwrap_err();
+    assert!(
+        refused.contains("3000 commits, more than the 2048"),
+        "{refused}"
+    );
 }
 
-/// Review round 1: facts past the request's bytes are sent smaller rather
-/// than refused: an end that is no success without its evidence, then any
-/// end without its boards; facts that fit go as they are.
+/// Review rounds 1 and 2: facts past the request's bytes are sent smaller:
+/// first without the board the run was left on beside its ended one; an
+/// end that is no success then without its evidence, then its boards; a
+/// success keeps only evidence naming commits, else is refused here.
 #[test]
 fn facts_past_their_bytes_are_sent_smaller() {
     use crate::application::project_board::fold_back::tests::swarm_item;
     let long = "x".repeat(200);
-    let evidence: Vec<(&str, &str)> = (0..100).map(|_| ("notes", long.as_str())).collect();
-    let facts = kept(vec![swarm_item(
-        "api: Build the api",
-        SwarmItemState::Completed,
-        None,
-        &evidence,
-    )]);
-    let bytes = serde_json::to_vec(&facts).unwrap().len();
-    assert_eq!(facts.clone().fitting(false, bytes), facts, "it fits");
-    let left = facts.clone().fitting(false, 2_000);
-    let views = left.reports.expect("its boards are kept");
-    let items = views.ended.expect("its ended board").items;
+    let notes: Vec<(&str, &str)> = (0..100).map(|_| ("notes", long.as_str())).collect();
+    let done = SwarmItemState::Completed;
+    let mut facts = kept(vec![swarm_item("api: Build the api", done, None, &notes)]);
+    let small = facts.clone();
+    let views = facts.reports.as_mut().unwrap();
+    views.left = views.ended.clone();
+    let bytes = serde_json::to_vec(&small).unwrap().len();
+    assert_eq!(
+        facts.clone().fitting(true, bytes),
+        Ok(small.clone()),
+        "left goes first"
+    );
+    let fits = serde_json::to_vec(&facts).unwrap().len();
+    assert_eq!(
+        facts.clone().fitting(true, fits),
+        Ok(facts.clone()),
+        "it fits"
+    );
+    let left = facts.clone().fitting(false, 2_000).unwrap();
+    let items = left.reports.unwrap().ended.unwrap().items;
     assert!(
         items.iter().all(|item| item.evidence.is_empty()),
         "no evidence"
     );
-    let success = facts.fitting(true, 2_000);
-    assert_eq!(
-        success.reports, None,
-        "a success keeps its evidence or no board"
+    assert_eq!(facts.clone().fitting(false, 100).unwrap().reports, None);
+    let commit = [("c", "abc123abc123")];
+    let named = kept(vec![swarm_item("api: Build the api", done, None, &commit)]);
+    let mut noisy = named.clone();
+    let item = &mut noisy
+        .reports
+        .as_mut()
+        .unwrap()
+        .ended
+        .as_mut()
+        .unwrap()
+        .items[0];
+    item.evidence.extend(
+        small.reports.unwrap().ended.unwrap().items[0]
+            .evidence
+            .clone(),
     );
+    let named_bytes = serde_json::to_vec(&named).unwrap().len();
+    assert_eq!(
+        noisy.clone().fitting(true, named_bytes),
+        Ok(named),
+        "commits kept"
+    );
+    assert_eq!(noisy.fitting(true, 50), Err(TOO_LARGE.to_string()));
 }

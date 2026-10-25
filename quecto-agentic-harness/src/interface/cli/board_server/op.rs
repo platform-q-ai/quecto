@@ -195,7 +195,9 @@ fn present(
     let mut call = BoardCall::start(None, front_end, Client::Other);
     let answer = run_recorded_with(&captured, text, summaries, &mut call);
     let error = &answer["error"];
-    let message = error["message"].as_str().unwrap_or_default().to_string();
+    // The refusal's own reason: the reply names the store's failure once.
+    let message = error["reason"].as_str().or(error["message"].as_str());
+    let message = message.unwrap_or_default().to_string();
     match error["code"].as_str() {
         Some("store_unavailable" | "clock_unreadable") => {
             return Err(Unkept {

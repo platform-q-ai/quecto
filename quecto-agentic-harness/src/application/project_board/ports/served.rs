@@ -116,7 +116,7 @@ pub trait BoardOperationsOver: Send + Sync {
         request: Option<&BoardRequest>,
         run: &ServedRun,
         reads: &dyn ProjectBoardStore,
-    ) -> OperationsOver;
+    ) -> Result<OperationsOver, ServeError>;
 }
 
 /// What a client sends beside a request for its run (B8): an end's
@@ -132,14 +132,19 @@ pub enum ServedRun {
     Undo(StartUndo),
 }
 
+/// Where an undo left its run, its fold-back where made here, and the
+/// board's refusal of it, when it refused.
+pub type Undone = (RunAfterUndo, Option<NotedFoldBack>, Option<String>);
+
 /// Port: where a begun start is undone (B8): the board it was begun on,
 /// this machine's or a board server's.
 pub trait BegunStarts: Send + Sync {
     /// `undo`'s run folded back as failed, as a swarm that reported
     /// nothing, moving its task back as the start's undo does: where that
     /// left the run (open when it could not be folded back), and the
-    /// fold-back for its record where it was made here, when `noting`.
-    fn undo(&self, undo: &StartUndo, noting: bool) -> (RunAfterUndo, Option<NotedFoldBack>);
+    /// fold-back for its record where it was made here, when `noting`; and
+    /// the board's refusal of the undo, its code and words, when it refused.
+    fn undo(&self, undo: &StartUndo, noting: bool) -> Undone;
 
     /// The time since this board's clock was made, on a monotonic clock;
     /// `None` where no clock is read (a board server's client).

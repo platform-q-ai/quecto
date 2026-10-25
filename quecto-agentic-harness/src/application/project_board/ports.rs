@@ -23,7 +23,7 @@ use crate::domain::project_board::value_objects::vocabulary::{Effort, TaskStatus
 mod served;
 pub use served::{
     BegunStarts, BoardOpStore, BoardOperationsOver, OpWrite, OperationsOver, ServeError, ServedRun,
-    ServedStatus, ServerRole, Transacted, WriteId,
+    ServedStatus, ServerRole, Transacted, Undone, WriteId,
 };
 mod listen_address;
 pub use listen_address::ListenAddress;

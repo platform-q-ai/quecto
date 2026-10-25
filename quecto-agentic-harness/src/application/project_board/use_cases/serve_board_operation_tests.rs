@@ -81,13 +81,13 @@ impl BoardOperationsOver for Over {
         _: Option<&BoardRequest>,
         _: &crate::application::project_board::ports::ServedRun,
         _: &dyn ProjectBoardStore,
-    ) -> OperationsOver {
+    ) -> Result<OperationsOver, crate::application::project_board::ports::ServeError> {
         self.prepared.fetch_add(1, Ordering::SeqCst);
         let refused = self.refused;
-        Box::new(move |_| match refused {
+        Ok(Box::new(move |_| match refused {
             true => Err(ProjectBoardError::NoLauncher),
             false => Ok(Box::new(Nothing) as Box<dyn BoardOperations>),
-        })
+        }))
     }
 }
 

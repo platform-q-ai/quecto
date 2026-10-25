@@ -526,6 +526,8 @@ pub enum RunAfterUndo {
     EndedAlready,
     /// It could not be folded back: it is still open, for `end_run`.
     Open,
+    /// The board refused the undo (its reason given): left as it was.
+    Refused,
 }
 
 impl RunAfterUndo {
@@ -534,6 +536,7 @@ impl RunAfterUndo {
             Self::Folded => "folded",
             Self::EndedAlready => "ended_already",
             Self::Open => "open",
+            Self::Refused => "refused",
         }
     }
 }

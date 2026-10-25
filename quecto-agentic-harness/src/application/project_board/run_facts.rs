@@ -7,13 +7,17 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use super::dto::SwarmRunView;
+use super::dto::{SwarmEvidence, SwarmRunView};
 use super::fold_back::evidence_revisions;
 use super::ports::{BoardStoreError, RemoteRevisions, RunLiveness, SwarmRunReports};
 use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::task_parts::{MAX_ITEMS, MAX_PER_ITEM};
-use crate::domain::project_board::value_objects::commit_token::checks_commit;
+use crate::domain::project_board::value_objects::commit_token::{checks_commit, commit_token};
 use crate::domain::project_board::value_objects::slug::Slug;
+
+/// Why a success whose facts are past the request's bytes is not sent.
+pub const TOO_LARGE: &str =
+    "the run's facts are too large to send: its kept board's evidence is past the request's bytes";
 
 /// Whether a client's front end looked for a run's coordinator.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -94,37 +98,59 @@ impl RunFacts {
     /// The commits the evidence of `plan`'s items names on the board its
     /// swarm ended on (as a success records them), once each and at most
     /// `MAX_ITEMS × MAX_PER_ITEM`: what the server reads the remote for
-    /// before its lock. A revision past them is unread, and refuses.
-    pub fn named_commits(&self, plan: &Plan) -> Vec<String> {
+    /// before its lock.
+    ///
+    /// # Errors
+    /// More commits than that: why the success is not checked.
+    pub fn named_commits(&self, plan: &Plan) -> Result<Vec<String>, String> {
         let ended = self.reports.as_ref().and_then(|views| views.ended.as_ref());
         let named = ended.map(|view| evidence_revisions(plan, view).ids);
-        let mut named = named.unwrap_or_default();
-        named.truncate(MAX_ITEMS * MAX_PER_ITEM);
-        named
+        let named = named.unwrap_or_default();
+        match named.len() <= MAX_ITEMS * MAX_PER_ITEM * 2 {
+            true => Ok(named),
+            false => Err(format!(
+                "the run's evidence names {} commits, more than the {} a success is checked for",
+                named.len(),
+                MAX_ITEMS * MAX_PER_ITEM
+            )),
+        }
     }
 
-    /// These facts within `bytes` on the wire: as they are; else, for an
-    /// end that is no success, its boards without their evidence (as a
-    /// run past the board's bytes is recorded); else without its boards. A
-    /// success keeps its evidence, which the push rule checks, or no board.
-    pub fn fitting(mut self, succeeds: bool, bytes: usize) -> Self {
+    /// These facts within `bytes` on the wire: as they are; else without
+    /// the board the run was left on beside the one it ended on; else, for
+    /// an end that is no success, its boards without their evidence, then
+    /// without its boards; a success without the evidence that names no
+    /// commit (its commits the push rule checks).
+    ///
+    /// # Errors
+    /// A success's facts still past `bytes`.
+    pub fn fitting(mut self, succeeds: bool, bytes: usize) -> Result<Self, String> {
         let size = |facts: &Self| serde_json::to_vec(facts).map_or(usize::MAX, |wire| wire.len());
-        match (size(&self) <= bytes, succeeds) {
-            (true, _) => return self,
-            (false, false) => {
-                let views = self.reports.iter_mut();
-                let views = views.flat_map(|views| [&mut views.ended, &mut views.left]);
-                let items = views.flatten().flat_map(|view| view.items.iter_mut());
-                items.for_each(|item| item.evidence.clear());
-            }
-            (false, true) => {}
+        let over = size(&self) > bytes;
+        if let Some(views) = self
+            .reports
+            .as_mut()
+            .filter(|views| over && views.ended.is_none())
+        {
+            views.left = None;
         }
-        match size(&self) <= bytes {
-            true => self,
-            false => Self {
+        if size(&self) > bytes {
+            let views = self.reports.iter_mut();
+            let views = views.flat_map(|views| [&mut views.ended, &mut views.left]);
+            let items = views.flatten().flat_map(|view| view.items.iter_mut());
+            let named = |entry: &SwarmEvidence| commit_token(&entry.revision).is_some();
+            items.for_each(|item| {
+                item.evidence
+                    .retain(|entry| succeeds && named(entry) && entry.artifact.is_empty())
+            });
+        }
+        match (size(&self) <= bytes, succeeds) {
+            (true, _) => Ok(self),
+            (false, false) => Ok(Self {
                 reports: None,
                 ..self
-            },
+            }),
+            (false, true) => Err(TOO_LARGE.into()),
         }
     }
 }

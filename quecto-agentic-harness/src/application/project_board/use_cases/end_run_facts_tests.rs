@@ -14,7 +14,7 @@ const DEF: &str = "def456def456def456def456def456def456def4";
 /// the remote's revisions as `remote` answered before the write.
 fn served_ender(store: &MemoryBoardStore, facts: &RunFacts, remote: &Remote) -> EndRun {
     let plan = crate::application::project_board::fold_back::tests::plan();
-    let revisions = StatedRemoteRevisions::read(remote, &facts.named_commits(&plan));
+    let revisions = StatedRemoteRevisions::read(remote, &facts.named_commits(&plan).unwrap());
     EndRun::new(
         Arc::new(store.client_as(person("Ada"))),
         SetClock::at("10:30:00"),

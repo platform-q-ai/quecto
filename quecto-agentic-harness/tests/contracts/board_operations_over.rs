@@ -63,7 +63,9 @@ fn the_operations_run_on_the_store_they_are_handed() {
     for store in [&here, &there] {
         store.bootstrap().expect("a board");
     }
-    let over = served.prepare(None, &ServedRun::Plain, &there.client());
+    let over = served
+        .prepare(None, &ServedRun::Plain, &there.client())
+        .expect("prepared");
     let operations = over(Arc::new(here.client())).expect("the operations are built");
     let value = json!({"op": "create", "task": "a", "title": "A", "status": "ready"});
     let request = parse(&value, EntryPolicy::SectionedOrLegacy).expect("a request");

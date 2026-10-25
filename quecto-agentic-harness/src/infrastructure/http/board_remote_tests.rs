@@ -181,10 +181,14 @@ fn request_body(stream: &mut std::os::unix::net::UnixStream) -> String {
     String::from_utf8(body).unwrap()
 }
 
+/// A start's answer, as a server replies it.
+pub(crate) const START_ANSWER: &str = r#"{"answer":{"ok":true,"op":"start"},"facts":null}"#;
+
 /// A socket that holds the first `held` requests unanswered and answers
-/// the rest with a start's answer, keeping each request's body.
-fn holding(
+/// the rest with `reply` (its status and body), keeping each body sent.
+pub(crate) fn holding(
     held: usize,
+    (status, answer): (u16, &'static str),
 ) -> (
     tempfile::TempDir,
     BoardServiceClient,
@@ -207,9 +211,8 @@ fn holding(
                 holding.push(stream);
                 continue;
             }
-            let answer = r#"{"answer":{"ok":true,"op":"start"},"facts":null}"#;
             let reply = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\
+                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\
                  connection: close\r\n\r\n{answer}",
                 answer.len()
             );
@@ -242,8 +245,14 @@ fn a_begin_unanswered_is_sent_once_more_the_same() {
         text: &text,
         front_end: crate::domain::project_board::value_objects::telemetry::FrontEnd::Cli,
     };
-    for (held, answered) in [(1, true), (5, false)] {
-        let (_dir, client, bodies) = holding(held);
+    // Round 2 (L3): a resend refused (here 503) points at show and end_run too.
+    let unavailable = r#"{"error":"down","code":"unavailable"}"#;
+    for (held, reply, answered) in [
+        (1, (200, START_ANSWER), true),
+        (5, (200, START_ANSWER), false),
+        (1, (503, unavailable), false),
+    ] {
+        let (_dir, client, bodies) = holding(held, reply);
         let mut remote = RemoteBoardOperations::new(vec![client], board.clone(), Some(ada.clone()));
         remote.replies = (Duration::from_millis(300), Duration::from_millis(300));
         let refused = remote.execute(read, ListSummaries::Omitted, OpNoting::Unnoted);

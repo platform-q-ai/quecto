@@ -37,7 +37,7 @@ use crate::application::project_board::dto::{
 use crate::application::project_board::fold_back::{SwarmEnd, SwarmRunView};
 use crate::application::project_board::ports::{
     BegunStarts, BoardArtifact, BoardClock, BoardTextCells, CoordinatorLaunch, CoordinatorRequest,
-    ProjectBoardStore, RunLiveness,
+    ProjectBoardStore, RunLiveness, Undone,
 };
 use crate::application::project_board::start::{
     Begun, NotedFoldBack, StartFacts, StartUndo, StartWrite, StartedTask,
@@ -167,7 +167,7 @@ impl BeginBoardRun {
         if let Err(refused) = self.undoable(request, undo) {
             return refused;
         }
-        let (run_state, _) = self.undo(undo, false);
+        let (run_state, _, _) = self.undo(undo, false);
         launch_failed(undo, run_state, None)
     }
 
@@ -185,8 +185,8 @@ impl BeginBoardRun {
         }
         match undo.from {
             TaskStatus::Ready | TaskStatus::Claimed | TaskStatus::Review | TaskStatus::Blocked => {}
-            TaskStatus::Draft
-            | TaskStatus::InProgress
+            TaskStatus::InProgress
+            | TaskStatus::Draft
             | TaskStatus::Done
             | TaskStatus::Archived => {
                 return Err(invalid("from", "is not a status a start takes a task from"));
@@ -295,7 +295,7 @@ impl BegunStarts for BeginBoardRun {
     /// The run folded back as failed, as a swarm that reported nothing:
     /// where that left it, and the fold-back, timed and with its facts
     /// when `noting`.
-    fn undo(&self, undo: &StartUndo, noting: bool) -> (RunAfterUndo, Option<NotedFoldBack>) {
+    fn undo(&self, undo: &StartUndo, noting: bool) -> Undone {
         let failed = SwarmRunView {
             end: SwarmEnd::Failed,
             items: vec![],
@@ -319,7 +319,7 @@ impl BegunStarts for BeginBoardRun {
             facts,
             elapsed: self.clock.elapsed().saturating_sub(before),
         };
-        (run_state, Some(noted))
+        (run_state, Some(noted), None)
     }
 
     fn elapsed(&self) -> Option<std::time::Duration> {
@@ -369,6 +369,7 @@ pub(super) fn undone_task(
             | TaskStatus::Archived,
         ) => (Some(true), None),
         (RunAfterUndo::Open, _) => (Some(false), None),
+        (RunAfterUndo::Refused, _) => (None, None),
         (RunAfterUndo::EndedAlready, _) => (None, None),
     }
 }

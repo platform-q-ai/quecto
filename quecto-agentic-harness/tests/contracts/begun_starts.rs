@@ -60,7 +60,8 @@ fn a_begun_start_is_undone_once_on_this_machines_board() {
     let undo = begun.undo("no container runtime");
     assert_eq!(undo, undo_of(1));
     let runs: &dyn BegunStarts = &begin;
-    let (state, folded) = runs.undo(&undo, true);
+    let (state, folded, refused) = runs.undo(&undo, true);
+    assert_eq!(refused, None);
     assert_eq!(state, RunAfterUndo::Folded);
     assert!(
         folded.is_some_and(|folded| folded.result.is_ok()),
@@ -84,6 +85,9 @@ fn an_undo_a_board_server_never_answers_leaves_the_run_open() {
     let board = BoardId::of_hex("0123456789abcdef").expect("a board id");
     let remote = RemoteBoardOperations::new(vec![client], board, Some(ada()));
     let runs = RemoteBoardRuns(Arc::new(remote));
-    assert_eq!(runs.undo(&undo_of(1), true), (RunAfterUndo::Open, None));
+    assert_eq!(
+        runs.undo(&undo_of(1), true),
+        (RunAfterUndo::Open, None, None)
+    );
     assert_eq!(runs.elapsed(), None, "a client reads no clock");
 }

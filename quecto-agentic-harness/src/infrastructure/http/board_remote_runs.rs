@@ -15,9 +15,9 @@ use crate::application::project_board::dto::{
     ProjectBoardError, ReadRequest, RunAfterUndo, ServedAnswer, TaskStart,
 };
 use crate::application::project_board::ports::{
-    BegunStarts, BoardOperations, CoordinatorRequest, LaunchedCoordinator,
+    BegunStarts, BoardOperations, CoordinatorRequest, LaunchedCoordinator, Undone,
 };
-use crate::application::project_board::start::{Begun, NotedFoldBack, StartFacts, StartUndo};
+use crate::application::project_board::start::{Begun, StartFacts, StartUndo};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{FrontEnd, StartClaim};
 use crate::domain::project_board::value_objects::vocabulary::{Effort, TaskStatus};
@@ -140,9 +140,11 @@ pub fn launched_answer(begun: Value, coordinator: &LaunchedCoordinator) -> Serve
 /// A begun start undone on the board server it was begun on.
 impl BegunStarts for RemoteBoardRuns {
     /// The undo sent as the start it undoes, with its run, its task's
-    /// former status and the launch's reason; the run left open unless the
-    /// server answers how its undo left it.
-    fn undo(&self, undo: &StartUndo, _: bool) -> (RunAfterUndo, Option<NotedFoldBack>) {
+    /// former status and the launch's reason, once more the same when no
+    /// answer came: how the server's undo left the run, or the server's
+    /// refusal of it (its code and words); the run left open when the
+    /// server never answered.
+    fn undo(&self, undo: &StartUndo, _: bool) -> Undone {
         let (task, plan_version) = (undo.task.clone(), undo.plan_version);
         let text = json!({"op": "start", "task": task.as_str(), "plan_version": plan_version});
         let request = BoardRequest::Start(TaskStart { task, plan_version });
@@ -154,22 +156,33 @@ impl BegunStarts for RemoteBoardRuns {
         };
         let undone = json!({"run": undo.run, "from": undo.from.as_str(), "reason": undo.reason});
         let beside = Map::from_iter([("undo".to_string(), undone)]);
-        let sent = self
-            .0
-            .execute_with(read, (ListSummaries::Omitted, OpNoting::Unnoted), beside);
-        let answer = sent
-            .result
-            .ok()
-            .as_ref()
-            .and_then(served)
-            .unwrap_or(Value::Null);
+        let asked = (ListSummaries::Omitted, OpNoting::Unnoted);
+        let (sent, _) = self.0.executed(read, asked, beside, false);
+        let answer = sent.result.ok().as_ref().and_then(served);
+        let answer = answer.unwrap_or(Value::Null);
         let error = &answer["error"];
-        let state = match (error["code"].as_str(), error["run_state"].as_str()) {
-            (Some("launch_failed"), Some("folded")) => RunAfterUndo::Folded,
-            (Some("launch_failed"), Some("ended_already")) => RunAfterUndo::EndedAlready,
-            _ => RunAfterUndo::Open,
-        };
-        (state, None)
+        let (code, rule) = (error["code"].as_str(), error["rule"]["code"].as_str());
+        let words = shown(error["message"].as_str().unwrap_or_default());
+        match (code, error["run_state"].as_str(), rule) {
+            (Some("launch_failed"), Some("folded"), _) => (RunAfterUndo::Folded, None, None),
+            (Some("launch_failed"), Some("ended_already"), _) => {
+                (RunAfterUndo::EndedAlready, None, None)
+            }
+            (Some(_) | None, _, _) if code.is_some() || words.is_empty() => {
+                (RunAfterUndo::Open, None, None)
+            }
+            (Some("launch_failed") | None, _, _) => (RunAfterUndo::Open, None, None),
+            (Some(code), _, Some(rule)) => (
+                RunAfterUndo::Refused,
+                None,
+                Some(format!("{code} ({rule}): {words}")),
+            ),
+            (Some(code), _, None) => (
+                RunAfterUndo::Refused,
+                None,
+                Some(format!("{code}: {words}")),
+            ),
+        }
     }
 
     fn elapsed(&self) -> Option<std::time::Duration> {

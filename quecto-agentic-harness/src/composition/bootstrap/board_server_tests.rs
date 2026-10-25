@@ -517,16 +517,19 @@ fn serve_binds_its_board_file_to_its_board() {
     );
 }
 
-/// A remote that answers after its delay, counting what it is asked.
-struct SlowRemote(std::sync::atomic::AtomicUsize, Duration);
+/// A remote that answers once let go, counting what it is asked.
+struct GatedRemote(
+    std::sync::atomic::AtomicUsize,
+    std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+);
 
-impl RemoteRevisions for SlowRemote {
+impl RemoteRevisions for GatedRemote {
     fn not_on_remote(
         &self,
         _: &[String],
     ) -> Result<Vec<String>, crate::application::project_board::ports::BoardStoreError> {
         self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        std::thread::sleep(self.1);
+        let _ = self.1.lock().unwrap().recv();
         Ok(vec![])
     }
 
@@ -537,27 +540,35 @@ impl RemoteRevisions for SlowRemote {
     }
 }
 
-/// Review round 1 (B8): one read of the remote at a time. A read past its
-/// budget is left to finish, and a write meanwhile reads nothing more, so
-/// threads and git processes never pile up; once it finishes, the next
-/// write reads again.
+/// Review rounds 1 and 2 (B8): one read of the remote at a time. A read
+/// past its budget is left to finish; a write meanwhile is busy (nothing
+/// written, its retry safe), so threads and git never pile up; once the
+/// read ends, however it ends, the next write reads again.
 #[test]
 fn the_remote_is_read_for_one_write_at_a_time() {
-    let slow = Arc::new(SlowRemote(
+    let (release, gate) = std::sync::mpsc::channel();
+    let gated = Arc::new(GatedRemote(
         std::sync::atomic::AtomicUsize::new(0),
-        Duration::from_millis(600),
+        std::sync::Mutex::new(gate),
     ));
-    let remote: Arc<dyn RemoteRevisions> = Arc::clone(&slow) as _;
+    let remote: Arc<dyn RemoteRevisions> = Arc::clone(&gated) as _;
     let reading = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let named = || vec!["abc123abc123".to_string()];
-    let short = Duration::from_millis(50);
-    let first = revisions_read(&remote, named(), short, &reading);
-    let second = revisions_read(&remote, named(), short, &reading);
-    let asked = || slow.0.load(std::sync::atomic::Ordering::SeqCst);
-    assert_eq!(asked(), 1, "one read in flight");
-    assert!(first.commit_id_hex_len().is_err() && second.commit_id_hex_len().is_err());
-    std::thread::sleep(Duration::from_millis(900));
-    let third = revisions_read(&remote, named(), Duration::from_secs(5), &reading);
+    let first = revisions_read(&remote, named(), Duration::ZERO, &reading).unwrap();
+    assert!(
+        first.commit_id_hex_len().is_err(),
+        "past its budget: unread"
+    );
+    let second = revisions_read(&remote, named(), Duration::ZERO, &reading);
+    assert_eq!(second.err(), Some(ServeError::Busy), "one read in flight");
+    release.send(()).unwrap();
+    release.send(()).unwrap();
+    let third = loop {
+        match revisions_read(&remote, named(), Duration::from_secs(30), &reading) {
+            Err(ServeError::Busy) => std::thread::yield_now(),
+            read => break read.unwrap(),
+        }
+    };
     assert_eq!(third.not_on_remote(&named()), Ok(vec![]));
-    assert_eq!(asked(), 2);
+    assert_eq!(gated.0.load(std::sync::atomic::Ordering::SeqCst), 2);
 }

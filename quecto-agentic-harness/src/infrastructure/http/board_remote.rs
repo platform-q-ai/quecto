@@ -58,7 +58,7 @@ pub struct RemoteBoardOperations {
     /// Who a write is made as; `None` for a front end that only reads.
     committer: Option<Identity>,
     /// How long a read's reply, and a write's, may take.
-    replies: (std::time::Duration, std::time::Duration),
+    pub(super) replies: (std::time::Duration, std::time::Duration),
 }
 
 impl RemoteBoardOperations {
@@ -80,35 +80,48 @@ impl RemoteBoardOperations {
         (summaries, noting): (ListSummaries, OpNoting),
         beside: Map<String, Value>,
     ) -> BoardExecution {
-        self.executed(read, (summaries, noting), beside, false)
+        self.executed(read, (summaries, noting), beside, false).0
     }
 
     /// A start begun on the server, for this client to launch (B8). Its
     /// body is sent once more, the same (its write id), when its answer
-    /// never came, so the server answers it from its kept answer.
+    /// never came, so the server answers it from its kept answer; a resend
+    /// that fails too says what to do.
     pub fn begin(&self, read: ReadRequest<'_>, noting: OpNoting) -> BoardExecution {
-        let mut begun = self.executed(read, (ListSummaries::Omitted, noting), Map::new(), true);
-        if let Err(ProjectBoardError::Unanswered(why)) = &begun.result {
+        let asked = (ListSummaries::Omitted, noting);
+        let (mut begun, resent) = self.executed(read, asked, Map::new(), true);
+        if let (Err(error @ ProjectBoardError::Unanswered(_)), true) = (&begun.result, resent) {
+            let why = match error {
+                ProjectBoardError::Unanswered(why) => why.clone(),
+                other => other.to_string(),
+            };
             begun.result = Err(ProjectBoardError::Unanswered(format!(
-                "{why}, twice: show the task, and end_run any run this start began as failed \
-                 before starting it again"
+                "{why}, after its first send went unanswered: show the task, and end_run any \
+                 run this start began as failed before starting it again"
             )));
         }
         begun
     }
 
-    fn executed(
+    /// The answer to `read` with `beside` it; its body sent once more, the
+    /// same, after no answer came when `again` (replay-safe by its write
+    /// id), and whether it was.
+    pub(super) fn executed(
         &self,
         read: ReadRequest<'_>,
         (summaries, noting): (ListSummaries, OpNoting),
         beside: Map<String, Value>,
         again: bool,
-    ) -> BoardExecution {
+    ) -> (BoardExecution, bool) {
         let noted = noting == OpNoting::Noted;
         let body = self.body(read, summaries == ListSummaries::Wanted, noted, beside);
         let send = |body: &[u8]| self.sent(body, read.request.writes());
+        let mut resent = false;
         let replied = body.and_then(|body| match send(&body) {
-            Err(ProjectBoardError::Unanswered(_)) if again => send(&body),
+            Err(ProjectBoardError::Unanswered(_)) if again => {
+                resent = true;
+                send(&body)
+            }
             replied => replied,
         });
         let (result, facts) = match replied.and_then(|(status, body)| answered(status, &body)) {
@@ -116,7 +129,7 @@ impl RemoteBoardOperations {
             Err(error) => (Err(error), None),
         };
         let facts = noted.then(|| facts.unwrap_or_default());
-        BoardExecution { result, facts }
+        (BoardExecution { result, facts }, resent)
     }
 
     /// The body; a write's with a fresh write id and its committer.
@@ -273,4 +286,4 @@ fn refused(why: &str) -> ProjectBoardError {
 
 #[cfg(test)]
 #[path = "board_remote_tests.rs"]
-mod tests;
+pub(super) mod tests;

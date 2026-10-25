@@ -176,6 +176,11 @@ impl fmt::Display for ProjectBoardError {
                         "run {run} could not be folded back: it is still open, and you still \
                          hold the task; end it with end_run(task, run {run}, outcome failed)"
                     ),
+                    (RunAfterUndo::Refused, _) => write!(
+                        f,
+                        "run {run} is left as the board refused to undo it: show the task \
+                         before you end the run"
+                    ),
                 }
             }
         }
