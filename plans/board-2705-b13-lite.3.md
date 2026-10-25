@@ -5,10 +5,12 @@
 |---|---|
 | Task | board-2705-b13-lite |
 | Version | 3 |
-| State | draft |
+| State | accepted |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-25T04:44:18Z |
 | Created | 2026-10-25T04:44:04Z |
-| Updated | 2026-10-25T04:44:04Z |
+| Updated | 2026-10-25T04:44:18Z |
 
 ## Approach
 FRESH DELIVERY ONLY for one complete B13-lite PR. Scope, safety, target/retention/typed errors and acceptance remain the FULL accepted plan2 and /home/shane-pocket/.quecto/artifacts/b13-lite-planning/{parent-acceptance.md,parent-report.md,proposed-tasks.json,source-seams.md,red-handoff.md,size-forecast.md,safety-retention-fence-decisions.md}. Parent-acceptance.md overrides planner deadlines/path/workflow: copy120s/busy250ms/board300s/invocation1200s; legitimate canonicalized existing parent aliases allowed; no workflow tools in swarms. Forecast1019–1447 production added+deleted,750target1500max/testsExcluded/sizedonce. No repeated sizing/golf/safety cuts/implicit exception; only unavoidable actual maximum breach returns to parent for minimum complete backup/fence split.

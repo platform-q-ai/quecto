@@ -5,12 +5,12 @@
 |---|---|
 | Task | board-2705-b13-lite |
 | Version | 2 |
-| State | accepted |
+| State | superseded |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted at | 2026-10-25T03:12:51Z |
 | Created | 2026-10-25T03:12:38Z |
-| Updated | 2026-10-25T03:12:51Z |
+| Updated | 2026-10-25T04:44:18Z |
 
 ## Approach
 Deliver one complete reduced B13-lite PR now, independent of B7/B8. Accepted planning artifacts: /home/shane-pocket/.quecto/artifacts/b13-lite-planning/{parent-report.md,proposed-tasks.json,source-seams.md,red-handoff.md,size-forecast.md,safety-retention-fence-decisions.md}. Read them fully. parent-acceptance.md is authoritative and overrides planner deadlines, parent-alias policy and workflow wording. Forecast 1019–1447 production additions+deletions, target750/hard1500, tests excluded, sized once at planning. Do not repeatedly resize, golf, cut safety, or imply an exception. Only an actual unavoidable maximum breach triggers the parent's minimum complete backup/fence split. Planning base6d3e874/version446; refresh actual master and merged operator seams before RED and record the real pin.
