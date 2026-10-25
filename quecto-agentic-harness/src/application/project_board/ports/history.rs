@@ -91,6 +91,9 @@ pub trait BoardHistorySink: Send + Sync {
     fn algorithm(&self) -> HistoryResult<Option<HistoryAlgorithm>> {
         Ok(None)
     }
+    /// The object's ID, `expected_oid` checked first. A dry run stores
+    /// nothing; otherwise the object is stored by the time `publish` moves
+    /// the ref (a sink may store objects in batches until then).
     fn raw(
         &self,
         kind: HistoryKind,

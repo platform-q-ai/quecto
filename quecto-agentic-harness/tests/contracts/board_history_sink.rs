@@ -47,13 +47,14 @@ fn real_sink_hashes_without_side_effects_then_publishes_only_the_captured_lease(
                 .unwrap(),
             expected
         );
+        assert_eq!(sink.tree(&[], false).unwrap(), tree);
+        assert_eq!(sink.commit(metadata, false).unwrap(), proposed);
+        sink.publish(None, &proposed).unwrap();
+        // Written objects are stored, exactly, by the time the ref moves (#2748).
         assert_eq!(
             git(&fixture.destination, &["cat-file", "blob", &expected], b""),
             body
         );
-        assert_eq!(sink.tree(&[], false).unwrap(), tree);
-        assert_eq!(sink.commit(metadata, false).unwrap(), proposed);
-        sink.publish(None, &proposed).unwrap();
         let loser = sink
             .commit(
                 HistoryCommit {
@@ -75,4 +76,58 @@ fn real_sink_hashes_without_side_effects_then_publishes_only_the_captured_lease(
         );
         assert!(!fixture.database.exists());
     }
+}
+
+/// An export of more objects than one store batch takes (4,096) publishes
+/// a head whose every reachable object is stored, and leaves no staging.
+#[test]
+fn an_export_across_store_batches_publishes_a_fully_connected_head() {
+    use super::project_board_store::task;
+    use quecto::application::project_board::ports::{BoardWrite, ProjectBoardStore};
+    use quecto::infrastructure::persistence::sqlite::project_board::SqliteProjectBoardStore;
+    let fixture = Fixture::new(HistoryAlgorithm::Sha1, 12);
+    let store = SqliteProjectBoardStore::open(&fixture.database, writer()).unwrap();
+    store.bootstrap().unwrap();
+    let mut head = store.read().unwrap().head;
+    // Each revision adds a task blob, the tasks tree, a root tree and a commit.
+    for index in 0..1100 {
+        let title = format!("Batch boundary object {index}");
+        head = match store.write_tasks(&head, &[task("a", &title)], "board: batches") {
+            Ok(BoardWrite::Written(next)) => next,
+            other => panic!("expected a valid write: {other:?}"),
+        };
+    }
+    let report = fixture.handles().export.execute(false, None).unwrap();
+    assert_eq!((report.revisions, report.frontier), (1101, head));
+    let inventory = text(
+        &fixture.destination,
+        &["cat-file", "--batch-all-objects", "--batch-check"],
+    );
+    assert!(
+        inventory.lines().count() > 4096,
+        "the export crosses a store batch: {} objects",
+        inventory.lines().count()
+    );
+    let reachable = text(
+        &fixture.destination,
+        &["rev-list", "--objects", "--missing=print", TARGET],
+    );
+    assert!(reachable.lines().count() > 4096);
+    assert!(
+        // A missing object prints as `?<id>`; a present one as its bare ID.
+        reachable
+            .lines()
+            .all(|line| line.bytes().next().is_some_and(|b| b.is_ascii_hexdigit())),
+        "every object the published head reaches is stored"
+    );
+    git(&fixture.destination, &["fsck", "--connectivity-only"], b"");
+    let staging: Vec<_> = std::fs::read_dir(&fixture.destination)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("quecto-export-"))
+        .collect();
+    assert!(
+        staging.is_empty(),
+        "stored batches leave no staging: {staging:?}"
+    );
 }
