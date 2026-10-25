@@ -53,7 +53,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         // A discussion's shape is its own: `kind`, `discussion`, `path`
         // (a_set_aside_artifact_is_named_by_its_kind_task_and_number).
         C::ArtifactSetAside => &["kind", "task", "number", "path", "object"],
-        C::NoPullRequestHost | C::Busy | C::Unanswered => &["reason"],
+        C::NoPullRequestHost | C::Busy | C::Unanswered | C::ClockUnsynced => &["reason"],
         // A discussion's and a task's shapes are their own
         // (a_duplicate_artifact_is_named_by_its_kind_task_and_number).
         C::DuplicateArtifact => &["kind", "task", "number"],
@@ -135,9 +135,8 @@ board_errors! {
         id: slug("a"),
         by: crate::application::project_board::dto::IdUser::Run(1),
     },
-    E::Clock(BoardClockError::OutOfRange(_)) => {
-        E::Clock(BoardClockError::OutOfRange("1969".into()))
-    },
+    E::Clock(BoardClockError::OutOfRange(_)) => E::Clock(BoardClockError::OutOfRange("1969".into())),
+    E::Clock(BoardClockError::Unsynced(_)) => E::Clock(BoardClockError::Unsynced("ntp".into())),
     E::Quarantined { .. } => E::Quarantined {
         key: ArtifactKey::Task(slug("a")),
         path: "tasks/a.md".into(),

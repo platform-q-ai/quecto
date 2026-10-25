@@ -232,6 +232,7 @@ const KNOWN_KINDS : & [
 "reason" ,
 "prs_open" ,
 "stop" ,
+"clock_unsynced" ,
 ] ;
 const fn all_shaped (  ) -> bool { let mut at = 0 ; while at < KNOWN_KINDS . len (  ) { if ! kind_shaped ( KNOWN_KINDS [
 at

@@ -1,7 +1,6 @@
-//! The project board capability's ports (#2476): where the board lives
-//! (the S1d git store implements [`ProjectBoardStore`] over the
-//! repository's `quecto/board` branch), its listings from a local view of
-//! it (the S1e index implements [`BoardListings`]) and what time it is.
+//! The project board capability's ports (#2476): where the board lives (the
+//! S1d git store implements [`ProjectBoardStore`]), its listings from a local
+//! view of it (the S1e index, [`BoardListings`]) and what time it is.
 use super::dto::{
     BoardExecution, BoardListing, FoldBackFacts, FoldedBack, ListSummaries, OpNoting,
     ProjectBoardError, ReadRequest, RunEnd, SwarmRunView,
@@ -30,6 +29,8 @@ mod listen_address;
 pub use listen_address::ListenAddress;
 mod tokens;
 pub use tokens::{BoardTokens, IssuedToken, MAX_TOKENS, TokenError, TokenRecord};
+mod time_sync;
+pub use time_sync::{ClockSync, TimeSync};
 
 /// The board's head: the store's revision a write must start from (the
 /// git store's commit id).
@@ -441,17 +442,17 @@ pub trait BoardListings: Send + Sync {
 /// Why the clock could not tell the time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoardClockError {
-    /// This machine's clock reads a time the board cannot spell (before
-    /// 1970, or past 9999).
+    /// This machine's clock reads a time the board cannot spell (before 1970 or past 9999).
     OutOfRange(String),
+    /// The host's clock is not synchronised, and why: the board server's gate (#2705).
+    Unsynced(String),
 }
 
 /// Whether the board clock has an outside reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReferenceStatus {
     Referenced,
-    /// No outside time is read, and why: changes are not bounded against
-    /// one.
+    /// No outside time is read, and why: changes are not bounded against one.
     NoReference(String),
 }
 

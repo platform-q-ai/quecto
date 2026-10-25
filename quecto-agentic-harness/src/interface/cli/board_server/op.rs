@@ -8,7 +8,7 @@ use crate::application::project_board::dto::{
     BoardExecution, BoardRequest, ListSummaries, OpNoting, ProjectBoardError, ReadRequest, RunEnd,
 };
 use crate::application::project_board::ports::{
-    BoardOperations, OpWrite, ServeError, Transacted, WriteId,
+    BoardClockError, BoardOperations, OpWrite, ServeError, Transacted, WriteId,
 };
 use crate::application::project_board::telemetry::OpFacts;
 use crate::application::project_board::use_cases::{
@@ -100,23 +100,42 @@ pub(super) fn answer_op(
         true => OpNoting::Noted,
         false => OpNoting::Unnoted,
     };
-    let mut answer =
-        |board: &dyn BoardOperations| present(board, &text, front_end, summaries, noting);
-    match operations.execute(request.as_ref(), write.as_ref(), &mut answer) {
-        Ok(Transacted::Answered(answer) | Transacted::Replayed(answer)) => Ok(answer),
-        Ok(Transacted::Reused) => Err(OpRefusal::Serve(ServeError::WriteIdReused)),
-        Err(error) => Err(OpRefusal::Serve(error)),
+    // The clock gate's reason, when its refusal undid the op (#2705).
+    let mut unsynced = None;
+    let mut answer = |board: &dyn BoardOperations| {
+        present(board, &text, front_end, summaries, noting).map_err(|unkept| {
+            unsynced = unkept.unsynced;
+            unkept.message
+        })
+    };
+    let executed = operations.execute(request.as_ref(), write.as_ref(), &mut answer);
+    match (executed, unsynced) {
+        (Ok(Transacted::Answered(answer) | Transacted::Replayed(answer)), _) => Ok(answer),
+        (Ok(Transacted::Reused), _) => Err(OpRefusal::Serve(ServeError::WriteIdReused)),
+        (Err(ServeError::Board(_)), Some(why)) => {
+            let unsynced = ProjectBoardError::Clock(BoardClockError::Unsynced(why));
+            Err(OpRefusal::Serve(ServeError::Board(unsynced)))
+        }
+        (Err(error), _) => Err(OpRefusal::Serve(error)),
     }
 }
 
-/// The reply body (answer and facts), or why the store failed under it.
+/// Why an op keeps no answer: a store-class refusal's message, and the
+/// host's reason when it is the clock gate's (`clock_unsynced`).
+struct Unkept {
+    message: String,
+    unsynced: Option<String>,
+}
+
+/// The reply body (answer and facts), or why the store or clock failed
+/// under it (the op is then undone).
 fn present(
     board: &dyn BoardOperations,
     text: &str,
     front_end: FrontEnd,
     summaries: ListSummaries,
     noting: OpNoting,
-) -> Result<String, String> {
+) -> Result<String, Unkept> {
     let facts = Mutex::new(None);
     let captured = Captured {
         board,
@@ -126,8 +145,22 @@ fn present(
     let mut call = BoardCall::start(None, front_end, Client::Other);
     let answer = run_recorded_with(&captured, text, summaries, &mut call);
     let error = &answer["error"];
-    if let Some("store_unavailable" | "clock_unreadable") = error["code"].as_str() {
-        return Err(error["message"].as_str().unwrap_or_default().to_string());
+    let message = error["message"].as_str().unwrap_or_default().to_string();
+    match error["code"].as_str() {
+        Some("store_unavailable" | "clock_unreadable") => {
+            return Err(Unkept {
+                message,
+                unsynced: None,
+            });
+        }
+        Some("clock_unsynced") => {
+            let why = error["reason"].as_str().unwrap_or_default().to_string();
+            return Err(Unkept {
+                message,
+                unsynced: Some(why),
+            });
+        }
+        Some(_) | None => {}
     }
     let facts = captured
         .facts
