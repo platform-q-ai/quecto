@@ -4,8 +4,8 @@
 //! many headers 431, both bodyless); 32 headers in 8 KiB; 10 s for a head,
 //! which also ends an idle keep-alive, and 10 s for a body (408); 10 s for
 //! a peer to take any reply byte ([`WriteDeadline`]); 64 connections at
-//! once a listener (TCP: see below); and each connection at most 60 s or
-//! 1,000 requests, then it
+//! once a listener (TCP: see below), of which one token holds at most 8
+//! (#2727); and each connection at most 60 s or 1,000 requests, then it
 //! finishes what it answers within 15 s and closes. No peer holds a slot
 //! for good.
 use std::future::Future;

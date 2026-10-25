@@ -1,5 +1,6 @@
 //! Who is asking over TCP (epic #2705 B5): each source's unauthenticated
-//! connections, and [`Answers`], the blocking answers TCP callers hold.
+//! connections, [`Answers`], the blocking answers TCP callers hold, and
+//! [`Shares`], what each token may hold (answers, connections).
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -92,13 +93,42 @@ impl Drop for Unproven {
     }
 }
 
+/// Each principal's share of something TCP callers hold (answers, or
+/// connections): at most `per` at once each. A principal is a held
+/// token's name: one entry for each name let in since the server began.
+#[derive(Debug)]
+pub(super) struct Shares {
+    each: Mutex<HashMap<String, Arc<Semaphore>>>,
+    per: usize,
+}
+
+impl Shares {
+    pub(super) fn new(per: usize) -> Self {
+        assert!(per >= 1, "a principal's share holds at least one");
+        Self {
+            each: Mutex::default(),
+            per,
+        }
+    }
+
+    /// One of `principal`'s share, held while the permit lives; `None`
+    /// while all of it is held.
+    pub(super) fn take(&self, principal: &str) -> Option<OwnedSemaphorePermit> {
+        // Each change leaves the map whole, so a poisoned lock is as good.
+        let mut each = self.each.lock().unwrap_or_else(PoisonError::into_inner);
+        let fresh = || Arc::new(Semaphore::new(self.per));
+        let mine = Arc::clone(each.entry(principal.to_string()).or_insert_with(fresh));
+        drop(each);
+        mine.try_acquire_owned().ok()
+    }
+}
+
 /// The blocking answers TCP requests may hold at once: in all, and each
 /// principal.
 #[derive(Debug)]
 pub(super) struct Answers {
     all: Arc<Semaphore>,
-    each: Mutex<HashMap<String, Arc<Semaphore>>>,
-    per: usize,
+    each: Shares,
 }
 
 impl Answers {
@@ -106,19 +136,14 @@ impl Answers {
         let all = Arc::new(Semaphore::new(all));
         Self {
             all,
-            each: Mutex::default(),
-            per,
+            each: Shares::new(per),
         }
     }
 
     /// Room for one more answer for `principal`, held while the permits
     /// live; `None` when it, or every TCP caller together, is at its most.
     pub(super) fn admit(&self, principal: &str) -> Option<[OwnedSemaphorePermit; 2]> {
-        let mut each = self.each.lock().unwrap_or_else(PoisonError::into_inner);
-        let fresh = || Arc::new(Semaphore::new(self.per));
-        let mine = Arc::clone(each.entry(principal.to_string()).or_insert_with(fresh));
-        drop(each);
-        let mine = mine.try_acquire_owned().ok()?;
+        let mine = self.each.take(principal)?;
         Some([mine, Arc::clone(&self.all).try_acquire_owned().ok()?])
     }
 }

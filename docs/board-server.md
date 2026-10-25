@@ -77,7 +77,7 @@ SQLite store as admin revisions.)
 
 | Route | Answer |
 |---|---|
-| `GET /v1/status` | `{"role": "primary", "board": "<id>", "head": "<head>" or null}` |
+| `GET /v1/status` | `{"role": "primary", "board": "<id>", "head": "<head>" or null}` (read from the server's own board file, never from the clone's remote, so a slow or silent remote never delays it) |
 | `GET /v1/time` | `{"time": "<RFC 3339, to the second>"}` (the server's clock; 503 `clock_unsynced` while it is not synchronised) |
 | `POST /v1/boards/{id}/op` | one board operation (below): `{"answer": {..}, "facts": {..} or null}` |
 | `GET /v1/admin/tokens` | `{"tokens": [{"name": "<name>", "created": "<RFC 3339>"}]}` (Unix socket only) |
@@ -232,7 +232,7 @@ or closed unanswered) the client sends the same body again, with the same
 `write_id`, up to 3 times. A reply that never came is not sent again: a
 read is answered `store_unavailable`, and a write `unanswered`, saying it
 may have landed, so read the board before making it again (a raw client
-may retry the same `write_id`, and gets the kept answer once it lands). After a `503 busy` (a token past its 4 answers at once, or the
+may retry the same `write_id`, and gets the kept answer once it lands). After a `503 busy` (a token past its 4 answers or 8 connections at once, or the
 server past its 2 writes) it sends it again after a jittered pause of
 50 to 500 ms, for up to 10 s of pauses in all; still busy, it answers
 `busy`, a code a caller may retry. Any other failure is answered
@@ -267,7 +267,7 @@ Every error reply the server makes is JSON, `{"error": "<why>", "code":
 | 500 | `handler` | the request's handler failed |
 | 503 | `unavailable` | the board's store, the clock or the tokens could not answer (over TCP a token failure says only `the token store is unavailable`) |
 | 503 | `clock_unsynced` | the host's clock is not synchronised, so a request that reads it is refused; `reason` says why |
-| 503 | `busy` | over TCP, the caller already has 4 answers in flight, or all TCP callers together have 12; or 2 writes are already held |
+| 503 | `busy` | over TCP, the caller already has 4 answers in flight, or all TCP callers together have 12; or 2 writes are already held; or the token already holds 8 TCP connections (this one is then closed) |
 
 Over TCP the token is checked first: an unauthenticated request is 401
 before any limit or route answers it (only the HTTP parser's own bodyless
@@ -292,6 +292,7 @@ hold for the Unix socket and TCP alike:
 - 64 connections at once on the socket, and 64 on each TCP address (TCP peers never take the socket's);
 - a TCP connection must authenticate its first request within 2 s on loopback, 5 s from a Tailscale address, or it is closed (later requests on an authenticated connection have the usual 10 s);
 - at most 8 TCP connections from one source that have not yet authenticated: a 9th evicts the source's oldest connection that has sent nothing (else its oldest), so idle sockets never lock out a client that authenticates at once. An authenticated connection leaves the count;
+- at most 8 TCP connections at once for one token, across every TCP address: from its first authenticated request until it closes, a connection holds one of its token's 8. A 9th is answered 503 `busy` and closed, so one token can never take all 64 slots and keep other devices out. The Unix socket has no such cap;
 - the token is checked without a blocking thread. Answers that need one (a store or clock read) are capped over TCP: 4 at once per token, 12 for all TCP callers together, out of the server's 16. So a slow remote can never take the threads the Unix socket needs (`token list`, `token revoke`);
 
 **The loopback trade-off.** All of loopback (`127.0.0.0/8` and `::1`) counts as one source, since any local user can bind any of it. So any user on the host can open 8 silent connections and evict a loopback client that is slow to send its first request. A client that sends its request at once is never evicted, and a Tailscale device has its own source. Listen on loopback only on a host whose users you trust, or have clients send their request as soon as they connect;

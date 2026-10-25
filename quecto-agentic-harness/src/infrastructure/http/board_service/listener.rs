@@ -16,8 +16,8 @@ use std::future::Future;
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
 use http_body_util::{BodyExt, Full, Limited};
@@ -26,10 +26,10 @@ use hyper::{Request, Response, StatusCode, header};
 use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
-use tokio::sync::{Semaphore, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 
 use super::limits::{self, Refusal, WriteDeadline};
-use super::sources::{Answers, Sources, Unproven, source_of};
+use super::sources::{Answers, Shares, Sources, Unproven, source_of};
 
 pub use super::limits::Method as ServiceMethod;
 
@@ -121,7 +121,8 @@ pub struct ServiceParts {
     pub limits: ConnectionLimits,
 }
 
-/// Each connection's deadlines and per-source cap; tests change them.
+/// Each connection's deadlines and its per-source and per-token caps;
+/// tests change them.
 #[derive(Debug, Clone, Copy)]
 pub struct ConnectionLimits {
     pub write_timeout: Duration,
@@ -266,7 +267,12 @@ pub async fn serve(
         .map(Accepting::from_std)
         .collect::<io::Result<Vec<_>>>()?;
     let answers = Answers::new(limits::MAX_TCP_ANSWERS, limits::MAX_ANSWERS_PER_PRINCIPAL);
-    let parts = Arc::new((parts, Arc::new(answers)));
+    let connections = Shares::new(parts.limits.per_token);
+    let parts = Arc::new(Shared {
+        parts,
+        answers: Arc::new(answers),
+        connections: Arc::new(connections),
+    });
     let (stopping, stopped) = watch::channel(());
     let mut loops = tokio::task::JoinSet::new();
     for listener in accepting {
@@ -279,6 +285,14 @@ pub async fn serve(
     drop(stopping);
     while loops.join_next().await.is_some() {}
     Ok(())
+}
+
+/// What a server's connections share: its parts; the blocking answers,
+/// and the connections, TCP callers hold (across every TCP address).
+struct Shared {
+    parts: ServiceParts,
+    answers: Arc<Answers>,
+    connections: Arc<Shares>,
 }
 
 /// A listener on the runtime.
@@ -294,12 +308,15 @@ enum Accepted {
 }
 
 /// What a connection's requests share; `pending` is a TCP connection's
-/// place until a request of it authenticates.
+/// place until a request of it authenticates, and `held` its place among
+/// its token's connections from then on (#2727).
 struct Conn {
     handler: Arc<dyn ServiceHandler>,
     transport: Transport,
     pending: std::sync::Mutex<Option<Unproven>>,
     answers: Arc<Answers>,
+    connections: Arc<Shares>,
+    held: std::sync::Mutex<Option<(String, OwnedSemaphorePermit)>>,
 }
 
 impl Accepting {
@@ -332,7 +349,7 @@ impl Accepting {
 /// Accepts on `listener` while a slot is free, until `stopped` changes.
 async fn accept(
     listener: Accepting,
-    parts: Arc<(ServiceParts, Arc<Answers>)>,
+    parts: Arc<Shared>,
     slots: Arc<Semaphore>,
     mut stopped: watch::Receiver<()>,
 ) {
@@ -348,7 +365,7 @@ async fn accept(
         };
         let accepted = tokio::select! {
             _ = stopped.changed() => return,
-            accepted = listener.accept(&sources, parts.0.limits.per_source) => accepted,
+            accepted = listener.accept(&sources, parts.parts.limits.per_source) => accepted,
         };
         match accepted {
             Ok(stream) => {
@@ -369,12 +386,15 @@ async fn accept(
 }
 
 /// A connection by its transport: a Unix peer only as the allowed uid.
-async fn admit(stream: Accepted, (parts, answers): &(ServiceParts, Arc<Answers>)) {
+async fn admit(stream: Accepted, shared: &Shared) {
+    let parts = &shared.parts;
     let conn = |transport, unproven| Conn {
         handler: Arc::clone(&parts.handler),
         transport,
         pending: std::sync::Mutex::new(unproven),
-        answers: Arc::clone(answers),
+        answers: Arc::clone(&shared.answers),
+        connections: Arc::clone(&shared.connections),
+        held: std::sync::Mutex::new(None),
     };
     match stream {
         Accepted::Unix(stream) => match parts.peers.uid(&stream) {
@@ -576,21 +596,47 @@ async fn read_body(body: Incoming, declared: u64) -> Result<Vec<u8>, ServiceRepl
     }
 }
 
-/// A TCP request's principal (its connection leaves its source's queue),
-/// or a refusal that ends the connection, before anything else is judged.
+/// A TCP request's principal (its connection leaves its source's queue
+/// and holds a place among its token's connections), or a refusal that
+/// ends the connection, before anything else is judged: the gate's own,
+/// or 503 `busy` when the token holds all its connections already.
 fn gate(conn: &Conn, headers: &header::HeaderMap) -> Result<String, ServiceReply> {
-    match conn
+    let closing = |refusal| ServiceReply {
+        close: true,
+        ..refusal
+    };
+    let principal = conn
         .handler
         .authenticate_remote(authorization(headers).as_deref())
-    {
-        Ok(principal) => {
+        .map_err(closing)?;
+    match hold(conn, &principal) {
+        true => {
             drop(conn.pending.lock().map(|mut place| place.take()));
             Ok(principal)
         }
-        Err(refusal) => Err(ServiceReply {
-            close: true,
-            ..refusal
-        }),
+        false => Err(closing(error(
+            503,
+            "busy",
+            "too many connections for this token: close one, or try again shortly",
+        ))),
+    }
+}
+
+/// Whether `conn` holds a place among `principal`'s connections: the one
+/// it holds already, else one taken now (giving back the place it held
+/// for another principal). The place lives as long as the connection.
+fn hold(conn: &Conn, principal: &str) -> bool {
+    // The slot is replaced whole, so a poisoned lock is as good.
+    let mut held = conn.held.lock().unwrap_or_else(PoisonError::into_inner);
+    match held.as_ref() {
+        Some((holder, _)) if holder == principal => true,
+        Some(_) | None => match conn.connections.take(principal) {
+            Some(place) => {
+                *held = Some((principal.to_owned(), place));
+                true
+            }
+            None => false,
+        },
     }
 }
 
