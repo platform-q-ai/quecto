@@ -1,7 +1,8 @@
 //! The board server's graph (epic #2705 B4, B5, B7): the SQLite board and
-//! tokens in the state directory, and the clone's git for the board's id.
+//! tokens in the state directory, and the clone's git for the board's id;
+//! the one resolver of the board's file for every command (#2741).
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -19,6 +20,7 @@ use crate::application::project_board::use_cases::{
     BoardAccess, QueryBoard, READ_BUDGET, RunBoardOperation, ServeBoard, ServeBoardOperation,
 };
 use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::config::Config;
@@ -65,22 +67,17 @@ pub fn build_board_server(
             environment.remote
         ))
     })?;
-    let state = environment.state.clone().unwrap_or_else(|| {
-        environment
-            .base_dir
-            .join("board-server")
-            .join(board.as_str())
-    });
+    let state = board_state_dir(&environment.base_dir, environment.state.as_deref(), &board);
     let tokens: Arc<dyn BoardTokens> =
         Arc::new(FileBoardTokens::open(&state).map_err(|why| refused(&why))?);
-    let ops =
-        SqliteBoardOps::open(&state.join(BOARD_FILE), server_identity()).map_err(|error| {
-            refused(&format!(
-                "the board in {}: {}",
-                state.display(),
-                told(&error)
-            ))
-        })?;
+    let database = board_database(&environment.base_dir, environment.state.as_deref(), &board);
+    let ops = SqliteBoardOps::open(&database, server_identity()).map_err(|error| {
+        refused(&format!(
+            "the board in {}: {}",
+            state.display(),
+            told(&error)
+        ))
+    })?;
     let ops: Arc<dyn BoardOpStore> = Arc::new(ops);
     let clock: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());
     let served = ServedOperations {
@@ -101,6 +98,35 @@ pub fn build_board_server(
 
 /// The board's file in the state directory.
 pub const BOARD_FILE: &str = "board.sqlite3";
+
+/// The board server's state directory for `board` (#2741): `state` when
+/// given (`--state`), else `<base_dir>/board-server/<board id>`. Serve,
+/// import, export and backup all name the board's directory by this alone.
+pub fn board_state_dir(base_dir: &Path, state: Option<&Path>, board: &BoardId) -> PathBuf {
+    match state {
+        Some(state) => state.to_path_buf(),
+        None => {
+            let id = Path::new(board.as_str());
+            // A board id is 16 hex digits: one plain name, never a way out.
+            let mut parts = id.components();
+            assert!(
+                matches!(
+                    (parts.next(), parts.next()),
+                    (Some(std::path::Component::Normal(_)), None)
+                ),
+                "a board id is one plain path name: {}",
+                board.as_str()
+            );
+            base_dir.join("board-server").join(id)
+        }
+    }
+}
+
+/// The board's one SQLite file (#2741): [`BOARD_FILE`] in
+/// [`board_state_dir`].
+pub fn board_database(base_dir: &Path, state: Option<&Path>, board: &BoardId) -> PathBuf {
+    board_state_dir(base_dir, state, board).join(BOARD_FILE)
+}
 
 /// Who the server's reads are made as (every write is its caller's).
 fn server_identity() -> Identity {

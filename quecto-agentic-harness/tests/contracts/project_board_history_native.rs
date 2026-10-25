@@ -505,9 +505,9 @@ fn offline_export_help_advertises_export_only_and_preserves_operator_verbs() {
 fn offline_export_allowlist_format3_board_id_path_confinement_and_pure_dryrun() {
     let fixture = Fixture::new(HistoryAlgorithm::Sha1, 12);
     let home = fixture.directory.path().join("offline-home");
-    let boards = home.join(".local/share/quecto/boards");
+    let boards = home.join("board-server/0123456789abcdef");
     std::fs::create_dir_all(&boards).unwrap();
-    let database = boards.join("0123456789abcdef.sqlite");
+    let database = boards.join("board.sqlite3");
     let store = SqliteProjectBoardStore::open(&database, writer()).unwrap();
     store.bootstrap().unwrap();
     let before = fingerprint(&database);
@@ -594,7 +594,7 @@ fn offline_export_allowlist_format3_board_id_path_confinement_and_pure_dryrun() 
     assert!(
         files
             .iter()
-            .all(|n| n.to_string_lossy().starts_with("0123456789abcdef.sqlite"))
+            .all(|n| n.to_string_lossy().starts_with("board.sqlite3"))
     );
-    assert!(!home.join(".local/share/quecto/escape.sqlite").exists());
+    assert!(!home.join("board-server/escape").exists());
 }

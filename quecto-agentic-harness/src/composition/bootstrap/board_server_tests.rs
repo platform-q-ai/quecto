@@ -282,6 +282,32 @@ fn one_resolver_names_the_board_file() {
     );
 }
 
+/// #2741: export reads the server's board file and never makes one.
+#[test]
+fn export_without_the_servers_board_file_is_refused() {
+    use crate::composition::bootstrap::project_board_history::build_history_cli;
+    use crate::domain::project_board::value_objects::telemetry::BoardId;
+    use crate::interface::cli::board_server::history::HistoryCliEnvironment;
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::of_hex("0123456789abcdef").unwrap();
+    let base = dir.path().join("base");
+    let refused = build_history_cli(HistoryCliEnvironment {
+        repo: dir.path().to_path_buf(),
+        board: board.clone(),
+        target: "refs/heads/rollback".into(),
+        base_dir: base.clone(),
+        state: None,
+    })
+    .err()
+    .unwrap();
+    let database = board_database(&base, None, &board);
+    assert!(
+        refused.contains(&database.display().to_string()),
+        "{refused}"
+    );
+    assert!(!database.exists() && !base.exists(), "nothing made");
+}
+
 /// #2741: import writes the board where serve serves it, and export reads
 /// it from there: one board file for one board.
 #[test]
@@ -299,6 +325,11 @@ fn serve_import_and_export_use_one_board_file() {
         handles.serve.board().clone()
     };
     let database = board_database(&base, None, &board);
+    // Import reads the clone's local board branch.
+    sh(
+        &work,
+        &["fetch", "-q", "origin", "quecto/board:quecto/board"],
+    );
     let imported = build_history_import_cli(ImportCliEnvironment {
         repo: work.clone(),
         board: board.clone(),

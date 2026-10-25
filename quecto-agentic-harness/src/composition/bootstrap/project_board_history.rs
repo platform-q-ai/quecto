@@ -1,4 +1,5 @@
 //! Composition-only native history export/read graphs.
+use super::board_server::{board_database, board_state_dir};
 use crate::application::project_board::ports::history::*;
 use crate::application::project_board::use_cases::ExportBoardHistory;
 use crate::domain::project_board::{entities::claim::Identity, value_objects::telemetry::BoardId};
@@ -48,10 +49,12 @@ pub fn build_history_cli(
 ) -> Result<crate::interface::cli::board_server::history::HistoryCliHandles, String> {
     use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
     use crate::interface::cli::board_server::history::HistoryCliHandles;
-    let data = dirs::data_dir()
-        .ok_or("no data directory")?
-        .join("quecto")
-        .join("boards");
+    // The board file `serve` keeps (#2741): export reads, never makes, it.
+    let database = board_database(&e.base_dir, e.state.as_deref(), &e.board);
+    if database.is_file() {
+    } else {
+        return Err(format!("no board file at {}", database.display()));
+    }
     let git = Git::reader(&e.repo, GitEnvironment::of_process()).map_err(|e| e.to_string())?;
     let valid = git
         .local(&["check-ref-format", &e.target], None, 1024)
@@ -75,7 +78,7 @@ pub fn build_history_cli(
     };
     let handles = build_board_history(BoardHistoryEnvironment {
         destination_repo: e.repo,
-        database: data.join(format!("{}.sqlite", e.board.as_str())),
+        database,
         target_ref: e.target,
         board: e.board,
         writer: Identity {
@@ -120,13 +123,17 @@ pub fn build_history_import_cli(
     e: crate::interface::cli::board_server::history::ImportCliEnvironment,
 ) -> Result<crate::application::project_board::use_cases::ImportBoardHistory, String> {
     use crate::infrastructure::persistence::project_board::history::GitBoardHistorySource;
-    let data = dirs::data_dir()
-        .ok_or("no data directory")?
-        .join("quecto")
-        .join("boards");
-    std::fs::create_dir_all(&data).map_err(|e| e.to_string())?;
+    use std::os::unix::fs::DirBuilderExt;
+    // The board file `serve` keeps (#2741), in a directory private to this
+    // user (mode 0700), as `serve` requires its state directory.
+    let state = board_state_dir(&e.base_dir, e.state.as_deref(), &e.board);
+    let made = std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&state);
+    made.map_err(|why| format!("the state directory {}: {why}", state.display()))?;
     let store = Arc::new(SqliteBoardHistoryStore::new(
-        data.join(format!("{}.sqlite", e.board.as_str())),
+        board_database(&e.base_dir, e.state.as_deref(), &e.board),
         Identity {
             name: "Quecto".into(),
             email: "board@quecto.invalid".into(),
