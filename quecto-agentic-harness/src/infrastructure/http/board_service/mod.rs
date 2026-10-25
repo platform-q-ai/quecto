@@ -4,6 +4,8 @@
 pub mod client;
 pub mod limits;
 pub mod listener;
+mod replies;
+mod socket;
 mod sources;
 
 #[cfg(test)]

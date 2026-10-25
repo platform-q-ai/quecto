@@ -24,6 +24,8 @@ const TRANSPORT: &[&str] = &[
     "src/infrastructure/http/board_service/limits.rs",
     "src/infrastructure/http/board_service/client.rs",
     "src/infrastructure/http/board_service/sources.rs",
+    "src/infrastructure/http/board_service/replies.rs",
+    "src/infrastructure/http/board_service/socket.rs",
 ];
 
 /// The crate paths the transport may reach.
