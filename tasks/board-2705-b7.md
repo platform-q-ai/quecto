@@ -5,10 +5,10 @@
 |---|---|
 | Id | board-2705-b7 |
 | Kind | task |
-| Status | draft |
+| Status | archived |
 | Parent | board-service-mvp-2705 |
 | Created | 2026-10-23T16:47:59Z |
-| Updated | 2026-10-25T19:23:52Z |
+| Updated | 2026-10-25T19:24:00Z |
 
 ## Description
 OPERATOR-OWNED AND EXTERNALLY DELIVERED. [PR #2728](https://github.com/platform-q-ai/quecto/pull/2728) merged2026-10-25T08:35:53Z as ea9265df365a930a20575d1529027d0889810849, verified from primary GitHub PR metadata. This stale unclaimed draft is archived as completed external prerequisite tracking, not started or implemented by the parent lane. Do not duplicate B7.
