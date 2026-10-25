@@ -140,6 +140,40 @@ fn the_server_serves_its_sqlite_board() {
     assert_eq!(get(&routes, "/v1/time").0, 200);
 }
 
+/// #2727: `/v1/status` reads the server's own board and never its remote.
+/// Against a remote that accepts and never answers (git's network calls
+/// wait up to 120 s on one) it is answered at once, with the board's head.
+#[test]
+fn status_is_answered_at_once_when_the_remote_never_answers() {
+    use crate::infrastructure::persistence::sqlite::project_board::SqliteProjectBoardStore;
+    use std::os::unix::fs::DirBuilderExt;
+    let (dir, work) = seeded();
+    // Connections complete in its backlog; it never reads or replies.
+    let black_hole = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/remote.git", black_hole.local_addr().unwrap());
+    sh(&work, &["remote", "set-url", "origin", &url]);
+    let state = dir.path().join("state");
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&state)
+        .unwrap();
+    SqliteProjectBoardStore::open(&state.join(BOARD_FILE), server_identity())
+        .unwrap()
+        .bootstrap()
+        .unwrap();
+    let mut serving = environment(&dir, &work, "origin");
+    serving.state = Some(state);
+    let began = Instant::now();
+    let handles = build_board_server_with(&serving, Arc::new(Synced)).unwrap();
+    let routes = BoardRoutes::new(handles.serve, handles.access, handles.operations);
+    let (status, body) = get(&routes, "/v1/status");
+    let took = began.elapsed();
+    assert_eq!(status, 200, "{body}");
+    assert_ne!(body["head"], Value::Null, "the board's head: {body}");
+    assert!(took < Duration::from_secs(5), "answered in {took:?}");
+    drop(black_hole);
+}
+
 #[test]
 fn a_remote_the_clone_does_not_configure_is_refused() {
     let (_dir, work) = seeded();

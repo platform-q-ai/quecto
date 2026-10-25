@@ -132,6 +132,8 @@ pub struct ConnectionLimits {
     pub first_request: Duration,
     pub first_request_remote: Duration,
     pub per_source: usize,
+    /// The TCP connections one token may hold at once.
+    pub per_token: usize,
 }
 
 impl ConnectionLimits {
@@ -142,6 +144,7 @@ impl ConnectionLimits {
         first_request: limits::FIRST_REQUEST_TIMEOUT,
         first_request_remote: limits::FIRST_REQUEST_REMOTE_TIMEOUT,
         per_source: limits::MAX_UNPROVEN_PER_SOURCE,
+        per_token: limits::MAX_CONNECTIONS_PER_TOKEN,
     };
 }
 

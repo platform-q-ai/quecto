@@ -41,6 +41,9 @@ pub const FIRST_REQUEST_REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
 /// the server's 16 blocking threads always leave 4 for the Unix socket.
 pub const MAX_TCP_ANSWERS: usize = 12;
 pub const MAX_ANSWERS_PER_PRINCIPAL: usize = 4;
+/// The TCP connections one token may hold at once, from its first
+/// authenticated request to its close (#2727).
+pub const MAX_CONNECTIONS_PER_TOKEN: usize = 8;
 pub const CONNECTION_LIFETIME: Duration = Duration::from_secs(60);
 pub const MAX_REQUESTS: usize = 1_000;
 /// How long a connection past its life may take to finish what it answers.
