@@ -63,7 +63,8 @@ fn classified(ret: libc::c_int, status: libc::c_int, errno: i32) -> ClockSync {
             std::io::Error::from_raw_os_error(errno)
         )),
         (_, true) => ClockSync::Unsynced(
-            "the kernel marks the clock unsynchronised (STA_UNSYNC): no time daemon keeps it in step"
+            "the kernel marks the clock unsynchronised (STA_UNSYNC): no time daemon has told it \
+             the clock is in step (systemd-timesyncd, or chrony with rtcsync, does)"
                 .into(),
         ),
         (clock, false) if KEPT.contains(&clock) => ClockSync::Synced,

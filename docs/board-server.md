@@ -189,6 +189,16 @@ know, or any other platform) is not.
 - Not gated: the board's own clock reads only. Tokens are dated by the
   host's clock as it is (a token's date bounds nothing), and the SQLite
   store stamps each revision with the host's time as it is.
+- What the gate reads is the kernel's sync flag, not the daemon itself.
+  systemd-timesyncd and ntpd clear `STA_UNSYNC` once they are in step;
+  chrony clears it only with `rtcsync` (on by default in most distro
+  configs), so a synchronised chrony host without it is refused. Check a
+  host with `timedatectl show -p NTPSynchronized` (`yes` is what the gate
+  needs).
+- The kernel sets `STA_UNSYNC` by itself only once its `maxerror` passes
+  16 s, so if the time daemon dies without clearing sync, the gate can
+  still say synchronised for hours (16 s at 500 ppm is about 9 h). Setting
+  the time by hand (`date -s`, `settimeofday`) sets the flag at once.
 - A board on a clone's own branch has no gate: it reads the remote's time
   as before.
 

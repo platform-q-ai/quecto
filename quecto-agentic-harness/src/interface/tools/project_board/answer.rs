@@ -20,10 +20,9 @@
 //!   artifact by its kind: a discussion by `discussion` where a plan, run,
 //!   change or review gives `task` and `number` (and a task, for
 //!   `duplicate_artifact`, `task` alone).
-//!   Messages are the error's own words (its `Display`); every text an
-//!   answer carries from outside (messages, reasons, fields, problems,
-//!   paths) has credentials redacted and is at most [`MAX_MESSAGE_CHARS`]
-//!   characters.
+//!   Messages are the error's own words (its `Display`); every text an answer
+//!   carries from outside (messages, reasons, fields, problems, paths) has
+//!   credentials redacted and is at most [`MAX_MESSAGE_CHARS`] characters.
 //!
 //! A set-aside file an answer lists (`quarantined_json`) lies directly
 //! under `tasks/` when it is a task's (`shown_path`), under its own kind's
@@ -145,9 +144,10 @@ pub enum ErrorCode {
     NoPullRequestHost,
     /// This session may not spawn, so it starts nothing (S4c).
     NoLauncher,
-    /// `reason`: the server stayed busy or never replied to a write (B7), or its clock is unsynced.
+    /// `reason`: the server stayed busy, or never replied to a write (B7).
     Busy,
     Unanswered,
+    /// `reason`: the board server's host clock is not synchronised (#2705).
     ClockUnsynced,
     /// `task`, `run`: the run's swarm still runs here, so it is not ended by hand (S4c).
     RunLive,
