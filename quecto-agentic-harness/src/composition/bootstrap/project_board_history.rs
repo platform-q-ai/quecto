@@ -151,3 +151,7 @@ pub fn build_history_import_cli(
     )
     .import)
 }
+
+#[cfg(test)]
+#[path = "project_board_history_tests.rs"]
+mod tests;

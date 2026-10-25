@@ -29,15 +29,46 @@ fn original(kind: HistoryKind, bytes: Vec<u8>, algorithm: HistoryAlgorithm) -> H
     }
 }
 fn fixture(path: PathBuf, algorithm: HistoryAlgorithm) -> SqliteBoardHistoryStore {
+    let store = unimported(path);
+    store
+        .prepare_import(&one_revision(algorithm))
+        .unwrap()
+        .commit()
+        .unwrap();
+    store
+}
+fn unimported(path: PathBuf) -> SqliteBoardHistoryStore {
     let writer = Identity {
         name: "History".into(),
         email: "h@example.com".into(),
     };
-    let store = SqliteBoardHistoryStore::new(
-        path,
-        writer.clone(),
-        BoardId::of_hex("0123456789abcdef").unwrap(),
+    SqliteBoardHistoryStore::new(path, writer, BoardId::of_hex("0123456789abcdef").unwrap())
+}
+/// #2741 review L3: a kept op answer (or any row of any table) makes the
+/// store not empty, so import refuses it.
+#[test]
+fn import_refuses_a_store_holding_any_row() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("board.db");
+    let c = storage::open(&path).unwrap();
+    c.execute(
+        "INSERT INTO op_results VALUES ('device:laptop','w1','{}','{}')",
+        [],
+    )
+    .unwrap();
+    drop(c);
+    let refused = unimported(path).prepare_import(&one_revision(HistoryAlgorithm::Sha1));
+    assert!(
+        matches!(refused, Err(HistoryError::Conflict(_))),
+        "{:?}",
+        refused.err().map(|e| e.to_string())
     );
+}
+fn one_revision(algorithm: HistoryAlgorithm) -> LinearHistory {
+    let writer = Identity {
+        name: "History".into(),
+        email: "h@example.com".into(),
+    };
     let tasks = original(HistoryKind::Tree, vec![], algorithm);
     let mut raw = b"40000 tasks\0".to_vec();
     for pair in tasks.oid.as_bytes().chunks_exact(2) {
@@ -50,7 +81,7 @@ fn fixture(path: PathBuf, algorithm: HistoryAlgorithm) -> SqliteBoardHistoryStor
         oid: tasks.oid.clone(),
     });
     let commit=original(HistoryKind::Commit,format!("tree {}\nauthor History <h@example.com> 1 +0000\ncommitter History <h@example.com> 1 +0000\n\noriginal\n",tree.oid).into_bytes(),algorithm);
-    let h = LinearHistory {
+    LinearHistory {
         algorithm,
         source_ref: "refs/heads/quecto/board".into(),
         source_remote: "local".into(),
@@ -65,9 +96,7 @@ fn fixture(path: PathBuf, algorithm: HistoryAlgorithm) -> SqliteBoardHistoryStor
             at: 1,
             original: Some(commit),
         }],
-    };
-    store.prepare_import(&h).unwrap().commit().unwrap();
-    store
+    }
 }
 #[test]
 fn imported_native_unchanged_clear_can_carry_original_root_both_formats() {

@@ -276,10 +276,6 @@ fn one_resolver_names_the_board_file() {
         board_database(base, Some(Path::new("/scratch/state")), &board),
         Path::new("/scratch/state/board.sqlite3")
     );
-    assert_eq!(
-        board_state_dir(base, None, &board).join(BOARD_FILE),
-        board_database(base, None, &board)
-    );
 }
 
 /// #2741: export reads the server's board file and never makes one.
@@ -322,9 +318,15 @@ fn serve_import_and_export_use_one_board_file() {
     let base = dir.path().join("base");
     let board = {
         let handles = build_board_server(&environment(&dir, &work, "origin")).unwrap();
-        handles.serve.board().clone()
+        let board = handles.serve.board().clone();
+        let routes = BoardRoutes::new(handles.serve, handles.access, handles.operations);
+        assert_eq!(
+            get(&routes, "/v1/status").1["head"],
+            Value::Null,
+            "none yet"
+        );
+        board
     };
-    let database = board_database(&base, None, &board);
     // Import reads the clone's local board branch.
     sh(
         &work,
@@ -341,7 +343,7 @@ fn serve_import_and_export_use_one_board_file() {
     .execute()
     .unwrap();
     assert!(imported.revisions > 0, "the seeded board has history");
-    assert!(database.is_file(), "import wrote {}", database.display());
+    // The head was null before import (above) and is set after (below).
     let handles = build_board_server(&environment(&dir, &work, "origin")).unwrap();
     let routes = BoardRoutes::new(handles.serve, handles.access, handles.operations);
     let (status, body) = get(&routes, "/v1/status");
@@ -361,4 +363,42 @@ fn serve_import_and_export_use_one_board_file() {
         .execute(true, exported.expected.as_deref())
         .unwrap();
     assert_eq!(report.revisions, imported.revisions, "export reads it too");
+}
+
+/// #2741 review M1: a `--state` directory names no board, so a file
+/// imported for another board is refused at start, naming both ids.
+#[test]
+fn serve_refuses_a_board_file_imported_for_another_board() {
+    use crate::composition::bootstrap::project_board_history::build_history_import_cli;
+    use crate::domain::project_board::value_objects::telemetry::BoardId;
+    use crate::interface::cli::board_server::history::ImportCliEnvironment;
+    let (dir, work) = seeded();
+    let state = dir.path().join("state");
+    let mut serving = environment(&dir, &work, "origin");
+    serving.state = Some(state.clone());
+    let board = build_board_server(&serving).unwrap().serve.board().clone();
+    let other = BoardId::of_hex("fedcba9876543210").unwrap();
+    assert_ne!(board, other);
+    sh(
+        &work,
+        &["fetch", "-q", "origin", "quecto/board:quecto/board"],
+    );
+    let imported = build_history_import_cli(ImportCliEnvironment {
+        repo: work.clone(),
+        board: other.clone(),
+        remote: "origin".into(),
+        base_dir: dir.path().join("base"),
+        state: Some(state.clone()),
+    })
+    .unwrap()
+    .execute();
+    assert!(imported.is_ok(), "{:?}", imported.err());
+    let refused = build_board_server(&serving).err().unwrap();
+    for named in [
+        board.as_str(),
+        other.as_str(),
+        &state.join(BOARD_FILE).display().to_string(),
+    ] {
+        assert!(refused.contains(named), "{named} in: {refused}");
+    }
 }
