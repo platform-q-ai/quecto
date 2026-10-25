@@ -30,7 +30,7 @@ use super::replies::response;
 use super::sources::{Answers, Shares, Sources, Unproven, source_of};
 
 pub use super::limits::Method as ServiceMethod;
-pub use super::socket::{BindError, Listener, bind, bind_tcp};
+pub use super::socket::{BindError, Listener, bind, bind_tcp, this_uid};
 
 /// A request as the handler gets it: admitted, its body read whole.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,12 +104,6 @@ impl PeerCredentials for SocketPeerCredentials {
     fn uid(&self, stream: &UnixStream) -> io::Result<u32> {
         Ok(stream.peer_cred()?.uid())
     }
-}
-
-/// This process's effective uid: the one a server lets in.
-pub fn this_uid() -> u32 {
-    // SAFETY: `geteuid` has no preconditions and cannot fail.
-    unsafe { libc::geteuid() }
 }
 
 /// What a listener serves with: handler, peer reader, the uid let in.

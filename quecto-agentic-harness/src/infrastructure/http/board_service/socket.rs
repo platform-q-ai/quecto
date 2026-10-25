@@ -5,7 +5,11 @@ use std::io;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use super::listener::this_uid;
+/// This process's effective uid: the one a server lets in.
+pub fn this_uid() -> u32 {
+    // SAFETY: `geteuid` has no preconditions and cannot fail.
+    unsafe { libc::geteuid() }
+}
 
 /// Why a socket was not bound: a server answers on it, or why not.
 #[derive(Debug)]
