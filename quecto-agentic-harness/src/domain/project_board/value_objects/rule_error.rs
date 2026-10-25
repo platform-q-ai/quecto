@@ -262,7 +262,7 @@ fn lifecycle(
     };
     write!(
         f,
-        "move does not take a task from {} to {}; {way}",
+        "a task does not go from {} to {} this way: {way}",
         from.as_str(),
         to.as_str()
     )

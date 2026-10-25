@@ -196,7 +196,7 @@
       "op": "move",
       "error": {
         "code": "rule",
-        "message": "move does not take a task from claimed to in_progress; start(task, plan_version) is the only way there, and it runs the task's accepted plan",
+        "message": "a task does not go from claimed to in_progress this way: start(task, plan_version) is the only way there, and it runs the task's accepted plan",
         "rule": {
           "code": "use_lifecycle",
           "action": "start",
@@ -217,7 +217,7 @@
       "op": "move",
       "error": {
         "code": "rule",
-        "message": "move does not take a task from claimed to done; finish work done without a run with done_without_run(task, reason)",
+        "message": "a task does not go from claimed to done this way: finish work done without a run with done_without_run(task, reason)",
         "rule": {
           "code": "use_lifecycle",
           "action": "done_without_run",
@@ -531,7 +531,7 @@
       "op": "move",
       "error": {
         "code": "rule",
-        "message": "move does not take a task from claimed to blocked; blocking is a run's outcome: release the task with move(task, to ready), and say why in your reply",
+        "message": "a task does not go from claimed to blocked this way: blocking is a run's outcome: release the task with move(task, to ready), and say why in your reply",
         "rule": {
           "code": "use_lifecycle",
           "action": "release",
@@ -1256,7 +1256,7 @@
       "op": "complete",
       "error": {
         "code": "rule",
-        "message": "move does not take a task from claimed to done; finish work done without a run with done_without_run(task, reason)",
+        "message": "a task does not go from claimed to done this way: finish work done without a run with done_without_run(task, reason)",
         "rule": {
           "code": "use_lifecycle",
           "action": "done_without_run",

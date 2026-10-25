@@ -141,7 +141,11 @@ fn a_move_to_review_names_end_run() {
         "10:00:00",
     );
     let message = refused.unwrap_err().to_string();
-    assert!(message.contains("end_run(task, run, outcome)"), "{message}");
+    assert_eq!(
+        message,
+        "a task does not go from in_progress to review this way: the task's run decides it: \
+         end the run with end_run(task, run, outcome)"
+    );
 }
 
 #[test]
