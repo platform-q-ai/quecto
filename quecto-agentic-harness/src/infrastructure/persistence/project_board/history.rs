@@ -13,7 +13,7 @@ use decode::projection_budget;
 mod staging;
 use staging::Staged;
 #[cfg(test)]
-use staging::{WRITE_BATCH, WRITE_BATCH_BYTES, listable};
+use staging::{WRITE_BATCH, WRITE_BATCH_BYTES, batch_timeout, listable};
 
 fn malformed(why: impl ToString) -> HistoryError {
     HistoryError::Malformed(why.to_string())
@@ -57,12 +57,15 @@ fn charge(value: &mut usize, n: usize, cap: usize) -> HistoryResult<()> {
 /// Exports hash every object in process (the framing [`verify_raw`]
 /// checks) and store them in batches, one git call per kind per batch, all
 /// before the target ref moves: a git call per object made a 4,102-revision
-/// export take minutes (#2748).
+/// export take minutes (#2748). Once any store fails the sink never
+/// publishes again; only a fresh sink (a fresh export graph) starts over.
 pub struct GitBoardHistorySink {
     repo: PathBuf,
     target_ref: String,
     format: std::sync::OnceLock<HistoryAlgorithm>,
+    git_dir: std::sync::OnceLock<PathBuf>,
     staged: std::sync::Mutex<Staged>,
+    failed: std::sync::atomic::AtomicBool,
 }
 impl GitBoardHistorySink {
     pub fn new(repo: PathBuf, target_ref: String) -> Self {
@@ -70,8 +73,25 @@ impl GitBoardHistorySink {
             repo,
             target_ref,
             format: std::sync::OnceLock::new(),
+            git_dir: std::sync::OnceLock::new(),
             staged: std::sync::Mutex::new(Staged::default()),
+            failed: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+    /// The destination's own git directory, absolute, asked of git once.
+    fn git_dir(&self) -> HistoryResult<PathBuf> {
+        if let Some(dir) = self.git_dir.get() {
+            return Ok(dir.clone());
+        }
+        let dir = git(&self.repo)?
+            .text(&["rev-parse", "--absolute-git-dir"], None)
+            .map_err(unavailable)?;
+        let dir = PathBuf::from(dir);
+        if dir.is_absolute() {
+        } else {
+            return Err(unavailable("destination git directory is not absolute"));
+        }
+        Ok(self.git_dir.get_or_init(|| dir).clone())
     }
     /// The destination's object format, asked of git once per sink.
     fn format(&self) -> HistoryResult<HistoryAlgorithm> {
@@ -239,12 +259,8 @@ impl BoardHistorySink for GitBoardHistorySink {
         self.raw(HistoryKind::Commit, body.as_bytes(), None, dry)
     }
     fn publish(&self, expected: Option<&str>, new: &str) -> HistoryResult<()> {
-        {
-            // Every object the new head reaches is stored before the ref moves.
-            let mut staged = self.staged.lock().map_err(unavailable)?;
-            self.store(&mut staged)?;
-            assert!(staged.is_empty(), "nothing staged is left unstored");
-        }
+        // Every object the new head reaches is stored before the ref moves.
+        self.store_for_publish()?;
         let git = git(&self.repo)?;
         if self.target_ref.len() <= 1024
             && self.target_ref.starts_with("refs/heads/")
@@ -257,15 +273,7 @@ impl BoardHistorySink for GitBoardHistorySink {
         } else {
             return Err(malformed("destination ref"));
         }
-        let width = match git
-            .text(&["rev-parse", "--show-object-format"], None)
-            .map_err(malformed)?
-            .as_str()
-        {
-            "sha1" => 40,
-            "sha256" => 64,
-            _ => return Err(malformed("destination format")),
-        };
+        let width = self.width()?;
         oid(new, width)?;
         if let Some(old) = expected {
             oid(old, width)?;

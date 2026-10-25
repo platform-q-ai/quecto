@@ -215,10 +215,12 @@ fn sink_stores_every_written_object_exactly_before_it_publishes() {
         let mut ids = vec![];
         for (kind, name, bytes) in kinds() {
             let id = sink.raw(kind, &bytes, None, false).unwrap();
-            // The same object written twice is stored once, under one id.
             assert_eq!(sink.raw(kind, &bytes, Some(&id), false).unwrap(), id);
             ids.push((id, name, bytes));
         }
+        // The same object written twice is staged, so stored, once.
+        let order: Vec<_> = ids.iter().map(|(id, ..)| id.clone()).collect();
+        assert_eq!(sink.staged.lock().unwrap().order(), order);
         let entry = HistoryEntry {
             mode: "100644".into(),
             name: b"a.md".to_vec(),
@@ -299,4 +301,153 @@ fn sink_lists_only_plain_absolute_paths_to_git() {
             "{path:?}"
         );
     }
+}
+
+/// Whether `repo` holds object `id`.
+fn stored(repo: &std::path::Path, id: &str) -> bool {
+    scratch(repo, &["cat-file", "-e", id], b"").status.success()
+}
+
+/// Makes git store something else for staged `id`: its stored ID then
+/// differs from ours, as a corrupted or swapped object would.
+fn corrupt(sink: &GitBoardHistorySink, id: &str) {
+    let file = sink.staged.lock().unwrap().file(id).unwrap();
+    std::fs::write(file, b"not the hashed bytes").unwrap();
+}
+
+/// A commit stored in `repo` by git itself, naming an empty tree.
+fn outside_commit(repo: &std::path::Path, message: &str) -> String {
+    let tree = scratch_ok(repo, &["hash-object", "-w", "-t", "tree", "--stdin"], b"");
+    let body = format!(
+        "tree {tree}\nauthor A <a@example.com> 1 +0000\ncommitter A <a@example.com> 1 +0000\n\n{message}\n"
+    );
+    let args = ["hash-object", "-w", "-t", "commit", "--stdin"];
+    scratch_ok(repo, &args, body.as_bytes())
+}
+
+const TARGET: &str = "refs/heads/quecto/rollback";
+
+#[test]
+fn sink_stores_blobs_then_trees_then_commits_whatever_order_they_came_in() {
+    let (_dir, repo, sink) = destination("sha1");
+    let mut staged = vec![];
+    for (kind, _, bytes) in kinds().into_iter().rev() {
+        staged.push(sink.raw(kind, &bytes, None, false).unwrap());
+    }
+    let [commit, tree, blob] = <[String; 3]>::try_from(staged).unwrap();
+    assert_eq!(
+        sink.staged.lock().unwrap().order(),
+        [blob.clone(), tree.clone(), commit.clone()]
+    );
+    // A tree that fails to store stops the batch before any commit.
+    corrupt(&sink, &tree);
+    assert!(sink.publish(None, &commit).is_err());
+    assert!(stored(&repo, &blob));
+    assert!(!stored(&repo, &tree));
+    assert!(
+        !stored(&repo, &commit),
+        "no commit is stored without its tree"
+    );
+}
+
+#[test]
+fn a_failed_store_before_publication_leaves_the_target_ref_alone() {
+    let (_dir, repo, sink) = destination("sha1");
+    let old = outside_commit(&repo, "published before");
+    scratch_ok(&repo, &["update-ref", TARGET, &old], b"");
+    let (kind, _, bytes) = kinds().into_iter().next().unwrap();
+    let blob = sink.raw(kind, &bytes, None, false).unwrap();
+    corrupt(&sink, &blob);
+    let new = outside_commit(&repo, "would be published");
+    assert!(matches!(
+        sink.publish(Some(&old), &new),
+        Err(HistoryError::Malformed(_))
+    ));
+    assert_eq!(scratch_ok(&repo, &["rev-parse", TARGET], b""), old);
+    // Nothing is left staged, yet the sink still never publishes.
+    assert!(matches!(
+        sink.publish(Some(&old), &new),
+        Err(HistoryError::Unavailable(why)) if why.contains("earlier object store")
+    ));
+    assert_eq!(scratch_ok(&repo, &["rev-parse", TARGET], b""), old);
+    let fresh = GitBoardHistorySink::new(repo.clone(), TARGET.into());
+    fresh.publish(Some(&old), &new).unwrap();
+    assert_eq!(scratch_ok(&repo, &["rev-parse", TARGET], b""), new);
+}
+
+#[test]
+fn a_store_that_fails_while_staging_stops_every_later_publication() {
+    let (_dir, repo, sink) = destination("sha1");
+    let first = sink
+        .raw(HistoryKind::Blob, b"first of a full batch", None, false)
+        .unwrap();
+    for n in 1..WRITE_BATCH {
+        let bytes = n.to_string();
+        sink.raw(HistoryKind::Blob, bytes.as_bytes(), None, false)
+            .unwrap();
+    }
+    corrupt(&sink, &first);
+    let next = sink.raw(HistoryKind::Blob, b"the next batch", None, false);
+    assert!(next.is_err());
+    let head = outside_commit(&repo, "stored by git itself");
+    assert!(matches!(
+        sink.publish(None, &head),
+        Err(HistoryError::Unavailable(why)) if why.contains("earlier object store")
+    ));
+    let target = scratch(&repo, &["rev-parse", "--verify", "--quiet", TARGET], b"");
+    assert!(!target.status.success(), "the target ref is never written");
+}
+
+#[test]
+fn objects_are_staged_privately_inside_the_destination_git_directory() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_dir, repo, sink) = destination("sha256");
+    let (kind, _, bytes) = kinds().into_iter().next().unwrap();
+    let id = sink.raw(kind, &bytes, None, false).unwrap();
+    let file = sink.staged.lock().unwrap().file(&id).unwrap();
+    let dir = file.parent().unwrap().to_path_buf();
+    let git_dir = scratch_ok(&repo, &["rev-parse", "--absolute-git-dir"], b"");
+    assert_eq!(dir.parent().unwrap(), std::path::Path::new(&git_dir));
+    let name = dir.file_name().unwrap().to_str().unwrap();
+    assert!(name.starts_with("quecto-export-"), "{name}");
+    let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o700);
+    let head = outside_commit(&repo, "head");
+    sink.publish(None, &head).unwrap();
+    assert!(!dir.exists(), "a stored batch removes its directory");
+}
+
+#[test]
+fn a_git_directory_git_cannot_read_back_as_a_line_is_named_in_the_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    let odd = dir.path().join("line\nbreak.git");
+    let path = odd.to_str().unwrap();
+    scratch_ok(dir.path(), &["init", "-q", "--bare", path], b"");
+    let sink = GitBoardHistorySink::new(odd.clone(), TARGET.into());
+    let (kind, _, bytes) = kinds().into_iter().next().unwrap();
+    assert!(
+        sink.raw(kind, &bytes, None, true).is_ok(),
+        "a dry run stages nothing"
+    );
+    match sink.raw(kind, &bytes, None, false) {
+        Err(HistoryError::Unavailable(why)) => {
+            assert!(why.contains("destination git directory"), "{why}");
+            assert!(why.contains("line\\nbreak.git"), "{why}");
+        }
+        other => panic!("expected a refusal naming the directory: {other:?}"),
+    }
+}
+
+#[test]
+fn a_store_deadline_grows_with_its_batch_from_gits_own() {
+    use std::time::Duration;
+    let base = super::super::git::LOCAL_TIMEOUT;
+    assert_eq!(batch_timeout(0, 0), base + Duration::from_secs(1));
+    let full = batch_timeout(WRITE_BATCH, WRITE_BATCH_BYTES);
+    let grown = Duration::from_millis(40_960) + Duration::from_secs(65);
+    assert_eq!(full, base + grown);
+    assert!(batch_timeout(1, 0) < batch_timeout(2, 0));
+    assert!(batch_timeout(1, 0) < batch_timeout(1, 2 * 1024 * 1024));
+    // Saturates rather than overflowing, however large a batch claims to be.
+    assert!(batch_timeout(usize::MAX, usize::MAX) > full);
 }
