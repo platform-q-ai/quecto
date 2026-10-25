@@ -479,10 +479,7 @@ fn feature_red_sink_exact_raw_objects_and_dryrun_tree_commit_are_real_git() {
         .sink
         .raw(object.kind, &object.bytes, Some(&object.oid), false)
         .unwrap();
-    assert_eq!(
-        git(&fixture.destination, &["cat-file", "blob", &id], b""),
-        object.bytes
-    );
+    assert_eq!(id, object.oid);
     let entries = vec![HistoryEntry {
         mode: "100644".into(),
         name: b"a.bin".to_vec(),
@@ -555,16 +552,7 @@ fn feature_red_sink_exact_raw_objects_and_dryrun_tree_commit_are_real_git() {
             false,
         )
         .unwrap();
-    let raw = git(&fixture.destination, &["cat-file", "commit", &commit], b"");
     assert_eq!(commit, expected_commit);
-    assert_eq!(raw, expected_body.as_bytes());
-    assert!(raw.starts_with(format!("tree {tree}\n").as_bytes()));
-    let expected=b"author History <history@example.com> 1700000100 +0000\ncommitter History <history@example.com> 1700000100 +0000\n";
-    assert!(
-        raw.windows(expected.len()).any(|bytes| bytes == expected),
-        "exact supplied writer/time/UTC fields, not fixed arbitrary commit metadata"
-    );
-    assert!(raw.ends_with(b"\n\nnative deterministic\n"));
     assert_eq!(
         handles
             .sink
@@ -587,6 +575,31 @@ fn feature_red_sink_exact_raw_objects_and_dryrun_tree_commit_are_real_git() {
     );
     handles.sink.publish(None, &commit).unwrap();
     assert_eq!(text(&fixture.destination, &["rev-parse", TARGET]), commit);
+    // Written objects are stored, exactly, by the time the ref moves (#2748).
+    assert_eq!(
+        git(
+            &fixture.destination,
+            &["cat-file", "blob", &object.oid],
+            b""
+        ),
+        object.bytes
+    );
+    assert_eq!(
+        text(
+            &fixture.destination,
+            &["rev-parse", &format!("{commit}^{{tree}}")]
+        ),
+        tree
+    );
+    let raw = git(&fixture.destination, &["cat-file", "commit", &commit], b"");
+    assert_eq!(raw, expected_body.as_bytes());
+    assert!(raw.starts_with(format!("tree {tree}\n").as_bytes()));
+    let expected=b"author History <history@example.com> 1700000100 +0000\ncommitter History <history@example.com> 1700000100 +0000\n";
+    assert!(
+        raw.windows(expected.len()).any(|bytes| bytes == expected),
+        "exact supplied writer/time/UTC fields, not fixed arbitrary commit metadata"
+    );
+    assert!(raw.ends_with(b"\n\nnative deterministic\n"));
 }
 
 #[test]

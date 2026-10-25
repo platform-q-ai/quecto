@@ -34,9 +34,3 @@ fail-fast = false
 slow-timeout = { period = "2s" }
 leak-timeout = "500ms"
 failure-output = "immediate-final"
-
-# Parent-approved B3-A exception: unchanged full 4102-revision acceptance.
-# Keep the ordinary hook/CI run and assertions; all other tests retain 300s.
-[[profile.ci.overrides]]
-filter = 'package(=quecto-agentic-harness) & binary(=contracts) & test(=project_board_history::feature_red_export_over_4096_native_revisions_and_oid_cache_eviction_has_no_truncation)'
-slow-timeout = { period = "60s", terminate-after = 20 }

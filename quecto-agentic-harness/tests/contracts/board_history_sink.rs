@@ -47,13 +47,14 @@ fn real_sink_hashes_without_side_effects_then_publishes_only_the_captured_lease(
                 .unwrap(),
             expected
         );
+        assert_eq!(sink.tree(&[], false).unwrap(), tree);
+        assert_eq!(sink.commit(metadata, false).unwrap(), proposed);
+        sink.publish(None, &proposed).unwrap();
+        // Written objects are stored, exactly, by the time the ref moves (#2748).
         assert_eq!(
             git(&fixture.destination, &["cat-file", "blob", &expected], b""),
             body
         );
-        assert_eq!(sink.tree(&[], false).unwrap(), tree);
-        assert_eq!(sink.commit(metadata, false).unwrap(), proposed);
-        sink.publish(None, &proposed).unwrap();
         let loser = sink
             .commit(
                 HistoryCommit {
