@@ -61,3 +61,5 @@ pub use import_board_history::ImportBoardHistory;
 
 mod backup_board;
 pub use backup_board::BackupBoard;
+mod fence_board;
+pub use fence_board::FenceBoard;

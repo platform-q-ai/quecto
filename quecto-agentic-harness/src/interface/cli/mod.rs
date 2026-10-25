@@ -293,6 +293,7 @@ pub struct CliContext {
     pub board_history: Option<board_server::history::BoardHistoryBuilder>,
     pub board_history_import: Option<board_server::history::BoardHistoryImportBuilder>,
     pub board_backup: Option<board_server::backup::BoardBackupBuilder>,
+    pub board_fence: Option<board_server::fence::BoardFenceBuilder>,
     /// Output reaches the real terminal (`run`, not `run_with_output`): a
     /// one-shot run writes its answer out before it settles its children.
     pub live_output: bool,
@@ -398,6 +399,7 @@ pub struct CliComposition {
     pub board_history: board_server::history::BoardHistoryBuilder,
     pub board_history_import: board_server::history::BoardHistoryImportBuilder,
     pub board_backup: board_server::backup::BoardBackupBuilder,
+    pub board_fence: board_server::fence::BoardFenceBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -482,6 +484,7 @@ fn composed_context(
         board_history: Some(composition.board_history),
         board_history_import: Some(composition.board_history_import),
         board_backup: Some(composition.board_backup),
+        board_fence: Some(composition.board_fence),
         swarm_board: Some(composition.swarm_board),
         swarm_board_wire: Some(composition.swarm_board_wire),
         swarm_board_log: Some(composition.swarm_board_log),

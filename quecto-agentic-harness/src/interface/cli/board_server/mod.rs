@@ -12,6 +12,7 @@ use crate::infrastructure::http::board_service::listener::PeerCredentials;
 use crate::interface::cli::CliContext;
 
 pub mod backup;
+pub mod fence;
 pub mod history;
 mod op;
 pub mod routes;
@@ -72,6 +73,12 @@ pub fn cmd_board_server(
         .map(|(first, rest)| (first.as_str(), rest))
     {
         return backup::run(ctx, rest, stdout, stderr);
+    }
+    if let Some(("fence", rest)) = args
+        .split_first()
+        .map(|(first, rest)| (first.as_str(), rest))
+    {
+        return fence::run(ctx, rest, stdout, stderr);
     }
     let began = std::time::Instant::now();
     if let Some(("token", rest)) = args

@@ -11,3 +11,4 @@ pub mod project_board_remote_runs;
 pub mod project_board_history;
 
 pub mod board_backup;
+pub mod board_fence;

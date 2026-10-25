@@ -40,13 +40,15 @@ pub struct ServeOptions {
 pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
     let refused = |why: String| Err(format!("board-server: {why}"));
     let Some((action, options)) = args.split_first() else {
-        return refused("an action is needed: serve, token, import, export or backup".into());
+        return refused(
+            "an action is needed: serve, token, import, export, backup or fence".into(),
+        );
     };
     match action.as_str() {
         "serve" => {}
         other => {
             return refused(format!(
-                "unknown action '{other}': the actions are serve, token, import, export and backup"
+                "unknown action '{other}': the actions are serve, token, import, export, backup and fence"
             ));
         }
     }
