@@ -492,13 +492,13 @@ fn idle_unauthenticated_sockets_never_lock_out_a_client() {
     assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
     let evicted = exchange(idle.into_iter().next().unwrap(), KEPT_ALIVE);
     assert_eq!(evicted, "", "the oldest idle socket was closed");
-    // Authenticated connections leave the count: 9 kept alive all serve.
-    let kept = b"GET /v1/thing HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer ok\r\n\r\n";
+    // Authenticated connections leave the count: 9 kept alive all serve
+    // (each its own token, so no token's connection cap is reached).
     let mut authenticated = Vec::new();
-    for _ in 0..=limits::MAX_UNPROVEN_PER_SOURCE {
+    for n in 0..=limits::MAX_UNPROVEN_PER_SOURCE {
         use std::io::Read;
         let mut stream = from_source("127.0.0.1", address);
-        stream.write_all(kept).unwrap();
+        stream.write_all(&kept_as(&format!("ok{n}"))).unwrap();
         let mut head = [0u8; 12];
         stream.read_exact(&mut head).unwrap();
         assert_eq!(&head, b"HTTP/1.1 200");
@@ -528,3 +528,13 @@ fn a_tcp_connection_that_never_asks_is_closed_after_its_first_request_time() {
     let waited = began.elapsed();
     assert!(waited < Duration::from_secs(5), "closed after {waited:?}");
 }
+
+/// A kept-alive request authenticated as `token`.
+fn kept_as(token: &str) -> Vec<u8> {
+    format!("GET /v1/thing HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer {token}\r\n\r\n")
+        .into_bytes()
+}
+
+/// #2727: each token's connection cap.
+#[path = "listener_token_tests.rs"]
+mod tokens;

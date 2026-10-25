@@ -85,3 +85,23 @@ fn answers_are_bounded_per_principal_and_in_all() {
     drop(first);
     assert!(answers.admit("laptop").is_some());
 }
+
+/// #2727: each principal's share is its own, `per` at once, and a place
+/// given back is taken again.
+#[test]
+fn shares_are_bounded_per_principal_and_given_back() {
+    let shares = Shares::new(2);
+    let first = shares.take("laptop").unwrap();
+    let _second = shares.take("laptop").unwrap();
+    assert!(shares.take("laptop").is_none(), "laptop's share is full");
+    assert!(shares.take("phone").is_some(), "phone's is its own");
+    drop(first);
+    assert!(shares.take("laptop").is_some(), "a place given back");
+}
+
+/// #2727: a share holds at least one, or no principal could ever be served.
+#[test]
+#[should_panic(expected = "at least one")]
+fn an_empty_share_is_refused() {
+    let _ = Shares::new(0);
+}
