@@ -14,9 +14,9 @@ use std::path::Path;
 use quecto::application::project_board::dto::{
     BoardExecution, ListSummaries, OpNoting, ReadRequest, SUMMARIES_LISTINGS_ONLY,
 };
-use quecto::application::project_board::ports::BoardOperations;
+use quecto::application::project_board::ports::{BoardOperations, ClockSync, TimeSync};
 use quecto::application::project_board::telemetry::OpFacts;
-use quecto::composition::bootstrap::board_server::build_board_server;
+use quecto::composition::bootstrap::board_server::build_board_server_with;
 use quecto::composition::bootstrap::project_board::build_project_board_handles;
 use quecto::domain::project_board::entities::task_parts::EntryPolicy;
 use quecto::domain::project_board::value_objects::telemetry::{Client, FrontEnd};
@@ -278,9 +278,20 @@ impl Drop for Server {
     }
 }
 
+/// A host whose clock is synchronised: the board server's clock gate
+/// (#2705) lets its clock through, as its own reference.
+struct Synced;
+
+impl TimeSync for Synced {
+    fn sync(&self) -> ClockSync {
+        ClockSync::Synced
+    }
+}
+
 /// The remote adapter composition picks for `--url`, against a board
 /// server for a fresh clone of `remote`, its board in a fresh state
-/// directory; the server's clock reads no outside time.
+/// directory; the server's host clock is synchronised, so its clock is
+/// referenced and its answers carry no clock note.
 fn served(remote: &Remote) -> Fixture {
     let repo = remote.clone_dir(0).to_path_buf();
     let state = repo.join(".git").join("served");
@@ -292,7 +303,8 @@ fn served(remote: &Remote) -> Fixture {
         state: Some(state.join("state")),
         base_dir: state.clone(),
     };
-    let handles = build_board_server(&environment).expect("the board server is built");
+    let handles = build_board_server_with(&environment, std::sync::Arc::new(Synced))
+        .expect("the board server is built");
     let board = handles.serve.board().clone();
     let socket = state.join("s").join("board.sock");
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
@@ -316,7 +328,7 @@ fn served(remote: &Remote) -> Fixture {
     };
     Fixture {
         operations: built(&repo, known),
-        clock_note: Some("this machine's clock reads no outside time".into()),
+        clock_note: None,
         _server: Some(Server {
             stop: Some(stop),
             thread: Some(thread),

@@ -13,7 +13,7 @@ use crate::application::project_board::ports::ListenAddress;
 use crate::application::project_board::ports::{
     BoardClock, BoardOpStore, BoardOperations, BoardOperationsOver, BoardTokens, OperationsOver,
     ProjectBoardStore, PullRequestState, PullRequestStates, PullRequestStatesError,
-    RemoteRevisions,
+    RemoteRevisions, TimeSync,
 };
 use crate::application::project_board::use_cases::{
     BoardAccess, QueryBoard, READ_BUDGET, RunBoardOperation, ServeBoard, ServeBoardOperation,
@@ -30,14 +30,29 @@ use crate::infrastructure::persistence::project_board::remote_revisions::GitRemo
 use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
 use crate::infrastructure::persistence::sqlite::project_board::SqliteBoardOps;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
+use crate::infrastructure::time::kernel_time_sync::KernelTimeSync;
 pub use crate::interface::cli::board_server::{BoardServerEnvironment, BoardServerHandles};
 
-/// Builds the board server for `environment`'s clone and board remote.
+/// Builds the board server for `environment`'s clone and board remote,
+/// its clock gated on the kernel's word ([`build_board_server_with`]).
+/// # Errors
+/// As [`build_board_server_with`].
+pub fn build_board_server(
+    environment: &BoardServerEnvironment,
+) -> Result<BoardServerHandles, String> {
+    build_board_server_with(environment, Arc::new(KernelTimeSync))
+}
+
+/// Builds the board server for `environment`'s clone and board remote. Its
+/// operations and its time read a clock that tells the time only while
+/// `sync` says the host's clock is synchronised; tokens are dated by the
+/// host's clock as it is.
 /// # Errors
 /// No git, remote, URL or board id; a bad config or address; a state
 /// directory or tokens file refused (secrets and URL userinfo redacted).
-pub fn build_board_server(
+pub fn build_board_server_with(
     environment: &BoardServerEnvironment,
+    sync: Arc<dyn TimeSync>,
 ) -> Result<BoardServerHandles, String> {
     let redacted = |why: &str| redact_secrets(&redact_url_userinfo(why));
     let refused = |why: &str| format!("board-server: {}", redacted(why));
@@ -83,6 +98,7 @@ pub fn build_board_server(
         })?;
     let ops: Arc<dyn BoardOpStore> = Arc::new(ops);
     let clock: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());
+    let _ = sync;
     let served = ServedOperations {
         clock: Arc::clone(&clock),
         prs: pull_request_states(&url, &environment.vars),

@@ -35,6 +35,7 @@ impl fmt::Display for ProjectBoardError {
                     "this clock reads {read}, a time the board cannot spell; fix the clock"
                 )
             }
+            Self::Clock(BoardClockError::Unsynced(why)) => f.write_str(why),
             Self::Invalid(error) => write!(f, "invalid task: {error}"),
             Self::NotFound(id) => write!(f, "no task {}", id.as_str()),
             Self::Exists(id) => write!(f, "task {} already exists", id.as_str()),

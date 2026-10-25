@@ -61,6 +61,13 @@ fn a_retired_kind_stays_known() {
     }
 }
 
+/// The board server's clock gate (#2705) refuses as `clock_unsynced`, a
+/// code its records name.
+#[test]
+fn the_clock_gates_refusal_is_a_known_kind() {
+    assert_eq!(StaticKind::new("clock_unsynced").as_str(), "clock_unsynced");
+}
+
 /// #2663: a board id is 16 lowercase hex digits, and nothing else.
 #[test]
 fn a_board_id_holds_only_its_hex() {

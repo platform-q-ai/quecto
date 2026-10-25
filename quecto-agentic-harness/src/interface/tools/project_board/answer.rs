@@ -7,13 +7,12 @@
 //!   merged, or `{"done": false, "error"}`), a listing's `head`, `tasks`
 //!   and `quarantined` (asked for summaries, each task with its `summary`,
 //!   [`listing_fields`], or `summary_skipped` and none), `show`'s
-//!   ([`shown_fields`]), a plan proposed,
-//!   edited or discarded as `plan` ([`planned_json`]), a plan accepted as
-//!   the `task` naming it, the `plan` and the version it `superseded`
-//!   (`null` when none was accepted), or `head` alone; and
-//!   `clock` when a request that reads the clock was not bounded against
-//!   an outside time. On the agent tool, a started task's answer also
-//!   carries `steps` ([`start_steps`]).
+//!   ([`shown_fields`]), a plan proposed, edited or discarded as `plan`
+//!   ([`planned_json`]), a plan accepted as the `task` naming it, the `plan`
+//!   and the version it `superseded` (`null` when none was accepted), or
+//!   `head` alone; and `clock` when a request that reads the clock was not
+//!   bounded against an outside time. On the agent tool, a started task's
+//!   answer also carries `steps` ([`start_steps`]).
 //! - Refusal: `{"ok": false, "op": …, "error": {"code", "message", …}}`.
 //!   Each [`ErrorCode`] has one shape: the same fields every time, but
 //!   a refused start's `steps` on the agent tool ([`start_steps`]), and
@@ -146,11 +145,11 @@ pub enum ErrorCode {
     NoPullRequestHost,
     /// This session may not spawn, so it starts nothing (S4c).
     NoLauncher,
-    /// `reason`: the server stayed busy, or never replied to a write (B7).
+    /// `reason`: the server stayed busy or never replied to a write (B7), or its clock is unsynced.
     Busy,
     Unanswered,
-    /// `task`, `run`: the run's swarm still runs here, so it is not ended
-    /// by hand (S4c).
+    ClockUnsynced,
+    /// `task`, `run`: the run's swarm still runs here, so it is not ended by hand (S4c).
     RunLive,
     /// `brief`: `{"code"}`, why the plan cannot brief a swarm (S4c).
     Brief,
@@ -185,6 +184,7 @@ impl ErrorCode {
             Self::Exists => "exists",
             Self::IdInUse => "id_in_use",
             Self::ClockUnreadable => "clock_unreadable",
+            Self::ClockUnsynced => "clock_unsynced",
             Self::SetAside => "set_aside",
             Self::ArtifactSetAside => "artifact_set_aside",
             Self::DuplicateArtifact => "duplicate_artifact",
@@ -629,6 +629,9 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         ),
         E::Clock(BoardClockError::OutOfRange(read)) => {
             (C::ClockUnreadable, fields([("read", shown_json(read))]))
+        }
+        E::Clock(BoardClockError::Unsynced(why)) => {
+            (C::ClockUnreadable, fields([("read", shown_json(why))]))
         }
         E::Quarantined { key, path, object } => set_aside::fields_of(key, path, object),
         E::Duplicate { key } => (C::DuplicateArtifact, key_fields(key)),

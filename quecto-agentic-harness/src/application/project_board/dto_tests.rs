@@ -36,6 +36,18 @@ fn a_clock_that_cannot_tell_the_time_is_reported() {
     );
 }
 
+/// The board server's clock gate (#2705): it names the host's reason and
+/// says the server takes no change that reads the clock.
+#[test]
+fn an_unsynchronised_server_clock_is_reported() {
+    let error: ProjectBoardError = BoardClockError::Unsynced("the kernel says so".into()).into();
+    assert_eq!(
+        error.to_string(),
+        "the board server's clock is not synchronised (the kernel says so): \
+         it takes no change that reads the clock until it is"
+    );
+}
+
 /// A board with these files set aside, holding `plans` and `runs`.
 fn snapshot(
     quarantined: Vec<crate::application::project_board::ports::QuarantinedFile>,
