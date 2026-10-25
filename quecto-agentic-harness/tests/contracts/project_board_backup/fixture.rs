@@ -31,6 +31,7 @@ impl ProbeDeadline {
                 rx.recv_timeout(Duration::from_secs(45)),
                 Err(mpsc::RecvTimeoutError::Timeout)
             ) {
+                // SAFETY: _exit ends this test process at once, by design, past its deadline.
                 unsafe { libc::_exit(124) }
             }
         });

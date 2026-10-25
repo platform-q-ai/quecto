@@ -190,6 +190,7 @@ fn r5_real_cooperative_per_board_lock_contention_never_publishes_or_prunes() {
         .open(&path)
         .unwrap();
     assert_eq!(
+        // SAFETY: flock on a descriptor this test opened and still owns.
         unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
         0
     );

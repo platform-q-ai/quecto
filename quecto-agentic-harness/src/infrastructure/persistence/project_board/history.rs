@@ -9,6 +9,11 @@ use std::path::PathBuf;
 mod decode;
 pub(crate) use decode::commit_links;
 use decode::projection_budget;
+#[path = "history_staging.rs"]
+mod staging;
+use staging::Staged;
+#[cfg(test)]
+use staging::{WRITE_BATCH, WRITE_BATCH_BYTES, batch_timeout, listable};
 
 fn malformed(why: impl ToString) -> HistoryError {
     HistoryError::Malformed(why.to_string())
@@ -49,28 +54,82 @@ fn charge(value: &mut usize, n: usize, cap: usize) -> HistoryResult<()> {
         false => Err(bounds("history admission exceeded")),
     }
 }
+/// Exports hash every object in process (the framing [`verify_raw`]
+/// checks) and store them in batches, one git call per kind per batch, all
+/// before the target ref moves: a git call per object made a 4,102-revision
+/// export take minutes (#2748). Once any store fails the sink never
+/// publishes again; only a fresh sink (a fresh export graph) starts over.
 pub struct GitBoardHistorySink {
     repo: PathBuf,
     target_ref: String,
+    format: std::sync::OnceLock<HistoryAlgorithm>,
+    git_dir: std::sync::OnceLock<PathBuf>,
+    staged: std::sync::Mutex<Staged>,
+    failed: std::sync::atomic::AtomicBool,
 }
 impl GitBoardHistorySink {
     pub fn new(repo: PathBuf, target_ref: String) -> Self {
-        Self { repo, target_ref }
+        Self {
+            repo,
+            target_ref,
+            format: std::sync::OnceLock::new(),
+            git_dir: std::sync::OnceLock::new(),
+            staged: std::sync::Mutex::new(Staged::default()),
+            failed: std::sync::atomic::AtomicBool::new(false),
+        }
     }
-}
-impl BoardHistorySink for GitBoardHistorySink {
-    fn algorithm(&self) -> HistoryResult<Option<HistoryAlgorithm>> {
-        match git(&self.repo)?
+    /// The destination's own git directory, absolute, asked of git once.
+    fn git_dir(&self) -> HistoryResult<PathBuf> {
+        if let Some(dir) = self.git_dir.get() {
+            return Ok(dir.clone());
+        }
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = git(&self.repo)?
+            .ok(&["rev-parse", "--absolute-git-dir"], None)
+            .map_err(unavailable)?;
+        // Exactly the path git printed: only its own line end is dropped,
+        // never a space or other byte the path itself ends in.
+        let Some(path) = bytes.strip_suffix(b"\n") else {
+            return Err(unavailable("destination git directory is not one line"));
+        };
+        let dir = PathBuf::from(std::ffi::OsStr::from_bytes(path));
+        if dir.is_absolute() {
+        } else {
+            return Err(unavailable("destination git directory is not absolute"));
+        }
+        Ok(self.git_dir.get_or_init(|| dir).clone())
+    }
+    /// The destination's object format, asked of git once per sink.
+    fn format(&self) -> HistoryResult<HistoryAlgorithm> {
+        if let Some(format) = self.format.get() {
+            return Ok(*format);
+        }
+        let format = match git(&self.repo)?
             .text(&["rev-parse", "--show-object-format"], None)
             .map_err(unavailable)?
             .as_str()
         {
-            "sha1" => Ok(Some(HistoryAlgorithm::Sha1)),
-            "sha256" => Ok(Some(HistoryAlgorithm::Sha256)),
-            _ => Err(HistoryError::Unsupported(
-                "destination object format".into(),
-            )),
-        }
+            "sha1" => HistoryAlgorithm::Sha1,
+            "sha256" => HistoryAlgorithm::Sha256,
+            _ => {
+                return Err(HistoryError::Unsupported(
+                    "destination object format".into(),
+                ));
+            }
+        };
+        Ok(*self.format.get_or_init(|| format))
+    }
+    fn width(&self) -> HistoryResult<usize> {
+        Ok(match self.format()? {
+            HistoryAlgorithm::Sha1 => 40,
+            HistoryAlgorithm::Sha256 => 64,
+        })
+    }
+}
+
+impl BoardHistorySink for GitBoardHistorySink {
+    fn algorithm(&self) -> HistoryResult<Option<HistoryAlgorithm>> {
+        self.format().map(Some)
     }
     fn raw(
         &self,
@@ -88,44 +147,21 @@ impl BoardHistorySink for GitBoardHistorySink {
         } else {
             return Err(bounds("sink object size"));
         }
-        let git = git(&self.repo)?;
-        let args = if dry {
-            vec!["hash-object", "--literally", "-t", kind(k), "--stdin"]
-        } else {
-            vec!["hash-object", "--literally", "-w", "-t", kind(k), "--stdin"]
-        };
         // Hash first, before any write, including expected-OID verification.
-        let hash = git
-            .text(
-                &["hash-object", "--literally", "-t", kind(k), "--stdin"],
-                Some(bytes),
-            )
-            .map_err(unavailable)?;
+        let hash = raw_id(k, bytes, self.width()?)?;
         if expected.is_none_or(|expected| expected == hash) {
         } else {
             return Err(malformed("expected raw object hash mismatch"));
         }
         if dry {
         } else {
-            let written = git.text(&args, Some(bytes)).map_err(unavailable)?;
-            if written == hash {
-            } else {
-                return Err(malformed("written hash mismatch"));
-            }
+            // Stored, and the stored ID checked, before publication.
+            self.stage(k, bytes, &hash)?;
         }
         Ok(hash)
     }
     fn tree(&self, entries: &[HistoryEntry], dry: bool) -> HistoryResult<String> {
-        let git = git(&self.repo)?;
-        let width = match git
-            .text(&["rev-parse", "--show-object-format"], None)
-            .map_err(malformed)?
-            .as_str()
-        {
-            "sha1" => 40,
-            "sha256" => 64,
-            _ => return Err(malformed("format")),
-        };
+        let width = self.width()?;
         if entries.len() <= 65536 {
         } else {
             return Err(bounds("native tree entry count"));
@@ -229,6 +265,8 @@ impl BoardHistorySink for GitBoardHistorySink {
         self.raw(HistoryKind::Commit, body.as_bytes(), None, dry)
     }
     fn publish(&self, expected: Option<&str>, new: &str) -> HistoryResult<()> {
+        // Every object the new head reaches is stored before the ref moves.
+        self.store_for_publish()?;
         let git = git(&self.repo)?;
         if self.target_ref.len() <= 1024
             && self.target_ref.starts_with("refs/heads/")
@@ -241,15 +279,7 @@ impl BoardHistorySink for GitBoardHistorySink {
         } else {
             return Err(malformed("destination ref"));
         }
-        let width = match git
-            .text(&["rev-parse", "--show-object-format"], None)
-            .map_err(malformed)?
-            .as_str()
-        {
-            "sha1" => 40,
-            "sha256" => 64,
-            _ => return Err(malformed("destination format")),
-        };
+        let width = self.width()?;
         oid(new, width)?;
         if let Some(old) = expected {
             oid(old, width)?;
@@ -323,25 +353,32 @@ const BOARD: &str = "refs/heads/quecto/board";
 const RAW: usize = 128 * 1024 * 1024;
 const META: usize = 32 * 1024 * 1024;
 
-/// Exact Git framing, independent of declared tree modes and repository filters.
-pub(crate) fn verify_raw(object: &HistoryObject, width: usize) -> HistoryResult<()> {
-    let frame = format!("{} {}\0", kind(object.kind), object.bytes.len());
-    let actual = match width {
+/// The ID git gives `bytes` as a literal object of kind `k` in a repository
+/// whose IDs are `width` hex digits: exact Git framing, independent of
+/// declared tree modes and repository filters.
+fn raw_id(k: HistoryKind, bytes: &[u8], width: usize) -> HistoryResult<String> {
+    let frame = format!("{} {}\0", kind(k), bytes.len());
+    let id = match width {
         40 => {
             let mut hash = sha1::Sha1::new();
             hash.update(frame.as_bytes());
-            hash.update(&object.bytes);
+            hash.update(bytes);
             format!("{:x}", hash.finalize())
         }
         64 => {
             let mut hash = sha2::Sha256::new();
             hash.update(frame.as_bytes());
-            hash.update(&object.bytes);
+            hash.update(bytes);
             format!("{:x}", hash.finalize())
         }
         _ => return Err(malformed("object format")),
     };
-    if actual == object.oid {
+    assert_eq!(id.len(), width, "a digest is as wide as its format's IDs");
+    Ok(id)
+}
+/// Exact Git framing, independent of declared tree modes and repository filters.
+pub(crate) fn verify_raw(object: &HistoryObject, width: usize) -> HistoryResult<()> {
+    if raw_id(object.kind, &object.bytes, width)? == object.oid {
         Ok(())
     } else {
         Err(malformed("raw hash mismatch"))
