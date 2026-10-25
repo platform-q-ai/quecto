@@ -13,8 +13,9 @@ use crate::application::project_board::ports::ListenAddress;
 use crate::application::project_board::ports::{
     BoardClock, BoardOpStore, BoardOperations, BoardOperationsOver, BoardTokens, OperationsOver,
     ProjectBoardStore, PullRequestState, PullRequestStates, PullRequestStatesError,
-    RemoteRevisions,
+    RemoteRevisions, TimeSync,
 };
+use crate::application::project_board::synced_clock::{HeldSync, SyncedBoardClock};
 use crate::application::project_board::use_cases::{
     BoardAccess, QueryBoard, READ_BUDGET, RunBoardOperation, ServeBoard, ServeBoardOperation,
 };
@@ -30,14 +31,29 @@ use crate::infrastructure::persistence::project_board::remote_revisions::GitRemo
 use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
 use crate::infrastructure::persistence::sqlite::project_board::SqliteBoardOps;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
+use crate::infrastructure::time::kernel_time_sync::KernelTimeSync;
 pub use crate::interface::cli::board_server::{BoardServerEnvironment, BoardServerHandles};
 
-/// Builds the board server for `environment`'s clone and board remote.
+/// Builds the board server for `environment`'s clone and board remote,
+/// its clock gated on the kernel's word ([`build_board_server_with`]).
+/// # Errors
+/// As [`build_board_server_with`].
+pub fn build_board_server(
+    environment: &BoardServerEnvironment,
+) -> Result<BoardServerHandles, String> {
+    build_board_server_with(environment, Arc::new(KernelTimeSync))
+}
+
+/// Builds the board server for `environment`'s clone and board remote. Its
+/// operations and its time read a clock that tells the time only while
+/// `sync` says the host's clock is synchronised; tokens are dated by the
+/// host's clock as it is.
 /// # Errors
 /// No git, remote, URL or board id; a bad config or address; a state
 /// directory or tokens file refused (secrets and URL userinfo redacted).
-pub fn build_board_server(
+pub fn build_board_server_with(
     environment: &BoardServerEnvironment,
+    sync: Arc<dyn TimeSync>,
 ) -> Result<BoardServerHandles, String> {
     let redacted = |why: &str| redact_secrets(&redact_url_userinfo(why));
     let refused = |why: &str| format!("board-server: {}", redacted(why));
@@ -82,17 +98,19 @@ pub fn build_board_server(
             ))
         })?;
     let ops: Arc<dyn BoardOpStore> = Arc::new(ops);
-    let clock: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());
+    let host: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());
+    let time = SyncedBoardClock::new(Arc::clone(&host), Arc::clone(&sync));
     let served = ServedOperations {
-        clock: Arc::clone(&clock),
+        clock: Arc::clone(&host),
+        sync,
         prs: pull_request_states(&url, &environment.vars),
         revisions: Arc::new(GitRemoteRevisions::of_store(&store)),
         read_budget: READ_BUDGET,
     };
     Ok(BoardServerHandles {
-        serve: ServeBoard::new(ops.reads(), Arc::clone(&clock), board),
+        serve: ServeBoard::new(ops.reads(), Arc::new(time), board),
         operations: ServeBoardOperation::new(ops, Arc::new(served)),
-        access: BoardAccess::new(tokens, clock),
+        access: BoardAccess::new(tokens, host),
         peers: Arc::new(SocketPeerCredentials),
         uid: this_uid(),
         listen,
@@ -111,8 +129,11 @@ fn server_identity() -> Identity {
 }
 
 /// The board's operations as a server runs them (B7): no launcher (B8).
+/// Each op's clock is `clock`, its time gated on `sync` as read once when
+/// the op begins (#2705).
 pub struct ServedOperations {
     pub clock: Arc<dyn BoardClock>,
+    pub sync: Arc<dyn TimeSync>,
     pub prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
     pub revisions: Arc<dyn RemoteRevisions>,
     pub read_budget: Duration,
@@ -128,12 +149,17 @@ impl BoardOperationsOver for ServedOperations {
             let stated = StatedPullRequests::read(&*host, request, reads, self.read_budget);
             Arc::new(stated) as Arc<dyn PullRequestStates>
         });
-        let (clock, revisions) = (Arc::clone(&self.clock), Arc::clone(&self.revisions));
+        let (host, revisions) = (Arc::clone(&self.clock), Arc::clone(&self.revisions));
+        let sync = Arc::clone(&self.sync);
         Box::new(move |store| {
+            // The host's word once for the whole op, however often it reads the time.
+            let held = Arc::new(HeldSync::read(&*sync));
+            let clock: Arc<dyn BoardClock> =
+                Arc::new(SyncedBoardClock::new(Arc::clone(&host), held));
             let listings = StoreListings(QueryBoard::new(Arc::clone(&store)));
             let parts = operation_parts(
                 (Arc::clone(&store), store),
-                Arc::clone(&clock),
+                clock,
                 Arc::new(listings),
                 prs.clone(),
                 Arc::clone(&revisions),

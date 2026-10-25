@@ -13,7 +13,7 @@ use crate::application::project_board::dto::{
     ProjectBoardError, ReadRequest, RunEnd, ServedAnswer,
 };
 use crate::application::project_board::ports::{
-    BoardHead, BoardOperations, BoardStoreError, ListenAddress,
+    BoardClockError, BoardHead, BoardOperations, BoardStoreError, ListenAddress,
 };
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
@@ -198,6 +198,12 @@ fn answered(
             ))
         }
         (200, _) => Err(refused("the board server's answer is not a JSON object")),
+        // The server's clock gate (#2705): its refusal by name, so the
+        // caller is answered `clock_unsynced` with the host's reason.
+        (503, _) if code == "clock_unsynced" => {
+            let why = shown(reply["reason"].as_str().unwrap_or("no reason given"));
+            Err(ProjectBoardError::Clock(BoardClockError::Unsynced(why)))
+        }
         (_, _) => Err(refused(&format!(
             "the board server refused the request ({status} {}): {}",
             shown(code),

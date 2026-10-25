@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod auth_clock;
 pub mod board_clock;
+pub mod kernel_time_sync;
 pub mod remote_time;
 
 /// Return the current UTC time as seconds since the Unix epoch.

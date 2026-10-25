@@ -103,12 +103,32 @@ fn get(routes: &BoardRoutes, path: &str) -> (u16, Value) {
     (reply.status, serde_json::from_slice(&reply.body).unwrap())
 }
 
+/// A host whose clock is synchronised: a test that reads the server's
+/// time never depends on the machine running it (#2705).
+struct Synced;
+
+impl crate::application::project_board::ports::TimeSync for Synced {
+    fn sync(&self) -> crate::application::project_board::ports::ClockSync {
+        crate::application::project_board::ports::ClockSync::Synced
+    }
+}
+
+/// The real composition, over the kernel's word on its clock, builds: no
+/// request here reads the clock, so it passes on any host.
+#[test]
+fn the_server_builds_over_the_kernels_word() {
+    let (dir, work) = seeded();
+    let handles = build_board_server(&environment(&dir, &work, "origin")).unwrap();
+    assert_eq!(handles.uid, this_uid());
+}
+
 /// B7: the server serves its own SQLite board in its state directory, not
 /// the clone's git board: none until it is made.
 #[test]
 fn the_server_serves_its_sqlite_board() {
     let (dir, work) = seeded();
-    let handles = build_board_server(&environment(&dir, &work, "origin")).unwrap();
+    let environment = environment(&dir, &work, "origin");
+    let handles = build_board_server_with(&environment, Arc::new(Synced)).unwrap();
     assert_eq!(handles.uid, this_uid());
     assert!(handles.listen.is_empty(), "no config, no TCP");
     let routes = BoardRoutes::new(handles.serve, handles.access, handles.operations);
