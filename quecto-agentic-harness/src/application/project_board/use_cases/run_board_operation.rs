@@ -207,8 +207,10 @@ impl RunBoardOperation {
                 Starting::Launched(task) => Ok(BoardOutcome::Started(Box::new(
                     task.execute_noted(start, facts)?,
                 ))),
-                // Red (B8): the server halves are not built yet.
-                Starting::Begun(_) | Starting::Undone(..) => Err(ProjectBoardError::NoLauncher),
+                Starting::Begun(begin) => {
+                    Ok(BoardOutcome::Begun(Box::new(begin.begin(start, facts)?)))
+                }
+                Starting::Undone(begin, undo) => Err(begin.undone(start, undo)),
             },
             BoardRequest::DiscardPlan(discard) => Ok(BoardOutcome::Planned(
                 self.parts.discard_plan.execute_noted(discard, facts)?,

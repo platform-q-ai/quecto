@@ -102,7 +102,7 @@ impl RemoteBoardOperations {
                               "summary": wanted, "noted": noted});
         body.as_object_mut()
             .expect("a body is an object")
-            .extend(beside.into_iter().filter(|_| false));
+            .extend(beside);
         match (read.request.writes(), &self.committer) {
             (true, Some(committer)) => {
                 body["write_id"] = json!(uuid::Uuid::new_v4().to_string());

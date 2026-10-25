@@ -55,10 +55,8 @@ impl RunFacts {
             left: reports.left_run(task, run),
         };
         Self {
-            liveness: liveness
-                .and(None)
-                .map_or(SeenLiveness::Unseen, |l| SeenLiveness::Seen(seen(l))),
-            reports: reports.and(None).map(kept),
+            liveness: liveness.map_or(SeenLiveness::Unseen, |l| SeenLiveness::Seen(seen(l))),
+            reports: reports.map(kept),
         }
     }
 
@@ -74,7 +72,7 @@ impl RunFacts {
     /// `None` as the client saw none.
     pub fn liveness(&self, (task, run): (&Slug, u32)) -> Option<Arc<dyn RunLiveness>> {
         match &self.liveness {
-            SeenLiveness::Unseen | SeenLiveness::Seen(_) => None,
+            SeenLiveness::Unseen => None,
             SeenLiveness::Seen(agent) => Some(Arc::new(StatedRunLiveness {
                 run: (task.clone(), run),
                 agent: agent.clone(),
@@ -169,7 +167,7 @@ impl StatedRemoteRevisions {
             let missing = missing.into_iter().collect();
             Ok((id_len, asked.into_iter().collect(), missing))
         };
-        Self(read().and(Err(BoardStoreError::Unavailable("red".into()))))
+        Self(read())
     }
 
     /// No revision read, for `why`.

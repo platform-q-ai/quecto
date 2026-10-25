@@ -213,8 +213,8 @@ impl BoardOperationsOver for ServedOperations {
         let named = named.unwrap_or_default();
         let revisions = Arc::new(revisions_read(&self.revisions, named, self.read_budget));
         let run = ended.map(|end| (&end.task, end.run));
-        let liveness = facts.zip(run).and_then(|_| None);
-        let reports = facts.zip(run).and_then(|_| None);
+        let liveness = facts.zip(run).and_then(|(facts, run)| facts.liveness(run));
+        let reports = facts.zip(run).and_then(|(facts, run)| facts.reports(run));
         let undo = match sent {
             ServedRun::Undo(undo) => Some(undo.clone()),
             ServedRun::Plain | ServedRun::Facts(_) => None,

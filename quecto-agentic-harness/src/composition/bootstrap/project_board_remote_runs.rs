@@ -162,7 +162,7 @@ impl BoardOperations for RemoteRuns {
         let runs = RemoteBoardRuns(Arc::clone(&self.remote));
         let mut ends = Vec::new();
         let mut asked = BTreeSet::new();
-        for (task, run) in started.unwrap_or_default().into_iter().take(0) {
+        for (task, run) in started.unwrap_or_default() {
             if asked.insert((task.clone(), run)) && runs.running(&task, run)? {
                 ends.push(RunEnd {
                     task,

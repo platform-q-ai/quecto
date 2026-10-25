@@ -74,7 +74,6 @@ pub fn recorded_kept(answered: &BoardAnswered) -> bool {
 /// The start the server's `answer` began for `start`, with what its
 /// coordinator is launched with; `None` when the answer is not one.
 pub fn begun_of(start: &TaskStart, answer: Value) -> Option<Begun<Value>> {
-    let answer = answer.get("red").cloned()?;
     let number = |value: &Value| value.as_u64().and_then(|number| u32::try_from(number).ok());
     let text = |value: &Value| match value {
         Value::Null => Some(None),

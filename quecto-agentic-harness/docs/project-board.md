@@ -69,8 +69,9 @@ the global config), never on the command line. Without `--url`,
 `QUECTO_BOARD_URL` or the global config's `board.url` names one, for the agent
 tool too. The server answers each request exactly as this machine's board would,
 and a write is one round trip, made as `QUECTO_BOARD_COMMITTER` when it is set,
-else as the clone's committer. A `start` is refused there until B8. A URL of
-another shape, or TCP without a token, answers `store_unavailable`; so does a
+else as the clone's committer. A `start` is begun there and its coordinator
+launched here (B8). A URL of another shape, or TCP without a token, answers
+`store_unavailable`; so does a
 server that cannot be reached after 3 tries, or that refuses the request (its
 status and code in the `reason`). A server that stays busy for 10 s answers
 `busy`: try again shortly. See `docs/board-server.md`.
