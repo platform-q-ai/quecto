@@ -255,7 +255,7 @@ fn remediation_typed_moved_redacts_json_and_stderr_without_changing_internal_url
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(stderr.contains("[REDACTED]"));
     assert!(stderr.contains("standby.example.test"));
-    assert_eq!(stderr.contains("SYNTHETIC_PR2751_SECRET"), false);
+    assert!(!stderr.contains("SYNTHETIC_PR2751_SECRET"));
     let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(json["error"]["kind"], "store");
     assert_eq!(json["error"]["store"]["kind"], "moved");
@@ -264,11 +264,10 @@ fn remediation_typed_moved_redacts_json_and_stderr_without_changing_internal_url
         json["error"]["store"]["urls"],
         serde_json::json!(["https://Primary.example.test/board?[REDACTED]", URLS[1]])
     );
-    assert_eq!(
-        String::from_utf8(result.stdout)
+    assert!(
+        !String::from_utf8(result.stdout)
             .unwrap()
-            .contains("SYNTHETIC_PR2751_SECRET"),
-        false
+            .contains("SYNTHETIC_PR2751_SECRET")
     );
     assert_eq!(fixture.state(), before);
 }
@@ -285,7 +284,7 @@ fn remediation_forbidden_userinfo_keeps_generic_redaction_control() {
     for stream in [&result.stdout, &result.stderr] {
         let text = String::from_utf8_lossy(stream);
         assert!(text.contains("https://***@example.test/"));
-        assert_eq!(text.contains("FAKESECRET"), false);
+        assert!(!text.contains("FAKESECRET"));
     }
     assert_eq!(fixture.state(), before);
 }

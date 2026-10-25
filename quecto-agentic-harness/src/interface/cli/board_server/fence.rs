@@ -90,7 +90,8 @@ fn store_error(error: &BoardStoreError) -> Value {
         BoardStoreError::FolderSetAside { .. } => "folder_set_aside",
         BoardStoreError::MovedMalformed(_) => "moved_malformed",
         BoardStoreError::Moved(found) => {
-            return json!({"kind":"moved", "board_id":found.board().as_str(), "urls":found.urls()});
+            let urls: Vec<_> = found.urls().iter().map(|url| safe(url)).collect();
+            return json!({"kind":"moved", "board_id":found.board().as_str(), "urls":urls});
         }
     };
     json!({"kind":kind, "message":safe(&format!("{error:?}"))})

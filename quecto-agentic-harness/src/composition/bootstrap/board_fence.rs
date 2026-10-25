@@ -24,9 +24,6 @@ pub fn build_fence_cli(
         interface::cli::board_server::fence::FenceCliHandles,
     };
     let vars = GitEnvironment::allowlisted(environment.vars.iter().cloned());
-    let explicit = super::project_board::board_committer(&environment.vars)
-        .transpose()
-        .map_err(FenceError::Unavailable)?;
     let reader = Git::reader_unasked(&environment.repo, vars.clone())
         .map_err(|error| FenceError::Unavailable(error.to_string()))?;
     let store = GitBoardStore::new(reader, &environment.remote)
@@ -47,8 +44,8 @@ pub fn build_fence_cli(
                 )))
             );
         }
-        let identity = match explicit.clone() {
-            Some(identity) => identity,
+        let identity = match super::project_board::board_committer(&environment.vars) {
+            Some(identity) => identity.map_err(BoardStoreError::Unavailable)?,
             None => Git::configured_committer(&environment.repo, &vars)
                 .map_err(|error| BoardStoreError::Unavailable(error.to_string()))?,
         };
