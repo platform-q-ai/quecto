@@ -317,3 +317,61 @@ fn adapter_mismatched_bound_native_is_refused() {
 fn adapter_unbound_native_null_remains_accepted() {
     native_admission(None, true);
 }
+
+fn missing_source(explicit: bool, selected: bool, existing_root: bool) {
+    let _deadline = Deadline::new();
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("sentinel"), b"preserve owned home").unwrap();
+    let state = home.path().join("custom-state");
+    let root = if explicit {
+        state.clone()
+    } else {
+        home.path().join("base/board-server")
+    };
+    if existing_root {
+        std::fs::create_dir_all(&root).unwrap();
+    }
+    assert_eq!(root.exists(), existing_root);
+    let to = home.path().join("snapshots");
+    let before = inventory(home.path());
+    let mut args = vec!["board-server", "backup", "--to", to.to_str().unwrap()];
+    if selected {
+        args.extend(["--board-id", A]);
+    }
+    if explicit {
+        args.extend(["--state", state.to_str().unwrap()]);
+    }
+    let result = cli(home.path(), &args);
+    assert_eq!(result.status.code(), Some(1));
+    assert_eq!(
+        inventory(home.path()),
+        before,
+        "missing source must not create source, destination, config or token state"
+    );
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    let expected = if selected {
+        "unknown_board"
+    } else {
+        "no_targets"
+    };
+    assert_eq!(
+        report["error"], expected,
+        "explicit={explicit} existing_root={existing_root}"
+    );
+}
+#[test]
+fn missing_default_root_selected_board_is_unknown_without_effects() {
+    missing_source(false, true, false);
+}
+#[test]
+fn missing_absolute_state_selected_board_is_unknown_without_effects() {
+    missing_source(true, true, false);
+}
+#[test]
+fn missing_default_root_bulk_is_no_targets_without_effects() {
+    missing_source(false, false, false);
+}
+#[test]
+fn existing_empty_default_root_selected_board_is_unknown_without_effects() {
+    missing_source(false, true, true);
+}
