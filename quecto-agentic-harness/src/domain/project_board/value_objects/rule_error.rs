@@ -227,6 +227,47 @@ fn with_article(word: &str) -> String {
     }
 }
 
+/// The lifecycle's refusals of a move `from` -> `to` (#2705 T4): one the
+/// lifecycle makes, naming the `action` to use, or (none) one back to
+/// ready from review given no reason.
+fn lifecycle(
+    f: &mut fmt::Formatter<'_>,
+    (from, to): (TaskStatus, TaskStatus),
+    action: Option<LifecycleAction>,
+) -> fmt::Result {
+    let way = match action {
+        Some(LifecycleAction::Start) => {
+            "start(task, plan_version) is the only way there, and it runs the task's \
+                     accepted plan"
+        }
+        Some(LifecycleAction::EndRun) => {
+            "the task's run decides it: end the run with end_run(task, run, outcome)"
+        }
+        Some(LifecycleAction::Release) => {
+            "blocking is a run's outcome: release the task with move(task, to ready) \
+                     and say why"
+        }
+        Some(LifecycleAction::DoneWithoutRun) => {
+            "finish work done without a run with done_without_run(task, reason)"
+        }
+        None => {
+            return write!(
+                f,
+                "a task moves from {} back to {} only with a reason: move(task, to {}, reason)",
+                from.as_str(),
+                to.as_str(),
+                to.as_str()
+            );
+        }
+    };
+    write!(
+        f,
+        "move does not take a task from {} to {}; {way}",
+        from.as_str(),
+        to.as_str()
+    )
+}
+
 impl fmt::Display for BoardRuleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -238,37 +279,8 @@ impl fmt::Display for BoardRuleError {
                     to.as_str()
                 )
             }
-            Self::UseLifecycle { from, to, action } => {
-                let way = match action {
-                    LifecycleAction::Start => {
-                        "start(task, plan_version) is the only way there, and it runs the task's \
-                         accepted plan"
-                    }
-                    LifecycleAction::EndRun => {
-                        "the task's run decides it: end the run with end_run(task, run, outcome)"
-                    }
-                    LifecycleAction::Release => {
-                        "blocking is a run's outcome: release the task with move(task, to ready) \
-                         and say why"
-                    }
-                    LifecycleAction::DoneWithoutRun => {
-                        "finish work done without a run with done_without_run(task, reason)"
-                    }
-                };
-                write!(
-                    f,
-                    "move does not take a task from {} to {}; {way}",
-                    from.as_str(),
-                    to.as_str()
-                )
-            }
-            Self::ReasonRequired { from, to } => write!(
-                f,
-                "a task moves from {} back to {} only with a reason: move(task, to {}, reason)",
-                from.as_str(),
-                to.as_str(),
-                to.as_str()
-            ),
+            Self::UseLifecycle { from, to, action } => lifecycle(f, (*from, *to), Some(*action)),
+            Self::ReasonRequired { from, to } => lifecycle(f, (*from, *to), None),
             Self::NotHolder => f.write_str("only the claim's holder may do this"),
             Self::NotHolderExpired => f.write_str(
                 "only the claim's holder may do this, and the task's claim has expired: take the task \
