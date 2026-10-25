@@ -125,6 +125,7 @@ fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
         references: vec![],
         created: now.clone(),
         updated: now.clone(),
+        reason: None,
     };
     assert!(
         matches!(fields.status, TaskStatus::Draft | TaskStatus::Ready),

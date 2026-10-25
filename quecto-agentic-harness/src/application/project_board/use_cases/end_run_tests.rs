@@ -1,6 +1,7 @@
 //! S4c: a run is ended by hand: as succeeded, stopped or failed by its
 //! task's holder, from its swarm's board as this front end kept it (or as
 //! a swarm that reported nothing), as lost by whoever the domain lets.
+use crate::domain::project_board::services::transitions::MoveReason;
 use std::sync::Arc;
 
 use super::*;
@@ -173,7 +174,10 @@ fn the_holder_ends_a_stranded_run_and_can_then_release_the_task() {
         )
         .unwrap();
         let task = release
-            .execute(&slug("board-store"), &BoardOp::Move(TaskStatus::Ready))
+            .execute(
+                &slug("board-store"),
+                &BoardOp::Move(TaskStatus::Ready, MoveReason::Absent),
+            )
             .unwrap();
         assert_eq!(task.fields().status, TaskStatus::Ready);
     }

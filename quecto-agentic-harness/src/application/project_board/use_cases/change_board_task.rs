@@ -19,7 +19,11 @@ use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::changes::Linked;
 use crate::domain::project_board::services::claims::{claim_facts, renew, renewal_due, take_over};
 use crate::domain::project_board::services::pull_requests::{add_pr, may_link, remove_pr};
-use crate::domain::project_board::services::transitions::{move_reads, move_task};
+use crate::domain::project_board::services::starts::unstart;
+use crate::domain::project_board::services::transitions::{
+    MoveReason, move_reads, move_with_reason,
+};
+use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -116,7 +120,7 @@ impl ChangeBoardTask {
                 facts.claim = claim;
             }
             facts.status_to = match op {
-                BoardOp::Move(to) => Some(*to),
+                BoardOp::Move(to, _) | BoardOp::UndoStart(to) => Some(*to),
                 BoardOp::Renew | BoardOp::TakeOver | BoardOp::AddPr(_) | BoardOp::RemovePr(_) => {
                     written.as_ref().ok().map(|task| task.fields().status)
                 }
@@ -195,7 +199,7 @@ fn apply(
     let ruled = match op {
         BoardOp::Renew => renew(task, actor, now),
         BoardOp::TakeOver => take_over(task, actor, now),
-        BoardOp::Move(to) => {
+        BoardOp::Move(to, reason) => {
             let reads = move_reads(task, *to, actor, now)?;
             let runs = match reads.runs {
                 true => owned(board_view::runs_of(board, id)?),
@@ -206,7 +210,9 @@ fn apply(
                 false => vec![],
             };
             // The tasks it relates to may hold the move back (#2661).
-            let moved = move_task(task, *to, actor, (&runs, &changes), &board.tasks, now)?;
+            let reason = entered(reason);
+            let works = (runs.as_slice(), changes.as_slice());
+            let moved = move_with_reason(task, (*to, &reason), actor, works, &board.tasks, now)?;
             // Once the rules allow it, a task file set aside may still be a
             // child an archive waits for.
             if *to == TaskStatus::Archived {
@@ -227,8 +233,21 @@ fn apply(
             add_pr(task, actor, *pr, linked, now)
         }
         BoardOp::RemovePr(pr) => remove_pr(task, actor, *pr, now),
+        BoardOp::UndoStart(from) => {
+            let runs = owned(board_view::runs_of(board, id)?);
+            unstart(task, *from, &runs, actor, now)
+        }
     };
     ruled.map_err(ProjectBoardError::Rule)
+}
+
+/// `reason` as it enters the board: a given one normalised as one line
+/// (#2705 T4), so no front end skips normalising.
+fn entered(reason: &MoveReason) -> MoveReason {
+    match reason {
+        MoveReason::Given(text) => MoveReason::Given(board_text::line(text)),
+        MoveReason::Absent | MoveReason::Unasked => reason.clone(),
+    }
 }
 
 #[cfg(test)]
@@ -238,3 +257,7 @@ mod tests;
 #[cfg(test)]
 #[path = "change_board_task_holder_tests.rs"]
 mod holder_tests;
+
+#[cfg(test)]
+#[path = "change_board_task_lifecycle_tests.rs"]
+mod lifecycle_tests;

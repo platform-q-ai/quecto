@@ -24,12 +24,15 @@ pub fn op_kind(request: &BoardRequest) -> OpKind {
         BoardRequest::Show(..) => OpKind::Show,
         BoardRequest::Create(_) => OpKind::Create,
         BoardRequest::UpdateDraft(_) => OpKind::UpdateDraft,
-        BoardRequest::Change(_, BoardOp::Move(_)) => OpKind::Move,
+        BoardRequest::Change(_, BoardOp::Move(..)) => OpKind::Move,
+        // Only the start use case undoes a start: no request carries it.
+        BoardRequest::Change(_, BoardOp::UndoStart(_)) => OpKind::Start,
         BoardRequest::Change(_, BoardOp::Renew) => OpKind::Renew,
         BoardRequest::Change(_, BoardOp::TakeOver) => OpKind::TakeOver,
         BoardRequest::Change(_, BoardOp::AddPr(_)) => OpKind::LinkPr,
         BoardRequest::Change(_, BoardOp::RemovePr(_)) => OpKind::UnlinkPr,
         BoardRequest::Complete(_) => OpKind::Complete,
+        BoardRequest::DoneWithoutRun { .. } => OpKind::DoneWithoutRun,
         BoardRequest::Clear { .. } => OpKind::ClearSetAside,
         BoardRequest::ProposePlan(_) => OpKind::ProposePlan,
         BoardRequest::EditPlan(_) => OpKind::EditPlan,
@@ -60,7 +63,8 @@ pub fn access_of(kind: OpKind) -> Access {
         | OpKind::EditPlan
         | OpKind::AcceptPlan
         | OpKind::DiscardPlan
-        | OpKind::EndRun => Access::Write,
+        | OpKind::EndRun
+        | OpKind::DoneWithoutRun => Access::Write,
         OpKind::Start => Access::Write,
         OpKind::List
         | OpKind::ListReady
@@ -73,9 +77,10 @@ pub fn access_of(kind: OpKind) -> Access {
 /// The task `request` acts on, when its op names one by its `task` field.
 pub fn task_of(request: &BoardRequest) -> Option<&Slug> {
     match request {
-        BoardRequest::Show(id, _) | BoardRequest::Change(id, _) | BoardRequest::Complete(id) => {
-            Some(id)
-        }
+        BoardRequest::Show(id, _)
+        | BoardRequest::Change(id, _)
+        | BoardRequest::Complete(id)
+        | BoardRequest::DoneWithoutRun { task: id, .. } => Some(id),
         BoardRequest::Create(task) => Some(&task.id),
         BoardRequest::UpdateDraft(update) => Some(&update.id),
         BoardRequest::ProposePlan(proposal) => Some(&proposal.task),
@@ -96,7 +101,10 @@ pub fn task_of(request: &BoardRequest) -> Option<&Slug> {
 pub fn pr_of(request: &BoardRequest) -> Option<u64> {
     match request {
         BoardRequest::Change(_, BoardOp::AddPr(pr) | BoardOp::RemovePr(pr)) => Some(*pr),
-        BoardRequest::Change(_, BoardOp::Move(_) | BoardOp::Renew | BoardOp::TakeOver)
+        BoardRequest::Change(
+            _,
+            BoardOp::Move(..) | BoardOp::UndoStart(_) | BoardOp::Renew | BoardOp::TakeOver,
+        )
         | BoardRequest::Bootstrap
         | BoardRequest::List(_)
         | BoardRequest::ListReady
@@ -105,6 +113,7 @@ pub fn pr_of(request: &BoardRequest) -> Option<u64> {
         | BoardRequest::Create(_)
         | BoardRequest::UpdateDraft(_)
         | BoardRequest::Complete(_)
+        | BoardRequest::DoneWithoutRun { .. }
         | BoardRequest::ProposePlan(_)
         | BoardRequest::EditPlan(_)
         | BoardRequest::AcceptPlan(_)

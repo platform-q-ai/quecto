@@ -53,6 +53,7 @@ pub fn git(repo: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
+        // SAFETY: pre_exec runs only async-signal-safe setrlimit in the forked child.
         unsafe {
             command.pre_exec(|| {
                 let limit = libc::rlimit {

@@ -83,7 +83,19 @@ vocabulary!(
 vocabulary!(
     /// How a done or archived task was resolved (the host's words for a
     /// closed issue, and `superseded`).
-    Resolution { Completed => "completed", NotPlanned => "not_planned", Duplicate => "duplicate", Superseded => "superseded" }
+    Resolution {
+        Completed => "completed", NotPlanned => "not_planned", Duplicate => "duplicate",
+        Superseded => "superseded", DoneWithoutRun => "done_without_run",
+    }
+);
+
+vocabulary!(
+    /// The lifecycle action that makes a status move `move` refuses
+    /// (#2705 T4): the board makes it, or the action names the way on.
+    LifecycleAction {
+        Start => "start", EndRun => "end_run", Release => "release",
+        DoneWithoutRun => "done_without_run",
+    }
 );
 
 vocabulary!(

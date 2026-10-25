@@ -50,6 +50,7 @@ fn shown(handoff: Option<String>) -> ShownTask {
         references: vec![],
         created: at(),
         updated: at(),
+        reason: None,
     })
     .unwrap();
     let items = (0..3)

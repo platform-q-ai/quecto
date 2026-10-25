@@ -105,6 +105,7 @@ pub(super) fn ready_with_plan() -> (Task, Plan) {
         created: at.clone(),
         updated: at,
         description_form: Default::default(),
+        reason: None,
     })
     .unwrap();
     (task, plan)

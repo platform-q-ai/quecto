@@ -72,6 +72,28 @@ fn counted(
 
 /// A board on `work` with one ready task `a`; its id, as git resolves it,
 /// and its remote's URL.
+/// Task `id` on `repo`'s board moved to review, as its run's end will move
+/// it (#2705 T4: `move` no longer does), written straight to the store as
+/// the committer the clone configures.
+pub(super) fn put_in_review(repo: &Path, id: &str) {
+    let environment = environment(repo, Access::Write);
+    let vars = GitEnvironment::allowlisted(environment.vars.iter().cloned());
+    let committer = Git::configured_committer(&environment.repo, &vars).unwrap();
+    let git = Git::new(&environment.repo, vars, committer).unwrap();
+    let store = GitBoardStore::new(git, &environment.remote).unwrap();
+    let board = store.read().unwrap();
+    let task = board
+        .tasks
+        .iter()
+        .find(|task| task.fields().id.as_str() == id);
+    let mut fields = task.expect("the task is on the board").fields().clone();
+    fields.status = crate::domain::project_board::value_objects::vocabulary::TaskStatus::Review;
+    let task = crate::domain::project_board::entities::task::Task::new(fields).unwrap();
+    store
+        .write_tasks(&board.head, &[task], "board: a run's end")
+        .unwrap();
+}
+
 fn board_with_a(work: &Path) -> (BoardId, String) {
     let writer = build_project_board_handles(&environment(work, Access::Write)).unwrap();
     let ops = |request: Value| run(&*writer.operations, &request.to_string());
@@ -277,6 +299,7 @@ fn a_write_names_the_board_and_remote_git_resolves() {
     assert_eq!(claimed["ok"], json!(true), "{claimed}");
     let linked = ops(json!({"op": "link_pr", "task": "a", "pr": 7}));
     assert_eq!(linked["ok"], json!(true), "{linked}");
+    put_in_review(&work, "a");
     let complete = ops(json!({"op": "complete", "task": "a"}));
     assert_eq!(
         complete["error"]["code"],

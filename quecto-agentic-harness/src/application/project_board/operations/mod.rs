@@ -14,8 +14,8 @@ pub use super::dto::{
 use super::ports::{BoardClock, BoardListings};
 use super::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
-    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ListLeftRuns, ProposePlan, QueryBoard,
-    StartBoardTask, UpdateDraftTask,
+    CreateBoardTask, DiscardPlan, EditPlan, EndRun, FinishWithoutRun, ListLeftRuns, ProposePlan,
+    QueryBoard, StartBoardTask, UpdateDraftTask,
 };
 
 /// `BoardListings` over `QueryBoard`, and the operations assembled as
@@ -50,4 +50,7 @@ pub struct BoardOperationParts {
     pub left_runs: Option<ListLeftRuns>,
     pub clear: ClearSetAside,
     pub complete: CompleteMergedTask,
+    /// A task done without a run, its linked pull requests read as a
+    /// completion reads them (#2705 T4).
+    pub done_without_run: FinishWithoutRun,
 }

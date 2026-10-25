@@ -94,6 +94,7 @@ fn launching_board(
         created: at.clone(),
         updated: at,
         description_form: Default::default(),
+        reason: None,
     })
     .unwrap();
     let head = store.read().unwrap().head;

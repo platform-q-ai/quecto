@@ -35,6 +35,7 @@ pub(super) fn fields() -> TaskFields {
         references: vec![],
         created: at("08:00:00"),
         updated: at("09:05:00"),
+        reason: None,
     }
 }
 

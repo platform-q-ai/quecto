@@ -117,6 +117,7 @@ pub(super) fn a_task() -> Task {
         created: at.clone(),
         updated: at,
         description_form: Default::default(),
+        reason: None,
     })
     .unwrap()
 }

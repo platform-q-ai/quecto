@@ -58,6 +58,7 @@ fn task(description: String, accepted: u32) -> Task {
         created: at(),
         updated: at(),
         description_form: Default::default(),
+        reason: None,
     })
     .unwrap()
 }

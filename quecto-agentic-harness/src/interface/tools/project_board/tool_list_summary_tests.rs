@@ -472,6 +472,7 @@ fn seeded_store() -> MemoryBoardStore {
             created: at("09:00:00"),
             updated: at("09:00:00"),
             description_form: Default::default(),
+            reason: None,
         });
         BoardArtifact::Task(task.unwrap())
     };

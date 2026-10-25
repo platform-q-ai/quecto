@@ -48,6 +48,7 @@ pub fn task(status: TaskStatus) -> Task {
         created: at("08:00:00"),
         updated: at("09:00:00"),
         description_form: Default::default(),
+        reason: None,
     })
     .expect("fixture is valid")
 }

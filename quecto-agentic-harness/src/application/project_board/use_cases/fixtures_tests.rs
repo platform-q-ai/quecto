@@ -140,6 +140,7 @@ pub fn fields(id: &str) -> TaskFields {
         references: vec![],
         created: at("00:00:00"),
         updated: at("00:00:00"),
+        reason: None,
     }
 }
 

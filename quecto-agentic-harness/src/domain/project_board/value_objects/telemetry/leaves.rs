@@ -291,6 +291,15 @@ const KNOWN_KINDS: &[&str] = &[
     // A plan's handoff and where show pages it from (#2705 T3).
     "handoff",
     "handoff_from",
+    // The lifecycle's refusals, the op done without a run and its field
+    // (#2705 T4).
+    "use_lifecycle",
+    "reason_required",
+    "done_without_run",
+    "reason",
+    // Done without a run once every linked pull request has merged (#2705
+    // T4 review round 1): its refusal for one that has not.
+    "prs_open",
 ];
 
 /// Whether every one of [`KNOWN_KINDS`] is shaped as a kind (checked as

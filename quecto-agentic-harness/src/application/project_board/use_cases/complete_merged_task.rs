@@ -184,19 +184,23 @@ impl CompleteMergedTask {
 }
 
 /// The host a completion reads, until `deadline` on `clock`'s monotonic
-/// time (`budget` after the completion began).
-struct Reads<'a> {
-    host: &'a dyn PullRequestStates,
-    clock: &'a dyn BoardClock,
-    deadline: Duration,
-    budget: Duration,
+/// time (`budget` after the completion began); a task done without a run
+/// reads its pull requests so too (#2705 T4).
+pub(super) struct Reads<'a> {
+    pub(super) host: &'a dyn PullRequestStates,
+    pub(super) clock: &'a dyn BoardClock,
+    pub(super) deadline: Duration,
+    pub(super) budget: Duration,
 }
 
 /// The linked pull requests the host reads as merged; an open or closed
 /// one is left out, for the rule to name. One the host does not know, a
 /// host that cannot be read, or reads past the deadline refuse the
 /// completion.
-fn merged(reads: &Reads<'_>, linked: &[u64]) -> Result<BTreeSet<u64>, ProjectBoardError> {
+pub(super) fn merged(
+    reads: &Reads<'_>,
+    linked: &[u64],
+) -> Result<BTreeSet<u64>, ProjectBoardError> {
     let host = reads.host;
     let mut merged = BTreeSet::new();
     for pr in linked {

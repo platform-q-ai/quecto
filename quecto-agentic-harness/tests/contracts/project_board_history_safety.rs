@@ -523,6 +523,7 @@ struct OwnedChild(Option<std::process::Child>);
 impl Drop for OwnedChild {
     fn drop(&mut self) {
         if let Some(mut child) = self.0.take() {
+            // SAFETY: kills the process group this test spawned and still owns.
             unsafe {
                 libc::kill(-(child.id() as i32), libc::SIGKILL);
             }
@@ -580,6 +581,7 @@ fn feature_red_prepared_owned_child_crash_rolls_back_all_rows() {
     command.args(["-s","KILL","20",std::env::current_exe().unwrap().to_str().unwrap(),"--exact","project_board_history_safety::feature_red_prepared_owned_child_crash_rolls_back_all_rows","--nocapture"]).env(CHILD,&fixture.database).env("QUECTO_B3_PREPARED_SOURCE",&fixture.repo).env("QUECTO_B3_PREPARED_DESTINATION",&fixture.destination).stdout(Stdio::from(output.try_clone().unwrap())).stderr(Stdio::from(output));
     {
         use std::os::unix::process::CommandExt;
+        // SAFETY: pre_exec runs only async-signal-safe setsid in the forked child.
         unsafe {
             command.pre_exec(|| {
                 if libc::setsid() < 0 {

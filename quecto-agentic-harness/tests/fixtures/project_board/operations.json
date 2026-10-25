@@ -196,9 +196,12 @@
       "op": "move",
       "error": {
         "code": "rule",
-        "message": "only the claim's holder may do this",
+        "message": "a task does not go from claimed to in_progress this way: start(task, plan_version) is the only way there, and it runs the task's accepted plan",
         "rule": {
-          "code": "not_holder"
+          "code": "use_lifecycle",
+          "action": "start",
+          "from": "claimed",
+          "to": "in_progress"
         }
       }
     }
@@ -207,41 +210,20 @@
     "request": {
       "op": "move",
       "task": "cli",
-      "to": "in_progress"
+      "to": "done"
     },
     "answer": {
-      "ok": true,
+      "ok": false,
       "op": "move",
-      "task": {
-        "id": "cli",
-        "title": "Board CLI",
-        "kind": "task",
-        "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
-        "status": "in_progress",
-        "parent": "epic",
-        "depends_on": [],
-        "accepted_plan": null,
-        "claim": {
-          "holder": {
-            "name": "Ada",
-            "email": "ada@example.com"
-          },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
-        },
-        "prs": [],
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:02Z",
-        "goal": "Why.",
-        "why": null,
-        "done_when": [
-          {
-            "outcome": "How.",
-            "done": false
-          }
-        ],
-        "links": [],
-        "needs_goal": false
+      "error": {
+        "code": "rule",
+        "message": "a task does not go from claimed to done this way: finish work done without a run with done_without_run(task, reason)",
+        "rule": {
+          "code": "use_lifecycle",
+          "action": "done_without_run",
+          "from": "claimed",
+          "to": "done"
+        }
       }
     }
   },
@@ -258,7 +240,7 @@
         "title": "Board CLI",
         "kind": "task",
         "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
-        "status": "in_progress",
+        "status": "claimed",
         "parent": "epic",
         "depends_on": [],
         "accepted_plan": null,
@@ -272,7 +254,7 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:02Z",
+        "updated": "2026-10-10T10:00:01Z",
         "goal": "Why.",
         "why": null,
         "done_when": [
@@ -320,7 +302,7 @@
         "title": "Board CLI",
         "kind": "task",
         "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
-        "status": "in_progress",
+        "status": "claimed",
         "parent": "epic",
         "depends_on": [],
         "accepted_plan": null,
@@ -364,7 +346,7 @@
         "title": "Board CLI",
         "kind": "task",
         "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
-        "status": "in_progress",
+        "status": "claimed",
         "parent": "epic",
         "depends_on": [],
         "accepted_plan": null,
@@ -391,35 +373,6 @@
         ],
         "links": [],
         "needs_goal": false
-      },
-      "completion": {
-        "done": true,
-        "task": {
-          "id": "cli",
-          "title": "Board CLI",
-          "kind": "task",
-          "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
-          "status": "done",
-          "parent": "epic",
-          "depends_on": [],
-          "accepted_plan": null,
-          "claim": null,
-          "prs": [
-            7
-          ],
-          "created": "2026-10-10T10:00:00Z",
-          "updated": "2026-10-10T12:30:02Z",
-          "goal": "Why.",
-          "why": null,
-          "done_when": [
-            {
-              "outcome": "How.",
-              "done": false
-            }
-          ],
-          "links": [],
-          "needs_goal": false
-        }
       }
     }
   },
@@ -493,43 +446,6 @@
   },
   {
     "request": {
-      "op": "move",
-      "task": "t2",
-      "to": "in_progress"
-    },
-    "answer": {
-      "ok": true,
-      "op": "move",
-      "task": {
-        "id": "t2",
-        "title": "Second",
-        "kind": "task",
-        "description": "",
-        "status": "in_progress",
-        "parent": null,
-        "depends_on": [],
-        "accepted_plan": null,
-        "claim": {
-          "holder": {
-            "name": "Ada",
-            "email": "ada@example.com"
-          },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
-        },
-        "prs": [],
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:02Z",
-        "goal": null,
-        "why": null,
-        "done_when": [],
-        "links": [],
-        "needs_goal": true
-      }
-    }
-  },
-  {
-    "request": {
       "op": "link_pr",
       "task": "t2",
       "pr": 8
@@ -542,7 +458,7 @@
         "title": "Second",
         "kind": "task",
         "description": "",
-        "status": "in_progress",
+        "status": "claimed",
         "parent": null,
         "depends_on": [],
         "accepted_plan": null,
@@ -558,18 +474,12 @@
           8
         ],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:03Z",
+        "updated": "2026-10-10T10:00:02Z",
         "goal": null,
         "why": null,
         "done_when": [],
         "links": [],
         "needs_goal": true
-      },
-      "completion": {
-        "done": false,
-        "pending": [
-          8
-        ]
       }
     }
   },
@@ -587,7 +497,7 @@
         "title": "Second",
         "kind": "task",
         "description": "",
-        "status": "in_progress",
+        "status": "claimed",
         "parent": null,
         "depends_on": [],
         "accepted_plan": null,
@@ -601,7 +511,7 @@
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:04Z",
+        "updated": "2026-10-10T10:00:03Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -617,33 +527,17 @@
       "to": "blocked"
     },
     "answer": {
-      "ok": true,
+      "ok": false,
       "op": "move",
-      "task": {
-        "id": "t2",
-        "title": "Second",
-        "kind": "task",
-        "description": "",
-        "status": "blocked",
-        "parent": null,
-        "depends_on": [],
-        "accepted_plan": null,
-        "claim": {
-          "holder": {
-            "name": "Ada",
-            "email": "ada@example.com"
-          },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
-        },
-        "prs": [],
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:05Z",
-        "goal": null,
-        "why": null,
-        "done_when": [],
-        "links": [],
-        "needs_goal": true
+      "error": {
+        "code": "rule",
+        "message": "a task does not go from claimed to blocked this way: blocking is a run's outcome: release the task with move(task, to ready), and say why in your reply",
+        "rule": {
+          "code": "use_lifecycle",
+          "action": "release",
+          "from": "claimed",
+          "to": "blocked"
+        }
       }
     }
   },
@@ -668,7 +562,7 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:06Z",
+        "updated": "2026-10-10T10:00:04Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -698,7 +592,7 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:07Z",
+        "updated": "2026-10-10T10:00:05Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -777,95 +671,30 @@
   },
   {
     "request": {
-      "op": "move",
-      "task": "t3",
-      "to": "in_progress"
+      "op": "done_without_run",
+      "task": "t3"
     },
     "answer": {
-      "ok": true,
-      "op": "move",
-      "task": {
-        "id": "t3",
-        "title": "Third",
-        "kind": "task",
-        "description": "",
-        "status": "in_progress",
-        "parent": null,
-        "depends_on": [],
-        "accepted_plan": null,
-        "claim": {
-          "holder": {
-            "name": "Ada",
-            "email": "ada@example.com"
-          },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
-        },
-        "prs": [],
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:02Z",
-        "goal": null,
-        "why": null,
-        "done_when": [],
-        "links": [],
-        "needs_goal": true
-      }
-    }
-  },
-  {
-    "request": {
-      "op": "link_pr",
-      "task": "t3",
-      "pr": 9
-    },
-    "answer": {
-      "ok": true,
-      "op": "link_pr",
-      "task": {
-        "id": "t3",
-        "title": "Third",
-        "kind": "task",
-        "description": "",
-        "status": "in_progress",
-        "parent": null,
-        "depends_on": [],
-        "accepted_plan": null,
-        "claim": {
-          "holder": {
-            "name": "Ada",
-            "email": "ada@example.com"
-          },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
-        },
-        "prs": [
-          9
-        ],
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:03Z",
-        "goal": null,
-        "why": null,
-        "done_when": [],
-        "links": [],
-        "needs_goal": true
-      },
-      "completion": {
-        "done": false,
-        "pending": [
-          9
-        ]
+      "ok": false,
+      "op": "done_without_run",
+      "error": {
+        "code": "invalid_request",
+        "message": "reason: is required",
+        "field": "reason",
+        "problem": "is required"
       }
     }
   },
   {
     "merge": 9,
     "request": {
-      "op": "complete",
-      "task": "t3"
+      "op": "done_without_run",
+      "task": "t3",
+      "reason": "Answered in chat: no change"
     },
     "answer": {
       "ok": true,
-      "op": "complete",
+      "op": "done_without_run",
       "task": {
         "id": "t3",
         "title": "Third",
@@ -876,11 +705,9 @@
         "depends_on": [],
         "accepted_plan": null,
         "claim": null,
-        "prs": [
-          9
-        ],
+        "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:04Z",
+        "updated": "2026-10-10T10:00:02Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -897,7 +724,7 @@
     "answer": {
       "ok": true,
       "op": "list_takeable",
-      "head": "r22",
+      "head": "r16",
       "tasks": [],
       "quarantined": []
     }
@@ -909,7 +736,7 @@
     "answer": {
       "ok": true,
       "op": "list_ready",
-      "head": "r22",
+      "head": "r16",
       "tasks": [],
       "quarantined": []
     }
@@ -922,23 +749,30 @@
     "answer": {
       "ok": true,
       "op": "list",
-      "head": "r22",
+      "head": "r16",
       "tasks": [
         {
           "id": "cli",
           "title": "Board CLI",
           "kind": "task",
           "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
-          "status": "done",
+          "status": "claimed",
           "parent": "epic",
           "depends_on": [],
           "accepted_plan": null,
-          "claim": null,
+          "claim": {
+            "holder": {
+              "name": "Bob",
+              "email": "bob@example.com"
+            },
+            "since": "2026-10-10T12:30:00Z",
+            "expires": "2026-10-10T14:30:00Z"
+          },
           "prs": [
             7
           ],
           "created": "2026-10-10T10:00:00Z",
-          "updated": "2026-10-10T12:30:02Z",
+          "updated": "2026-10-10T12:30:01Z",
           "goal": "Why.",
           "why": null,
           "done_when": [
@@ -962,22 +796,29 @@
     "answer": {
       "ok": true,
       "op": "show",
-      "head": "r22",
+      "head": "r16",
       "task": {
         "id": "cli",
         "title": "Board CLI",
         "kind": "task",
         "description": "## Goal\nWhy.\n\n## Done when\n- [ ] How.",
-        "status": "done",
+        "status": "claimed",
         "parent": "epic",
         "depends_on": [],
         "accepted_plan": null,
-        "claim": null,
+        "claim": {
+          "holder": {
+            "name": "Bob",
+            "email": "bob@example.com"
+          },
+          "since": "2026-10-10T12:30:00Z",
+          "expires": "2026-10-10T14:30:00Z"
+        },
         "prs": [
           7
         ],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T12:30:02Z",
+        "updated": "2026-10-10T12:30:01Z",
         "goal": "Why.",
         "why": null,
         "done_when": [
@@ -1049,7 +890,7 @@
     "answer": {
       "ok": true,
       "op": "list_ready",
-      "head": "r24",
+      "head": "r18",
       "tasks": [],
       "quarantined": [
         {
@@ -1159,9 +1000,9 @@
       "op": null,
       "error": {
         "code": "invalid_request",
-        "message": "op: must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, start, end_run, clear_set_aside",
+        "message": "op: must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, done_without_run, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, start, end_run, clear_set_aside",
         "field": "op",
-        "problem": "must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, start, end_run, clear_set_aside"
+        "problem": "must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, done_without_run, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, start, end_run, clear_set_aside"
       }
     }
   },
@@ -1257,10 +1098,10 @@
       "op": "update_draft",
       "error": {
         "code": "rule",
-        "message": "a done task is not a draft: only drafts are edited",
+        "message": "a claimed task is not a draft: only drafts are edited",
         "rule": {
           "code": "not_draft",
-          "status": "done"
+          "status": "claimed"
         }
       }
     },
@@ -1354,43 +1195,6 @@
   },
   {
     "request": {
-      "op": "move",
-      "task": "t4",
-      "to": "in_progress"
-    },
-    "answer": {
-      "ok": true,
-      "op": "move",
-      "task": {
-        "id": "t4",
-        "title": "Fourth",
-        "kind": "task",
-        "description": "",
-        "status": "in_progress",
-        "parent": null,
-        "depends_on": [],
-        "accepted_plan": null,
-        "claim": {
-          "holder": {
-            "name": "Ada",
-            "email": "ada@example.com"
-          },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
-        },
-        "prs": [],
-        "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:02Z",
-        "goal": null,
-        "why": null,
-        "done_when": [],
-        "links": [],
-        "needs_goal": true
-      }
-    }
-  },
-  {
-    "request": {
       "op": "link_pr",
       "task": "t4",
       "pr": 8
@@ -1452,9 +1256,12 @@
       "op": "complete",
       "error": {
         "code": "rule",
-        "message": "the task links no pull request; its holder finishes it with move(task, to done) from review",
+        "message": "a task does not go from claimed to done this way: finish work done without a run with done_without_run(task, reason)",
         "rule": {
-          "code": "no_prs"
+          "code": "use_lifecycle",
+          "action": "done_without_run",
+          "from": "claimed",
+          "to": "done"
         }
       }
     }
@@ -1798,7 +1605,7 @@
     "answer": {
       "ok": true,
       "op": "show",
-      "head": "r32",
+      "head": "r25",
       "task": {
         "id": "epic",
         "title": "Project boards",
@@ -2068,7 +1875,7 @@
     "answer": {
       "ok": true,
       "op": "show",
-      "head": "r37",
+      "head": "r30",
       "task": {
         "id": "epic",
         "title": "Project boards",
@@ -2319,7 +2126,7 @@
       "op": "move",
       "error": {
         "code": "rule",
-        "message": "the task depends on tasks not done yet: dep-a; it can be claimed or started once each is done or archived",
+        "message": "the task depends on tasks not done yet: dep-a; it can be claimed, started or done without a run once each is done or archived",
         "rule": {
           "code": "dependency_not_done",
           "tasks": [
@@ -2441,7 +2248,7 @@
       "op": "move",
       "error": {
         "code": "rule",
-        "message": "its child tasks are still being worked on: kid; finish or release them before archiving it",
+        "message": "its child tasks are still being worked on: kid; finish or release them first",
         "rule": {
           "code": "children_active",
           "tasks": [

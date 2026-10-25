@@ -170,7 +170,9 @@ fn a_reviewed_task_a_change_links_is_not_archived() {
 fn a_released_task_is_not_archived_while_it_links_pull_requests_or_changes() {
     let changes = [change(1, Some(7))];
     for (actor, now) in [(person("Ada"), live()), (person("Bob"), lapsed())] {
-        let ready = move_task(&task(Review), Ready, &actor, (&[], &[]), &[], &now).unwrap();
+        let back = MoveReason::Given("Back for a new plan".into());
+        let ready =
+            move_with_reason(&task(Review), (Ready, &back), &actor, (&[], &[]), &[], &now).unwrap();
         assert_eq!(
             (ready.fields().status, &ready.fields().prs),
             (Ready, &vec![2482, 2483]),
@@ -190,9 +192,9 @@ fn a_released_task_is_not_archived_while_it_links_pull_requests_or_changes() {
                 "{actor:?} {from:?}"
             );
         }
-        let unlinked = move_task(
+        let unlinked = move_with_reason(
             &without_prs(task(Review)),
-            Ready,
+            (Ready, &back),
             &actor,
             (&[], &[]),
             &[],
@@ -241,7 +243,19 @@ fn a_superseded_task_is_never_done() {
         complete_merged(&linked, &merged, &[], &[], &now).map(|done| done.task),
         refused
     );
-    assert!(move_task(&review, InProgress, &person("Ada"), (&[], &[]), &[], &now).is_ok());
+    let back = MoveReason::Given("Back for a new plan".into());
+    assert!(
+        move_with_reason(
+            &review,
+            (Ready, &back),
+            &person("Ada"),
+            (&[], &[]),
+            &[],
+            &now
+        )
+        .is_ok(),
+        "it is released, as any reviewed task"
+    );
     let linking = superseded(task(Review));
     assert_eq!(
         move_task(&linking, Done, &person("Ada"), (&[], &[]), &[], &now),

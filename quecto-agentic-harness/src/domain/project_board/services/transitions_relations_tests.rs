@@ -123,18 +123,18 @@ fn dependency_not_done_reads_in_each_form() {
     };
     assert_eq!(
         refused(&["a", "b"], &[]),
-        "the task depends on tasks not done yet: a, b; it can be claimed or started once \
-         each is done or archived"
+        "the task depends on tasks not done yet: a, b; it can be claimed, started or done without \
+         a run once each is done or archived"
     );
     assert_eq!(
         refused(&[], &["c"]),
         "the task depends on tasks not on the board or set aside: c (add or mend them \
-         first); it can be claimed or started once each is done or archived"
+         first); it can be claimed, started or done without a run once each is done or archived"
     );
     assert_eq!(
         refused(&["a"], &["c"]),
         "the task depends on tasks not done yet: a, and on tasks not on the board or set \
-         aside: c (add or mend them first); it can be claimed or started once each is done \
-         or archived"
+         aside: c (add or mend them first); it can be claimed, started or done without a run once \
+         each is done or archived"
     );
 }

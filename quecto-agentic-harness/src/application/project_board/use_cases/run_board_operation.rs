@@ -1,7 +1,7 @@
 //! Runs one typed board operation (#2477).
 //!
-//! - After every pull request linked and every move to review, a task
-//!   that links pull requests is completed if they have all merged
+//! - After every pull request linked to a task in review, a task that
+//!   links pull requests is completed if they have all merged
 //!   (`CompleteMergedTask`), and the outcome says what came of that: done,
 //!   pending on the ones not merged yet, or failed.
 //! - A listing asked for summaries ([`ListSummaries::Wanted`]) has its
@@ -173,8 +173,8 @@ impl RunBoardOperation {
                 // The completion's own write is noted apart (only while
                 // noting), so the change's attempts stay its own.
                 let mut own = facts.as_ref().map(|_| OpFacts::default());
-                let completion =
-                    (completes(op) && links).then(|| completion(self.complete(id, own.as_mut())));
+                let completion = (completes(op, &task) && links)
+                    .then(|| completion(self.complete(id, own.as_mut())));
                 if let (Some(facts), Some(completion)) = (facts, &completion) {
                     let own = own.unwrap_or_default();
                     facts.completion = Some(CompletionFacts {
@@ -187,6 +187,12 @@ impl RunBoardOperation {
                 Ok(changed(task, completion))
             }
             BoardRequest::Complete(id) => Ok(changed(self.complete(id, facts)?, None)),
+            BoardRequest::DoneWithoutRun { task, reason } => Ok(changed(
+                self.parts
+                    .done_without_run
+                    .execute_noted(task, reason, facts)?,
+                None,
+            )),
             BoardRequest::ProposePlan(proposal) => Ok(BoardOutcome::Planned(
                 self.parts.propose_plan.execute_noted(proposal, facts)?,
             )),
@@ -298,10 +304,12 @@ fn completion(result: Result<Task, ProjectBoardError>) -> Completion {
     }
 }
 
-/// A change after which the task may be done: a pull request linked (it
-/// may have merged before), or a move to review.
-fn completes(op: &BoardOp) -> bool {
-    matches!(op, BoardOp::AddPr(_) | BoardOp::Move(TaskStatus::Review))
+/// A change after which `task`, as it left it, may be done: a pull
+/// request linked (it may have merged before) to a task in review, the
+/// only status a merged pull request completes (#2705 T4). A move to
+/// review was one until T4, which leaves that move to the task's run.
+fn completes(op: &BoardOp, task: &Task) -> bool {
+    matches!(op, BoardOp::AddPr(_)) && task.fields().status == TaskStatus::Review
 }
 
 #[cfg(test)]

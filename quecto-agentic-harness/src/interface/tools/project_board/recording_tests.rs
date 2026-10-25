@@ -519,15 +519,33 @@ fn a_call_dropped_unfinished_is_recorded_cancelled() {
 /// failed completion's error code as the answer spells it.
 #[test]
 fn a_call_records_what_its_use_case_saw() {
-    let board = board();
-    let lines = recorded(
+    let store = MemoryBoardStore::default();
+    store.bootstrap().unwrap();
+    let board = assembled(
+        Arc::new(store.client()),
+        Arc::new(SystemBoardClock::default()),
+        Arc::new(QueryListings(QueryBoard::new(Arc::new(store.client())))),
+        Err(NoPullRequestHost::NotAPullRequestHost),
+    )
+    .unwrap();
+    let mut lines = recorded(
         &board,
         &[
             json!({"op": "create", "task": "a", "title": " A ", "status": "ready"}).to_string(),
             json!({"op": "move", "task": "a", "to": "claimed"}).to_string(),
-            json!({"op": "link_pr", "task": "a", "pr": 7}).to_string(),
         ],
     );
+    // In review, as its run's end will move it (#2705 T4), a link
+    // completes it: here, with no pull request host, it fails to.
+    let held = store.read().unwrap();
+    let mut fields = held.tasks[0].fields().clone();
+    fields.status = crate::domain::project_board::value_objects::vocabulary::TaskStatus::Review;
+    let review = crate::domain::project_board::entities::task::Task::new(fields).unwrap();
+    store
+        .write_tasks(&held.head, &[review], "a run's end")
+        .unwrap();
+    let link = json!({"op": "link_pr", "task": "a", "pr": 7}).to_string();
+    lines.extend(recorded(&board, &[link]));
     // A create that gave no description tells none.
     assert_eq!(lines[0]["normalised"], json!({"title": ["edge_space"]}));
     assert_eq!(

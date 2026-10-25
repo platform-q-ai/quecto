@@ -8,6 +8,7 @@ use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
 use crate::application::project_board::use_cases::fixtures_tests::{
     board, fields, set_aside_task, slug,
 };
+use crate::domain::project_board::services::transitions::MoveReason;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
@@ -20,7 +21,10 @@ fn another_renewing_or_releasing_an_expired_claim_is_told_to_take_it_over() {
         let store = board();
         seed(&store, held_by_ada(from));
         let writes = store.writes();
-        for op in [BoardOp::Renew, BoardOp::Move(TaskStatus::Ready)] {
+        for op in [
+            BoardOp::Renew,
+            BoardOp::Move(TaskStatus::Ready, MoveReason::Absent),
+        ] {
             let refused = change(&store, "Bob", "14:00:00").execute(&slug("a"), &op);
             assert_eq!(
                 refused,

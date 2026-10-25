@@ -2,7 +2,7 @@
 use super::schema_error::SchemaError;
 use super::slug::Slug;
 use super::timestamp::Timestamp;
-use super::vocabulary::{DiscussionLimit, PlanState, TaskStatus};
+use super::vocabulary::{DiscussionLimit, LifecycleAction, PlanState, TaskStatus};
 use std::fmt;
 
 /// Whether a run ended by hand had a board of its swarm to report its
@@ -27,6 +27,16 @@ impl SwarmReport {
 pub enum BoardRuleError {
     /// No row of the transition table moves a task between these statuses.
     NotAllowed { from: TaskStatus, to: TaskStatus },
+    /// A move the task's lifecycle makes, never `move` (#2705 T4): the
+    /// action named makes it, or is the way on.
+    UseLifecycle {
+        from: TaskStatus,
+        to: TaskStatus,
+        action: LifecycleAction,
+    },
+    /// This move is made only with a reason (#2705 T4): back to ready
+    /// from review.
+    ReasonRequired { from: TaskStatus, to: TaskStatus },
     /// Another's claim has expired: only its holder may do this, and
     /// anyone may take the task over first (#2659).
     NotHolderExpired,
@@ -163,6 +173,10 @@ pub enum BoardRuleError {
     /// holder may unlink one deliberately (a wrong or abandoned pull
     /// request) first.
     PrsLinked(Vec<u64>),
+    /// These linked pull requests have not merged (open, or closed
+    /// unmerged): a task linking them is done without a run only once
+    /// every one has (#2705 T4).
+    PrsOpen(Vec<u64>),
     /// The task does not link this pull request.
     PrNotLinked(u64),
     /// The task already links this pull request.
@@ -213,6 +227,47 @@ fn with_article(word: &str) -> String {
     }
 }
 
+/// The lifecycle's refusals of a move `from` -> `to` (#2705 T4): one the
+/// lifecycle makes, naming the `action` to use, or (none) one back to
+/// ready from review given no reason.
+fn lifecycle(
+    f: &mut fmt::Formatter<'_>,
+    (from, to): (TaskStatus, TaskStatus),
+    action: Option<LifecycleAction>,
+) -> fmt::Result {
+    let way = match action {
+        Some(LifecycleAction::Start) => {
+            "start(task, plan_version) is the only way there, and it runs the task's \
+                     accepted plan"
+        }
+        Some(LifecycleAction::EndRun) => {
+            "the task's run decides it: end the run with end_run(task, run, outcome)"
+        }
+        Some(LifecycleAction::Release) => {
+            "blocking is a run's outcome: release the task with move(task, to ready), \
+             and say why in your reply"
+        }
+        Some(LifecycleAction::DoneWithoutRun) => {
+            "finish work done without a run with done_without_run(task, reason)"
+        }
+        None => {
+            return write!(
+                f,
+                "a task moves from {} back to {} only with a reason: move(task, to {}, reason)",
+                from.as_str(),
+                to.as_str(),
+                to.as_str()
+            );
+        }
+    };
+    write!(
+        f,
+        "a task does not go from {} to {} this way: {way}",
+        from.as_str(),
+        to.as_str()
+    )
+}
+
 impl fmt::Display for BoardRuleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -224,6 +279,8 @@ impl fmt::Display for BoardRuleError {
                     to.as_str()
                 )
             }
+            Self::UseLifecycle { from, to, action } => lifecycle(f, (*from, *to), Some(*action)),
+            Self::ReasonRequired { from, to } => lifecycle(f, (*from, *to), None),
             Self::NotHolder => f.write_str("only the claim's holder may do this"),
             Self::NotHolderExpired => f.write_str(
                 "only the claim's holder may do this, and the task's claim has expired: take the task \
@@ -396,6 +453,11 @@ impl fmt::Display for BoardRuleError {
                 "the task links pull requests {prs:?}, so it is done when they merge: \
                  complete it once they have (anyone may), or unlink one first"
             ),
+            Self::PrsOpen(prs) => write!(
+                f,
+                "pull requests {prs:?} have not merged: a task linking pull requests is done \
+                 without a run only once every one has merged"
+            ),
             Self::PrNotLinked(pr) => write!(f, "the task does not link pull request {pr}"),
             Self::PrAlreadyLinked(pr) => write!(f, "the task already links pull request {pr}"),
             Self::NotDraft(status) => write!(
@@ -437,8 +499,8 @@ impl fmt::Display for BoardRuleError {
                 };
                 write!(
                     f,
-                    "the task depends on {held}; it can be claimed or started once each is done \
-                     or archived"
+                    "the task depends on {held}; it can be claimed, started or done without a run \
+                     once each is done or archived"
                 )
             }
             Self::ChildrenActive(tasks) => {
@@ -446,7 +508,7 @@ impl fmt::Display for BoardRuleError {
                 write!(
                     f,
                     "its child tasks are still being worked on: {}; finish or release them \
-                     before archiving it",
+                     first",
                     tasks.join(", ")
                 )
             }
