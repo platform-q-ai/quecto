@@ -570,7 +570,7 @@ identity + the listed version — never an action.
 values (messages, ids, identities, ledger positions); no `serde_json::Value`,
 no `AgentEvent`, no transport type. Every refusal text a client can see is a
 DTO `Display` impl. The one live-conversation read model is the
-application-owned `ActiveSessionState` (`active_session.rs`: typed identity,
+application-owned `ActiveSessionState` (`services/active_session.rs`: typed identity,
 the `ConversationLedger` published transcript with its bounded full-copy
 ledger and sync frontier, the retention backstop, and the persistence state —
 watermark, sticky durable-prefix latch, killing exit). It is created once per

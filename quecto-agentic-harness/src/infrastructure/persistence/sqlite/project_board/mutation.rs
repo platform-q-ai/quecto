@@ -12,22 +12,15 @@ impl SqliteProjectBoardStore {
         expected: &BoardHead,
         artifacts: Option<&[BoardArtifact]>,
         clear: Option<&SetAsideClear>,
+        message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
-        object_id(&expected.0).map_err(|_| invalid("not a board head"))?;
         let mut c = self.connection.lock().map_err(unavailable)?;
         let tx = storage::Scope::begin(&mut c, true)?;
         let (current, root) = storage::current(&tx)?;
-        let known: bool = tx
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM revisions WHERE head=?1)",
-                [&expected.0],
-                |r| r.get(0),
-            )
-            .map_err(unavailable)?;
-        match (known, current == *expected) {
-            (true, true) => {}
-            (true, false) => return Ok(BoardWrite::Lost),
-            (false, _) => return Err(invalid("not a board head")),
+        match history::classify(&tx, expected)? {
+            BoardWrite::Written(_) => {}
+            BoardWrite::Lost => return Ok(BoardWrite::Lost),
+            BoardWrite::Refused(_) => unreachable!("head classifier never refuses"),
         }
         let before = self.board(&tx, &root)?;
         let after;
@@ -82,7 +75,7 @@ impl SqliteProjectBoardStore {
         let writer = writer.with_fault(fault);
         let mut writer = writer;
         let root = Self::assemble(&mut writer, &after, &tasks, &files)?;
-        let next = writer.advance(&root, &self.writer, self.principal.as_deref())?;
+        let next = writer.advance(&root, &self.writer, message, self.principal.as_deref())?;
         tx.commit()?;
         Ok(BoardWrite::Written(next))
     }

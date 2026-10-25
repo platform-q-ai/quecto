@@ -2,7 +2,7 @@
 //! store's layout, real Git discovery, and the process's execution
 //! directory — or the typed reason it has none. Built once per loop and
 //! shared by the list query, the save transaction and resume admission.
-use crate::application::sessions::session_home::SessionHomeContext;
+use crate::application::sessions::services::session_home::SessionHomeContext;
 use crate::infrastructure::persistence::file::sessions::session_home_catalogue::FileSessionHomeCatalogue;
 use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use crate::infrastructure::workspace::git_scope_discovery::GitScopeDiscovery;

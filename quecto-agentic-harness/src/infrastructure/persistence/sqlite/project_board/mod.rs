@@ -32,6 +32,7 @@ pub struct SqliteProjectBoardStore {
     #[cfg(feature = "test-support")]
     hooks: std::sync::Arc<FixtureHooks>,
 }
+const BOOTSTRAP: &str = "board: bootstrap";
 fn unavailable(e: impl std::fmt::Display) -> BoardStoreError {
     BoardStoreError::Unavailable(e.to_string())
 }
@@ -87,7 +88,8 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
                         storage::entry("040000", b"tasks", tasks),
                     ],
                 )?;
-                let head = storage::advance(&tx, &root, &self.writer, self.principal.as_deref())?;
+                let (writer, by) = (&self.writer, self.principal.as_deref());
+                let head = storage::ObjectWriter::new(&tx).advance(&root, writer, BOOTSTRAP, by)?;
                 tx.commit()?;
                 Ok(BoardBootstrap::Created(head))
             }
@@ -103,7 +105,7 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
         line("message", message, 200).map_err(invalid)?;
         let keys: BTreeSet<_> = artifacts.iter().map(BoardArtifact::key).collect();
         match (artifacts.is_empty(), keys.len() == artifacts.len()) {
-            (false, true) => self.change(expected, Some(artifacts), None),
+            (false, true) => self.change(expected, Some(artifacts), None, message),
             _ => Err(invalid("write one or more board files, each once")),
         }
     }
@@ -139,7 +141,7 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
                 object_id(oid).map_err(|_| invalid("not an object id"))?;
             }
         }
-        self.change(expected, None, Some(clear))
+        self.change(expected, None, Some(clear), message)
     }
     fn writer(&self) -> Identity {
         self.writer.clone()
@@ -148,3 +150,5 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
 #[cfg(test)]
 #[cfg(feature = "test-support")]
 mod project_board_sqlite_tests;
+
+pub mod history;

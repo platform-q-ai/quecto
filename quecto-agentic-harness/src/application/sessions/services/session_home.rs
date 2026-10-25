@@ -126,5 +126,4 @@ impl SessionHomeContext {
 }
 
 #[cfg(test)]
-#[path = "session_home_tests.rs"]
 mod tests;

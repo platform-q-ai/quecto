@@ -7,7 +7,9 @@ use super::super::*;
 use crate::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::application::sessions::use_cases::{DepartingChildren, ResumeSavedSession, SaveSession};
-use crate::application::sessions::{active_session::ActiveSessionState, ports::SessionStore};
+use crate::application::sessions::{
+    ports::SessionStore, services::active_session::ActiveSessionState,
+};
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_home::SessionHomeScope;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;

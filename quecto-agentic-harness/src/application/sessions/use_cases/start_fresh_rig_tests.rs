@@ -14,12 +14,14 @@ use std::sync::{Arc, Mutex};
 
 use super::{DepartingChildren, ResumeSavedSession, SaveSession, StartFreshConversation};
 use crate::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch;
-use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSessionState};
 use crate::application::sessions::dto::{FleetSettled, FleetSettlementOutcome, SessionListQuery};
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
 use crate::application::sessions::ports::{
     ContextSpillStore, DelegatedChildrenRoster, FleetSettlement, FreshSessionIdentityGenerator,
     SessionKeyPropagation, SessionStore, SessionSwitchRuntime, SpillIndexList,
+};
+use crate::application::sessions::services::active_session::{
+    ActiveSessionHandle, ActiveSessionState,
 };
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::{
@@ -324,7 +326,8 @@ pub(crate) struct FreshOptions {
     /// refuses any loaded target (#1995).
     pub(crate) legacy_homes: bool,
     /// The home context of the resume transaction, instead of the rig's (#2011).
-    pub(crate) home: Option<crate::application::sessions::session_home::SessionHomeContext>,
+    pub(crate) home:
+        Option<crate::application::sessions::services::session_home::SessionHomeContext>,
 }
 
 impl Default for FreshOptions {
@@ -606,7 +609,9 @@ async fn the_fakes_journal_and_fail_as_told() {
 ///
 /// `legacy` instead makes every saved home read as legacy-unscoped, which
 /// scope admission refuses (#1995: a refusal after the claim step).
-fn rig_home(legacy: bool) -> crate::application::sessions::session_home::SessionHomeContext {
+fn rig_home(
+    legacy: bool,
+) -> crate::application::sessions::services::session_home::SessionHomeContext {
     use crate::application::sessions::ports::session_home::{
         HomeCatalogueSnapshot, SessionHomeCatalogue, WorkspaceDiscovery,
     };
@@ -659,7 +664,7 @@ fn rig_home(legacy: bool) -> crate::application::sessions::session_home::Session
             Ok(())
         }
     }
-    crate::application::sessions::session_home::SessionHomeContext::at(
+    crate::application::sessions::services::session_home::SessionHomeContext::at(
         Arc::new(Permissive(legacy)),
         Arc::new(Permissive(legacy)),
         "/rig".into(),

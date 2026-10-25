@@ -9,10 +9,10 @@
 //! ([`HistoryPage::keeping_newest`]).
 use std::sync::Arc;
 
-use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::dto::{HistoryError, HistoryPage, HistoryQuery};
-use crate::application::sessions::history_paging;
 use crate::application::sessions::ports::SessionStore;
+use crate::application::sessions::services::active_session::ActiveSessionHandle;
+use crate::application::sessions::services::history_paging;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::identity::ids::MessageId;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;

@@ -12,7 +12,7 @@ use crate::application::sessions::dto::{
     SessionListScope, SessionMetadataRow,
 };
 use crate::application::sessions::ports::session_home::SessionMetadataRecord;
-use crate::application::sessions::session_home::SessionHomeContext;
+use crate::application::sessions::services::session_home::SessionHomeContext;
 use crate::domain::sessions::entities::session_home::*;
 use crate::domain::sessions::services::session_metadata_search::{
     MatchedField, MetadataQuery, SessionMetadataFields, group_root, rank_of, repository_label,

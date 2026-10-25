@@ -1,7 +1,7 @@
 use super::ReadHistoryController;
-use crate::application::sessions::active_session::ActiveSessionState;
 use crate::application::sessions::dto::HistoryError;
 use crate::application::sessions::ports::SessionStore;
+use crate::application::sessions::services::active_session::ActiveSessionState;
 use crate::application::sessions::use_cases::ReadHistory;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;

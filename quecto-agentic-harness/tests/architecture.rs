@@ -620,7 +620,10 @@ fn ports_modules_expose_only_contracts() {
 /// live beside their capability's use cases rather than in a `ports`/`dto`
 /// module, keyed by module path under `application`.
 const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
-    ("sessions::conversation_ledger", &["LedgerAdvance"]),
+    (
+        "sessions::services::conversation_ledger",
+        &["LedgerAdvance"],
+    ),
     (
         "catalogue::services::snapshot_store",
         &["CatalogueSnapshotStore"],

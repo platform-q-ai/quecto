@@ -3,7 +3,7 @@
 //! first: what the fleet reported, why a transition was refused, what a
 //! fresh session is, and how starting one failed.
 use super::SaveSessionError;
-use crate::application::sessions::conversation_ledger::LedgerAdvance;
+use crate::application::sessions::services::conversation_ledger::LedgerAdvance;
 use crate::domain::identity::ids::AgentUuid;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 

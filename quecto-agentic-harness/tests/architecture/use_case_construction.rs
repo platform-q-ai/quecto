@@ -77,6 +77,7 @@ const USE_CASES: &[&str] = &[
     "EndedTranscriptPage",
     "ExecuteHarnessShutdown",
     "ExecuteHarnessShutdownPorts",
+    "ExportBoardHistory",
     "ExportSessionReport",
     "ExtendRunDeadline",
     "FinalizeEnvironmentMember",

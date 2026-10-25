@@ -7,7 +7,7 @@ use crate::application::sessions::dto::{
     ResumeDecision, ResumeRequest, ResumeSavedSessionError, ResumeTarget,
 };
 use crate::application::sessions::ports::SessionStore;
-use crate::application::sessions::session_home::{HomeObstacle, SessionHomeContext};
+use crate::application::sessions::services::session_home::{HomeObstacle, SessionHomeContext};
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_home::SessionHomeScope;
 use crate::domain::sessions::services::resume_decision::HomeVersion;

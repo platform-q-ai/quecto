@@ -10,10 +10,12 @@ use std::sync::{Arc, Mutex};
 
 use super::{ClearConversation, RewindConversation, SaveSession};
 use crate::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch;
-use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSessionState};
 use crate::application::sessions::dto::SessionListQuery;
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore, SpillIndexList};
+use crate::application::sessions::services::active_session::{
+    ActiveSessionHandle, ActiveSessionState,
+};
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::{
     Session, SessionSummary, SpillEntries, SpillEntry,

@@ -64,13 +64,20 @@ use std::path::Path;
 
 use super::teardown_authority::{production_code, production_files, walk};
 
+// cfg(test) child constructs its parent's state and converts raw keys for characterization: https://github.com/platform-q-ai/quecto/issues/2729
+pub(super) const ACTIVE_SESSION_TEST_FILE: &str =
+    "src/application/sessions/services/active_session/tests.rs";
+// cfg(test) child uses its parent's retention port to characterize ledger retention: https://github.com/platform-q-ai/quecto/issues/2729
+const CONVERSATION_LEDGER_TEST_FILE: &str =
+    "src/application/sessions/services/conversation_ledger/tests.rs";
+
 /// The files the plural capability is made of (R1).
 const CANONICAL_FILES: &[&str] = &[
     // #2009 extends the existing owners with home discovery, not scoped keys.
     "src/domain/sessions/entities/session_home.rs",
     "src/application/sessions/dto/list_sessions.rs",
     "src/application/sessions/ports/session_home.rs",
-    "src/application/sessions/session_home.rs",
+    "src/application/sessions/services/session_home.rs",
     "src/infrastructure/persistence/file/sessions/session_home_catalogue.rs",
     "src/infrastructure/persistence/file/sessions/session_home_catalogue_index.rs",
     "src/infrastructure/persistence/file/sessions/session_store_home.rs",
@@ -159,9 +166,9 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/start_fresh_conversation.rs",
     "src/application/sessions/dto/resume_saved_session.rs",
     "src/application/sessions/dto/retained_context.rs",
-    "src/application/sessions/active_session.rs",
-    "src/application/sessions/conversation_ledger.rs",
-    "src/application/sessions/history_paging.rs",
+    "src/application/sessions/services/active_session.rs",
+    "src/application/sessions/services/conversation_ledger.rs",
+    "src/application/sessions/services/history_paging.rs",
     "src/application/agent_turn/agent_loop/durable_prefix.rs",
     "src/infrastructure/persistence/file/sessions/session_snapshot_sources.rs",
     "src/infrastructure/persistence/file/sessions/fresh_session_identity.rs",
@@ -623,8 +630,11 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // D7 #1976 folds the interface reset composition into `switch_to`
     // (was 277 before D7); D8 #1977 notes the switch is the transactions' alone
     // (was 287 before D8).
-    ("src/application/sessions/active_session.rs", 289),
-    ("src/application/sessions/conversation_ledger.rs", 295),
+    ("src/application/sessions/services/active_session.rs", 289),
+    (
+        "src/application/sessions/services/conversation_ledger.rs",
+        295,
+    ),
     ("src/application/sessions/dto/history.rs", 90),
     ("src/application/sessions/dto/message_recovery.rs", 185),
     ("src/application/sessions/dto/session_report.rs", 150),
@@ -636,7 +646,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/application/sessions/dto/start_fresh_conversation.rs",
         136,
     ),
-    ("src/application/sessions/history_paging.rs", 65),
+    ("src/application/sessions/services/history_paging.rs", 65),
     // D7 #1976 declares and re-exports the transition ports module (was
     // 135 before D7); D9 #1978 adds the ephemeral scrub to the retention
     // port (was 142 before D9).
@@ -1283,7 +1293,15 @@ fn ports_are_declared_only_in_the_capability_ports_file_and_contracted() {
 #[test]
 fn sessions_graph_nodes_are_constructed_only_in_composition() {
     for (constructor, site) in COMPOSED_CONSTRUCTORS {
-        let sites = production_files_calling(constructor);
+        let test_exceptions = if *constructor == "ActiveSessionState::new(" {
+            set(&[ACTIVE_SESSION_TEST_FILE])
+        } else {
+            BTreeSet::new()
+        };
+        let (test_sites, sites): (BTreeSet<_>, BTreeSet<_>) = production_files_calling(constructor)
+            .into_iter()
+            .partition(|path| test_exceptions.contains(path));
+        assert_eq!(test_sites, test_exceptions);
         assert_eq!(
             sites,
             set(&[site]),
@@ -1695,7 +1713,8 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
         );
     }
     // The identity switch is the active session's own step, private to it.
-    let state = std::fs::read_to_string("src/application/sessions/active_session.rs").unwrap();
+    let state =
+        std::fs::read_to_string("src/application/sessions/services/active_session.rs").unwrap();
     assert!(state.contains("pub(in crate::application::sessions) fn switch_to("));
     assert!(!state.contains("pub fn switch_to("));
     assert!(!state.contains("pub fn switch_identity("));
@@ -1763,13 +1782,13 @@ fn interface_owns_no_conversation_state_or_history_policy() {
     let application_ledger = production_files_calling("struct ConversationLedger");
     assert_eq!(
         application_ledger,
-        set(&["src/application/sessions/conversation_ledger.rs"]),
+        set(&["src/application/sessions/services/conversation_ledger.rs"]),
         "one conversation ledger, owned by the application"
     );
     let state_owner = production_files_calling("struct ActiveSessionState");
     assert_eq!(
         state_owner,
-        set(&["src/application/sessions/active_session.rs"]),
+        set(&["src/application/sessions/services/active_session.rs"]),
         "one active-session state, owned by the application"
     );
 }
@@ -1884,8 +1903,8 @@ fn owner_line_ceilings_are_non_empty_and_respected() {
 /// implements it, and the interface handle structs the loop is composed
 /// over. Exact: no pruning-policy file, no tool, no dispatch handler.
 const RETENTION_PORT_HOLDERS: &[&str] = &[
-    "src/application/sessions/active_session.rs",
-    "src/application/sessions/conversation_ledger.rs",
+    "src/application/sessions/services/active_session.rs",
+    "src/application/sessions/services/conversation_ledger.rs",
     "src/application/sessions/ports/mod.rs",
     "src/application/sessions/use_cases/clear_conversation.rs",
     "src/application/sessions/use_cases/export_session_report.rs",
@@ -1953,8 +1972,14 @@ fn retained_context_has_exactly_one_owner_per_role() {
         set(&["src/application/sessions/ports/mod.rs"])
     );
     assert!(!RETENTION_PORT_HOLDERS.is_empty());
+    let test_exceptions = set(&[CONVERSATION_LEDGER_TEST_FILE]);
+    let (test_holders, holders): (BTreeSet<_>, BTreeSet<_>) =
+        production_files_calling("ContextSpillStore")
+            .into_iter()
+            .partition(|path| test_exceptions.contains(path));
+    assert_eq!(test_holders, test_exceptions);
     assert_eq!(
-        production_files_calling("ContextSpillStore"),
+        holders,
         set(RETENTION_PORT_HOLDERS),
         "the retention port's holders are exact"
     );
@@ -2088,4 +2113,80 @@ fn retained_context_has_exactly_one_owner_per_role() {
         production_files_calling("fn build_retention_handles("),
         set(&["src/composition/sessions.rs"])
     );
+}
+
+/// Characterization: the inherited tests have real ordinary cfg(test) owners.
+/// This does not grant either constructor or retention policy an exception.
+#[test]
+fn families_use_ordinary_test_children() {
+    let prefix = ["application", "sessions", "services"];
+    let mounted = super::dependency_scan::mounted_under(&prefix);
+    let mut owners = BTreeSet::new();
+    let mut children = BTreeSet::new();
+    for family in [
+        "active_session",
+        "conversation_ledger",
+        "history_paging",
+        "session_home",
+    ] {
+        let mut identity: Vec<String> = prefix.iter().map(|part| part.to_string()).collect();
+        identity.push(family.to_string());
+        let owner = format!("src/application/sessions/services/{family}.rs");
+        let production: Vec<_> = mounted
+            .iter()
+            .filter(|(_, module, test_only)| module == &identity && !test_only)
+            .collect();
+        assert_eq!(
+            production.len(),
+            1,
+            "{family}: one production service owner"
+        );
+        assert_eq!(production[0].0, Path::new(&owner));
+        assert!(owners.insert(owner.clone()), "{family}: distinct owner");
+        let source = std::fs::read_to_string(&owner).unwrap();
+        let ast = syn::parse_file(&source).unwrap();
+        let declarations: Vec<_> = ast
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Mod(module) if module.ident == "tests" => Some(module),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            declarations.len(),
+            1,
+            "{family}: one direct tests declaration"
+        );
+        let tests = declarations[0];
+        assert!(matches!(tests.vis, syn::Visibility::Inherited));
+        assert!(tests.content.is_none() && tests.semi.is_some());
+        assert_eq!(tests.attrs.len(), 1, "{family}: no redirected test child");
+        let cfg = &tests.attrs[0];
+        assert!(
+            cfg.path().is_ident("cfg")
+                && cfg
+                    .parse_args::<syn::Path>()
+                    .is_ok_and(|path| path.is_ident("test")),
+            "{family}: direct cfg(test) only"
+        );
+        let child = format!("src/application/sessions/services/{family}/tests.rs");
+        identity.push("tests".to_string());
+        let tests: Vec<_> = mounted
+            .iter()
+            .filter(|(_, module, test_only)| module == &identity && *test_only)
+            .collect();
+        assert_eq!(tests.len(), 1, "{family}: one test-only child mount");
+        assert_eq!(tests[0].0, Path::new(&child));
+        assert!(Path::new(&child).is_file() && children.insert(child));
+        for retired in [
+            format!("src/application/sessions/{family}.rs"),
+            format!("src/application/sessions/{family}_tests.rs"),
+            format!("src/application/sessions/services/{family}_tests.rs"),
+            format!("src/application/sessions/services/{family}/tests/mod.rs"),
+        ] {
+            assert!(!Path::new(&retired).exists(), "duplicate owner: {retired}");
+        }
+    }
+    assert_eq!((owners.len(), children.len()), (4, 4));
 }

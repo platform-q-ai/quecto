@@ -282,7 +282,7 @@ fn the_drop_rung_keeps_the_in_flight_tool_call_and_its_result() {
 /// stays recallable by id.
 #[test]
 fn the_ceiling_never_removes_the_agents_report() {
-    use crate::application::sessions::history_paging::newest_window;
+    use crate::application::sessions::services::history_paging::newest_window;
     use crate::domain::conversation::services::turn_origin::{
         TurnOrigin, instruction, progress_nudge,
     };

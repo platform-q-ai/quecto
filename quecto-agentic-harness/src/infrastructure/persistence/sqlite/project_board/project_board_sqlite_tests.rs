@@ -35,7 +35,7 @@ fn uncommitted_owned_child_crash_rolls_back_rows_and_head() {
         roots.retain(|entry| entry.name != "tasks");
         roots.push(storage::entry("040000", b"tasks", tasks));
         let root = storage::tree(&tx, &roots).unwrap();
-        storage::advance(&tx, &root, &store.writer, None).unwrap();
+        storage::advance(&tx, &root, &store.writer).unwrap();
         std::fs::write(path.with_extension("ready"), b"transaction open").unwrap();
         loop {
             std::thread::park();

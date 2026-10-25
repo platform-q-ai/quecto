@@ -729,9 +729,7 @@ pub trait BoardOperations: Send + Sync {
     /// `summaries` asks, noted as `noting` asks: a noted request gives
     /// back what its use cases saw, answered or refused. A listing is
     /// never refused for its summaries; summaries asked of a request that
-    /// is no listing ([`BoardRequest::is_listing`]) are refused as invalid.
-    ///
-    /// [`BoardRequest::is_listing`]: super::dto::BoardRequest::is_listing
+    /// is no listing (`BoardRequest::is_listing`) are refused as invalid.
     fn execute(
         &self,
         request: ReadRequest<'_>,
@@ -747,3 +745,5 @@ pub trait BoardOperations: Send + Sync {
     /// The board could not be read.
     fn left_runs(&self) -> Result<Vec<RunEnd>, ProjectBoardError>;
 }
+
+pub mod history;

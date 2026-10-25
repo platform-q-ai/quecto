@@ -473,8 +473,14 @@ fn interface_session_modules_parse_map_and_present_only() {
 /// Admitted raw-key sites are exact and decrease-only.
 #[test]
 fn raw_key_conversion_and_startup_key_sites_are_exact() {
+    let test_exceptions = set(&[super::sessions_capability::ACTIVE_SESSION_TEST_FILE]);
+    let (test_sites, sites): (BTreeSet<_>, BTreeSet<_>) =
+        production_files_calling("SessionIdentity::from_persisted_key(")
+            .into_iter()
+            .partition(|path| test_exceptions.contains(path));
+    assert_eq!(test_sites, test_exceptions);
     assert_eq!(
-        production_files_calling("SessionIdentity::from_persisted_key("),
+        sites,
         set(RAW_KEY_CONVERSION_SITES),
         "the raw-key conversion sites are exact (decrease-only)"
     );

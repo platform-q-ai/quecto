@@ -258,3 +258,41 @@ hold for the Unix socket and TCP alike:
 
 **The loopback trade-off.** All of loopback (`127.0.0.0/8` and `::1`) counts as one source, since any local user can bind any of it. So any user on the host can open 8 silent connections and evict a loopback client that is slow to send its first request. A client that sends its request at once is never evicted, and a Tailscale device has its own source. Listen on loopback only on a host whose users you trust, or have clients send their request as soon as they connect;
 - each connection at most 60 s or 1,000 requests, then 15 s to finish what it is answering before it is dropped.
+
+
+## Offline native history export (B3-A)
+
+`quecto board-server export --repo <destination> --board-id <16-hex>
+--to-branch <branch> --format 3 [--dry-run]` reads the existing native
+schema-4 SQLite board at `<data-dir>/quecto/boards/<board-id>.sqlite`.
+The board ID must be exactly 16 hexadecimal characters; it is not a path.
+Only format `3` is accepted. The optional `--remote <name>` is validated
+for command compatibility; native export does not contact or fetch a remote.
+Unknown or duplicate flags, unsupported formats, and invalid target refs
+are refused. `board-server export --help` describes this command.
+
+This offline command runs before token or server dispatch: it starts no
+listener, opens no writable board connection, and creates no source DB or
+data directory. Import is not exposed. Earlier schemas (2, and 3 before B7) and foreign schemas are
+refused without migration or reset. Populated imported provenance is
+unsupported until the separate import delivery.
+
+A readonly transaction pins the complete native revision frontier. Export
+writes deterministic real Git objects in the destination's SHA1 or SHA256
+format, retaining each successful revision's writer, message, UTC timestamp
+and actual preceding Git parent, including unchanged writes and clears.
+There is no total native revision cap; traversal uses a 4096-pair ID-only
+cache, checked object/listing bounds and a depth limit of 128. These are
+finite algorithmic bounds, not an RSS guarantee.
+
+The result on stdout is JSON with `revisions`, `frontier` (epoch:revision),
+and `git_head`. Dry-run performs the full verification and hashing but writes
+neither objects nor refs. A real export verifies the entire captured history
+before publishing the target using the expected head captured by composition.
+A competing head is a conflict; an operational lock failure with the same
+expected head is unavailable. An ambiguous publication is not success: reconcile
+the expected and proposed Git heads against the destination and the captured
+source frontier before retrying. Failed publication may leave verified
+unreachable destination objects. No distributed DB/Git atomic transaction is
+claimed, and export never mutates source board rows. Existing `serve`, `token`,
+HTTP routes, authentication, and timing behavior are unchanged.

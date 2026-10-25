@@ -200,8 +200,8 @@ fn a_board_of_another_version_is_refused_by_name() {
         panic!("refused")
     };
     assert!(
-        why.contains("schema version 2, this build writes 3"),
+        why.contains("schema version 2, this build writes 4"),
         "{why}"
     );
-    assert!(why.contains("move it aside"), "{why}");
+    assert!(why.contains("move the file aside"), "{why}");
 }
