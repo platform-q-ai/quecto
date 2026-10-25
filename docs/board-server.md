@@ -9,7 +9,8 @@ The board is the server's own: a SQLite file, `board.sqlite3`, in the state
 directory (below). The clone gives only the board's id (from its remote's
 URL) and, for the board's operations, its remote's revisions and pull
 requests. A new server has no board until a `bootstrap` op makes one (an
-import of a `quecto/board` branch is B3). A `board.sqlite3` of another
+import of a `quecto/board` branch, `board-server import` below, writes
+this same file; `export` and the backup read it). A `board.sqlite3` of another
 schema version (an earlier build's) is refused at start, naming the version
 found and the one this build writes: move the file aside and start the
 board again (there are no boards to keep yet).
@@ -300,8 +301,12 @@ hold for the Unix socket and TCP alike:
 ## Offline native history export (B3-A)
 
 `quecto board-server export --repo <destination> --board-id <16-hex>
---to-branch <branch> --format 3 [--dry-run]` reads the existing native
-schema-4 SQLite board at `<data-dir>/quecto/boards/<board-id>.sqlite`.
+--to-branch <branch> --format 3 [--state <dir>] [--dry-run]` reads the
+existing native schema-4 SQLite board that `serve` keeps:
+`board.sqlite3` in the server's state directory (`--state <dir>`, else
+`<base>/board-server/<board-id>/`, where `<base>` is `QUECTO_BASE_DIR`,
+else `~/.quecto`). The directory must be absolute and not end in `/`. A
+missing board file is refused by name; export never makes one.
 The board ID must be exactly 16 hexadecimal characters; it is not a path.
 Only format `3` is accepted. The optional `--remote <name>` is validated
 for command compatibility; native export does not contact or fetch a remote.
@@ -339,12 +344,25 @@ HTTP routes, authentication, and timing behavior are unchanged.
 ## Offline complete history import (B3-B)
 
 `quecto board-server import --repo <source> --board-id <16-hex>
-[--remote <name>]` captures the complete local `refs/heads/quecto/board`
-H0 once. `--remote` defaults to `origin` and is provenance only: no fetch,
+[--remote <name>] [--state <dir>]` captures the complete local
+`refs/heads/quecto/board` H0 once, into the board file `serve` keeps:
+`board.sqlite3` in the server's state directory (`--state <dir>`, else
+`<base>/board-server/<board-id>/`, where `<base>` is `QUECTO_BASE_DIR`,
+else `~/.quecto`). The directory passes the same checks as `serve`'s
+(absolute, no trailing `/`, no symlink, this user's at mode 0700, made so
+if missing), and import holds `serve`'s lock on it until it is done, so an
+import while a server runs on that directory is refused. Give the board id
+the server announces (`serving board <id>`) and the server's `--state`, if
+any. A board file is bound to one board id: an import records its
+`--board-id`; a server binds an unbound board file to its own board id at
+start, under its directory lock, and a board file it first makes is bound
+by its first write. A server whose board id differs from the file's
+refuses to start, naming both ids and the file, and `export` with another
+`--board-id` is refused. `--remote` defaults to `origin` and is provenance only: no fetch,
 listener or token graph is started. `import --help` describes the command;
 stdout JSON contains `revisions`, `head` and `source_head`.
 
-An owned IMMEDIATE transaction requires all seven schema3 tables empty.
+An owned IMMEDIATE transaction requires every table of the schema empty.
 It preserves original raw commits/trees/blobs, IDs, headers and exposed
 clear/seen/keep tokens; the SAME complete export dry-run verifies every
 original and H0 before commit. Error, Drop and owned precommit crash roll

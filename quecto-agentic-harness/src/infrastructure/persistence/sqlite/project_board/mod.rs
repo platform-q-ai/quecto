@@ -20,7 +20,7 @@ mod reader;
 mod storage;
 #[cfg(feature = "test-support")]
 pub use fixture::{FixtureHooks, RawEditor, RawEntry};
-pub use op_store::SqliteBoardOps;
+pub use op_store::{BoardBinding, SqliteBoardOps};
 
 pub struct SqliteProjectBoardStore {
     connection: Arc<Mutex<Connection>>,
