@@ -12,7 +12,9 @@ mod admission;
 #[path = "backup_run.rs"]
 mod run;
 
+type SourceResolver = Arc<dyn Fn(&str) -> PathBuf + Send + Sync>;
 pub struct SqliteBoardBackup {
+    resolved: Option<(Option<String>, SourceResolver)>,
     source_root: PathBuf,
     files: Arc<dyn BackupFileOps>,
     sqlite: Arc<dyn BackupSqliteOps>,
@@ -20,6 +22,12 @@ pub struct SqliteBoardBackup {
     time: Arc<dyn BoardClock>,
 }
 impl SqliteBoardBackup {
+    /// Composition owns common-file paths; the adapter owns bounded discovery and held FDs.
+    pub fn with_resolver(root: PathBuf, single: Option<String>, resolve: SourceResolver) -> Self {
+        let mut owner = Self::new(root);
+        owner.resolved = Some((single, resolve));
+        owner
+    }
     pub fn new(source_root: PathBuf) -> Self {
         Self::with_files(source_root, Arc::new(SystemBackupFileOps))
     }
@@ -53,6 +61,7 @@ impl SqliteBoardBackup {
         time: Arc<dyn BoardClock>,
     ) -> Self {
         Self {
+            resolved: None,
             source_root,
             files,
             sqlite,

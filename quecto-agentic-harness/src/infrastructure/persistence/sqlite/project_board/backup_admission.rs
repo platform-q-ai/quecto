@@ -21,7 +21,7 @@ pub(super) fn admit(c: &Connection, board: &str) -> Result<(), BackupError> {
     let meta: Option<Meta> = c.query_row("SELECT board_id,algorithm,source_remote,source_ref,source_head,imported_count FROM history_meta WHERE id=1 AND (board_id IS NULL OR length(CAST(board_id AS BLOB))=16) AND length(CAST(algorithm AS BLOB))<=6 AND (source_remote IS NULL OR length(CAST(source_remote AS BLOB)) BETWEEN 1 AND 200) AND (source_ref IS NULL OR length(CAST(source_ref AS BLOB))<=64) AND (source_head IS NULL OR length(CAST(source_head AS BLOB))<=64)", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional().map_err(classify)?;
     let (binding, algorithm, remote, reference, head, count) =
         meta.ok_or(BackupError::IdentityMismatch)?;
-    let native = binding.is_none()
+    let native = (binding.is_none() || binding.as_deref() == Some(board))
         && algorithm == "sha256"
         && remote.is_none()
         && reference.is_none()

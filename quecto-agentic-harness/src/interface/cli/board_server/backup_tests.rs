@@ -20,7 +20,7 @@ fn backup_options_admit_only_complete_known_pairs() {
 }
 #[test]
 fn backup_invalid_options_never_construct_graph() {
-    fn trap() -> Result<BackupBoard, String> {
+    fn trap(_: BackupCliEnvironment) -> Result<BackupBoard, String> {
         panic!("bad argv must precede composition")
     }
     let context = CliContext {
@@ -31,4 +31,44 @@ fn backup_invalid_options_never_construct_graph() {
         run(&context, &[], &mut String::new(), &mut String::new()),
         1
     );
+}
+
+#[test]
+fn backup_state_is_absolute_unique_and_requires_explicit_identity() {
+    for values in [
+        vec!["--to", "out", "--state", "/owned/state"],
+        vec![
+            "--to",
+            "out",
+            "--board-id",
+            "0123456789abcdef",
+            "--state",
+            "relative",
+        ],
+        vec![
+            "--to",
+            "out",
+            "--board-id",
+            "0123456789abcdef",
+            "--state",
+            "/a",
+            "--state",
+            "/b",
+        ],
+    ] {
+        assert!(parse(&values.into_iter().map(str::to_owned).collect::<Vec<_>>()).is_err());
+    }
+    let options = parse(
+        &[
+            "--to",
+            "out",
+            "--board-id",
+            "0123456789abcdef",
+            "--state",
+            "/owned/state",
+        ]
+        .map(str::to_owned),
+    )
+    .unwrap();
+    assert_eq!(options.state, Some(PathBuf::from("/owned/state")));
 }

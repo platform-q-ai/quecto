@@ -5,15 +5,23 @@ use crate::{
     interface::cli::CliContext,
 };
 use std::path::PathBuf;
-pub type BoardBackupBuilder = fn() -> Result<BackupBoard, String>;
-pub const USAGE: &str = "board-server backup --to <dir> [--board-id <16-hex>]";
+pub struct BackupCliEnvironment {
+    pub base_dir: PathBuf,
+    pub state: Option<PathBuf>,
+    pub board: Option<String>,
+}
+pub type BoardBackupBuilder = fn(BackupCliEnvironment) -> Result<BackupBoard, String>;
+pub const USAGE: &str =
+    "board-server backup --to <dir> [--board-id <16-hex>] [--state <absolute-dir>]";
 struct Options {
     to: PathBuf,
     board: Option<String>,
+    state: Option<PathBuf>,
 }
 fn parse(args: &[String]) -> Result<Options, &'static str> {
     let mut to = None;
     let mut board = None;
+    let mut state = None;
     let mut args = args.iter();
     while let Some(option) = args.next() {
         let value = args
@@ -24,18 +32,36 @@ fn parse(args: &[String]) -> Result<Options, &'static str> {
                 })
             })
             .ok_or("backup: option value required")?;
-        match (option.as_str(), to.is_none(), board.is_none()) {
-            ("--to", true, _) => to = Some(PathBuf::from(value)),
-            ("--board-id", _, true) => {
+        match (
+            option.as_str(),
+            to.is_none(),
+            board.is_none(),
+            state.is_none(),
+        ) {
+            ("--to", true, _, _) => to = Some(PathBuf::from(value)),
+            ("--board-id", _, true, _) => {
                 BoardId::of_hex(value).ok_or("backup: invalid board id")?;
                 board = Some(value.clone());
+            }
+            ("--state", _, _, true) => {
+                let path = PathBuf::from(value);
+                if path.is_absolute() {
+                    state = Some(path);
+                } else {
+                    return Err("backup: --state must be a non-empty absolute path");
+                }
             }
             _ => return Err("backup: unsupported or repeated option"),
         }
     }
+    if state.is_none() || board.is_some() {
+    } else {
+        return Err("backup: --state requires --board-id");
+    }
     Ok(Options {
         to: to.ok_or("backup: --to is required")?,
         board,
+        state,
     })
 }
 pub fn run(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
@@ -49,7 +75,13 @@ pub fn run(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut 
     let result = ctx
         .board_backup
         .ok_or_else(|| "backup: offline graph not composed".to_owned())
-        .and_then(|build| build());
+        .and_then(|build| {
+            build(BackupCliEnvironment {
+                base_dir: ctx.base_dir(),
+                state: options.state,
+                board: options.board.clone(),
+            })
+        });
     let usecase = match result {
         Ok(usecase) => usecase,
         Err(_) => {

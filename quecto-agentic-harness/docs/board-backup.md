@@ -1,9 +1,14 @@
 # Offline board backup
 
-`quecto board-server backup --to <dir> [--board-id <16-hex>]` backs up all
-sorted canonical local boards in the same data directory used by board history
-import/export. An optional board id selects one existing board. The command
-never starts a server, reads tokens or creates a missing source directory.
+`quecto board-server backup --to <dir> [--board-id <16-hex>] [--state <absolute-dir>]`
+backs up sorted canonical local boards from `<base>/board-server/<board-id>/board.sqlite3`,
+the same file resolved for serve/import/export. An optional board id selects one
+existing board. `--state` selects that absolute directory's `board.sqlite3` and
+requires `--board-id`: a directory alone never determines a board's identity.
+Empty, relative or repeated state options refuse before composition or I/O.
+Native unbound NULL and matching-bound metadata are accepted; mismatched IDs or
+provenance refuse. The command never starts a server, reads tokens or creates a
+missing source directory.
 
 Each invocation creates a fresh `<board>-YYYYMMDDTHHMMSSZ.sqlite` using SQLite's
 online backup API and a pinned read-only transaction, including committed WAL

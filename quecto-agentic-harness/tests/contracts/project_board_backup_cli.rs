@@ -24,7 +24,7 @@ fn cli(home: &Path, args: &[&str]) -> Output {
 #[test]
 fn backup_cli_real_offline_graph_publishes_independent_restore_and_typed_unknown_board() {
     let home = tempfile::tempdir().unwrap();
-    let root = home.path().join("data/quecto/boards");
+    let root = home.path().join("base/board-server");
     let to = home.path().join("backups");
     let missing = cli(
         home.path(),
@@ -41,7 +41,9 @@ fn backup_cli_real_offline_graph_publishes_independent_restore_and_typed_unknown
         "missing sources leave all owned HOME roots untouched"
     );
     std::fs::create_dir_all(&root).unwrap();
-    let source = root.join("0123456789abcdef.sqlite");
+    let state = root.join("0123456789abcdef");
+    std::fs::create_dir(&state).unwrap();
+    let source = state.join("board.sqlite3");
     let writer = crate::project_board_history_fixture::writer();
     let store = SqliteProjectBoardStore::open(&source, writer).unwrap();
     store.bootstrap().unwrap();
@@ -111,7 +113,7 @@ fn backup_cli_real_offline_graph_publishes_independent_restore_and_typed_unknown
     final_names.sort();
     assert_eq!(
         final_names,
-        ["backups", "data", "unavailable-source"],
+        ["backups", "base", "unavailable-source"],
         "offline graph never constructs config, token, or listener state"
     );
 }

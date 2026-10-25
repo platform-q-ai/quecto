@@ -122,9 +122,15 @@ impl SqliteBoardBackup {
         let mut boards: Vec<_> = names
             .iter()
             .filter_map(|name| {
-                name.strip_suffix(".sqlite")
-                    .filter(|id| canonical_board(id))
-                    .map(str::to_owned)
+                match &self.resolved {
+                    Some((Some(board), resolve)) => resolve(board)
+                        .file_name()
+                        .and_then(|file| (file == name.as_str()).then_some(board.as_str())),
+                    Some((None, _)) => Some(name.as_str()),
+                    None => name.strip_suffix(".sqlite"),
+                }
+                .filter(|id| canonical_board(id))
+                .map(str::to_owned)
             })
             .collect();
         if let Some(board) = &request.board {
@@ -192,7 +198,51 @@ impl SqliteBoardBackup {
         outcome: &mut BackupOutcome,
     ) -> Result<(), BackupError> {
         outcome.stage = BackupStage::Admission;
-        let source_name = format!("{}.sqlite", outcome.board);
+        let resolved;
+        let held_parent;
+        let source_name = match &self.resolved {
+            Some((single, resolve)) => {
+                resolved = resolve(&outcome.board);
+                let parent = resolved.parent().ok_or(BackupError::UnsafePath)?;
+                let relative = parent
+                    .strip_prefix(&self.source_root)
+                    .map_err(|_| BackupError::UnsafePath)?;
+                held_parent = if single.is_some() {
+                    if relative.as_os_str().is_empty() {
+                    } else {
+                        return Err(BackupError::UnsafePath);
+                    }
+                    None
+                } else {
+                    if relative == Path::new(&outcome.board) {
+                    } else {
+                        return Err(BackupError::UnsafePath);
+                    }
+                    Some(
+                        fs::open(root, &outcome.board, libc::O_RDONLY | libc::O_DIRECTORY, 0)
+                            .map_err(unsafe_io)?,
+                    )
+                };
+                resolved
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .ok_or(BackupError::UnsafePath)?
+                    .to_owned()
+            }
+            None => {
+                held_parent = None;
+                format!("{}.sqlite", outcome.board)
+            }
+        };
+        let discovery_root = root;
+        let root = held_parent.as_ref().unwrap_or(root);
+        let source_parent = match &self.resolved {
+            Some((_, resolve)) => resolve(&outcome.board)
+                .parent()
+                .ok_or(BackupError::UnsafePath)?
+                .to_owned(),
+            None => self.source_root.clone(),
+        };
         let (_source_file, source) = record(root, &source_name)?;
         let source_path = fs::path(root, &source_name);
         let connection = open_read(&source_path, request.limits.busy.min(budget.remaining()?))?;
@@ -204,6 +254,7 @@ impl SqliteBoardBackup {
                 .map_err(classify)?;
             admission::admit(&connection, &outcome.board)
         })?;
+        fs::stable_directory(root, &source_parent).map_err(unsafe_io)?;
         fs::check(root, &source).map_err(unsafe_io)?;
         let (directory, canonical) =
             fs::private_destination(&request.to, &self.source_root).map_err(unsafe_io)?;
@@ -233,6 +284,7 @@ impl SqliteBoardBackup {
             },
         };
         fs::stable_directory(&directory, &canonical).map_err(unsafe_io)?;
+        fs::stable_directory(root, &source_parent).map_err(unsafe_io)?;
         fs::check(root, &source).map_err(unsafe_io)?;
         let partial_path = fs::path(&directory, &partial.owned.name);
         let mut destination =
@@ -284,8 +336,9 @@ impl SqliteBoardBackup {
             self.guarded(&validation, budget, || exact_integrity(&validation))?;
             fs::check(&directory, candidate).map_err(unsafe_io)?;
         }
+        fs::stable_directory(root, &source_parent).map_err(unsafe_io)?;
         fs::check(root, &source).map_err(unsafe_io)?;
-        fs::stable_directory(root, &self.source_root).map_err(unsafe_io)?;
+        fs::stable_directory(discovery_root, &self.source_root).map_err(unsafe_io)?;
         fs::stable_directory(&directory, &canonical).map_err(unsafe_io)?;
         budget.remaining()?;
         outcome.stage = BackupStage::Publication;
