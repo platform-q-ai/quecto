@@ -13,3 +13,5 @@ mod push_report;
 pub mod remote_revisions;
 pub mod store;
 pub mod text_cells;
+
+pub mod history;

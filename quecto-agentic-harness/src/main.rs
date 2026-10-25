@@ -43,6 +43,7 @@ fn main() {
                 quecto::composition::bootstrap::project_board::cli_board_recording,
             ),
             board_server: quecto::composition::bootstrap::board_server::build_board_server,
+            board_history: quecto::composition::bootstrap::project_board_history::build_history_cli,
         },
     ));
 }

@@ -84,7 +84,7 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
                         storage::entry("040000", b"tasks", tasks),
                     ],
                 )?;
-                let head = storage::advance(&tx, &root, &self.writer)?;
+                let head = storage::advance_message(&tx, &root, &self.writer, "board: bootstrap")?;
                 tx.commit().map_err(unavailable)?;
                 Ok(BoardBootstrap::Created(head))
             }
@@ -100,7 +100,7 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
         line("message", message, 200).map_err(invalid)?;
         let keys: BTreeSet<_> = artifacts.iter().map(BoardArtifact::key).collect();
         match (artifacts.is_empty(), keys.len() == artifacts.len()) {
-            (false, true) => self.change(expected, Some(artifacts), None),
+            (false, true) => self.change(expected, Some(artifacts), None, message),
             _ => Err(invalid("write one or more board files, each once")),
         }
     }
@@ -136,7 +136,7 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
                 object_id(oid).map_err(|_| invalid("not an object id"))?;
             }
         }
-        self.change(expected, None, Some(clear))
+        self.change(expected, None, Some(clear), message)
     }
     fn writer(&self) -> Identity {
         self.writer.clone()
@@ -145,3 +145,5 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
 #[cfg(test)]
 #[cfg(feature = "test-support")]
 mod project_board_sqlite_tests;
+
+pub mod history;
