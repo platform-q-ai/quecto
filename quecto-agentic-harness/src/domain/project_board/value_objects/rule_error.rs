@@ -244,8 +244,8 @@ fn lifecycle(
             "the task's run decides it: end the run with end_run(task, run, outcome)"
         }
         Some(LifecycleAction::Release) => {
-            "blocking is a run's outcome: release the task with move(task, to ready) \
-                     and say why"
+            "blocking is a run's outcome: release the task with move(task, to ready), \
+             and say why in your reply"
         }
         Some(LifecycleAction::DoneWithoutRun) => {
             "finish work done without a run with done_without_run(task, reason)"
@@ -499,8 +499,8 @@ impl fmt::Display for BoardRuleError {
                 };
                 write!(
                     f,
-                    "the task depends on {held}; it can be claimed or started once each is done \
-                     or archived"
+                    "the task depends on {held}; it can be claimed, started or done without a run \
+                     once each is done or archived"
                 )
             }
             Self::ChildrenActive(tasks) => {

@@ -987,8 +987,9 @@ one task once (#2686).
 
 `complete(task)` completes a task in review whose linked pull requests have
 all merged, reading their states from the repository's host (GitHub, or the
-configured `GH_HOST`); a task in any other status is refused (`not_allowed`)
-before anything is read (#2705 T4). A task that links no pull request has
+configured `GH_HOST`); a task in any other status is refused before anything
+is read (#2705 T4): a ready or claimed one with `use_lifecycle`, naming
+`done_without_run`, any other with `not_allowed`. A task that links no pull request has
 nothing to read there: it is
 refused by the rule itself (`no_prs`, whose message names the way on), with or
 without a host, and its holder finishes it by moving it from review to done. Only a task that links pull

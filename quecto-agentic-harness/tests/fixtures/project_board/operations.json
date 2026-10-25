@@ -531,7 +531,7 @@
       "op": "move",
       "error": {
         "code": "rule",
-        "message": "move does not take a task from claimed to blocked; blocking is a run's outcome: release the task with move(task, to ready) and say why",
+        "message": "move does not take a task from claimed to blocked; blocking is a run's outcome: release the task with move(task, to ready), and say why in your reply",
         "rule": {
           "code": "use_lifecycle",
           "action": "release",
@@ -1256,9 +1256,10 @@
       "op": "complete",
       "error": {
         "code": "rule",
-        "message": "a task does not move from claimed to done",
+        "message": "move does not take a task from claimed to done; finish work done without a run with done_without_run(task, reason)",
         "rule": {
-          "code": "not_allowed",
+          "code": "use_lifecycle",
+          "action": "done_without_run",
           "from": "claimed",
           "to": "done"
         }
@@ -2125,7 +2126,7 @@
       "op": "move",
       "error": {
         "code": "rule",
-        "message": "the task depends on tasks not done yet: dep-a; it can be claimed or started once each is done or archived",
+        "message": "the task depends on tasks not done yet: dep-a; it can be claimed, started or done without a run once each is done or archived",
         "rule": {
           "code": "dependency_not_done",
           "tasks": [

@@ -251,7 +251,15 @@ fn a_held_task_is_done_once_all_its_prs_merge_whoever_merged_them() {
             &at("10:00:00"),
         )
         .map(|done| done.task);
-        assert_eq!(refused, Err(BoardRuleError::NotAllowed { from, to: Done }));
+        let way = match lifecycle_action(from, Done) {
+            Some(action) => BoardRuleError::UseLifecycle {
+                from,
+                to: Done,
+                action,
+            },
+            None => BoardRuleError::NotAllowed { from, to: Done },
+        };
+        assert_eq!(refused, Err(way), "{from:?}");
     }
     let mut unlinked = task(Review).into_fields();
     unlinked.prs.clear();

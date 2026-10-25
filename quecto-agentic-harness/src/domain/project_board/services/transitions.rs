@@ -550,12 +550,22 @@ fn numbers(
 /// changes, so a completion refused anyway reads nothing.
 ///
 /// # Errors
-/// A task in any other status, or one others took over.
+/// A task in any other status (`use_lifecycle`, naming done_without_run, for
+/// a ready or claimed one; `not_allowed` for the rest), or one others took
+/// over.
 pub fn completable(task: &Task) -> Result<(), BoardRuleError> {
     match task.fields().status {
         Review => not_superseded(task),
+        // A ready or claimed task is pointed to done_without_run, as `move` is.
         from @ (Draft | Ready | Claimed | InProgress | Blocked | Done | Archived) => {
-            Err(BoardRuleError::NotAllowed { from, to: Done })
+            Err(match lifecycle_action(from, Done) {
+                Some(action) => BoardRuleError::UseLifecycle {
+                    from,
+                    to: Done,
+                    action,
+                },
+                None => BoardRuleError::NotAllowed { from, to: Done },
+            })
         }
     }
 }

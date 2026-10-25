@@ -421,10 +421,22 @@ fn a_release_from_progress_waits_for_its_run() {
 #[test]
 fn a_merged_pull_request_completes_a_task_only_from_review() {
     assert_eq!(completable(&task(Review)), Ok(()));
-    for from in [Draft, Ready, Claimed, InProgress, Blocked, Done, Archived] {
+    for from in [Draft, InProgress, Blocked, Done, Archived] {
         assert_eq!(
             completable(&task(from)),
             Err(BoardRuleError::NotAllowed { from, to: Done }),
+            "{from:?}"
+        );
+    }
+    // A ready or claimed task is pointed to done_without_run.
+    for from in [Ready, Claimed] {
+        assert_eq!(
+            completable(&task(from)),
+            Err(BoardRuleError::UseLifecycle {
+                from,
+                to: Done,
+                action: LifecycleAction::DoneWithoutRun
+            }),
             "{from:?}"
         );
     }

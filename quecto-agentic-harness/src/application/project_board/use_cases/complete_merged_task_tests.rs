@@ -143,9 +143,10 @@ fn a_released_task_is_not_done_when_its_pull_request_merges() {
     host.fail("must not be asked");
     assert_eq!(
         complete(&store, &host).execute(&slug("a")),
-        Err(ProjectBoardError::Rule(BoardRuleError::NotAllowed {
+        Err(ProjectBoardError::Rule(BoardRuleError::UseLifecycle {
             from: TaskStatus::Ready,
-            to: TaskStatus::Done
+            to: TaskStatus::Done,
+            action: crate::domain::project_board::value_objects::vocabulary::LifecycleAction::DoneWithoutRun,
         }))
     );
 }
