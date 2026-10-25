@@ -5,10 +5,12 @@
 |---|---|
 | Task | board-2705-b13-backup |
 | Version | 3 |
-| State | draft |
+| State | accepted |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-25T11:15:33Z |
 | Created | 2026-10-25T11:15:04Z |
-| Updated | 2026-10-25T11:15:04Z |
+| Updated | 2026-10-25T11:15:33Z |
 
 ## Approach
 Recovery delivery from completed preserved implementation after owner's explicit dead-run check and restart instruction. Run1 stopped11:09:26Z after confirmed missing coordinator/supervisor-killed environment; read-only worker board showed3completed/1publication incomplete, noPR. Complete durable phase-specific requirements/architecture/acceptance/environment/source/commands/evidence: /home/shane-pocket/.quecto/artifacts/b13-backup-recovery/handoff.md, unchanged parent B13plan5 and prior backupplan2. Recovery handoff supersedes only stale legacy-path and replay-RED requirements.
