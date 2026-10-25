@@ -224,6 +224,8 @@ const KNOWN_KINDS : & [
 "links" ,
 "handoff" ,
 "handoff_from" ,
+"busy" ,
+"unanswered" ,
 "use_lifecycle" ,
 "reason_required" ,
 "done_without_run" ,

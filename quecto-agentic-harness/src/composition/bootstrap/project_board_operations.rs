@@ -3,7 +3,7 @@
 //! answered by the [`RunBoardOperation`] use case over the board
 //! composition built, exactly as the front ends ran it before the port.
 use crate::application::project_board::dto::{
-    BoardAnswered, BoardExecution, BoardRequest, ListSummaries, OpNoting, ProjectBoardError, RunEnd,
+    BoardAnswered, BoardExecution, ListSummaries, OpNoting, ProjectBoardError, ReadRequest, RunEnd,
 };
 use crate::application::project_board::ports::BoardOperations;
 use crate::application::project_board::telemetry::OpFacts;
@@ -23,10 +23,11 @@ impl LocalBoardOperations {
 impl BoardOperations for LocalBoardOperations {
     fn execute(
         &self,
-        request: &BoardRequest,
+        read: ReadRequest<'_>,
         summaries: ListSummaries,
         noting: OpNoting,
     ) -> BoardExecution {
+        let request = read.request;
         let mut facts = match noting {
             OpNoting::Noted => Some(OpFacts::default()),
             OpNoting::Unnoted => None,

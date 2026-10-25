@@ -1630,6 +1630,18 @@ fn application_path_allowed(path: &str) -> bool {
         // `application/<capability>/ports.rs` is a contract this
         // layer implements. Subagent teardown (#1935) was the first.
         ["crate", "application", _, "ports", ..] => true,
+        // The board operations port (#2705 B6, B7) takes and answers the
+        // capability's own request and outcome values: the remote adapter
+        // implements it over HTTP.
+        [
+            "crate",
+            "application",
+            "project_board",
+            "dto",
+            "BoardAnswered" | "BoardExecution" | "BoardOutcome" | "ListSummaries" | "OpNoting"
+            | "ProjectBoardError" | "ReadRequest" | "RunEnd" | "ServedAnswer" | "BoardRequest",
+        ]
+        | ["crate", "application", "project_board", "telemetry", "OpFacts"] => true,
         // The project board's listings port (#2476 S1e) answers the
         // capability's own listing DTO; the index builds it to implement
         // the port.

@@ -15,7 +15,7 @@ use crate::application::project_board::use_cases::QueryBoard;
 use crate::composition::bootstrap::project_board_operations::LocalBoardOperations;
 use crate::composition::bootstrap::project_board_operations::fixtures::{QueryListings, assembled};
 use crate::domain::audit::AuditEvent;
-use crate::domain::project_board::value_objects::telemetry::FoldBackRecord;
+use crate::domain::project_board::value_objects::telemetry::{BoardStartRecord, FoldBackRecord};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
 use crate::interface::tools::project_board::run_recorded;
@@ -26,7 +26,7 @@ use crate::interface::tools::project_board::run_recorded;
 pub(crate) struct Records(
     Mutex<Vec<BoardOpRecord>>,
     Mutex<Vec<FoldBackRecord>>,
-    Mutex<Vec<crate::domain::project_board::value_objects::telemetry::BoardStartRecord>>,
+    Mutex<Vec<BoardStartRecord>>,
 );
 
 impl ProjectBoardOpLog for Records {
@@ -36,10 +36,7 @@ impl ProjectBoardOpLog for Records {
     fn record_fold_back(&self, record: FoldBackRecord) {
         self.1.lock().unwrap().push(record);
     }
-    fn record_start(
-        &self,
-        record: crate::domain::project_board::value_objects::telemetry::BoardStartRecord,
-    ) {
+    fn record_start(&self, record: BoardStartRecord) {
         self.2.lock().unwrap().push(record);
     }
 }
@@ -48,9 +45,7 @@ impl Records {
     pub(crate) fn taken(&self) -> Vec<BoardOpRecord> {
         std::mem::take(&mut *self.0.lock().unwrap())
     }
-    pub(crate) fn starts(
-        &self,
-    ) -> Vec<crate::domain::project_board::value_objects::telemetry::BoardStartRecord> {
+    pub(crate) fn starts(&self) -> Vec<BoardStartRecord> {
         std::mem::take(&mut *self.2.lock().unwrap())
     }
     pub(crate) fn fold_backs(&self) -> Vec<FoldBackRecord> {
@@ -666,12 +661,18 @@ fn a_rule_failed_completion_records_its_rule() {
     let board = board();
     let created = json!({"op": "create", "task": "a", "title": "A", "status": "ready"});
     run_recorded(&board, &created.to_string(), &mut BoardCall::unrecorded());
+    let shown = BoardRequest::Show(
+        crate::domain::project_board::value_objects::slug::Slug::parse("a").unwrap(),
+        crate::application::project_board::operations::PlanView::default(),
+    );
+    let read = ReadRequest {
+        request: &shown,
+        text: r#"{"op": "show", "task": "a"}"#,
+        front_end: FrontEnd::Tool,
+    };
     let BoardOutcome::Shown(shown, _) = board
         .execute(
-            &BoardRequest::Show(
-                crate::domain::project_board::value_objects::slug::Slug::parse("a").unwrap(),
-                crate::application::project_board::operations::PlanView::default(),
-            ),
+            read,
             ListSummaries::Omitted,
             crate::application::project_board::dto::OpNoting::Unnoted,
         )

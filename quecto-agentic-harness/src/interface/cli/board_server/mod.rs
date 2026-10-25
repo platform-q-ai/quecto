@@ -7,11 +7,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::application::project_board::ports::ListenAddress;
-use crate::application::project_board::use_cases::{BoardAccess, ServeBoard};
+use crate::application::project_board::use_cases::{BoardAccess, ServeBoard, ServeBoardOperation};
 use crate::infrastructure::http::board_service::listener::PeerCredentials;
 use crate::interface::cli::CliContext;
 
 pub mod history;
+mod op;
 pub mod routes;
 pub mod serve;
 pub mod token;
@@ -25,7 +26,8 @@ pub struct BoardServerEnvironment {
     pub vars: Vec<(OsString, OsString)>,
     /// The global config, whose `board_server.listen` names TCP addresses.
     pub config: PathBuf,
-    /// The tokens' directory: `--state`, else `<base_dir>/board-server/<board id>`.
+    /// The tokens' and the board's directory: `--state`, else
+    /// `<base_dir>/board-server/<board id>`.
     pub state: Option<PathBuf>,
     pub base_dir: PathBuf,
 }
@@ -33,6 +35,8 @@ pub struct BoardServerEnvironment {
 /// The board server's graph, and the TCP addresses its config names.
 pub struct BoardServerHandles {
     pub serve: ServeBoard,
+    /// The board's operations (B7).
+    pub operations: ServeBoardOperation,
     pub access: BoardAccess,
     pub peers: Arc<dyn PeerCredentials>,
     pub uid: u32,

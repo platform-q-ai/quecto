@@ -2,9 +2,9 @@
 use super::*;
 use crate::infrastructure::persistence::project_board::board_tree::{Entry, raw_entry_bytes};
 
-const VERSION: i64 = 3;
+const VERSION: i64 = 4;
 const APPLICATION: i64 = 0x51424f32;
-const TABLES: [(&str, &str); 7] = [
+const TABLES: [(&str, &str); 9] = [
     (
         "objects",
         "CREATE TABLE objects (oid TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('blob','tree')), bytes BLOB, tree_size INTEGER, CHECK((kind='blob' AND typeof(bytes)='blob' AND tree_size IS NULL) OR (kind='tree' AND bytes IS NULL AND typeof(tree_size)='integer' AND tree_size>=0)))",
@@ -33,14 +33,122 @@ const TABLES: [(&str, &str); 7] = [
         "epochs",
         "CREATE TABLE epochs (epoch INTEGER PRIMARY KEY, from_revision INTEGER NOT NULL, reason TEXT NOT NULL, at INTEGER NOT NULL)",
     ),
+    // B7: who a board server let in for each revision it wrote.
+    (
+        "revision_principals",
+        "CREATE TABLE revision_principals (head TEXT PRIMARY KEY NOT NULL, principal TEXT NOT NULL)",
+    ),
+    // B7: each served write's answer, by principal and write id, for retries.
+    (
+        "op_results",
+        "CREATE TABLE op_results (principal TEXT NOT NULL, write_id TEXT NOT NULL, request TEXT NOT NULL, answer TEXT NOT NULL, PRIMARY KEY(principal, write_id))",
+    ),
 ];
-const INDEXES: [(&str, &str); 5] = [
+const INDEXES: [(&str, &str); 7] = [
     ("sqlite_autoindex_revisions_2", "revisions"),
     ("sqlite_autoindex_git_objects_1", "git_objects"),
     ("sqlite_autoindex_objects_1", "objects"),
     ("sqlite_autoindex_tree_entries_1", "tree_entries"),
     ("sqlite_autoindex_revisions_1", "revisions"),
+    (
+        "sqlite_autoindex_revision_principals_1",
+        "revision_principals",
+    ),
+    ("sqlite_autoindex_op_results_1", "op_results"),
 ];
+
+/// The served writes' answers kept for their retries (B7), newest first.
+const KEPT_ANSWERS: i64 = 1024;
+
+/// A store call's own transaction, or inside a served operation's (B7) a
+/// savepoint of it, so a failed call undoes its own rows alone.
+pub(super) enum Scope<'c> {
+    Own(rusqlite::Transaction<'c>),
+    Within(rusqlite::Savepoint<'c>),
+}
+
+impl Scope<'_> {
+    /// Immediate when it `writes`.
+    pub(super) fn begin(c: &mut Connection, writes: bool) -> Result<Scope<'_>, BoardStoreError> {
+        let behavior = match writes {
+            true => TransactionBehavior::Immediate,
+            false => TransactionBehavior::Deferred,
+        };
+        match c.is_autocommit() {
+            true => c.transaction_with_behavior(behavior).map(Scope::Own),
+            false => c.savepoint().map(Scope::Within),
+        }
+        .map_err(unavailable)
+    }
+
+    pub(super) fn commit(self) -> Result<(), BoardStoreError> {
+        match self {
+            Self::Own(tx) => tx.commit(),
+            Self::Within(savepoint) => savepoint.commit(),
+        }
+        .map_err(unavailable)
+    }
+}
+
+impl std::ops::Deref for Scope<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        match self {
+            Self::Own(tx) => tx,
+            Self::Within(savepoint) => savepoint,
+        }
+    }
+}
+
+/// The answer kept for `write` (B7); `Some(None)` when kept for another.
+pub(super) fn kept_answer(
+    c: &Connection,
+    write: &OpWrite,
+) -> Result<Option<Option<String>>, BoardStoreError> {
+    let kept: Option<(String, String)> = c
+        .query_row(
+            "SELECT request, answer FROM op_results WHERE principal=?1 AND write_id=?2",
+            [&write.principal, write.write_id.as_str()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(unavailable)?;
+    Ok(kept.map(|(request, answer)| (request == asked(write)).then_some(answer)))
+}
+
+/// Keeps `answer` for `write`, dropping the oldest past [`KEPT_ANSWERS`].
+pub(super) fn keep_answer(
+    c: &Connection,
+    write: &OpWrite,
+    answer: &str,
+) -> Result<(), BoardStoreError> {
+    c.execute(
+        "INSERT INTO op_results VALUES (?1, ?2, ?3, ?4)",
+        params![
+            write.principal,
+            write.write_id.as_str(),
+            asked(write),
+            answer
+        ],
+    )
+    .map_err(unavailable)?;
+    c.execute(
+        "DELETE FROM op_results WHERE rowid <= (SELECT max(rowid) FROM op_results) - ?1",
+        [KEPT_ANSWERS],
+    )
+    .map_err(unavailable)?;
+    Ok(())
+}
+
+/// What `write` asks: its request and committer, hashed.
+fn asked(write: &OpWrite) -> String {
+    let OpWrite {
+        request, committer, ..
+    } = write;
+    let fields = [request, &committer.name, &committer.email].map(|field| field.as_bytes());
+    digest(b"op", &fields)
+}
 
 pub(super) fn open(path: &Path) -> Result<Connection, BoardStoreError> {
     let mut c = Connection::open(path).map_err(unavailable)?;
@@ -82,11 +190,15 @@ pub(super) fn recognize_on(tx: &Connection, initialize: bool) -> Result<(), Boar
         .query_row("PRAGMA application_id", [], |r| r.get(0))
         .map_err(unavailable)?;
     let (count,bytes):(i64,i64)=tx.query_row("SELECT count(*),coalesce(sum(length(CAST(name AS BLOB))+length(CAST(type AS BLOB))+length(CAST(tbl_name AS BLOB))+coalesce(length(CAST(sql AS BLOB)),0)),0) FROM sqlite_schema",[],|r|Ok((r.get(0)?,r.get(1)?))).map_err(unavailable)?;
+    let unsupported = || {
+        BoardStoreError::Clash(format!(
+            "not a board this build reads (schema version {version}, this build writes \
+             {VERSION}): move the file aside to start a new board"
+        ))
+    };
     if (count == 0 || count == (TABLES.len() + INDEXES.len()) as i64) && bytes <= 65536 {
     } else {
-        return Err(BoardStoreError::Clash(
-            "unsupported SQLite board schema".into(),
-        ));
+        return Err(unsupported());
     }
     let schema: Vec<(String, String, String, Option<String>)> = tx
         .prepare("SELECT name,type,tbl_name,sql FROM sqlite_schema ORDER BY name")
@@ -122,11 +234,7 @@ pub(super) fn recognize_on(tx: &Connection, initialize: bool) -> Result<(), Boar
                 .map_err(unavailable)?;
         }
         (false, true) => {}
-        _ => {
-            return Err(BoardStoreError::Clash(
-                "unsupported SQLite board schema".into(),
-            ));
-        }
+        _ => return Err(unsupported()),
     }
     Ok(())
 }
@@ -250,6 +358,7 @@ impl<'a> ObjectWriter<'a> {
         root: &str,
         writer: &Identity,
         message: &str,
+        principal: Option<&str>,
     ) -> Result<BoardHead, BoardStoreError> {
         let at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -287,6 +396,12 @@ impl<'a> ObjectWriter<'a> {
                 at
             ],
         )?;
+        if let Some(principal) = principal {
+            self.insert(
+                "INSERT INTO revision_principals VALUES (?1,?2)",
+                params![head.0, principal],
+            )?;
+        }
         self.insert(
             "INSERT INTO state VALUES (1,?1) ON CONFLICT(id) DO UPDATE SET head=excluded.head",
             [&head.0],
@@ -468,13 +583,14 @@ impl<'a> ObjectWriter<'a> {
         self.tree(&rows)
     }
 }
+#[cfg(feature = "test-support")]
 pub(super) fn advance_message(
     c: &Connection,
     root: &str,
     writer: &Identity,
     message: &str,
 ) -> Result<BoardHead, BoardStoreError> {
-    ObjectWriter::new(c).advance(root, writer, message)
+    ObjectWriter::new(c).advance(root, writer, message, None)
 }
 pub(super) fn blob(c: &Connection, bytes: &[u8]) -> Result<String, BoardStoreError> {
     ObjectWriter::new(c).blob(bytes)
@@ -483,7 +599,7 @@ pub(super) fn tree(c: &Connection, rows: &[Entry]) -> Result<String, BoardStoreE
     ObjectWriter::new(c).tree(rows)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "test-support"))]
 pub(super) fn advance(
     c: &Connection,
     root: &str,

@@ -15,9 +15,7 @@ impl SqliteProjectBoardStore {
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
         let mut c = self.connection.lock().map_err(unavailable)?;
-        let tx = c
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(unavailable)?;
+        let tx = storage::Scope::begin(&mut c, true)?;
         let (current, root) = storage::current(&tx)?;
         match history::classify(&tx, expected)? {
             BoardWrite::Written(_) => {}
@@ -77,8 +75,8 @@ impl SqliteProjectBoardStore {
         let writer = writer.with_fault(fault);
         let mut writer = writer;
         let root = Self::assemble(&mut writer, &after, &tasks, &files)?;
-        let next = writer.advance(&root, &self.writer, message)?;
-        tx.commit().map_err(unavailable)?;
+        let next = writer.advance(&root, &self.writer, message, self.principal.as_deref())?;
+        tx.commit()?;
         Ok(BoardWrite::Written(next))
     }
     fn assemble(

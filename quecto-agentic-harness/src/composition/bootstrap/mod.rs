@@ -5,5 +5,6 @@ pub mod board_server;
 pub mod credential_presence;
 pub mod project_board;
 pub mod project_board_operations;
+pub mod project_board_remote;
 
 pub mod project_board_history;

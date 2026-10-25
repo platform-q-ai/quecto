@@ -22,7 +22,7 @@ const TRANSPORT: &[&str] = &[
     "src/infrastructure/http/board_service/mod.rs",
     "src/infrastructure/http/board_service/listener.rs",
     "src/infrastructure/http/board_service/limits.rs",
-    "src/infrastructure/http/board_service/local_client.rs",
+    "src/infrastructure/http/board_service/client.rs",
     "src/infrastructure/http/board_service/sources.rs",
 ];
 
@@ -38,6 +38,7 @@ const FRONT_END: &[&str] = &[
     "src/interface/cli/board_server/serve.rs",
     "src/interface/cli/board_server/routes.rs",
     "src/interface/cli/board_server/token.rs",
+    "src/interface/cli/board_server/op.rs",
 ];
 
 /// The crate paths the front end may reach: each a path, or the module
@@ -46,9 +47,13 @@ const FRONT_END_REACHES: &[&str] = &[
     "crate::application::project_board::ports",
     "crate::application::project_board::use_cases",
     "crate::application::project_board::dto",
+    "crate::application::project_board::telemetry::OpFacts",
+    "crate::domain::project_board::entities::claim::Identity",
     "crate::domain::project_board::value_objects::telemetry",
     "crate::domain::shared::redaction",
     "crate::interface::cli",
+    // B7: an op is read and answered by the front ends' own path.
+    "crate::interface::tools::project_board",
     "crate::infrastructure::http::board_service::listener::ServiceHandler",
     "crate::infrastructure::http::board_service::listener::ServiceMethod",
     "crate::infrastructure::http::board_service::listener::ServiceReply",
@@ -61,7 +66,8 @@ const FRONT_END_REACHES: &[&str] = &[
     "crate::infrastructure::http::board_service::listener::Transport",
     "crate::infrastructure::http::board_service::listener::Listener",
     "crate::infrastructure::http::board_service::listener::bind_tcp",
-    "crate::infrastructure::http::board_service::local_client::local_request",
+    "crate::infrastructure::http::board_service::client::BoardServiceClient",
+    "crate::infrastructure::http::board_service::client::READ_REPLY",
 ];
 
 /// The listener's module, for resolving a synthetic source's paths.
@@ -181,4 +187,53 @@ fn the_scan_sees_what_it_refuses() {
         let hits = front_end(allowed);
         assert!(hits.is_empty(), "{allowed}: {hits:?}");
     }
+}
+
+/// The remote client (B7): its adapter, its transport and the composition
+/// that picks it.
+const REMOTE: &[&str] = &[
+    "src/infrastructure/http/board_remote.rs",
+    "src/infrastructure/http/board_service/client.rs",
+    "src/composition/bootstrap/project_board_remote.rs",
+];
+
+/// B7 acceptance: a remote client never reads the clock (the server's is
+/// the one clock), and never decodes the board (a write is one request,
+/// whose answer comes back rendered).
+#[test]
+fn a_remote_client_reads_no_clock_and_decodes_no_board() {
+    let clock = [
+        "BoardClock",
+        "board_clock",
+        "remote_time",
+        "SystemTime",
+        "Instant",
+        "Timestamp",
+        "humantime",
+        "chrono",
+    ];
+    let board = [
+        "BoardSnapshot",
+        "ProjectBoardStore",
+        "QueryBoard",
+        "BoardListings",
+        "artifacts",
+        "RunBoardOperation",
+        ".read()",
+    ];
+    for file in REMOTE {
+        let source = read(file);
+        assert_eq!(
+            dependency_scan::forbidden_hit(&source, &clock),
+            Ok(()),
+            "{file}"
+        );
+        assert_eq!(
+            dependency_scan::forbidden_hit(&source, &board),
+            Ok(()),
+            "{file}"
+        );
+    }
+    let seen = "fn f() { let _ = std::time::SystemTime::now(); }";
+    assert!(dependency_scan::forbidden_hit(seen, &clock).is_err());
 }

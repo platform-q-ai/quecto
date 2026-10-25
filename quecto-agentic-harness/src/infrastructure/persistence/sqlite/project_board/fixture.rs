@@ -206,11 +206,17 @@ impl SqliteProjectBoardStore {
         let version: i64 = tx
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(unavailable)?;
-        if version == 3 {
+        if version >= 3 {
             tables.extend([
                 ("git_objects", "oid"),
                 ("history_meta", "id"),
                 ("epochs", "epoch"),
+            ]);
+        }
+        if version >= 4 {
+            tables.extend([
+                ("revision_principals", "head"),
+                ("op_results", "principal,write_id"),
             ]);
         }
         for (table, order) in tables {

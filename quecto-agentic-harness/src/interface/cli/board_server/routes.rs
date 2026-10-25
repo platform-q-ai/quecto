@@ -1,5 +1,6 @@
-//! The board service's route table (epic #2705 B4, B5), an allowlist:
-//! reads `GET /v1/status` and `GET /v1/time`; admin `GET`/`POST
+//! The board service's route table (epic #2705 B4, B5, B7), an allowlist:
+//! reads `GET /v1/status` and `GET /v1/time`; the board's operations
+//! `POST /v1/boards/{id}/op` ([`super::op`]); admin `GET`/`POST
 //! /v1/admin/tokens` and `POST /v1/admin/tokens/revoke`, on the Unix socket
 //! only (403 over TCP); else 404, or 405 naming a route's methods.
 use std::sync::PoisonError;
@@ -9,17 +10,21 @@ use serde_json::json;
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{BoardStoreError, ServeError, TokenError};
 use crate::application::project_board::use_cases::{
-    BoardAccess, Principal, Refused, Scope, ServeBoard,
+    BoardAccess, Principal, Refused, Scope, ServeBoard, ServeBoardOperation,
 };
+use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::http::board_service::listener::{
     ServiceHandler, ServiceMethod, ServiceReply, ServiceRequest, Transport,
 };
 
-/// The routes, over the server's reads of its board and its access rules.
+use super::op::{OpRefusal, answer_op};
+
+/// The routes, over the server's reads, operations and access rules.
 pub struct BoardRoutes {
     serve: ServeBoard,
     access: BoardAccess,
+    operations: ServeBoardOperation,
     /// The token store's failure last said on stderr.
     unavailable: std::sync::Mutex<String>,
 }
@@ -31,6 +36,7 @@ enum Route {
     Time,
     Tokens,
     Revoke,
+    Op,
 }
 
 impl Route {
@@ -41,7 +47,7 @@ impl Route {
             "/v1/time" => Some(Self::Time),
             "/v1/admin/tokens" => Some(Self::Tokens),
             "/v1/admin/tokens/revoke" => Some(Self::Revoke),
-            _ => None,
+            other => board_of(other).map(|_| Self::Op),
         }
     }
 
@@ -50,7 +56,7 @@ impl Route {
         match self {
             Self::Status | Self::Time => "GET",
             Self::Tokens => "GET, POST",
-            Self::Revoke => "POST",
+            Self::Revoke | Self::Op => "POST",
         }
     }
 
@@ -60,12 +66,20 @@ impl Route {
             .any(|allowed| allowed == method.as_str())
     }
 
+    /// The scope a caller needs to reach it (an op's own is judged after).
     fn scope(self) -> Scope {
         match self {
-            Self::Status | Self::Time => Scope::Read,
+            Self::Status | Self::Time | Self::Op => Scope::Read,
             Self::Tokens | Self::Revoke => Scope::Admin,
         }
     }
+}
+
+/// The board id of an op route's `path`, when it is shaped as one.
+fn board_of(path: &str) -> Option<BoardId> {
+    path.strip_prefix("/v1/boards/")
+        .and_then(|rest| rest.strip_suffix("/op"))
+        .and_then(BoardId::of_hex)
 }
 
 /// An admin request's body: the token's name.
@@ -76,11 +90,29 @@ struct Named {
 }
 
 impl BoardRoutes {
-    pub fn new(serve: ServeBoard, access: BoardAccess) -> Self {
+    pub fn new(serve: ServeBoard, access: BoardAccess, operations: ServeBoardOperation) -> Self {
         Self {
             serve,
             access,
+            operations,
             unavailable: std::sync::Mutex::default(),
+        }
+    }
+
+    /// An op's reply, or its refusal by its code.
+    fn op(&self, request: &ServiceRequest, principal: &Principal) -> ServiceReply {
+        match board_of(&request.path) {
+            Some(board) if board == *self.serve.board() => {}
+            Some(_) | None => return coded(404, "board", "this server serves no such board"),
+        }
+        match answer_op(&self.operations, principal, &request.body) {
+            Ok(answer) => ServiceReply {
+                body: answer.into_bytes(),
+                ..ServiceReply::json(200, &serde_json::Value::Null)
+            },
+            Err(OpRefusal::Body(why)) => coded(400, "request", &why),
+            Err(OpRefusal::Access(refused)) => self.refusal(&refused, request.transport),
+            Err(OpRefusal::Serve(error)) => failed(&error),
         }
     }
 
@@ -99,7 +131,7 @@ impl BoardRoutes {
             Refused::LocalOnly => coded(
                 403,
                 "local_only",
-                "forbidden: admin routes are served on the Unix socket only",
+                "forbidden: admin routes and operations are served on the Unix socket only",
             ),
             Refused::Unavailable(error) => match transport {
                 Transport::Local => coded(503, "unavailable", &error.to_string()),
@@ -122,9 +154,10 @@ impl BoardRoutes {
         }
     }
 
-    /// Answers `request` on `route`, a method it takes.
-    fn route(&self, route: Route, request: &ServiceRequest) -> ServiceReply {
+    /// Answers `request` from `principal` on `route`, a method it takes.
+    fn route(&self, route: Route, request: &ServiceRequest, principal: &Principal) -> ServiceReply {
         match (route, request.method) {
+            (Route::Op, _) => self.op(request, principal),
             (Route::Status, _) => read(self.serve.status().map(|status| {
                 json!({
                     "role": status.role.as_str(),
@@ -199,7 +232,7 @@ impl ServiceHandler for BoardRoutes {
         match Route::of(&request.path) {
             Some(route) if route.takes(request.method) => {
                 match BoardAccess::authorize(&principal, route.scope()) {
-                    Ok(()) => self.route(route, request),
+                    Ok(()) => self.route(route, request, &principal),
                     Err(refused) => self.refusal(&refused, request.transport),
                 }
             }
@@ -266,7 +299,8 @@ fn token_failed(error: &TokenError) -> ServiceReply {
     coded(status, code, &error.to_string())
 }
 
-/// A failed read's reply: 404 `no_board` while there is no board, else 503
+/// A failed request's reply: 404 `no_board` while there is no board, 400
+/// `write` for a write without its id and committer, else 503
 /// `unavailable`; a store error may quote its remote, so it is redacted.
 fn failed(error: &ServeError) -> ServiceReply {
     let (status, code, why) = match error {
@@ -274,6 +308,21 @@ fn failed(error: &ServeError) -> ServiceReply {
             (404, "no_board", error.to_string())
         }
         ServeError::Board(error) => (503, "unavailable", error.to_string()),
+        ServeError::NoWrite => (
+            400,
+            "write",
+            "a write needs its write_id and committer".to_string(),
+        ),
+        ServeError::WriteIdReused => (
+            409,
+            "write_id_reused",
+            "this write_id was used for another write: make a new one".to_string(),
+        ),
+        ServeError::Busy => (
+            503,
+            "busy",
+            "too many writes at once: try again shortly".into(),
+        ),
     };
     coded(status, code, &redact_secrets(&redact_url_userinfo(&why)))
 }

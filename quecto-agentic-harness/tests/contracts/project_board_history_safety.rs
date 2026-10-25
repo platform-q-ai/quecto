@@ -768,7 +768,7 @@ fn feature_red_import_schema3_normalized_history_and_source_provenance() {
     let version: i64 = c
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 3);
+    assert_eq!(version, 4, "schema 4: B3 history and B7 op answers");
     let tables: Vec<String> = c
         .prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name")
         .unwrap()
@@ -784,10 +784,12 @@ fn feature_red_import_schema3_normalized_history_and_source_provenance() {
         "git_objects",
         "history_meta",
         "epochs",
+        "revision_principals",
+        "op_results",
     ] {
         assert!(
             tables.iter().any(|name| name == table),
-            "normalized schema3 includes {table}"
+            "normalized schema4 includes {table}"
         );
     }
     let count: i64 = c
