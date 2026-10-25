@@ -163,14 +163,20 @@ fn status_is_answered_at_once_when_the_remote_never_answers() {
         .unwrap();
     let mut serving = environment(&dir, &work, "origin");
     serving.state = Some(state);
-    let began = Instant::now();
-    let handles = build_board_server_with(&serving, Arc::new(Synced)).unwrap();
-    let routes = BoardRoutes::new(handles.serve, handles.access, handles.operations);
-    let (status, body) = get(&routes, "/v1/status");
-    let took = began.elapsed();
+    // Asked on its own thread, so a status that waits on the remote fails
+    // within the bound instead of holding the test for git's 120 s.
+    let (answered, answer) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let handles = build_board_server_with(&serving, Arc::new(Synced))
+            .map(|handles| BoardRoutes::new(handles.serve, handles.access, handles.operations));
+        let _ = answered.send(handles.map(|routes| get(&routes, "/v1/status")));
+    });
+    let (status, body) = answer
+        .recv_timeout(Duration::from_secs(5))
+        .expect("status is answered within 5 s, never waiting on the remote")
+        .unwrap();
     assert_eq!(status, 200, "{body}");
     assert_ne!(body["head"], Value::Null, "the board's head: {body}");
-    assert!(took < Duration::from_secs(5), "answered in {took:?}");
     drop(black_hole);
 }
 
