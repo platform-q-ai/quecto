@@ -106,7 +106,7 @@ pub fn build_board_history_import_from_ports(
         import: crate::application::project_board::use_cases::ImportBoardHistory::new(
             source.clone(),
             store.clone(),
-            sink.clone(),
+            ExportBoardHistory::new(store.clone(), sink.clone()),
         ),
         export: ExportBoardHistory::new(store.clone(), sink.clone()),
         source,

@@ -54,6 +54,19 @@ impl GitBoardHistorySink {
     }
 }
 impl BoardHistorySink for GitBoardHistorySink {
+    fn algorithm(&self) -> HistoryResult<Option<HistoryAlgorithm>> {
+        match git(&self.repo)?
+            .text(&["rev-parse", "--show-object-format"], None)
+            .map_err(unavailable)?
+            .as_str()
+        {
+            "sha1" => Ok(Some(HistoryAlgorithm::Sha1)),
+            "sha256" => Ok(Some(HistoryAlgorithm::Sha256)),
+            _ => Err(HistoryError::Unsupported(
+                "destination object format".into(),
+            )),
+        }
+    }
     fn raw(
         &self,
         k: HistoryKind,
@@ -306,7 +319,7 @@ const RAW: usize = 128 * 1024 * 1024;
 const META: usize = 32 * 1024 * 1024;
 
 /// Exact Git framing, independent of declared tree modes and repository filters.
-fn verify_raw(object: &HistoryObject, width: usize) -> HistoryResult<()> {
+pub(crate) fn verify_raw(object: &HistoryObject, width: usize) -> HistoryResult<()> {
     let frame = format!("{} {}\0", kind(object.kind), object.bytes.len());
     let actual = match width {
         40 => {
@@ -574,7 +587,7 @@ fn projection_budget(mut bytes: &[u8], width: usize) -> HistoryResult<(usize, us
 
 /// Commit metadata is retained raw; only structural and required-header framing
 /// is interpreted here. Encodings, signatures and extension headers are opaque.
-fn commit_links(bytes: &[u8], width: usize) -> HistoryResult<(String, Option<String>)> {
+pub(crate) fn commit_links(bytes: &[u8], width: usize) -> HistoryResult<(String, Option<String>)> {
     let end = bytes
         .windows(2)
         .position(|s| s == b"\n\n")

@@ -418,6 +418,10 @@ mod project_board_history_fixture;
 mod project_board_history;
 
 #[cfg(feature = "test-support")]
+#[path = "contracts/project_board_history_import.rs"]
+mod project_board_history_import;
+
+#[cfg(feature = "test-support")]
 #[path = "contracts/project_board_history_orchestration.rs"]
 mod project_board_history_orchestration;
 

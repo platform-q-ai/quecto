@@ -86,6 +86,11 @@ pub struct HistoryCommit<'a> {
 }
 /// Git serialization and publication belong outward, never inside the SQL store.
 pub trait BoardHistorySink: Send + Sync {
+    /// None is format-neutral (e.g. a trace fake), not permission to accept
+    /// imported originals. Imported snapshots require an exact Some match.
+    fn algorithm(&self) -> HistoryResult<Option<HistoryAlgorithm>> {
+        Ok(None)
+    }
     fn raw(
         &self,
         kind: HistoryKind,
