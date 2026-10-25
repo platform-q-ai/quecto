@@ -495,8 +495,8 @@ fn offline_export_help_advertises_export_only_and_preserves_operator_verbs() {
     assert!(help.contains("board-server serve"));
     assert!(help.contains("board-server token"));
     assert!(
-        !help.contains("board-server import"),
-        "A exposes no import action or unavailable placeholder"
+        help.contains("board-server import --repo <source> --board-id <16-hex> [--remote <name>]"),
+        "B complete offline import usage must be registered in actual root help"
     );
 }
 #[test]
