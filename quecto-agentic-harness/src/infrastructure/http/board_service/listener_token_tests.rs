@@ -268,3 +268,25 @@ fn a_refused_head_holds_its_place_and_on_a_full_token_is_closed_as_itself() {
     let calls = running.handler.calls.load(Ordering::SeqCst);
     assert_eq!(calls, 1, "no refusal reached the handler");
 }
+
+/// Review round 2 (L1): on a full token a body that fails (cut short) is
+/// answered as itself, 400 `body`, and closes its connection: never
+/// `busy`, and never kept open.
+#[test]
+fn a_failed_body_on_a_full_token_is_closed_as_itself() {
+    let running = one_each();
+    let address = running.tcp.unwrap();
+    let held = held_as("alpha", address);
+    let mut short = from_source("127.0.0.1", address);
+    let head = "POST /v1/thing HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer alpha\r\n\
+                Content-Length: 5\r\n\r\nab";
+    short.write_all(head.as_bytes()).unwrap();
+    short.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut answer = Vec::new();
+    let _ = short.read_to_end(&mut answer);
+    let answer = String::from_utf8_lossy(&answer).to_string();
+    assert!(answer.starts_with("HTTP/1.1 400"), "{answer}");
+    assert!(answer.contains(r#""code":"body""#), "{answer}");
+    assert!(answer.contains("connection: close"), "{answer}");
+    drop(held);
+}
