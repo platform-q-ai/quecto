@@ -7,7 +7,12 @@ pub struct SqliteBoardOps {
     writes: SqliteProjectBoardStore,
     reads: Arc<SqliteProjectBoardStore>,
     lock: Mutex<()>,
+    /// The board this file is bound to, once [`Self::bind`] binds it.
+    board: std::sync::OnceLock<String>,
 }
+
+/// Binds an unbound board (#2741); a bound one is left as it is.
+const BIND: &str = "UPDATE history_meta SET board_id=?1 WHERE id=1 AND board_id IS NULL";
 
 /// A served board file's binding to a board id (#2741).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,28 +32,32 @@ impl SqliteBoardOps {
             writes: SqliteProjectBoardStore::open(path, reader.clone())?,
             reads: Arc::new(SqliteProjectBoardStore::open(path, reader)?),
             lock: Mutex::new(()),
+            board: std::sync::OnceLock::new(),
         })
     }
 
-    /// The board id an import bound this file to (#2741): none for a board
-    /// made by a server, or not made yet.
+    /// Binds this file to `board` (#2741): an unbound board is bound now,
+    /// and one first made by a write here is bound by that write. A file
+    /// bound to another board is left so, and named.
     /// # Errors
-    /// The file cannot be read.
-    pub fn bound_board(&self) -> Result<Option<String>, BoardStoreError> {
-        let c = self.reads.connection.lock().map_err(unavailable)?;
-        let bound = c
+    /// The file cannot be read or written.
+    pub fn bind(&self, board: &str) -> Result<BoardBinding, BoardStoreError> {
+        let _held = self.lock.lock().map_err(unavailable)?;
+        let c = self.locked()?;
+        c.execute(BIND, [board]).map_err(unavailable)?;
+        let bound: Option<Option<String>> = c
             .query_row("SELECT board_id FROM history_meta WHERE id=1", [], |r| {
-                r.get::<_, Option<String>>(0)
+                r.get(0)
             })
             .optional()
             .map_err(unavailable)?;
-        Ok(bound.flatten())
-    }
-
-    /// Red skeleton (#2741 review round 2).
-    /// # Errors
-    /// None yet.
-    pub fn bind(&self, _board: &str) -> Result<BoardBinding, BoardStoreError> {
+        match bound.flatten() {
+            None => {}
+            Some(id) if id == board => {}
+            Some(other) => return Ok(BoardBinding::Other(other)),
+        }
+        let set = self.board.get_or_init(|| board.to_owned());
+        assert_eq!(set, board, "a board file is bound to one board");
         Ok(BoardBinding::Bound)
     }
 
@@ -73,6 +82,10 @@ impl SqliteBoardOps {
             hooks: Arc::clone(&self.writes.hooks),
         };
         let answer = op(Arc::new(bound))?;
+        // A board first made by this write is bound with it.
+        if let Some(board) = self.board.get() {
+            self.locked()?.execute(BIND, [board]).map_err(unavailable)?;
+        }
         storage::keep_answer(&*self.locked()?, write, &answer)?;
         Ok(Transacted::Answered(answer))
     }

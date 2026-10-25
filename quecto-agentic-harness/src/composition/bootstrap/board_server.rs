@@ -30,7 +30,7 @@ use crate::infrastructure::persistence::project_board::board_tree::told;
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
 use crate::infrastructure::persistence::project_board::remote_revisions::GitRemoteRevisions;
 use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
-use crate::infrastructure::persistence::sqlite::project_board::SqliteBoardOps;
+use crate::infrastructure::persistence::sqlite::project_board::{BoardBinding, SqliteBoardOps};
 use crate::infrastructure::time::board_clock::SystemBoardClock;
 pub use crate::interface::cli::board_server::{BoardServerEnvironment, BoardServerHandles};
 
@@ -78,12 +78,12 @@ pub fn build_board_server(
             told(&error)
         ))
     })?;
-    // A `--state` directory names no board: a file imported for another
-    // board is refused, never served as this one (#2741).
-    match ops.bound_board() {
-        Ok(None) => {}
-        Ok(Some(bound)) if bound == board.as_str() => {}
-        Ok(Some(bound)) => {
+    // A `--state` directory names no board: the file is bound to this
+    // server's board under the directory's lock, and a file bound to
+    // another board is refused, never served as this one (#2741).
+    match ops.bind(board.as_str()) {
+        Ok(BoardBinding::Bound) => {}
+        Ok(BoardBinding::Other(bound)) => {
             return Err(refused(&format!(
                 "the board file {} holds board {bound}, not this clone's board {}: \
                  give this server its own --state <dir>",
@@ -91,7 +91,13 @@ pub fn build_board_server(
                 board.as_str()
             )));
         }
-        Err(error) => return Err(refused(&told(&error))),
+        Err(error) => {
+            return Err(refused(&format!(
+                "the board in {}: {}",
+                state.display(),
+                told(&error)
+            )));
+        }
     }
     let ops: Arc<dyn BoardOpStore> = Arc::new(ops);
     let clock: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());

@@ -316,8 +316,12 @@ else `~/.quecto`). The directory passes the same checks as `serve`'s
 if missing), and import holds `serve`'s lock on it until it is done, so an
 import while a server runs on that directory is refused. Give the board id
 the server announces (`serving board <id>`) and the server's `--state`, if
-any. The import records the board id in the file; a server whose own board
-id differs refuses to start on it, naming both ids. `--remote` defaults to `origin` and is provenance only: no fetch,
+any. A board file is bound to one board id: an import records its
+`--board-id`; a server binds an unbound board file to its own board id at
+start, under its directory lock, and a board file it first makes is bound
+by its first write. A server whose board id differs from the file's
+refuses to start, naming both ids and the file, and `export` with another
+`--board-id` is refused. `--remote` defaults to `origin` and is provenance only: no fetch,
 listener or token graph is started. `import --help` describes the command;
 stdout JSON contains `revisions`, `head` and `source_head`.
 

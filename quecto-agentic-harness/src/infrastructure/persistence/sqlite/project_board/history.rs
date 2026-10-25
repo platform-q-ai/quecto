@@ -145,7 +145,7 @@ fn validate_native(c: &Connection, board: &BoardId) -> HistoryResult<()> {
     }
     let native: bool = c.query_row("SELECT NOT EXISTS(SELECT 1 FROM git_objects) AND NOT EXISTS(SELECT 1 FROM revisions WHERE git_commit IS NOT NULL OR git_meta IS NOT NULL)",[],|r|r.get(0)).map_err(error)?;
     if count == 0
-        && binding.is_none()
+        && binding.as_deref().is_none_or(|id| id == board.as_str())
         && algorithm == "sha256"
         && remote.is_none()
         && reference.is_none()

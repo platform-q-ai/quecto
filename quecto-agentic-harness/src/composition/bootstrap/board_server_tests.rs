@@ -414,7 +414,12 @@ fn serve_binds_its_board_file_to_its_board() {
     use crate::interface::cli::board_server::history::HistoryCliEnvironment;
     use std::os::unix::fs::DirBuilderExt;
     let (dir, work) = seeded();
-    sh(dir.path(), &["clone", "-q", "remote.git", "second"]);
+    // Another repository's clone: a board id is its remote's.
+    sh(
+        dir.path(),
+        &["init", "-q", "--bare", "-b", "main", "other.git"],
+    );
+    sh(dir.path(), &["clone", "-q", "other.git", "second"]);
     let second = dir.path().join("second");
     let state = dir.path().join("state");
     std::fs::DirBuilder::new()
