@@ -49,6 +49,15 @@ pub const CONNECTION_LIFETIME: Duration = Duration::from_secs(60);
 pub const MAX_REQUESTS: usize = 1_000;
 /// How long a connection past its life may take to finish what it answers.
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(15);
+/// Streamed replies (B10): at most 32 open at once on a server, socket and
+/// TCP together, and 2 for one token (each holds one of its token's 8
+/// connections for its life); an idle one sends a keep-alive each 15 s;
+/// at most 8 chunks wait for a slow reader. A stream ends with its
+/// connection's lifetime, and its reader resumes.
+pub const MAX_STREAMS: usize = 32;
+pub const MAX_STREAMS_PER_TOKEN: usize = 2;
+pub const STREAM_PING: Duration = Duration::from_secs(15);
+pub const STREAM_CHUNKS: usize = 8;
 
 /// The methods the service takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

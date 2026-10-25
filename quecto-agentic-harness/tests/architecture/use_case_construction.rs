@@ -175,6 +175,8 @@ const USE_CASES: &[&str] = &[
     "SendMessage",
     "ServeBoard",
     "ServeBoardOperation",
+    "FollowBoard",
+    "Follower",
     "SetTaskDependencies",
     "SettleAuthority",
     "SettleDelegatedChild",

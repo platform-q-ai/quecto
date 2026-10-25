@@ -1,8 +1,10 @@
 //! The board service's route table (epic #2705 B4, B5, B7), an allowlist:
 //! reads `GET /v1/status` and `GET /v1/time`; the board's operations
-//! `POST /v1/boards/{id}/op` ([`super::op`]); admin `GET`/`POST
-//! /v1/admin/tokens` and `POST /v1/admin/tokens/revoke`, on the Unix socket
-//! only (403 over TCP); else 404, or 405 naming a route's methods.
+//! `POST /v1/boards/{id}/op` ([`super::op`]); the change feed (B10), `GET
+//! /v1/boards/{id}/events` and `GET /v1/boards/{id}/revisions`
+//! ([`super::feed`]); admin `GET`/`POST /v1/admin/tokens` and `POST
+//! /v1/admin/tokens/revoke`, on the Unix socket only (403 over TCP); else
+//! 404, or 405 naming a route's methods.
 use std::sync::PoisonError;
 
 use serde_json::json;
@@ -12,12 +14,13 @@ use crate::application::project_board::ports::{
     BoardClockError, BoardStoreError, ServeError, TokenError,
 };
 use crate::application::project_board::use_cases::{
-    BoardAccess, Principal, Refused, Scope, ServeBoard, ServeBoardOperation,
+    BoardAccess, FollowBoard, Principal, Refused, Scope, ServeBoard, ServeBoardOperation,
 };
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::http::board_service::listener::{
-    ServiceHandler, ServiceMethod, ServiceReply, ServiceRequest, Transport,
+    ServiceHandler, ServiceMethod, ServiceReply, ServiceRequest, ServiceStream, StreamWake,
+    Transport,
 };
 
 use super::op::{OpRefusal, answer_op};
@@ -27,6 +30,8 @@ pub struct BoardRoutes {
     serve: ServeBoard,
     access: BoardAccess,
     operations: ServeBoardOperation,
+    /// The change feed (B10); none answers its routes 404.
+    feed: Option<FollowBoard>,
     /// The token store's failure last said on stderr.
     unavailable: std::sync::Mutex<String>,
 }
@@ -39,7 +44,16 @@ enum Route {
     Tokens,
     Revoke,
     Op,
+    Events,
+    Revisions,
 }
+
+/// The routes under a board's id, by their last segment.
+const BOARD_ROUTES: [(&str, Route); 3] = [
+    ("/op", Route::Op),
+    ("/events", Route::Events),
+    ("/revisions", Route::Revisions),
+];
 
 impl Route {
     /// The route `path` names, if the table holds it.
@@ -49,14 +63,14 @@ impl Route {
             "/v1/time" => Some(Self::Time),
             "/v1/admin/tokens" => Some(Self::Tokens),
             "/v1/admin/tokens/revoke" => Some(Self::Revoke),
-            other => board_of(other).map(|_| Self::Op),
+            other => board_of(other).map(|(_, route)| route),
         }
     }
 
     /// The methods it takes, as an `Allow` value.
     fn allow(self) -> &'static str {
         match self {
-            Self::Status | Self::Time => "GET",
+            Self::Status | Self::Time | Self::Events | Self::Revisions => "GET",
             Self::Tokens => "GET, POST",
             Self::Revoke | Self::Op => "POST",
         }
@@ -71,17 +85,20 @@ impl Route {
     /// The scope a caller needs to reach it (an op's own is judged after).
     fn scope(self) -> Scope {
         match self {
-            Self::Status | Self::Time | Self::Op => Scope::Read,
+            Self::Status | Self::Time | Self::Op | Self::Events | Self::Revisions => Scope::Read,
             Self::Tokens | Self::Revoke => Scope::Admin,
         }
     }
 }
 
-/// The board id of an op route's `path`, when it is shaped as one.
-fn board_of(path: &str) -> Option<BoardId> {
-    path.strip_prefix("/v1/boards/")
-        .and_then(|rest| rest.strip_suffix("/op"))
-        .and_then(BoardId::of_hex)
+/// The board id and route of a board route's `path`, when it is shaped as
+/// one: `/v1/boards/<16 hex>` and one of [`BOARD_ROUTES`].
+fn board_of(path: &str) -> Option<(BoardId, Route)> {
+    let rest = path.strip_prefix("/v1/boards/")?;
+    BOARD_ROUTES.iter().find_map(|(last, route)| {
+        let board = rest.strip_suffix(last).and_then(BoardId::of_hex)?;
+        Some((board, *route))
+    })
 }
 
 /// An admin request's body: the token's name.
@@ -97,15 +114,62 @@ impl BoardRoutes {
             serve,
             access,
             operations,
+            feed: None,
             unavailable: std::sync::Mutex::default(),
+        }
+    }
+
+    /// The routes, serving `feed` as the board's change feed (B10).
+    pub fn with_feed(self, feed: Option<FollowBoard>) -> Self {
+        Self { feed, ..self }
+    }
+
+    /// The feed of the board `path` names, when it is this server's; or
+    /// the reply refusing it (404 `board`, or `route` with no feed).
+    fn feed_of(&self, path: &str) -> Result<&FollowBoard, ServiceReply> {
+        self.served(path)?;
+        match &self.feed {
+            Some(feed) => Ok(feed),
+            None => Err(coded(404, "route", "no such route")),
+        }
+    }
+
+    /// `Ok` when `path` names this server's board; else 404 `board`.
+    fn served(&self, path: &str) -> Result<(), ServiceReply> {
+        match board_of(path) {
+            Some((board, _)) if board == *self.serve.board() => Ok(()),
+            Some(_) | None => Err(coded(404, "board", "this server serves no such board")),
+        }
+    }
+
+    /// The caller's principal and the route it may reach, or the reply
+    /// refusing it: a route it names, a method it takes, a scope it holds.
+    fn admitted(&self, request: &ServiceRequest) -> Result<(Route, Principal), ServiceReply> {
+        let principal = match (request.transport, request.principal.as_deref()) {
+            (Transport::Local, _) => Ok(Principal::Local),
+            (Transport::Tcp, Some(name)) => BoardAccess::device(name),
+            (Transport::Tcp, None) => Err(Refused::Token),
+        };
+        let principal = principal.map_err(|refused| self.refusal(&refused, request.transport))?;
+        match Route::of(&request.path) {
+            Some(route) if route.takes(request.method) => {
+                match BoardAccess::authorize(&principal, route.scope()) {
+                    Ok(()) => Ok((route, principal)),
+                    Err(refused) => Err(self.refusal(&refused, request.transport)),
+                }
+            }
+            Some(route) => Err(ServiceReply {
+                allow: Some(route.allow()),
+                ..coded(405, "method", "method not allowed")
+            }),
+            None => Err(coded(404, "route", "no such route")),
         }
     }
 
     /// An op's reply, or its refusal by its code.
     fn op(&self, request: &ServiceRequest, principal: &Principal) -> ServiceReply {
-        match board_of(&request.path) {
-            Some(board) if board == *self.serve.board() => {}
-            Some(_) | None => return coded(404, "board", "this server serves no such board"),
+        if let Err(reply) = self.served(&request.path) {
+            return reply;
         }
         match answer_op(&self.operations, principal, &request.body) {
             Ok(answer) => ServiceReply {
@@ -160,6 +224,12 @@ impl BoardRoutes {
     fn route(&self, route: Route, request: &ServiceRequest, principal: &Principal) -> ServiceReply {
         match (route, request.method) {
             (Route::Op, _) => self.op(request, principal),
+            (Route::Revisions, _) => match self.feed_of(&request.path) {
+                Ok(feed) => super::feed::revisions(feed, request),
+                Err(reply) => reply,
+            },
+            // The listener streams every GET of it; anything else is refused.
+            (Route::Events, _) => coded(400, "stream", "the change feed is read as a stream"),
             (Route::Status, _) => read(self.serve.status().map(|status| {
                 json!({
                     "role": status.role.as_str(),
@@ -222,32 +292,29 @@ impl ServiceHandler for BoardRoutes {
     }
 
     fn answer(&self, request: &ServiceRequest) -> ServiceReply {
-        let principal = match (request.transport, request.principal.as_deref()) {
-            (Transport::Local, _) => Ok(Principal::Local),
-            (Transport::Tcp, Some(name)) => BoardAccess::device(name),
-            (Transport::Tcp, None) => Err(Refused::Token),
-        };
-        let principal = match principal {
-            Ok(principal) => principal,
-            Err(refused) => return self.refusal(&refused, request.transport),
-        };
-        match Route::of(&request.path) {
-            Some(route) if route.takes(request.method) => {
-                match BoardAccess::authorize(&principal, route.scope()) {
-                    Ok(()) => self.route(route, request, &principal),
-                    Err(refused) => self.refusal(&refused, request.transport),
-                }
-            }
-            Some(route) => ServiceReply {
-                allow: Some(route.allow()),
-                ..coded(405, "method", "method not allowed")
-            },
-            None => coded(404, "route", "no such route"),
+        match self.admitted(request) {
+            Ok((route, principal)) => self.route(route, request, &principal),
+            Err(reply) => reply,
         }
     }
 
     fn allowed(&self, path: &str) -> Option<&'static str> {
         Route::of(path).map(Route::allow)
+    }
+
+    fn streams(&self, path: &str) -> bool {
+        Route::of(path) == Some(Route::Events)
+    }
+
+    fn stream(
+        &self,
+        request: &ServiceRequest,
+        wake: StreamWake,
+    ) -> Result<Box<dyn ServiceStream>, ServiceReply> {
+        match self.admitted(request)? {
+            (Route::Events, _) => super::feed::open(self.feed_of(&request.path)?, request, wake),
+            (_, _) => Err(coded(404, "route", "no such route")),
+        }
     }
 }
 
@@ -306,7 +373,7 @@ fn token_failed(error: &TokenError) -> ServiceReply {
 /// with the host's `reason` while its clock is not synchronised (#2705),
 /// else 503 `unavailable`; a store error may quote its remote, so it is
 /// redacted.
-fn failed(error: &ServeError) -> ServiceReply {
+pub(super) fn failed(error: &ServeError) -> ServiceReply {
     let shown = |text: &str| redact_secrets(&redact_url_userinfo(text));
     if let ServeError::Board(clock @ ProjectBoardError::Clock(BoardClockError::Unsynced(why))) =
         error

@@ -146,6 +146,8 @@ fn answer(routes: &BoardRoutes, method: ServiceMethod, path: &str) -> (u16, Valu
         body: vec![],
         transport: Transport::Local,
         principal: None,
+        query: None,
+        last_event_id: None,
     });
     let body = serde_json::from_slice(&reply.body)
         .unwrap_or_else(|error| panic!("{path}: {error}: {:?}", reply.body));
@@ -192,6 +194,8 @@ fn a_routes_405_names_its_methods() {
             body: vec![],
             transport: Transport::Local,
             principal: None,
+            query: None,
+            last_event_id: None,
         });
         assert_eq!((reply.status, reply.allow), (405, Some("GET")), "{path}");
         assert_eq!(
@@ -273,6 +277,8 @@ fn sent(
         body: body.as_bytes().to_vec(),
         transport,
         principal,
+        query: None,
+        last_event_id: None,
     });
     let body = serde_json::from_slice(&reply.body).unwrap();
     (reply, body)
@@ -592,6 +598,8 @@ fn answer_takes_the_gates_principal() {
             body: vec![],
             transport: Transport::Tcp,
             principal: principal.clone(),
+            query: None,
+            last_event_id: None,
         });
         assert_eq!(reply.status, 401, "{principal:?}");
     }
@@ -601,6 +609,8 @@ fn answer_takes_the_gates_principal() {
         body: vec![],
         transport: Transport::Tcp,
         principal: Some("laptop".into()),
+        query: None,
+        last_event_id: None,
     });
     assert_eq!(reply.status, 200);
 }

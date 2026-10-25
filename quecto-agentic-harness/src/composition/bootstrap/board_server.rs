@@ -14,6 +14,7 @@ use crate::application::project_board::dto::{
 };
 use crate::application::project_board::operations::StoreListings;
 use crate::application::project_board::ports::ListenAddress;
+use crate::application::project_board::ports::feed::BoardFeed;
 use crate::application::project_board::ports::{
     BoardClock, BoardOpStore, BoardOperations, BoardOperationsOver, BoardTokens, OperationsOver,
     ProjectBoardStore, PullRequestState, PullRequestStates, PullRequestStatesError,
@@ -22,7 +23,8 @@ use crate::application::project_board::ports::{
 use crate::application::project_board::run_facts::StatedRemoteRevisions;
 use crate::application::project_board::synced_clock::{HeldSync, SyncedBoardClock};
 use crate::application::project_board::use_cases::{
-    BoardAccess, QueryBoard, READ_BUDGET, RunBoardOperation, ServeBoard, ServeBoardOperation,
+    BoardAccess, FollowBoard, QueryBoard, READ_BUDGET, RunBoardOperation, ServeBoard,
+    ServeBoardOperation,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::Plan;
@@ -121,7 +123,10 @@ pub fn build_board_server_with(
             )));
         }
     }
-    let ops: Arc<dyn BoardOpStore> = Arc::new(ops);
+    let ops = Arc::new(ops);
+    // The feed is the store's own: a write publishes as it commits (B10).
+    let feed = FollowBoard::new(Arc::clone(&ops) as Arc<dyn BoardFeed>);
+    let ops: Arc<dyn BoardOpStore> = ops;
     let host: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());
     let time = SyncedBoardClock::new(Arc::clone(&host), Arc::clone(&sync));
     let served = ServedOperations {
@@ -135,6 +140,7 @@ pub fn build_board_server_with(
     Ok(BoardServerHandles {
         serve: ServeBoard::new(ops.reads(), Arc::new(time), board),
         operations: ServeBoardOperation::new(ops, Arc::new(served)),
+        feed: Some(feed),
         access: BoardAccess::new(tokens, host),
         peers: Arc::new(SocketPeerCredentials),
         uid: this_uid(),
@@ -378,3 +384,7 @@ fn configured_listen(path: &Path) -> Result<Vec<ListenAddress>, String> {
 #[cfg(test)]
 #[path = "board_server_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "board_feed_tests.rs"]
+mod feed_tests;

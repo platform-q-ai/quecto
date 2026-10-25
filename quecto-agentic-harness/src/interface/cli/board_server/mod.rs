@@ -7,11 +7,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::application::project_board::ports::ListenAddress;
-use crate::application::project_board::use_cases::{BoardAccess, ServeBoard, ServeBoardOperation};
+use crate::application::project_board::use_cases::{
+    BoardAccess, FollowBoard, ServeBoard, ServeBoardOperation,
+};
 use crate::infrastructure::http::board_service::listener::PeerCredentials;
 use crate::interface::cli::CliContext;
 
 pub mod backup;
+pub mod feed;
 pub mod fence;
 pub mod history;
 mod op;
@@ -39,6 +42,8 @@ pub struct BoardServerHandles {
     pub serve: ServeBoard,
     /// The board's operations (B7).
     pub operations: ServeBoardOperation,
+    /// The board's change feed (B10); none answers its routes 404.
+    pub feed: Option<FollowBoard>,
     pub access: BoardAccess,
     pub peers: Arc<dyn PeerCredentials>,
     pub uid: u32,

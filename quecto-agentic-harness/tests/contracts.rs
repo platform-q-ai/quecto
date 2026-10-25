@@ -56,6 +56,8 @@ mod board_encoding;
 mod board_events;
 #[path = "contracts/board_evidence.rs"]
 mod board_evidence;
+#[path = "contracts/board_feed.rs"]
+mod board_feed;
 #[path = "contracts/board_files.rs"]
 mod board_files;
 #[path = "contracts/board_listings.rs"]
@@ -339,6 +341,8 @@ mod device_code_flow;
 mod direct_child_routing;
 #[path = "contracts/ended_child_records.rs"]
 mod ended_child_records;
+#[path = "contracts/feed_subscription.rs"]
+mod feed_subscription;
 #[path = "contracts/fetch_web_content.rs"]
 mod fetch_web_content;
 #[path = "contracts/model_default_persistence.rs"]

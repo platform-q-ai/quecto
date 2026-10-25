@@ -41,6 +41,7 @@ const FRONT_END: &[&str] = &[
     "src/interface/cli/board_server/routes.rs",
     "src/interface/cli/board_server/token.rs",
     "src/interface/cli/board_server/op.rs",
+    "src/interface/cli/board_server/feed.rs",
 ];
 
 /// The crate paths the front end may reach: each a path, or the module
@@ -70,6 +71,10 @@ const FRONT_END_REACHES: &[&str] = &[
     "crate::infrastructure::http::board_service::listener::bind",
     "crate::infrastructure::http::board_service::listener::serve",
     "crate::infrastructure::http::board_service::listener::Transport",
+    // B10: a streamed reply.
+    "crate::infrastructure::http::board_service::listener::ServiceStream",
+    "crate::infrastructure::http::board_service::listener::StreamStep",
+    "crate::infrastructure::http::board_service::listener::StreamWake",
     "crate::infrastructure::http::board_service::listener::Listener",
     "crate::infrastructure::http::board_service::listener::bind_tcp",
     "crate::infrastructure::http::board_service::client::BoardServiceClient",
@@ -134,6 +139,11 @@ fn the_listener_calls_injected_handles_only() {
         text.matches(".answer(").count(),
         1,
         "the listener answers through its handler's `answer`, once"
+    );
+    assert_eq!(
+        text.matches("handler.stream(").count(),
+        1,
+        "a streamed route is opened through its handler's `stream`, once (B10)"
     );
 }
 

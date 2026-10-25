@@ -80,6 +80,8 @@ SQLite store as admin revisions.)
 | `GET /v1/status` | `{"role": "primary", "board": "<id>", "head": "<head>" or null}` (read from the server's own board file, never from the clone's remote, so a slow or silent remote never delays it) |
 | `GET /v1/time` | `{"time": "<RFC 3339, to the second>"}` (the server's clock; 503 `clock_unsynced` while it is not synchronised) |
 | `POST /v1/boards/{id}/op` | one board operation (below): `{"answer": {..}, "facts": {..} or null}` |
+| `GET /v1/boards/{id}/events` | the change feed, a `text/event-stream` (below) |
+| `GET /v1/boards/{id}/revisions?after=<n>[&limit=<1..500>]` | `{"revisions": [<revision events>], "epoch", "tip", "more"}` (below) |
 | `GET /v1/admin/tokens` | `{"tokens": [{"name": "<name>", "created": "<RFC 3339>"}]}` (Unix socket only) |
 | `POST /v1/admin/tokens` `{"name": "<name>"}` | 201 `{"name", "created", "token"}`: the one time the token is shown (Unix socket only) |
 | `POST /v1/admin/tokens/revoke` `{"name": "<name>"}` | `{"name": "<name>", "revoked": true}` (Unix socket only) |
@@ -288,6 +290,78 @@ server past its 2 writes) it sends it again after a jittered pause of
 `busy`, a code a caller may retry. Any other failure is answered
 `store_unavailable`, naming the server's status and code.
 
+## Change feed (B10)
+
+The feed tells which revisions the board made, in order, by number and
+kind alone. No event carries a task's text, a message, an identity or a
+principal: a reader that wants the change reads the board. Every event's
+data is one JSON object of this allowlisted schema, and nothing else:
+
+| `kind` | data | SSE `id` |
+|---|---|---|
+| `revision` | `{"kind": "revision", "epoch": <n>, "revision": <n>}` | the revision |
+| `epoch` | `{"kind": "epoch", "epoch": <n>}`: the epoch the next revisions are in | the revision before them |
+| `reset` | `{"kind": "reset", "after": <n>}`: the stream ends; read on from `after` | `after` |
+
+Revision numbers are unique and increase across epochs. An `epoch` event
+comes before the first revision of a stream and before any revision whose
+epoch differs from the one before it; a stream opened at the tip starts
+with the current epoch (its id the tip, so a reconnect misses nothing).
+An epoch opened with no revision (B11/B12) is told with the next revision.
+
+**`GET /v1/boards/{id}/events`** answers `200`, `Content-Type:
+text/event-stream`, `Cache-Control: no-store`, `Connection: close`, a
+chunked body. It starts from the `Last-Event-ID` header (what an
+`EventSource` sends when it reconnects), else `?after=<revision>`, else the
+tip (live only). Each event is `id: <n>`, `event: <kind>`, `data: <json>`;
+the stream opens with `retry: 1000`, and an idle stream sends a `: ping`
+comment every 15 s. Resume is gap-free with each revision exactly once:
+the stream subscribes before it reads the store, reads the revisions after
+its cursor from the store (500 at a time) while it is behind, then tells
+what its queue holds, skipping any revision it already told by number. A
+cursor past the board's tip (a reader of another board, or of a board
+restored) is answered with one `reset` to the tip, after which the reader
+should read the board whole. `Last-Event-ID` or `after` not a number is
+400 `last_event_id` or `query`.
+
+**Slow readers.** Each stream has a bounded queue of 256 revisions. A
+committed write publishes its new revisions to every queue without ever
+waiting on a reader; a queue that would pass 256 is reset instead (its
+revisions dropped), and that stream sends `reset` with its last revision
+and ends. A reader that takes no bytes at all stalls the server's write to
+it; the 10 s write deadline then drops the connection and the stream with
+it, so a stalled reader holds at most its queue and its connection, never a
+blocking thread or the writers. Either way the reader reconnects with
+`Last-Event-ID` and is caught up from the store.
+
+**Limits and the connection caps.**
+- A stream is its connection's last reply. It ends at its connection's 60 s
+  lifetime (not after the 15 s grace), and the reader reconnects from its
+  last id: about one reconnect a minute per reader, so no stream holds a
+  connection slot for good. The 10 s head timeout never ends a stream (no
+  next request head is read while a reply is sent), and the 10 s write
+  deadline counts only a write the reader is not taking, never an idle
+  stream.
+- At most 32 streams are open at once on a server, socket and TCP
+  together, and 2 for one token; past either, 503 `busy`.
+- Over TCP a stream holds one of its token's 8 connections for its life
+  (#2746), so a token with 2 streams open has 6 left for its operations.
+  A stream's request authenticates like any other, so it leaves its
+  source's unauthenticated count at once.
+- Each time a stream reads the store it holds one of its token's 4 blocking
+  answers (out of 12 for TCP) for that read alone; idle, it holds no thread.
+
+**`GET /v1/boards/{id}/revisions?after=<n>[&limit=<1..500>]`** answers the
+revisions after `n`, oldest first, at most `limit` (500 when not given), as
+revision events: `{"revisions": [...], "epoch": <current epoch>, "tip":
+<newest revision>, "more": <whether revisions follow this batch>}`. The
+query takes only `after` (required) and `limit`, each once, as a number
+(else 400 `query`); a `limit` outside 1 to 500 is 400 `limit`.
+
+Both routes are reads: over TCP any held token may ask them, on the Unix
+socket the server's own user. An id that is not this server's board is 404
+`board`.
+
 ## Error replies
 
 Every error reply the server makes is JSON, `{"error": "<why>", "code":
@@ -296,6 +370,9 @@ Every error reply the server makes is JSON, `{"error": "<why>", "code":
 | Status | `code` | When |
 |---|---|---|
 | 400 | `request` | an admin body that is not `{"name": "<name>"}`, or an op body not shaped as above |
+| 400 | `query` | a feed query with a key other than `after`/`limit`, one twice, one not a number, or `revisions` without `after` |
+| 400 | `limit` | a `revisions` limit outside 1 to 500 |
+| 400 | `last_event_id` | a `Last-Event-ID` that is not a revision number |
 | 400 | `write` | a write op without its `write_id` and `committer` |
 | 400 | `token_name` | a token name that is not 1 to 64 of `a-z`, `0-9` and inner `-` |
 | 401 | `token` | over TCP, no bearer token, or an unknown or revoked one (with `WWW-Authenticate: Bearer`) |

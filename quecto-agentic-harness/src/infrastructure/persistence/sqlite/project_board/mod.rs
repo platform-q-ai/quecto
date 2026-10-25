@@ -1,4 +1,5 @@
 //! Durable structural board objects, interpreted by the shared board reader.
+use crate::application::project_board::ports::feed::*;
 use crate::application::project_board::ports::*;
 use crate::domain::project_board::{entities::claim::Identity, value_objects::schema_error::line};
 use crate::infrastructure::persistence::project_board::board_tree::{
@@ -12,6 +13,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+mod feed;
 #[cfg(feature = "test-support")]
 mod fixture;
 mod mutation;

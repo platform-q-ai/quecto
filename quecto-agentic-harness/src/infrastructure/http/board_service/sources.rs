@@ -150,6 +150,44 @@ impl Answers {
     }
 }
 
+/// The streamed replies open at once (B10): in all, socket and TCP, and
+/// each TCP principal.
+#[derive(Debug)]
+pub(super) struct Streams {
+    all: Arc<Semaphore>,
+    each: Shares,
+}
+
+/// A stream's place, given back when dropped.
+#[derive(Debug)]
+pub(super) struct StreamPlace {
+    _all: OwnedSemaphorePermit,
+    _mine: Option<OwnedSemaphorePermit>,
+}
+
+impl Streams {
+    pub(super) fn new(all: usize, per: usize) -> Self {
+        Self {
+            all: Arc::new(Semaphore::new(all)),
+            each: Shares::new(per),
+        }
+    }
+
+    /// A place for a stream of `principal`'s (none: the Unix socket's);
+    /// `None` when it, or the server, holds all it may.
+    pub(super) fn take(&self, principal: Option<&str>) -> Option<StreamPlace> {
+        let mine = match principal {
+            Some(principal) => Some(self.each.take(principal)?),
+            None => None,
+        };
+        let all = Arc::clone(&self.all).try_acquire_owned().ok()?;
+        Some(StreamPlace {
+            _all: all,
+            _mine: mine,
+        })
+    }
+}
+
 #[cfg(test)]
 #[path = "sources_tests.rs"]
 mod tests;
