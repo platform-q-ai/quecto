@@ -5,12 +5,12 @@
 |---|---|
 | Task | board-2705-b13-lite |
 | Version | 4 |
-| State | accepted |
+| State | superseded |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted at | 2026-10-25T06:12:20Z |
 | Created | 2026-10-25T06:12:01Z |
-| Updated | 2026-10-25T06:12:20Z |
+| Updated | 2026-10-25T07:55:00Z |
 
 ## Approach
 Fresh RECOVERY DELIVERY ONLY to finish the existing B13 implementation, ONE PR per latest operator instruction, not repeat planning/red design. Full previous scope/criteria/parent safety/defaults/ownership is accepted-plan3-full.json in /home/shane-pocket/.quecto/artifacts/b13-lite-recovery/. FULL parent-disposition.md there is authoritative for current-master integration, preserved36-path WIP, precise R7 fixture approval and no automatic split. Read both fully plus targeted b13-lite-delivery/{parent-r7-decision-request.md,author-fence80-runtime-stop.md,verifier-fence80-challenge.md,verifier-remediation60-closure.md}. Original full planning/parent-acceptance and RED source obligations remain referenced by plan3. No new architectural investigation or re-sizing cycles.

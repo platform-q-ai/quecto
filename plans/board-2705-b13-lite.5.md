@@ -5,10 +5,12 @@
 |---|---|
 | Task | board-2705-b13-lite |
 | Version | 5 |
-| State | draft |
+| State | accepted |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-25T07:55:00Z |
 | Created | 2026-10-25T07:52:39Z |
-| Updated | 2026-10-25T07:52:39Z |
+| Updated | 2026-10-25T07:55:00Z |
 
 ## Approach
 Deliver the owner's explicitly authorised B13 split as TWO complete, independently testable PRs. PR1 is online SQLite backup; PR2 is wiring to the existing fence builder. No runtime dependency exists: both branch from then-current origin/master, with backup opened first. Capability-specific ports and composition avoid an invented shared DTO/helper dependency. Each merge leaves master buildable and green.
