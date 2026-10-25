@@ -78,6 +78,21 @@ pub fn build_board_server(
             told(&error)
         ))
     })?;
+    // A `--state` directory names no board: a file imported for another
+    // board is refused, never served as this one (#2741).
+    match ops.bound_board() {
+        Ok(None) => {}
+        Ok(Some(bound)) if bound == board.as_str() => {}
+        Ok(Some(bound)) => {
+            return Err(refused(&format!(
+                "the board file {} holds board {bound}, not this clone's board {}: \
+                 give this server its own --state <dir>",
+                database.display(),
+                board.as_str()
+            )));
+        }
+        Err(error) => return Err(refused(&told(&error))),
+    }
     let ops: Arc<dyn BoardOpStore> = Arc::new(ops);
     let clock: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());
     let served = ServedOperations {

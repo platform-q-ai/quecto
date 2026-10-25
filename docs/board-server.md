@@ -266,9 +266,10 @@ hold for the Unix socket and TCP alike:
 `quecto board-server export --repo <destination> --board-id <16-hex>
 --to-branch <branch> --format 3 [--state <dir>] [--dry-run]` reads the
 existing native schema-4 SQLite board that `serve` keeps:
-`board.sqlite3` in the server's state directory (`--state <dir>`, absolute,
-else `~/.quecto/board-server/<board-id>/`). A missing board file is refused
-by name; export never makes one.
+`board.sqlite3` in the server's state directory (`--state <dir>`, else
+`<base>/board-server/<board-id>/`, where `<base>` is `QUECTO_BASE_DIR`,
+else `~/.quecto`). The directory must be absolute and not end in `/`. A
+missing board file is refused by name; export never makes one.
 The board ID must be exactly 16 hexadecimal characters; it is not a path.
 Only format `3` is accepted. The optional `--remote <name>` is validated
 for command compatibility; native export does not contact or fetch a remote.
@@ -308,14 +309,19 @@ HTTP routes, authentication, and timing behavior are unchanged.
 `quecto board-server import --repo <source> --board-id <16-hex>
 [--remote <name>] [--state <dir>]` captures the complete local
 `refs/heads/quecto/board` H0 once, into the board file `serve` keeps:
-`board.sqlite3` in the server's state directory (`--state <dir>`, absolute,
-else `~/.quecto/board-server/<board-id>/`, made mode 0700 if missing). Give
-the board id the server announces (`serving board <id>`) and the server's
-`--state`, if any, so that `serve` then serves the imported board. `--remote` defaults to `origin` and is provenance only: no fetch,
+`board.sqlite3` in the server's state directory (`--state <dir>`, else
+`<base>/board-server/<board-id>/`, where `<base>` is `QUECTO_BASE_DIR`,
+else `~/.quecto`). The directory passes the same checks as `serve`'s
+(absolute, no trailing `/`, no symlink, this user's at mode 0700, made so
+if missing), and import holds `serve`'s lock on it until it is done, so an
+import while a server runs on that directory is refused. Give the board id
+the server announces (`serving board <id>`) and the server's `--state`, if
+any. The import records the board id in the file; a server whose own board
+id differs refuses to start on it, naming both ids. `--remote` defaults to `origin` and is provenance only: no fetch,
 listener or token graph is started. `import --help` describes the command;
 stdout JSON contains `revisions`, `head` and `source_head`.
 
-An owned IMMEDIATE transaction requires all seven schema3 tables empty.
+An owned IMMEDIATE transaction requires every table of the schema empty.
 It preserves original raw commits/trees/blobs, IDs, headers and exposed
 clear/seen/keep tokens; the SAME complete export dry-run verifies every
 original and H0 before commit. Error, Drop and owned precommit crash roll

@@ -596,5 +596,5 @@ fn offline_export_allowlist_format3_board_id_path_confinement_and_pure_dryrun() 
             .iter()
             .all(|n| n.to_string_lossy().starts_with("board.sqlite3"))
     );
-    assert!(!home.join("board-server/escape").exists());
+    assert!(!home.join("escape").exists());
 }

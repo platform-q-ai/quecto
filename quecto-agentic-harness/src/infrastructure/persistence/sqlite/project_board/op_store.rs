@@ -21,6 +21,21 @@ impl SqliteBoardOps {
         })
     }
 
+    /// The board id an import bound this file to (#2741): none for a board
+    /// made by a server, or not made yet.
+    /// # Errors
+    /// The file cannot be read.
+    pub fn bound_board(&self) -> Result<Option<String>, BoardStoreError> {
+        let c = self.reads.connection.lock().map_err(unavailable)?;
+        let bound = c
+            .query_row("SELECT board_id FROM history_meta WHERE id=1", [], |r| {
+                r.get::<_, Option<String>>(0)
+            })
+            .optional()
+            .map_err(unavailable)?;
+        Ok(bound.flatten())
+    }
+
     /// Inside the transaction: the kept answer, or `op`'s, kept.
     fn ran(
         &self,
