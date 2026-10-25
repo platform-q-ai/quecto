@@ -451,7 +451,12 @@ where
     };
     let lifetime = tokio::time::sleep(bounds.lifetime);
     tokio::pin!(connection, unproven_end, lifetime);
-    let still_unproven = || conn.pending.lock().map_or(true, |place| place.is_some());
+    let still_unproven = || {
+        conn.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+    };
     // Past its lifetime a connection finishes what it is answering, then
     // closes. A peer that goes, or is too slow, ends its own connection.
     let ended = loop {
@@ -635,7 +640,12 @@ fn gate(conn: &Conn, headers: &header::HeaderMap) -> Result<(String, Room), Serv
         })?;
     match hold(conn, &principal) {
         true => {
-            drop(conn.pending.lock().map(|mut place| place.take()));
+            drop(
+                conn.pending
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .take(),
+            );
             Ok((principal, Room::Placed))
         }
         false => Ok((principal, Room::Full)),
@@ -661,16 +671,9 @@ fn hold(conn: &Conn, principal: &str) -> bool {
         Some((holder, _)) if holder == principal => true,
         Some(_) | None => match conn.connections.take(principal) {
             Some(place) => {
-                let given_back = held.replace((principal.to_owned(), place));
-                // A connection holds one place at once: the one it gives
-                // back is another token's, never a second of this one's.
-                debug_assert!(
-                    given_back
-                        .as_ref()
-                        .is_none_or(|(holder, _)| holder != principal),
-                    "a connection never holds two places for one token"
-                );
-                drop(given_back);
+                // A connection holds one place at once: replacing the slot
+                // gives back the other token's place it held, if any.
+                drop(held.replace((principal.to_owned(), place)));
                 true
             }
             None => false,
