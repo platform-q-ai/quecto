@@ -291,6 +291,8 @@ const KNOWN_KINDS: &[&str] = &[
     // A plan's handoff and where show pages it from (#2705 T3).
     "handoff",
     "handoff_from",
+    "busy",
+    "unanswered",
     // The lifecycle's refusals, the op done without a run and its field
     // (#2705 T4).
     "use_lifecycle",

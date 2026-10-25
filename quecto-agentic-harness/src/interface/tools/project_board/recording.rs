@@ -20,7 +20,7 @@ use super::answer::{self, FrontEndRefusal, rule_code};
 use super::request::{RequestError, schema_field};
 use crate::application::project_board::dto::{
     BoardAnswered, BoardExecution, BoardOutcome, BoardRequest, Completion, ListSummaries, OpNoting,
-    ProjectBoardError,
+    ProjectBoardError, ReadRequest, ServedAnswer,
 };
 use crate::application::project_board::ports::{
     BoardOperations, FoldBackOutcome, FoldBackRecorder,
@@ -192,7 +192,7 @@ impl BoardCall {
     pub fn executed(
         &mut self,
         operations: &dyn BoardOperations,
-        request: &BoardRequest,
+        request: ReadRequest<'_>,
         summaries: ListSummaries,
     ) -> Result<BoardAnswered, ProjectBoardError> {
         let Some(open) = &mut self.open else {
@@ -272,6 +272,9 @@ impl BoardCall {
     /// The answer to `op`, which came to `outcome`; `clock` as
     /// [`answer::outcome`] takes it. The head it names is one git produced.
     pub fn answer(&mut self, op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value {
+        if let BoardOutcome::Served(served) = outcome {
+            return self.served(served);
+        }
         self.note(|record| {
             let head = match outcome {
                 BoardOutcome::Bootstrapped { head, .. } | BoardOutcome::Cleared { head } => {
@@ -283,7 +286,7 @@ impl BoardCall {
                 | BoardOutcome::Planned(_)
                 | BoardOutcome::Accepted(_)
                 | BoardOutcome::RunEnded(_) => None,
-                BoardOutcome::Started(_) => None,
+                BoardOutcome::Started(_) | BoardOutcome::Served(_) => None,
             };
             record.outcome = OpOutcome::Ok;
             // A write's own commit is its use case's to note (#2663).
@@ -307,6 +310,22 @@ impl BoardCall {
         });
         let steps = self.carried(answer::start_steps::started(outcome));
         answer::outcome(op, outcome, clock, steps)
+    }
+
+    /// A board server's answer (epic #2705 B7), as it came: the call's
+    /// outcome is read from it when the call finishes, as every answer's
+    /// is. One that is no JSON object (its adapter checks it is one) is
+    /// answered as the store unavailable.
+    fn served(&mut self, served: &ServedAnswer) -> Value {
+        self.note(|record| record.outcome = OpOutcome::Ok);
+        match serde_json::from_str::<Value>(&served.0) {
+            Ok(answer @ Value::Object(_)) => answer,
+            Ok(_) | Err(_) => self.refuse_as_front_end(
+                None,
+                FrontEndRefusal::StoreUnavailable,
+                "the board server's answer is not a JSON object",
+            ),
+        }
     }
 
     /// Writes the call's record, once its front end sent `answer`:
@@ -455,6 +474,8 @@ pub(super) fn refusal_parts(
         | E::NoPullRequestHost(_)
         | E::Stale { .. }
         | E::NoLauncher
+        | E::Busy(_)
+        | E::Unanswered(_)
         | E::RunLive { .. }
         | E::LaunchFailed { .. } => (None, None),
     }

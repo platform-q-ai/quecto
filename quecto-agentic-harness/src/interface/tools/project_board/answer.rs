@@ -146,6 +146,9 @@ pub enum ErrorCode {
     NoPullRequestHost,
     /// This session may not spawn, so it starts nothing (S4c).
     NoLauncher,
+    /// `reason`: the server stayed busy, or never replied to a write (B7).
+    Busy,
+    Unanswered,
     /// `task`, `run`: the run's swarm still runs here, so it is not ended
     /// by hand (S4c).
     RunLive,
@@ -199,6 +202,8 @@ impl ErrorCode {
             Self::NotSetAside => "not_set_aside",
             Self::NoPullRequestHost => "no_pull_request_host",
             Self::NoLauncher => "no_launcher",
+            Self::Busy => "busy",
+            Self::Unanswered => "unanswered",
             Self::RunLive => "run_live",
             Self::Brief => "brief",
             Self::LaunchFailed => "launch_failed",
@@ -219,9 +224,6 @@ pub fn shown(text: &str) -> String {
 fn shown_json(text: &str) -> Value {
     Value::String(shown(text))
 }
-
-/// The answer to `op`, which came to `outcome`; `clock` says why its
-/// changes were not bounded against an outside time.
 /// What an `end_run` by its holder recorded of the run's task items when
 /// no swarm reported them (S4c): said only then.
 const NO_SWARM_REPORT: &str = "items recorded as todo: no swarm report";
@@ -310,6 +312,7 @@ pub fn outcome(
             }
         }
         BoardOutcome::Started(started) => fields.extend(started_fields(started)),
+        BoardOutcome::Served(_) => {}
         BoardOutcome::Accepted(accepted) => {
             fields.insert("task".into(), task_json(&accepted.task));
             fields.insert("plan".into(), planned_json(&accepted.plan));
@@ -687,6 +690,8 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             fields([("reason", shown_json(&why.to_string()))]),
         ),
         E::NoLauncher => (C::NoLauncher, Map::new()),
+        E::Busy(why) => (C::Busy, fields([("reason", shown_json(why))])),
+        E::Unanswered(why) => (C::Unanswered, fields([("reason", shown_json(why))])),
         E::RunLive { task, run, agent } => (
             C::RunLive,
             fields([

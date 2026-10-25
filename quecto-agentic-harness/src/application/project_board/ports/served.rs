@@ -1,8 +1,9 @@
-//! The board service's contracts (epic #2705 B4). The server reads its
-//! board only through `ProjectBoardStore` and `BoardClock`, so it serves
-//! the git store today and a SQLite store later unchanged.
-use super::BoardHead;
-use crate::application::project_board::dto::ProjectBoardError;
+//! The board service's contracts (epic #2705 B4, B7).
+use std::sync::Arc;
+
+use super::{BoardHead, BoardOperations, BoardStoreError, ProjectBoardStore};
+use crate::application::project_board::dto::{BoardRequest, ProjectBoardError};
+use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 
 /// What a board server is to its board: an allowlist (a follower is B11).
@@ -27,8 +28,89 @@ pub struct ServedStatus {
     pub head: Option<BoardHead>,
 }
 
-/// Why a board server could not answer: its store's or clock's failure.
+/// Why a board server could not answer (the write cases are B7's).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServeError {
     Board(ProjectBoardError),
+    NoWrite,
+    WriteIdReused,
+    Busy,
+}
+
+/// A write's id (B7), a UUID, the same on every retry of the write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteId(String);
+
+impl WriteId {
+    /// `text` as a write id: lowercase hex in groups of 8-4-4-4-12.
+    pub fn parse(text: &str) -> Option<Self> {
+        let shaped = text.len() == 36
+            && text.char_indices().all(|(at, c)| match at {
+                8 | 13 | 18 | 23 => c == '-',
+                _ => matches!(c, '0'..='9' | 'a'..='f'),
+            });
+        shaped.then(|| Self(text.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// One write (B7): its id, what it asks (front end and text), the identity
+/// asserted (its author), and who the server let in (recorded beside it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpWrite {
+    pub write_id: WriteId,
+    pub request: String,
+    pub committer: Identity,
+    pub principal: String,
+}
+
+/// A served write's answer, made now or kept; or its id kept for another.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Transacted {
+    Answered(String),
+    Replayed(String),
+    Reused,
+}
+
+/// Port: a board server's store, written one operation at a time (B7).
+pub trait BoardOpStore: Send + Sync {
+    /// The store a read is answered from, outside any write.
+    fn reads(&self) -> Arc<dyn ProjectBoardStore>;
+
+    /// `write`'s kept answer, read outside any write (`transact` judges).
+    ///
+    /// # Errors
+    /// The store's failure.
+    fn kept(&self, write: &OpWrite) -> Result<Option<Transacted>, BoardStoreError>;
+
+    /// Runs `op` once per write id and principal, under the write lock in
+    /// one immediate transaction, on a store writing as `write.committer`;
+    /// its answer is kept as it commits, and replayed for the same id.
+    ///
+    /// # Errors
+    /// The store's failure, or `op`'s; either writes nothing.
+    fn transact(
+        &self,
+        write: &OpWrite,
+        op: &mut dyn FnMut(Arc<dyn ProjectBoardStore>) -> Result<String, BoardStoreError>,
+    ) -> Result<Transacted, BoardStoreError>;
+}
+
+/// The operations over the store they are handed.
+pub type OperationsOver = Box<
+    dyn Fn(Arc<dyn ProjectBoardStore>) -> Result<Box<dyn BoardOperations>, ProjectBoardError>
+        + Send,
+>;
+
+/// Port: the board's operations, as composition assembles them (B7).
+pub trait BoardOperationsOver: Send + Sync {
+    /// The operations for `request`, its host reads made now, before any lock.
+    fn prepare(
+        &self,
+        request: Option<&BoardRequest>,
+        reads: &dyn ProjectBoardStore,
+    ) -> OperationsOver;
 }

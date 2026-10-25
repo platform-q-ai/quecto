@@ -851,8 +851,8 @@ fn round2_recognized_names_wrong_ddl_refused_before_any_mutation() {
     );
     assert_eq!(
         names.len(),
-        12,
-        "seven schema3 tables and five schema3 indexes"
+        16,
+        "nine schema-4 tables and seven indexes (B7 adds op_results and revision_principals)"
     );
     assert_eq!(
         rows(&raw, "PRAGMA application_id"),
@@ -860,14 +860,14 @@ fn round2_recognized_names_wrong_ddl_refused_before_any_mutation() {
     );
     assert_eq!(
         rows(&raw, "PRAGMA user_version"),
-        vec![vec![Value::Integer(3)]]
+        vec![vec![Value::Integer(4)]]
     );
     assert_eq!(
         rows(&raw, "PRAGMA integrity_check"),
         vec![vec![Value::Text("ok".into())]]
     );
     let recognized = SqliteProjectBoardStore::open(&database.path(), identity("Recognized"))
-        .expect("schema3 fixture is recognized before the deliberate wrong DDL");
+        .expect("schema-4 fixture is recognized before the deliberate wrong DDL");
     drop(recognized);
     drop(raw);
     let raw = Connection::open(database.path()).unwrap();

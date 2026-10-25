@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
+use crate::infrastructure::http::board_service::client::{BoardServiceClient, READ_REPLY};
 use crate::infrastructure::http::board_service::listener::ServiceMethod;
-use crate::infrastructure::http::board_service::local_client::local_request;
 
 /// A token command.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,8 +68,9 @@ pub fn run(options: &TokenOptions, stdout: &mut String, stderr: &mut String) -> 
         TokenAction::Revoke(name) => (ServiceMethod::Post, "/v1/admin/tokens/revoke", named(name)),
         TokenAction::List => (ServiceMethod::Get, "/v1/admin/tokens", String::new()),
     };
-    let (status, reply) = match local_request(&options.socket, method, path, body.as_bytes()) {
-        Ok(answer) => answer,
+    let client = BoardServiceClient::unix(&options.socket);
+    let (status, reply) = match client.send(method, path, body.as_bytes(), READ_REPLY) {
+        Ok(reply) => (reply.status, reply.body),
         Err(error) => {
             let socket = options.socket.display();
             let why = format!("board-server: no answer from a server on {socket}: {error}\n");

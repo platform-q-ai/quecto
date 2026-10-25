@@ -227,7 +227,7 @@ fn native_six_kinds_unchanged_clear_utc_writer_messages_actual_parents_sha256() 
 }
 
 #[test]
-fn native_schema3_has_exact_seven_tables_five_indexes_and_positive_metadata() {
+fn native_schema4_has_exact_nine_tables_seven_indexes_and_positive_metadata() {
     let fixture = Fixture::new(HistoryAlgorithm::Sha1, 12);
     let _store = native(&fixture);
     let c = rusqlite::Connection::open(&fixture.database).unwrap();
@@ -235,8 +235,8 @@ fn native_schema3_has_exact_seven_tables_five_indexes_and_positive_metadata() {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
     assert_eq!(
-        version, 3,
-        "native durable history requires schema3 before any new-table fixture setup"
+        version, 4,
+        "native durable history requires schema4 (B3's history, B7's op answers)"
     );
     let tables: Vec<String> = c
         .prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name")
@@ -252,6 +252,8 @@ fn native_schema3_has_exact_seven_tables_five_indexes_and_positive_metadata() {
             "git_objects",
             "history_meta",
             "objects",
+            "op_results",
+            "revision_principals",
             "revisions",
             "state",
             "tree_entries"
@@ -264,7 +266,7 @@ fn native_schema3_has_exact_seven_tables_five_indexes_and_positive_metadata() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(indexes, 5);
+    assert_eq!(indexes, 7);
     let meta: (Option<String>, String, Option<String>, Option<String>, Option<String>, i64) = c.query_row("SELECT board_id,algorithm,source_remote,source_ref,source_head,imported_count FROM history_meta", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).unwrap();
     assert_eq!(meta, (None, "sha256".into(), None, None, None, 0));
     let git_fields: i64 = c

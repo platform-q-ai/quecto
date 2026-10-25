@@ -1,6 +1,5 @@
-use std::collections::BTreeSet;
-
 use super::*;
+use std::collections::BTreeSet;
 
 /// The board's refusal of `op`, carrying no steps.
 fn board_refused(op: &str, error: &ProjectBoardError) -> Value {
@@ -54,7 +53,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         // A discussion's shape is its own: `kind`, `discussion`, `path`
         // (a_set_aside_artifact_is_named_by_its_kind_task_and_number).
         C::ArtifactSetAside => &["kind", "task", "number", "path", "object"],
-        C::NoPullRequestHost => &["reason"],
+        C::NoPullRequestHost | C::Busy | C::Unanswered => &["reason"],
         // A discussion's and a task's shapes are their own
         // (a_duplicate_artifact_is_named_by_its_kind_task_and_number).
         C::DuplicateArtifact => &["kind", "task", "number"],
@@ -185,6 +184,8 @@ board_errors! {
         updated: at("10:00:00"),
     },
     E::NoLauncher => E::NoLauncher,
+    E::Busy(_) => E::Busy("busy".into()),
+    E::Unanswered(_) => E::Unanswered("late".into()),
     E::RunLive { .. } => E::RunLive {
         task: slug("a"),
         run: 1,
@@ -457,8 +458,7 @@ board_rules! {
 #[test]
 fn every_rule_answers_its_code_and_its_own_keys() {
     let rules = every_rule();
-    // Each rule once, by its variant (two may share a code: #2659's
-    // not_holder on an expired claim).
+    // Each rule once, by its variant (two may share a code: #2659's not_holder on an expired claim).
     let variants: std::collections::HashSet<_> = rules
         .iter()
         .map(|(rule, ..)| {

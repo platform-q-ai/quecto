@@ -103,18 +103,18 @@ fn get(routes: &BoardRoutes, path: &str) -> (u16, Value) {
     (reply.status, serde_json::from_slice(&reply.body).unwrap())
 }
 
+/// B7: the server serves its own SQLite board in its state directory, not
+/// the clone's git board: none until it is made.
 #[test]
-fn the_server_serves_the_git_boards_head() {
+fn the_server_serves_its_sqlite_board() {
     let (dir, work) = seeded();
-    let remote = dir.path().join("remote.git");
     let handles = build_board_server(&environment(&dir, &work, "origin")).unwrap();
     assert_eq!(handles.uid, this_uid());
     assert!(handles.listen.is_empty(), "no config, no TCP");
-    let routes = BoardRoutes::new(handles.serve, handles.access);
+    let routes = BoardRoutes::new(handles.serve, handles.access, handles.operations);
     let (status, body) = get(&routes, "/v1/status");
     assert_eq!(status, 200, "{body}");
-    let head = sh(&remote, &["rev-parse", "quecto/board"]);
-    assert_eq!(body["head"], head.trim());
+    assert_eq!(body["head"], Value::Null, "no board made yet");
     assert_eq!(body["role"], "primary");
     assert_eq!(body["board"].as_str().map(str::len), Some(16), "{body}");
     assert_eq!(get(&routes, "/v1/time").0, 200);
@@ -206,4 +206,57 @@ fn the_tokens_live_in_the_state_directory() {
     assert!(elsewhere.access.list().unwrap().is_empty());
     elsewhere.access.add("phone").unwrap();
     assert!(state.join("tokens.json").exists());
+}
+
+/// Board holding task `a`, ready, linking pull request 7.
+fn linking_seven() -> crate::infrastructure::test_support::memory_board_store::MemoryBoardStore {
+    use crate::domain::project_board::entities::task::{Task, TaskFields};
+    use crate::domain::project_board::value_objects::slug::Slug;
+    use crate::domain::project_board::value_objects::timestamp::Timestamp;
+    use crate::domain::project_board::value_objects::vocabulary::TaskKind;
+    let store =
+        crate::infrastructure::test_support::memory_board_store::MemoryBoardStore::default();
+    store.bootstrap().unwrap();
+    let at = Timestamp::parse("2026-10-10T08:00:00Z").unwrap();
+    let task = Task::new(TaskFields {
+        id: Slug::parse("a").unwrap(),
+        title: "Task a".into(),
+        kind: TaskKind::Task,
+        description_form: Default::default(),
+        description: String::new(),
+        status: TaskStatus::Ready,
+        parent: None,
+        depends_on: vec![],
+        accepted_plan: None,
+        claim: None,
+        prs: vec![7],
+        github_issue: None,
+        resolution: None,
+        superseded_by: vec![],
+        references: vec![],
+        created: at.clone(),
+        updated: at,
+        reason: None,
+    })
+    .unwrap();
+    let head = store.read().unwrap().head;
+    store.write_tasks(&head, &[task], "seed").unwrap();
+    store
+}
+
+#[test]
+fn done_without_a_run_has_its_pull_requests_read_before_the_write() {
+    use crate::application::project_board::ports::PullRequestState;
+    use crate::domain::project_board::value_objects::slug::Slug;
+    use crate::infrastructure::test_support::memory_pull_requests::MemoryPullRequests;
+    let store = linking_seven();
+    let host = MemoryPullRequests::default();
+    host.set(7, PullRequestState::Merged);
+    let request = BoardRequest::DoneWithoutRun {
+        task: Slug::parse("a").unwrap(),
+        reason: "Answered in chat".into(),
+    };
+    let stated = StatedPullRequests::read(&host, Some(&request), &store, Duration::from_secs(30));
+    assert_eq!(host.asked(), vec![7], "read before the write");
+    assert_eq!(stated.state(7).unwrap(), PullRequestState::Merged);
 }

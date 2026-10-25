@@ -31,10 +31,14 @@ pub enum Access {
 /// it by, and its remote's fetch URL. Each part left `None` is asked of
 /// git, as before; the caller that names one vouches for it. Only a read
 /// takes it: a write asks git for the whole location.
+///
+/// `url` names a board server (epic #2705 B7): reads and writes alike go
+/// there, and none of them to git.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KnownLocation {
     pub board_id: Option<BoardId>,
     pub remote_url: Option<String>,
+    pub url: Option<String>,
 }
 
 /// What composition is given to build the board's operations.
