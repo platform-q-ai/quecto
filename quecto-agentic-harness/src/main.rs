@@ -46,6 +46,7 @@ fn main() {
             board_history: quecto::composition::bootstrap::project_board_history::build_history_cli,
             board_backup: quecto::composition::bootstrap::board_backup::build_backup_cli,
             board_fence: quecto::composition::bootstrap::board_fence::build_fence_cli,
+            board_watch: quecto::composition::bootstrap::project_board_remote::build_board_watch,
             board_history_import:
                 quecto::composition::bootstrap::project_board_history::build_history_import_cli,
         },

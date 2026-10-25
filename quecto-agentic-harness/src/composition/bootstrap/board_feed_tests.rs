@@ -1,10 +1,6 @@
 //! The change feed end to end (epic #2705 B10): a real server on a temp
-//! socket over its SQLite board, written through its op route and its
-//! event stream read raw off the socket. Acceptance (feed p95 at most
-//! 100 ms) is measured here and held to a bound CI load cannot flake.
-use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+//! socket over its SQLite board, written through its op route and watched
+//! through the client's reader. Acceptance: feed p95 at most 100 ms.
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -13,14 +9,16 @@ use serde_json::{Value, json};
 
 use super::tests::{Synced, environment, seeded};
 use super::*;
+use crate::application::project_board::ports::feed::{BoardWatch, FeedEvent, WatchFlow};
 use crate::infrastructure::http::board_service::client::{BoardServiceClient, READ_REPLY};
+use crate::infrastructure::http::board_service::events::Opened;
 use crate::infrastructure::http::board_service::limits::Method;
+use crate::infrastructure::http::board_watch::{RemoteBoardWatch, decoded};
 use crate::interface::cli::board_server::serve::{Started, serve};
 
 /// A server serving `handles` on a temp socket until the sender is used.
 struct Served {
     _dir: tempfile::TempDir,
-    socket: PathBuf,
     client: BoardServiceClient,
     board: BoardId,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
@@ -56,7 +54,6 @@ fn served(handles: BoardServerHandles) -> Served {
     Served {
         _dir: dir,
         client: BoardServiceClient::unix(&socket),
-        socket,
         board,
         stop: Some(stop),
         thread: Some(thread),
@@ -73,8 +70,12 @@ fn write(served: &Served, request: Value) -> Value {
         .client
         .send(Method::Post, &path, body.to_string().as_bytes(), READ_REPLY)
         .unwrap();
-    let shown = String::from_utf8_lossy(&reply.body).to_string();
-    assert_eq!(reply.status, 200, "{shown}");
+    assert_eq!(
+        reply.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&reply.body)
+    );
     let answer: Value = serde_json::from_slice(&reply.body).unwrap();
     assert_eq!(answer["answer"]["ok"], json!(true), "{answer}");
     answer
@@ -91,77 +92,42 @@ fn tip(served: &Served) -> u64 {
     head.split_once(':').unwrap().1.parse().unwrap()
 }
 
-/// One SSE event read off the wire: its id, its name, its data line.
-#[derive(Debug, Clone)]
-struct Frame {
-    id: u64,
-    event: String,
-    data: String,
-}
-
-/// The whole frames in `text` from `from` on (`id`, `event`, `data`, a
-/// blank line), and where the next one starts. Chunk framing lies between
-/// frames, never inside one: each chunk is whole frames.
-fn frames(text: &str, mut from: usize) -> (Vec<Frame>, usize) {
-    let mut found = Vec::new();
-    while let Some(at) = text[from..].find("id: ").map(|at| at + from) {
-        let rest = &text[at..];
-        let Some(end) = rest.find("\n\n") else { break };
-        let lines: Vec<&str> = rest[..end].lines().collect();
-        if let [id, event, data] = lines.as_slice() {
-            found.push(Frame {
-                id: id.trim_start_matches("id: ").parse().unwrap(),
-                event: event.trim_start_matches("event: ").to_string(),
-                data: data.trim_start_matches("data: ").to_string(),
-            });
-        }
-        from = at + end + 2;
-    }
-    (found, from)
-}
-
-/// The revisions a stream told, each with when it came.
+/// The revisions a watch saw, each with when it came.
 type Revisions = mpsc::Receiver<(u64, Instant)>;
-/// A stream's reader thread: every frame it read.
-type Reader = std::thread::JoinHandle<Vec<Frame>>;
+/// A watch's thread, and how its watch ended.
+type Watcher = std::thread::JoinHandle<Result<(), String>>;
 
-/// A raw stream from `Last-Event-ID: after`, read on its own thread until
-/// `stop` is set or the server closes it.
-fn streaming(served: &Served, after: u64, stop: Arc<AtomicBool>) -> (Revisions, Reader) {
-    let path = format!("/v1/boards/{}/events", served.board.as_str());
-    let mut stream = UnixStream::connect(&served.socket).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_millis(50)))
-        .unwrap();
-    let head = format!("GET {path} HTTP/1.1\r\nHost: board\r\nLast-Event-ID: {after}\r\n\r\n");
-    stream.write_all(head.as_bytes()).unwrap();
+/// A watch on its own thread from `after`, sending each revision and when
+/// it came, until `stop` is set (checked at each event).
+fn watching(
+    served: &Served,
+    after: Option<u64>,
+    stop: std::sync::Arc<AtomicBool>,
+) -> (Revisions, Watcher) {
+    let watch = RemoteBoardWatch::timed(
+        served.client.clone(),
+        served.board.clone(),
+        Duration::from_secs(20),
+        Duration::from_millis(50),
+    );
     let (seen, revisions) = mpsc::channel();
-    let reader = std::thread::spawn(move || {
-        let (mut text, mut from, mut all) = (String::new(), 0, Vec::new());
-        let mut buf = [0u8; 8192];
-        while !stop.load(Ordering::SeqCst) {
-            match stream.read(&mut buf) {
-                Ok(0) => break,
-                Ok(read) => text.push_str(&String::from_utf8_lossy(&buf[..read])),
-                Err(_) => continue,
+    let thread = std::thread::spawn(move || {
+        watch.watch(after, &mut |event| {
+            if let FeedEvent::Revision(revision) = event {
+                let _ = seen.send((revision.revision, Instant::now()));
             }
-            let (found, next) = frames(&text, from);
-            from = next;
-            for frame in found {
-                if frame.event == "revision" {
-                    let _ = seen.send((frame.id, Instant::now()));
-                }
-                all.push(frame);
+            match stop.load(Ordering::SeqCst) {
+                true => WatchFlow::Stop,
+                false => WatchFlow::Continue,
             }
-        }
-        all
+        })
     });
-    (revisions, reader)
+    (revisions, thread)
 }
 
 /// Waits for revision `want`: when it came; every revision before it is
 /// pushed onto `seen` too.
-fn until(revisions: &Revisions, want: u64, seen: &mut Vec<u64>) -> Instant {
+fn until(revisions: &mpsc::Receiver<(u64, Instant)>, want: u64, seen: &mut Vec<u64>) -> Instant {
     loop {
         let (revision, at) = revisions
             .recv_timeout(Duration::from_secs(10))
@@ -173,31 +139,9 @@ fn until(revisions: &Revisions, want: u64, seen: &mut Vec<u64>) -> Instant {
     }
 }
 
-/// Whether `frame` is of the feed's allowlisted schema, its id the cursor.
-fn allowlisted(frame: &Frame) -> bool {
-    let data: Value = serde_json::from_str(&frame.data).unwrap_or(Value::Null);
-    let Some(fields) = data.as_object() else {
-        return false;
-    };
-    let mut keys: Vec<&str> = fields.keys().map(String::as_str).collect();
-    keys.sort_unstable();
-    let number = |key: &str| fields.get(key).and_then(Value::as_u64);
-    match (frame.event.as_str(), data["kind"].as_str(), keys.as_slice()) {
-        ("epoch", Some("epoch"), ["epoch", "kind"]) => number("epoch").is_some(),
-        ("revision", Some("revision"), ["epoch", "kind", "revision"]) => {
-            number("epoch").is_some() && number("revision") == Some(frame.id)
-        }
-        ("reset", Some("reset"), ["after", "kind"]) => number("after") == Some(frame.id),
-        (_, _, _) => false,
-    }
-}
-
-/// Red tests (plan B10), end to end: a stream resumed after a cut is
-/// gap-free with each revision once, no event carries the task's text, and
-/// the feed is fast: from a write's reply (its commit is before it) to its
-/// event, the median is at most 100 ms (the plan's target, as a p95, was
-/// measured at 36 to 40 ms) and the p95 at most 250 ms, a bound CI load
-/// cannot flake.
+/// Red tests (plan B10), end to end: a resumed watch is gap-free with
+/// each revision once, no event carries the task's text, and the feed's
+/// p95 from a write sent to its event received is at most 100 ms.
 #[test]
 fn the_feed_is_gap_free_textless_and_fast_end_to_end() {
     let (dir, work) = seeded();
@@ -206,52 +150,76 @@ fn the_feed_is_gap_free_textless_and_fast_end_to_end() {
     let served = served(handles);
     write(&served, json!({"op": "bootstrap"}));
     let stop = Arc::new(AtomicBool::new(false));
-    let (revisions, reader) = streaming(&served, 0, Arc::clone(&stop));
+    let (revisions, watcher) = watching(&served, Some(0), Arc::clone(&stop));
     let mut seen = Vec::new();
     until(&revisions, tip(&served), &mut seen);
     let mut latencies = Vec::new();
     for at in 0..40 {
+        let sent = Instant::now();
         write(
             &served,
             json!({"op": "create", "task": format!("t{at}"),
             "title": format!("SECRET-TITLE-{at}"), "status": "ready"}),
         );
-        let answered = Instant::now();
         let came = until(&revisions, tip(&served), &mut seen);
-        latencies.push(came.saturating_duration_since(answered));
+        latencies.push(came.saturating_duration_since(sent));
     }
     latencies.sort_unstable();
     let p95 = latencies[latencies.len() * 95 / 100 - 1];
-    let (p50, most) = (latencies[latencies.len() / 2], latencies.last().unwrap());
-    eprintln!("board feed: p50 {p50:?}, p95 {p95:?}, max {most:?}");
-    assert!(
-        p50 <= Duration::from_millis(100),
-        "feed p50 {p50:?}: {latencies:?}"
+    eprintln!(
+        "board feed: p50 {:?}, p95 {p95:?}, max {:?}",
+        latencies[latencies.len() / 2],
+        latencies.last().unwrap()
     );
     assert!(
-        p95 <= Duration::from_millis(250),
+        p95 <= Duration::from_millis(100),
         "feed p95 {p95:?}: {latencies:?}"
     );
-    // The stream is cut; more lands while no one reads; it resumes.
+    // The watch is cut; more lands while no one watches; it resumes.
     stop.store(true, Ordering::SeqCst);
-    let first = reader.join().unwrap();
+    write(
+        &served,
+        json!({"op": "create", "task": "cut", "title": "Cut", "status": "ready"}),
+    );
+    watcher.join().unwrap().unwrap();
+    while let Ok((revision, _)) = revisions.try_recv() {
+        seen.push(revision);
+    }
     let last = *seen.last().unwrap();
     for at in 0..5 {
         write(
             &served,
-            json!({"op": "create", "task": format!("r{at}"), "title": "R",
-            "status": "ready"}),
+            json!({"op": "create", "task": format!("r{at}"), "title": "R", "status": "ready"}),
         );
     }
-    let stop = Arc::new(AtomicBool::new(false));
-    let (resumed, reader) = streaming(&served, last, Arc::clone(&stop));
+    let (resumed, thread) = watching(&served, Some(last), Arc::new(AtomicBool::new(false)));
     until(&resumed, tip(&served), &mut seen);
-    stop.store(true, Ordering::SeqCst);
-    let second = reader.join().unwrap();
-    let every: Vec<u64> = (1..=tip(&served)).collect();
-    assert_eq!(seen, every, "every revision once, in order");
-    for frame in first.iter().chain(&second) {
-        assert!(!frame.data.contains("SECRET"), "{frame:?}");
-        assert!(allowlisted(frame), "off the schema: {frame:?}");
+    assert_eq!(
+        seen,
+        (1..=tip(&served)).collect::<Vec<_>>(),
+        "every revision once, in order"
+    );
+    drop(resumed);
+    // The raw stream from the start: every event of the schema, no text.
+    let path = format!("/v1/boards/{}/events", served.board.as_str());
+    let Ok(Opened::Stream(mut reader)) =
+        served
+            .client
+            .open_events(&path, Some(0), Duration::from_secs(5))
+    else {
+        panic!("the stream opens");
+    };
+    let mut told = 0;
+    while told < tip(&served) {
+        let event = reader.next_event().unwrap().unwrap();
+        assert!(!format!("{event:?}").contains("SECRET"), "{event:?}");
+        let (_, event) = decoded(&event).unwrap_or_else(|| panic!("off the schema: {event:?}"));
+        if let FeedEvent::Revision(_) = event {
+            told += 1;
+        }
     }
+    drop(reader);
+    drop(served);
+    // The resumed watch ends as its server goes.
+    let _ = thread.join();
 }

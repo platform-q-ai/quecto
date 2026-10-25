@@ -362,6 +362,18 @@ Both routes are reads: over TCP any held token may ask them, on the Unix
 socket the server's own user. An id that is not this server's board is 404
 `board`.
 
+**`quecto board watch [--url <url>] [--board-id <hex>] [--repo <path>]
+[--remote <name>] [--after <revision>] [--count <n>]`** prints the feed,
+one JSON line per event (the event's data as above), for scripts and the
+Pocket relay's tests. The server, its token and the board's id are found
+as for `quecto board --url`. It starts from `--after` (else now), and when
+the stream ends or is cut it opens it again from the last id it printed, so
+each revision is printed once; after a `reset` it reads on from the reset's
+`after`. It exits 0 after `--count` events or once its output is closed,
+and 1 when it cannot start, the server refuses it (a 503 `busy` is tried
+again), or 5 opens in a row fail. A read waits at most 45 s (three missed
+pings) before the stream is opened again.
+
 ## Error replies
 
 Every error reply the server makes is JSON, `{"error": "<why>", "code":

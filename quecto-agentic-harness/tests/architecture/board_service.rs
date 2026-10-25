@@ -23,6 +23,7 @@ const TRANSPORT: &[&str] = &[
     "src/infrastructure/http/board_service/listener.rs",
     "src/infrastructure/http/board_service/limits.rs",
     "src/infrastructure/http/board_service/client.rs",
+    "src/infrastructure/http/board_service/events.rs",
     "src/infrastructure/http/board_service/sources.rs",
     "src/infrastructure/http/board_service/replies.rs",
     "src/infrastructure/http/board_service/socket.rs",
@@ -209,7 +210,9 @@ fn the_scan_sees_what_it_refuses() {
 /// that picks it.
 const REMOTE: &[&str] = &[
     "src/infrastructure/http/board_remote.rs",
+    "src/infrastructure/http/board_watch.rs",
     "src/infrastructure/http/board_service/client.rs",
+    "src/infrastructure/http/board_service/events.rs",
     "src/composition/bootstrap/project_board_remote.rs",
     // B8: a start begun there and launched here, an end sent with its facts.
     "src/infrastructure/http/board_remote_runs.rs",

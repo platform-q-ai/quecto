@@ -11,10 +11,12 @@ use super::project_board::{
     BoardLocation, board_committer, kept_reports, store_reason, write_refusal,
 };
 use super::project_board_remote_runs::{RemoteRuns, RunSwarms};
+use crate::application::project_board::ports::feed::BoardWatch;
 use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness, StartedRuns};
 use crate::application::project_board::use_cases::LaunchBegunRun;
 use crate::infrastructure::http::board_remote::{RemoteBoardOperations, endpoint_of};
 use crate::infrastructure::http::board_remote_runs::RemoteBoardRuns;
+use crate::infrastructure::http::board_watch::RemoteBoardWatch;
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
 use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
 use crate::interface::cli::controllers::board::{
@@ -85,6 +87,34 @@ pub fn remote_handles(
         operations: Box::new(operations),
         board: Some(board),
     })
+}
+
+/// A watch of the change feed of the server `environment` names (B10):
+/// its URL and token as for its operations; no committer.
+///
+/// # Errors
+/// No board server named, a URL or token refused, or no board id.
+pub fn build_board_watch(
+    environment: &ProjectBoardEnvironment,
+) -> Result<Box<dyn BoardWatch>, BuildError> {
+    let unavailable = BuildError::Unavailable;
+    let url = server_url(environment).ok_or_else(|| {
+        unavailable(format!(
+            "watch needs a board server: give --url, or set {URL_VARIABLE} or board.url"
+        ))
+    })?;
+    let token =
+        var(&environment.vars, TOKEN_VARIABLE).or_else(|| configured(&environment.vars, "token"));
+    let client = endpoint_of(&url, token.as_deref())
+        .map_err(|why| unavailable(format!("the board server: {why}")))?;
+    let board = match &environment.known.board_id {
+        Some(board) => board.clone(),
+        None => located(
+            environment,
+            GitEnvironment::allowlisted(environment.vars.iter().cloned()),
+        )?,
+    };
+    Ok(Box::new(RemoteBoardWatch::new(client, board)))
 }
 
 /// The board's id as git makes it from the clone's remote.

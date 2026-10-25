@@ -103,3 +103,25 @@ pub struct Told {
     pub id: u64,
     pub event: FeedEvent,
 }
+
+/// Whether a watcher goes on after an event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchFlow {
+    Continue,
+    Stop,
+}
+
+/// Port: a client's watch of a board server's feed (`quecto board watch`).
+pub trait BoardWatch {
+    /// Hands `each` every event from revision `after` (none: from now),
+    /// reconnecting from the last revision seen when the stream ends,
+    /// until `each` says stop.
+    ///
+    /// # Errors
+    /// The server could not be reached or refused the watch.
+    fn watch(
+        &self,
+        after: Option<u64>,
+        each: &mut dyn FnMut(FeedEvent) -> WatchFlow,
+    ) -> Result<(), String>;
+}

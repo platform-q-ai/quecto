@@ -102,6 +102,8 @@ mod board_transaction;
 mod board_usage;
 #[path = "contracts/board_wakes.rs"]
 mod board_wakes;
+#[path = "contracts/board_watch.rs"]
+mod board_watch;
 #[path = "contracts/browser_authorization.rs"]
 mod browser_authorization;
 #[path = "common/catalogue_conformance.rs"]
