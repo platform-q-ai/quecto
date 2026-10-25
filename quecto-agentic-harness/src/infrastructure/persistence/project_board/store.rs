@@ -717,7 +717,7 @@ pub(crate) use clear::cleared;
 mod committer;
 #[path = "store_fence.rs"]
 mod fence;
-pub use fence::Fence;
+pub use fence::{Fence, GitBoardFence};
 #[path = "store_fetch_state.rs"]
 mod fetch_state;
 #[path = "store_fetch.rs"]
