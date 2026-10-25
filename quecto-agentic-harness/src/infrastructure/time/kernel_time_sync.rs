@@ -53,6 +53,11 @@ fn read() -> ClockSync {
     ClockSync::Unsynced("this build reads the clock's synchronisation on Linux only".into())
 }
 
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn classified(ret: libc::c_int, status: libc::c_int, _errno: i32) -> ClockSync {
+    judged(ret, status)
+}
+
 /// The kernel's `clock` state and `status` bits, judged: synchronised only
 /// for a state in [`KEPT`] with `STA_UNSYNC` clear.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]

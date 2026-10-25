@@ -279,7 +279,7 @@ impl Drop for Server {
 }
 
 /// A host whose clock is synchronised: the board server's clock gate
-/// (#2705) lets its clock through, as its own reference.
+/// (#2705) lets its clock through, still with no outside reference.
 struct Synced;
 
 impl TimeSync for Synced {
@@ -290,8 +290,8 @@ impl TimeSync for Synced {
 
 /// The remote adapter composition picks for `--url`, against a board
 /// server for a fresh clone of `remote`, its board in a fresh state
-/// directory; the server's host clock is synchronised, so its clock is
-/// referenced and its answers carry no clock note.
+/// directory; the server's host clock is synchronised, and its clock
+/// reads no outside time.
 fn served(remote: &Remote) -> Fixture {
     let repo = remote.clone_dir(0).to_path_buf();
     let state = repo.join(".git").join("served");
@@ -328,7 +328,7 @@ fn served(remote: &Remote) -> Fixture {
     };
     Fixture {
         operations: built(&repo, known),
-        clock_note: None,
+        clock_note: Some("this machine's clock reads no outside time".into()),
         _server: Some(Server {
             stop: Some(stop),
             thread: Some(thread),

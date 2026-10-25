@@ -25,18 +25,40 @@ fn an_unsynchronised_host_clock_tells_no_time() {
     assert_eq!(clock.reference(), None);
     assert_eq!(
         clock.reference_status(),
-        ReferenceStatus::NoReference("the kernel says so".into())
+        ReferenceStatus::NoReference("set without one".into())
     );
 }
 
-/// A synchronised host clock is itself kept to an outside time: it is the
-/// reference, so a change is bounded against it and carries no clock note.
+/// A synchronised host clock tells the time, and is no outside reference
+/// (B7's behaviour until B9): its reference is the wrapped clock's.
 #[test]
-fn a_synchronised_host_clock_tells_the_time_and_is_its_own_reference() {
+fn a_synchronised_host_clock_tells_the_time_with_the_clocks_own_reference() {
     let clock = gated(ClockSync::Synced);
     assert_eq!(clock.now(), Ok(at("08:00:00")));
-    assert_eq!(clock.reference(), Some(at("08:00:00")));
-    assert_eq!(clock.reference_status(), ReferenceStatus::Referenced);
+    assert_eq!(clock.reference(), None);
+    assert_eq!(
+        clock.reference_status(),
+        ReferenceStatus::NoReference("set without one".into())
+    );
+}
+
+/// Only `now` asks the host: an op that reads the clock reads the kernel
+/// once, whatever else it asks of the clock.
+#[test]
+fn only_reading_the_time_asks_the_host() {
+    struct Counted(std::sync::atomic::AtomicUsize);
+    impl TimeSync for Counted {
+        fn sync(&self) -> ClockSync {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            ClockSync::Synced
+        }
+    }
+    let counted = Arc::new(Counted(Default::default()));
+    let clock = SyncedBoardClock::new(SetClock::at("08:00:00"), Arc::clone(&counted) as _);
+    clock.now().unwrap();
+    let _ = (clock.reference(), clock.reference_status(), clock.elapsed());
+    clock.pause(2);
+    assert_eq!(counted.0.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 #[test]
