@@ -5,14 +5,12 @@
 |---|---|
 | Id | board-2705-b13-fence |
 | Kind | task |
-| Status | review |
+| Status | done |
 | Parent | board-2705-b13-lite |
 | Accepted plan | 2 |
-| Claimed by | shane-pocket (`shane@platformq.co.uk`) |
-| Claimed since | 2026-10-25T22:08:01Z |
-| Claim expires | 2026-10-26T00:08:01Z |
+| Resolution | completed |
 | Created | 2026-10-25T07:51:31Z |
-| Updated | 2026-10-25T22:08:01Z |
+| Updated | 2026-10-25T22:28:41Z |
 
 ## Description
 Deliver the owner's second complete B13 PR: offline `quecto board-server fence`, using #2718's existing BoardMoved/parser/fence_tree and the Git store's private captured-head CAS publication/reconciliation. Same-destination invocation is idempotent without new fence objects/commit/push or writer-identity lookup; another board/URL/order returns typed Moved. Malformed/unsupported/missing boards refuse without bootstrap or repair. Preserve caller identity, sole captured parent, recognized folders/archive/history and unrelated refs. Test only owned scratch remotes; never fence the live board.
