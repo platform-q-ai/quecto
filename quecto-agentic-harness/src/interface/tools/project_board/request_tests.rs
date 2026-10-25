@@ -1,5 +1,6 @@
 use super::*;
 use crate::domain::project_board::entities::task_parts::Entry;
+use crate::domain::project_board::services::transitions::MoveReason;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -76,7 +77,10 @@ fn each_op_reads_its_own_fields() {
         ),
         (
             json!({"op": "move", "task": "a", "to": "in_progress"}),
-            BoardRequest::Change(task(), BoardOp::Move(TaskStatus::InProgress)),
+            BoardRequest::Change(
+                task(),
+                BoardOp::Move(TaskStatus::InProgress, MoveReason::Absent),
+            ),
         ),
         (
             json!({"op": "renew", "task": "a"}),
@@ -150,6 +154,7 @@ fn each_op_reads_its_own_fields() {
             "create",
             "update_draft",
             "move",
+            "done_without_run",
             "renew",
             "take_over",
             "link_pr",
@@ -163,7 +168,7 @@ fn each_op_reads_its_own_fields() {
             "end_run",
             "clear_set_aside"
         ],
-        "no op is named plain ready; status changes are moves"
+        "no op is named plain ready; status changes are moves, or the lifecycle's"
     );
 }
 
@@ -339,6 +344,7 @@ fn samples(kind: Kind) -> (Value, Value, Value) {
         Kind::AcceptedVersion => (json!(1), Value::Null, json!("1")),
         Kind::Run => (json!(1), json!(2), json!(0)),
         Kind::RunEnd => (json!("failed"), json!("lost"), json!("completed")),
+        Kind::RunStop => (json!("blocked"), json!("cancelled"), json!("paused")),
         Kind::PlanItems => (
             json!([{"id": "a", "title": "A"}]),
             json!([{"id": "b", "title": "B"}]),
@@ -379,6 +385,10 @@ fn every_field_in_the_table_is_read_by_its_kind() {
                     _ => ("approach", json!("D")),
                 };
                 object.insert(other.into(), value);
+            }
+            // A stop's kind is taken with a stopped run alone (#2705 T5).
+            if *op == "end_run" && except == "stop" {
+                object.insert("outcome".into(), json!("stopped"));
             }
             object
         };
@@ -422,6 +432,7 @@ fn sample(kind: Kind) -> Value {
         Kind::AcceptedVersion => Value::Null,
         Kind::Run => json!(1),
         Kind::RunEnd => json!("failed"),
+        Kind::RunStop => json!("blocked"),
         Kind::PlanItems => json!([]),
         Kind::Team => Value::Null,
     }
@@ -573,9 +584,35 @@ fn end_run_reads_its_run_outcome_and_pin() {
             run: 2,
             outcome: RunEndOutcome::Stopped,
             expected_updated: Some(at),
+            stop: None,
+        }))
+    );
+    // #2705 T5 review round 1: how a stop stopped, when no board was kept.
+    use crate::domain::project_board::services::run_outcomes::StopKind;
+    assert_eq!(
+        parse(
+            &json!({"op": "end_run", "task": "a", "run": 2, "outcome": "stopped",
+                      "stop": "blocked"})
+        ),
+        Ok(BoardRequest::EndRun(RunEnd {
+            task: slug("a"),
+            run: 2,
+            outcome: RunEndOutcome::Stopped,
+            expected_updated: None,
+            stop: Some(StopKind::Blocked),
         }))
     );
     for (value, field, problem) in [
+        (
+            json!({"op": "end_run", "task": "a", "run": 1, "outcome": "stopped", "stop": "paused"}),
+            "stop",
+            "must be one of blocked, cancelled",
+        ),
+        (
+            json!({"op": "end_run", "task": "a", "run": 1, "outcome": "failed", "stop": "blocked"}),
+            "stop",
+            "is taken only with outcome stopped",
+        ),
         (
             json!({"op": "end_run", "task": "a", "run": 1, "outcome": "completed"}),
             "outcome",

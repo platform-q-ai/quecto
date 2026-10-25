@@ -4,19 +4,23 @@
 //! its accepted plan begins, all at one stamp, so the task and the run are
 //! written by one commit, and the run begins with a whole claim window.
 //!
-//! The transition table stays the authority on who may move a task: a start
-//! asks it about each move it makes ([`move_reads`]) and composes them, as
-//! two moves in a row would stamp the task twice.
+//! The transition table stays the authority on who claims a ready task: a
+//! start asks it about that move ([`move_reads`]) and composes it with the
+//! move to in progress, as two moves in a row would stamp the task twice.
+//! The move to in progress is the lifecycle's own (#2705 T4): `move` never
+//! makes it, and a start is the only way there; the run's end is the only
+//! way out (#2705 T5), a start's undo included.
 use super::super::entities::claim::Identity;
 use super::super::entities::plan::Plan;
 use super::super::entities::run::Run;
 use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::timestamp::Timestamp;
+use super::super::value_objects::vocabulary::LifecycleAction;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
 use super::claims::{new_claim, renew, settle, stamp};
 use super::runs::begin_run;
-use super::transitions::{move_reads, relations_allow};
+use super::transitions::{lifecycle_action, move_reads, relations_allow};
 
 /// A task started: in progress, held by its starter, and a run of its
 /// accepted plan begun. Only [`start`] builds one, so holding one proves
@@ -99,11 +103,15 @@ pub fn start(
             next
         }
         Claimed | Review | Blocked => {
-            let renewed = renew(task, actor, now)?;
-            // Guards the table's row: a held status moves to in progress
-            // only by its holder's row, never by this rule's say-so.
-            move_reads(&renewed, InProgress, actor, &at)?;
-            renewed.into_fields()
+            // The move to in progress is the lifecycle's, made only here
+            // (#2705 T4), and its holder's: `renew` refuses anyone else,
+            // and the run begins only under a live claim (`begin_run`).
+            assert_eq!(
+                lifecycle_action(from, InProgress),
+                Some(LifecycleAction::Start),
+                "a start makes {from:?} -> in_progress, as the lifecycle says"
+            );
+            renew(task, actor, now)?.into_fields()
         }
         InProgress => renew(task, actor, now)?.into_fields(),
         Draft | Done | Archived => {
@@ -119,6 +127,8 @@ pub fn start(
         (Some(_), Some(plan)) => plan,
     };
     next.status = TaskStatus::InProgress;
+    // A reason is kept only beside the move that took it (#2705 T4).
+    next.reason = None;
     let started = settle(next, &at)?;
     let run = begin_run(&started, runs, plan, actor, &at)?;
     let fields = started.fields();

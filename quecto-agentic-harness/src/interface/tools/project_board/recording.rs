@@ -509,6 +509,8 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
     match rule {
         R::Invalid(schema) | R::InvalidPlan(schema) => Some(schema),
         R::NotAllowed { .. }
+        | R::UseLifecycle { .. }
+        | R::ReasonRequired { .. }
         | R::NotHolder
         | R::NotHolderExpired
         | R::NoClaim
@@ -554,6 +556,7 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         | R::NoPrs
         | R::PrsUnmerged(..)
         | R::PrsLinked(..)
+        | R::PrsOpen(..)
         | R::PrNotLinked(..)
         | R::PrAlreadyLinked(..)
         | R::NotDraft(..)

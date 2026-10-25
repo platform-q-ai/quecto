@@ -20,13 +20,16 @@ pub const MAX_PRS: usize = 16;
 pub const MAX_SUPERSEDED_BY: usize = 16;
 /// The most references a task keeps.
 pub const MAX_REFERENCES: usize = 64;
+/// The most characters a status move's reason takes (#2705 T4).
+pub const MAX_REASON_CHARS: usize = 1_000;
 /// All of a task's text together, in UTF-8 bytes: this budget keeps every
 /// task the domain admits inside the file it is stored in (the record
 /// layer proves it). Its title and description alone always fit (a
 /// character is at most four bytes); with its references they can add up
 /// past it, so the budget is checked.
 pub const MAX_TEXT_BYTES: usize = 320 * 1024;
-const _: () = assert!(4 * (MAX_TITLE_CHARS + MAX_DESCRIPTION_CHARS) <= MAX_TEXT_BYTES);
+const _: () =
+    assert!(4 * (MAX_TITLE_CHARS + MAX_DESCRIPTION_CHARS + MAX_REASON_CHARS) <= MAX_TEXT_BYTES);
 
 /// A task's content, unchecked: what [`Task::new`] validates.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +65,10 @@ pub struct TaskFields {
     pub references: Vec<Reference>,
     pub created: Timestamp,
     pub updated: Timestamp,
+    /// Why the task's last status move was made, for the moves that take a
+    /// reason (#2705 T4): back to ready from review, or done without a
+    /// run (kept when that task is archived). Every other move clears it.
+    pub reason: Option<String>,
 }
 
 impl TaskFields {
@@ -77,7 +84,8 @@ impl TaskFields {
             .iter()
             .map(|reference| reference.as_str().len())
             .sum();
-        self.title.len() + self.description.len() + references
+        let reason = self.reason.as_ref().map_or(0, String::len);
+        self.title.len() + self.description.len() + references + reason
     }
 }
 
@@ -180,6 +188,7 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
         ));
     }
     validate_closure(task)?;
+    reason_holds(task)?;
     let text = task.text_bytes();
     if text <= MAX_TEXT_BYTES {
         Ok(())
@@ -257,14 +266,14 @@ fn validate_closure(task: &TaskFields) -> Result<(), SchemaError> {
 
 /// The task's resolution fits its status and what superseded it.
 fn resolution_holds(task: &TaskFields) -> Result<(), SchemaError> {
-    use Resolution::{Completed, Duplicate, NotPlanned, Superseded};
+    use Resolution::{Completed, DoneWithoutRun, Duplicate, NotPlanned, Superseded};
     use TaskStatus::{Archived, Blocked, Claimed, Done, Draft, InProgress, Ready, Review};
     let status = task.status;
     let by_status = match (task.resolution, status) {
-        (Some(Completed), Done)
+        (Some(Completed | DoneWithoutRun), Done)
         | (Some(_), Archived)
         | (None, Draft | Ready | Claimed | InProgress | Review | Blocked | Archived) => Ok(()),
-        (_, Done) => Err("a done task is completed"),
+        (_, Done) => Err("a done task is completed, or done without a run"),
         (Some(_), _) => Err("only a done or archived task is resolved"),
     };
     let named = !task.superseded_by.is_empty() || !task.references.is_empty();
@@ -272,10 +281,12 @@ fn resolution_holds(task: &TaskFields) -> Result<(), SchemaError> {
         (Some(Superseded | Duplicate), false, _) => {
             Err("a superseded or duplicate task names what took it over: a task or a reference")
         }
-        (Some(Completed | NotPlanned), _, false) => {
+        (Some(Completed | DoneWithoutRun | NotPlanned), _, false) => {
             Err("a task superseded by others is unresolved, superseded or duplicate")
         }
-        (None | Some(Completed | NotPlanned), _, true) | (None, _, false) => Ok(()),
+        (None | Some(Completed | DoneWithoutRun | NotPlanned), _, true) | (None, _, false) => {
+            Ok(())
+        }
         (Some(Superseded | Duplicate), true, _) => Ok(()),
     };
     match by_status.and(by_successor) {
@@ -283,6 +294,32 @@ fn resolution_holds(task: &TaskFields) -> Result<(), SchemaError> {
         Err(why) => Err(SchemaError::new(
             "resolution",
             format!("{why} (status {})", status.as_str()),
+        )),
+    }
+}
+
+/// A reason is one line, kept only beside the move that took it (#2705
+/// T4): a ready task's, moved back from review, or a task's done without a
+/// run (done, or archived since), which always has one.
+fn reason_holds(task: &TaskFields) -> Result<(), SchemaError> {
+    if let Some(reason) = &task.reason {
+        line("reason", reason, MAX_REASON_CHARS)?;
+    }
+    let done_without_run = task.resolution == Some(Resolution::DoneWithoutRun);
+    match (&task.reason, task.status, done_without_run) {
+        (Some(_), TaskStatus::Ready, false)
+        | (Some(_), TaskStatus::Done | TaskStatus::Archived, true)
+        | (None, _, false) => Ok(()),
+        (None, _, true) => Err(SchemaError::new(
+            "reason",
+            "a task done without a run says why",
+        )),
+        (Some(_), _, _) => Err(SchemaError::new(
+            "reason",
+            format!(
+                "is kept only by a ready task or one done without a run (status {})",
+                task.status.as_str()
+            ),
         )),
     }
 }

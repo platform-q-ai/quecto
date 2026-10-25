@@ -293,6 +293,18 @@ const KNOWN_KINDS: &[&str] = &[
     "handoff_from",
     "busy",
     "unanswered",
+    // The lifecycle's refusals, the op done without a run and its field
+    // (#2705 T4).
+    "use_lifecycle",
+    "reason_required",
+    "done_without_run",
+    "reason",
+    // Done without a run once every linked pull request has merged (#2705
+    // T4 review round 1): its refusal for one that has not.
+    "prs_open",
+    // How a stopped run stopped, when no board of its swarm was kept
+    // (#2705 T5 review round 1).
+    "stop",
 ];
 
 /// Whether every one of [`KNOWN_KINDS`] is shaped as a kind (checked as

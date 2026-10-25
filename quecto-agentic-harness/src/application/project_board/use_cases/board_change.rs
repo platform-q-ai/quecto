@@ -13,6 +13,7 @@ use crate::application::project_board::ports::{
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::Plan;
+use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::claims::{CLOCK_AHEAD_SECONDS, within_slack};
 use crate::domain::project_board::services::plans::Moment;
@@ -81,8 +82,8 @@ pub(super) fn checked_now(clock: &dyn BoardClock) -> Result<When, ProjectBoardEr
 /// one change, retried against a fresh board when another writer moved it
 /// first. Every change is about one task ([`one_tasks_change`]): it
 /// writes that task first ([`written_task`]), or only other artifacts of
-/// it (a plan, [`written_plan`]); a fold-back writes its run alone
-/// ([`commit_run`]). Given
+/// it (a plan, [`written_plan`]); a run's end writes its run, after its
+/// task when the end moves it ([`commit_run`]). Given
 /// `facts` (epic #2481 T4), it notes the attempts it began, how many lost
 /// the race and how long it paused between them; given none, it notes
 /// nothing and reads no monotonic time.
@@ -96,8 +97,8 @@ pub(super) fn commit(
     shaped(Writes::OneTask, store, clock, message, facts, change)
 }
 
-/// [`commit`] of a change that writes one run alone: a fold-back, which
-/// leaves its task as it is.
+/// [`commit`] of a run's end (a fold-back, an end_run): its run, after
+/// its task when the end moves it (#2705 T5), and nothing else.
 pub(super) fn commit_run(
     store: &dyn ProjectBoardStore,
     clock: &dyn BoardClock,
@@ -113,16 +114,20 @@ pub(super) fn commit_run(
 enum Writes {
     /// One task's change ([`one_tasks_change`]).
     OneTask,
-    /// One run, and nothing else.
+    /// One run, after its task when its end moves it, and nothing else.
     OneRun,
 }
 
 impl Writes {
     /// Whether `artifacts` are written as declared (an allowlist).
     fn holds(self, artifacts: &[BoardArtifact]) -> bool {
-        match self {
-            Self::OneTask => one_tasks_change(artifacts),
-            Self::OneRun => matches!(artifacts, [BoardArtifact::Run(_)]),
+        match (self, artifacts) {
+            (Self::OneTask, _) => one_tasks_change(artifacts),
+            (Self::OneRun, [BoardArtifact::Run(_)]) => true,
+            (Self::OneRun, [BoardArtifact::Task(task), BoardArtifact::Run(run)]) => {
+                task.fields().id == run.fields().task
+            }
+            (Self::OneRun, _) => false,
         }
     }
 
@@ -132,7 +137,9 @@ impl Writes {
             Self::OneTask => {
                 "a board change writes its task first, or only one task's other artifacts"
             }
-            Self::OneRun => "a board change writes as it declares: one run alone",
+            Self::OneRun => {
+                "a board change writes as it declares: one run, after its task when it moves"
+            }
         }
     }
 }
@@ -268,6 +275,23 @@ pub(super) fn written_task(artifacts: Vec<BoardArtifact>) -> Task {
     match artifacts.into_iter().next() {
         Some(BoardArtifact::Task(task)) => task,
         other => panic!("a board change writes its task first, not {other:?}"),
+    }
+}
+
+/// What a run's end writes ([`commit_run`]): its task first, when the end
+/// `moved` it, then its `run`.
+pub(super) fn run_end_writes(run: Run, moved: Option<Task>) -> Vec<BoardArtifact> {
+    let task = moved.map(BoardArtifact::Task);
+    task.into_iter().chain([BoardArtifact::Run(run)]).collect()
+}
+
+/// The run a run's end wrote, and its task when the end moved it:
+/// [`commit_run`] holds it to those.
+pub(super) fn written_run_end(artifacts: &[BoardArtifact]) -> (Option<&Task>, &Run) {
+    match artifacts {
+        [BoardArtifact::Run(run)] => (None, run),
+        [BoardArtifact::Task(task), BoardArtifact::Run(run)] => (Some(task), run),
+        other => panic!("a run's end writes its run, after its task when it moves, not {other:?}"),
     }
 }
 

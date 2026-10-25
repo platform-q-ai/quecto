@@ -59,6 +59,7 @@ fn brief_with(handoff: Option<&str>, items: Vec<PlanItem>) -> Result<SwarmBrief,
         references: vec![],
         created: at("08:00:00"),
         updated: at("09:00:00"),
+        reason: None,
     })
     .unwrap();
     let plan = Plan::new(PlanFields {

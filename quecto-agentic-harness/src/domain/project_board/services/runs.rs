@@ -341,7 +341,7 @@ pub(super) fn lost_at(run: &Run, at: &Timestamp) -> Result<Run, BoardRuleError> 
 }
 
 /// Every run in `runs` is `task`'s.
-fn of_task(task: &Task, runs: &[Run]) -> Result<(), BoardRuleError> {
+pub(super) fn of_task(task: &Task, runs: &[Run]) -> Result<(), BoardRuleError> {
     match runs.iter().all(|run| run.fields().task == task.fields().id) {
         true => Ok(()),
         false => Err(BoardRuleError::NotThisTasks),

@@ -69,6 +69,7 @@ fn task(id: &str, status: TaskStatus, parent: Option<&str>, depends_on: &[&str])
         created: at.clone(),
         updated: at,
         description_form: Default::default(),
+        reason: None,
     })
     .unwrap()
 }

@@ -108,10 +108,11 @@ fn the_board_runs_end_to_end_over_git_and_the_index() {
     );
     assert_eq!(
         summarised["tasks"][0]["summary"],
-        json!({"subtitle": "Ship A.", "plan": null, "run": null, "may_be_incomplete": false}),
+        json!({"subtitle": "Ship A.", "plan": null, "run": null, "items": null, "may_be_incomplete": false, "inconsistent": []}),
         "{summarised}"
     );
     assert_eq!(summarised.get("summary_skipped"), None, "{summarised}");
+    super::location_tests::put_in_review(&work, "a");
     let complete = ops(json!({"op": "complete", "task": "a"}));
     // No pull request host, and none linked: the rule's own answer (#2658).
     assert_eq!(

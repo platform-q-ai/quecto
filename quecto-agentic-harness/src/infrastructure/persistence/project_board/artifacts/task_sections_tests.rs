@@ -108,6 +108,7 @@ fn fields(description: &str, form: DescriptionForm) -> TaskFields {
         references: vec![],
         created: at.clone(),
         updated: at,
+        reason: None,
     }
 }
 
@@ -158,13 +159,14 @@ fn a_legacy_description_stays_its_description_never_rewritten() {
 }
 
 /// Review round 1 (MEDIUM): a file of a newer schema asks for an upgrade,
-/// as master asks of schema 2 (it reads schema 1 alone).
+/// as master asks of schema 2 (it reads schema 1 alone); schema 3 holds a
+/// reason since #2705 T4.
 #[test]
 fn a_newer_schema_asks_for_an_upgrade() {
-    let newer = FILE.replacen("schema=2", "schema=3", 1);
+    let newer = FILE.replacen("schema=2", "schema=4", 1);
     assert_eq!(
         decode::<TaskCodec>(newer.as_bytes()),
-        Err(CodecError::NewerSchema { found: 3, known: 2 })
+        Err(CodecError::NewerSchema { found: 4, known: 3 })
     );
 }
 

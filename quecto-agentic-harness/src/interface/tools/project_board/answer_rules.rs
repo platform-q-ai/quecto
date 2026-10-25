@@ -21,6 +21,8 @@ pub fn rule_code(rule: &BoardRuleError) -> &'static str {
     use BoardRuleError as R;
     match rule {
         R::NotAllowed { .. } => "not_allowed",
+        R::UseLifecycle { .. } => "use_lifecycle",
+        R::ReasonRequired { .. } => "reason_required",
         R::NotHolder | R::NotHolderExpired => "not_holder",
         R::NoClaim => "no_claim",
         R::ClaimLive => "claim_live",
@@ -65,6 +67,7 @@ pub fn rule_code(rule: &BoardRuleError) -> &'static str {
         R::NoPrs => "no_prs",
         R::PrsUnmerged(..) => "prs_unmerged",
         R::PrsLinked(..) => "prs_linked",
+        R::PrsOpen(..) => "prs_open",
         R::PrNotLinked(..) => "pr_not_linked",
         R::PrAlreadyLinked(..) => "pr_already_linked",
         R::NotDraft(..) => "not_draft",
@@ -94,9 +97,14 @@ macro_rules! object {
 fn rule_fields(rule: &BoardRuleError) -> Map<String, Value> {
     use BoardRuleError as R;
     match rule {
-        R::NotAllowed { from, to } => {
+        R::NotAllowed { from, to } | R::ReasonRequired { from, to } => {
             object!({"from": from.as_str(), "to": to.as_str()})
         }
+        R::UseLifecycle { from, to, action } => object!({
+            "action": action.as_str(),
+            "from": from.as_str(),
+            "to": to.as_str(),
+        }),
         R::NotHolder => Map::new(),
         R::NotHolderExpired => object!({"expired": true}),
         R::NoClaim => Map::new(),
@@ -177,7 +185,7 @@ fn rule_fields(rule: &BoardRuleError) -> Map<String, Value> {
         R::AlreadyHolder => Map::new(),
         R::NoPrs => Map::new(),
         R::PrsUnmerged(prs) => object!({"prs": prs}),
-        R::PrsLinked(prs) => object!({"prs": prs}),
+        R::PrsLinked(prs) | R::PrsOpen(prs) => object!({"prs": prs}),
         R::PrNotLinked(pr) => object!({"pr": pr}),
         R::PrAlreadyLinked(pr) => object!({"pr": pr}),
         R::NotDraft(status) => object!({"status": status.as_str()}),

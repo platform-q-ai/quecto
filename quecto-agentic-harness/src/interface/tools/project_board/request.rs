@@ -137,6 +137,8 @@ pub enum Kind {
     Run,
     /// How a run is ended by hand: `stopped`, `failed` or `lost` (S4c).
     RunEnd,
+    /// How a stopped run with no kept board stopped (#2705 T5).
+    RunStop,
     /// A plan's task items: `[{"id", "title", "criteria", "depends_on"}]`,
     /// as `show` gives them.
     PlanItems,
@@ -178,6 +180,9 @@ const fn optional(name: &'static str, kind: Kind) -> Field {
 }
 
 const TASK: Field = required("task", Kind::Slug);
+/// A move's target, and its reason (#2705 T4).
+const TO: Field = required("to", Kind::Status);
+const REASON: Field = optional("reason", Kind::Text);
 
 /// Every op and the fields it takes: the one table both front ends read.
 pub const OPS: &[(&str, &[Field])] = &[
@@ -233,7 +238,8 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("expected_updated", Kind::Timestamp),
         ],
     ),
-    ("move", &[TASK, required("to", Kind::Status)]),
+    ("move", &[TASK, TO, REASON]),
+    ("done_without_run", &[TASK, required("reason", Kind::Text)]),
     ("renew", &[TASK]),
     ("take_over", &[TASK]),
     ("link_pr", &[TASK, required("pr", Kind::Pr)]),
@@ -286,6 +292,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             required("run", Kind::Run),
             required("outcome", Kind::RunEnd),
             optional("expected_updated", Kind::Timestamp),
+            optional("stop", Kind::RunStop),
         ],
     ),
     (
@@ -509,10 +516,8 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         )),
         "create" => create(read),
         "update_draft" => update_draft(read),
-        "move" => {
-            let to = read.status("to")?.expect("a required field is present");
-            change(BoardOp::Move(to))
-        }
+        "move" => change(moves::moved(read)?),
+        "done_without_run" => moves::done_without_run(read),
         "renew" => change(BoardOp::Renew),
         "take_over" => change(BoardOp::TakeOver),
         "link_pr" => change(BoardOp::AddPr(read.pr()?)),
@@ -731,8 +736,15 @@ mod plans;
 
 #[path = "request_description.rs"]
 mod description;
+
+#[path = "request_moves.rs"]
+mod moves;
 pub use description::entry_policy;
 
 #[cfg(test)]
 #[path = "request_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "request_lifecycle_tests.rs"]
+mod lifecycle_tests;

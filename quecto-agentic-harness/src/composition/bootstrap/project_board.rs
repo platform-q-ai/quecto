@@ -27,8 +27,8 @@ use crate::application::project_board::ports::{
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
-    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ListLeftRuns, ProposePlan, QueryBoard,
-    RunBoardOperation, StartBoardTask, UpdateDraftTask,
+    CreateBoardTask, DiscardPlan, EditPlan, EndRun, FinishWithoutRun, ListLeftRuns, ProposePlan,
+    QueryBoard, RunBoardOperation, StartBoardTask, UpdateDraftTask,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
@@ -168,6 +168,8 @@ pub(super) fn operation_parts(
     let launcher = environment.and_then(|environment| environment.launcher.clone());
     let swarm_session = environment.and_then(|environment| environment.swarm_session.as_deref());
     let cancelled = environment.and_then(|environment| environment.cancelled.clone());
+    let done_without_run =
+        FinishWithoutRun::reading(Arc::clone(&store), Arc::clone(&clock), prs.clone())?;
     let complete = CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs)?;
     Ok(BoardOperationParts {
         bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
@@ -222,6 +224,7 @@ pub(super) fn operation_parts(
             .map(|swarms| ListLeftRuns::new(Arc::clone(&store), swarms as Arc<dyn StartedRuns>)),
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock))?,
         complete,
+        done_without_run,
         clock,
         listings,
         query: QueryBoard::new(store),

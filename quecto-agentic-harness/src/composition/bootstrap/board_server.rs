@@ -150,6 +150,8 @@ struct StatedPullRequests(BTreeMap<u64, Result<PullRequestState, PullRequestStat
 
 impl StatedPullRequests {
     /// None for a task absent or linking none; unread past `budget`, unavailable.
+    /// Read for the writes that may judge them: a move to review, a
+    /// completion and done without a run (#2705 T4).
     fn read(
         host: &dyn PullRequestStates,
         request: Option<&BoardRequest>,
@@ -159,8 +161,9 @@ impl StatedPullRequests {
         let (task, linking) = match request {
             Some(BoardRequest::Change(id, BoardOp::AddPr(pr))) => (Some(id), Some(*pr)),
             Some(
-                BoardRequest::Change(id, BoardOp::Move(TaskStatus::Review))
-                | BoardRequest::Complete(id),
+                BoardRequest::Change(id, BoardOp::Move(TaskStatus::Review, _))
+                | BoardRequest::Complete(id)
+                | BoardRequest::DoneWithoutRun { task: id, .. },
             ) => (Some(id), None),
             Some(_) | None => (None, None),
         };

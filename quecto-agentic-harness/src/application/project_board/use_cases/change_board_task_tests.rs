@@ -10,6 +10,7 @@ use crate::application::project_board::use_cases::fixtures_tests::{
 use crate::domain::project_board::entities::change::{Change, ChangeFields};
 use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
+use crate::domain::project_board::services::transitions::MoveReason;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -43,6 +44,11 @@ pub(super) fn held_by_ada(status: TaskStatus) -> TaskFields {
     }
 }
 
+/// A move to `to`, giving no reason.
+pub(super) fn mv(to: TaskStatus) -> BoardOp {
+    BoardOp::Move(to, MoveReason::Absent)
+}
+
 /// The change use case over `store`, writing as `who`.
 pub(super) fn change(store: &MemoryBoardStore, who: &str, time: &str) -> ChangeBoardTask {
     ChangeBoardTask::new(Arc::new(store.client_as(person(who))), SetClock::at(time)).unwrap()
@@ -52,27 +58,34 @@ fn current(store: &MemoryBoardStore) -> TaskFields {
     store.read().unwrap().tasks[0].fields().clone()
 }
 
+/// A task is claimed and linked; once in review (where its run moves it,
+/// #2705 T4), it is completed when its pull request merges.
 #[test]
-fn a_task_is_claimed_worked_linked_and_completed_when_its_pr_merges() {
+fn a_task_is_claimed_linked_and_completed_from_review_when_its_pr_merges() {
     let store = board();
     seed(&store, fields("a"));
     let a = slug("a");
     let claimed = change(&store, "Ada", "10:00:00")
-        .execute(&a, &BoardOp::Move(TaskStatus::Claimed))
+        .execute(&a, &mv(TaskStatus::Claimed))
         .unwrap();
     let claim = claimed.fields().claim.clone().unwrap();
     assert_eq!(
         (claimed.fields().status, claim.holder, claim.expires),
         (TaskStatus::Claimed, person("Ada"), at("12:00:00"))
     );
-    for (time, op) in [
-        ("10:05:00", BoardOp::Move(TaskStatus::InProgress)),
-        ("10:10:00", BoardOp::AddPr(7)),
-        ("10:15:00", BoardOp::Move(TaskStatus::Review)),
-    ] {
-        change(&store, "Ada", time).execute(&a, &op).unwrap();
-    }
-    let early = change(&store, "Ada", "10:16:00").execute(&a, &BoardOp::Move(TaskStatus::Done));
+    let linked = change(&store, "Ada", "10:10:00")
+        .execute(&a, &BoardOp::AddPr(7))
+        .unwrap();
+    assert_eq!(linked.fields().prs, [7]);
+    let store = board();
+    seed(
+        &store,
+        TaskFields {
+            prs: vec![7],
+            ..held_by_ada(TaskStatus::Review)
+        },
+    );
+    let early = change(&store, "Ada", "10:16:00").execute(&a, &mv(TaskStatus::Done));
     assert_eq!(
         early,
         Err(ProjectBoardError::Rule(BoardRuleError::PrsLinked(vec![7]))),
@@ -132,8 +145,7 @@ fn a_change_the_rules_refuse_writes_nothing() {
     seed(&store, held_by_ada(TaskStatus::Claimed));
     store.quarantine("q", "malformed");
     let writes = store.writes();
-    let refused = change(&store, "Bob", "10:00:00")
-        .execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress));
+    let refused = change(&store, "Bob", "10:00:00").execute(&slug("a"), &mv(TaskStatus::Ready));
     assert_eq!(
         refused,
         Err(ProjectBoardError::Rule(BoardRuleError::NotHolder))
@@ -145,8 +157,8 @@ fn a_change_the_rules_refuse_writes_nothing() {
     assert_eq!(store.writes(), writes);
 }
 
-/// Ada's other machine starts the work while this one renews: the renewal
-/// is made again on the started task and keeps its progress.
+/// Ada's other machine links a pull request while this one renews: the
+/// renewal is made again on the fresh task and keeps the link.
 #[test]
 fn a_lost_change_is_made_again_on_the_fresh_task() {
     let store = board();
@@ -154,17 +166,15 @@ fn a_lost_change_is_made_again_on_the_fresh_task() {
     store.before_next_write(|board| {
         let other =
             ChangeBoardTask::new(Arc::new(board.client()), SetClock::at("10:10:00")).unwrap();
-        other
-            .execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress))
-            .unwrap();
+        other.execute(&slug("a"), &BoardOp::AddPr(5)).unwrap();
     });
     let clock = SetClock::at("10:20:00");
     let renew = ChangeBoardTask::new(Arc::new(store.client()), clock.clone()).unwrap();
     let renewed = renew.execute(&slug("a"), &BoardOp::Renew).unwrap();
     assert_eq!(
-        renewed.fields().status,
-        TaskStatus::InProgress,
-        "the other machine's move is kept"
+        renewed.fields().prs,
+        [5],
+        "the other machine's link is kept"
     );
     assert_eq!(
         renewed.fields().claim.as_ref().unwrap().expires,
@@ -189,11 +199,9 @@ fn a_change_no_longer_allowed_on_the_fresh_task_is_refused() {
             SetClock::at("10:00:00"),
         )
         .unwrap();
-        ada.execute(&slug("a"), &BoardOp::Move(TaskStatus::Claimed))
-            .unwrap();
+        ada.execute(&slug("a"), &mv(TaskStatus::Claimed)).unwrap();
     });
-    let refused =
-        change(&store, "Bob", "10:00:01").execute(&slug("a"), &BoardOp::Move(TaskStatus::Claimed));
+    let refused = change(&store, "Bob", "10:00:01").execute(&slug("a"), &mv(TaskStatus::Claimed));
     let not_allowed = BoardRuleError::NotAllowed {
         from: TaskStatus::Claimed,
         to: TaskStatus::Claimed,
@@ -214,7 +222,7 @@ fn a_task_from_the_future_and_a_refusal_are_reported() {
     )
     .unwrap();
     // A write (a renewal this early writes nothing, #2656).
-    let ahead = skewed.execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress));
+    let ahead = skewed.execute(&slug("a"), &mv(TaskStatus::Ready));
     assert_eq!(
         ahead,
         Err(ProjectBoardError::TaskAhead {
@@ -223,8 +231,7 @@ fn a_task_from_the_future_and_a_refusal_are_reported() {
         })
     );
     store.refuse_next_write("a hook said no");
-    let refused = change(&store, "Ada", "10:00:00")
-        .execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress));
+    let refused = change(&store, "Ada", "10:00:00").execute(&slug("a"), &mv(TaskStatus::Ready));
     assert_eq!(
         refused,
         Err(ProjectBoardError::Refused("a hook said no".into()))
@@ -244,7 +251,7 @@ fn the_holder_unlinks_a_pull_request_and_then_finishes_the_task() {
         },
     );
     let a = slug("a");
-    let early = change(&store, "Ada", "10:00:00").execute(&a, &BoardOp::Move(TaskStatus::Done));
+    let early = change(&store, "Ada", "10:00:00").execute(&a, &mv(TaskStatus::Done));
     assert_eq!(
         early,
         Err(ProjectBoardError::Rule(BoardRuleError::PrsLinked(vec![4])))
@@ -253,7 +260,7 @@ fn the_holder_unlinks_a_pull_request_and_then_finishes_the_task() {
         .execute(&a, &BoardOp::RemovePr(4))
         .unwrap();
     let done = change(&store, "Ada", "10:02:00")
-        .execute(&a, &BoardOp::Move(TaskStatus::Done))
+        .execute(&a, &mv(TaskStatus::Done))
         .unwrap();
     assert_eq!(done.fields().status, TaskStatus::Done);
 }
@@ -278,7 +285,7 @@ fn a_task_stamped_at_the_bound_is_built_on_and_a_second_past_it_is_not() {
             SetClock::with_reference("09:00:30", Some("09:00:00")),
         )
         .unwrap()
-        .execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress))
+        .execute(&slug("a"), &mv(TaskStatus::Ready))
     };
     let at_bound = built_on("09:01:30").unwrap();
     assert_eq!(
@@ -349,7 +356,7 @@ fn quick_writes_from_a_fast_clock_never_lock_out_a_right_one() {
     let task = Task::new(TaskFields {
         created: at("08:00:00"),
         updated: at("09:00:00"),
-        ..held_by_ada(TaskStatus::InProgress)
+        ..held_by_ada(TaskStatus::Claimed)
     })
     .unwrap();
     let head = store.read().unwrap().head;
@@ -359,8 +366,8 @@ fn quick_writes_from_a_fast_clock_never_lock_out_a_right_one() {
         SetClock::with_reference("09:00:55", Some("09:00:00")),
     )
     .unwrap();
-    for to in [TaskStatus::Blocked, TaskStatus::InProgress].repeat(6) {
-        fast.execute(&slug("a"), &BoardOp::Move(to)).unwrap();
+    for to in [TaskStatus::Ready, TaskStatus::Claimed].repeat(6) {
+        fast.execute(&slug("a"), &mv(to)).unwrap();
     }
     assert!(
         current(&store).updated > at("09:01:00"),
@@ -371,7 +378,7 @@ fn quick_writes_from_a_fast_clock_never_lock_out_a_right_one() {
         SetClock::with_reference("09:00:00", Some("09:00:00")),
     )
     .unwrap();
-    let moved = right.execute(&slug("a"), &BoardOp::Move(TaskStatus::Blocked));
+    let moved = right.execute(&slug("a"), &mv(TaskStatus::Ready));
     assert!(moved.is_ok(), "{moved:?}");
 }
 
@@ -496,14 +503,13 @@ fn linking(task: &str, number: u32, pr: u64) -> Change {
 #[test]
 fn a_task_whose_run_is_going_is_not_released() {
     let store = board();
-    seed(&store, held_by_ada(TaskStatus::InProgress));
+    seed(&store, held_by_ada(TaskStatus::Claimed));
     seed_artifacts(
         &store,
         vec![BoardArtifact::Run(board_artifacts::run("a", 1))],
     );
     let writes = store.writes();
-    let released =
-        change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Ready));
+    let released = change(&store, "Ada", "10:00:00").execute(&slug("a"), &mv(TaskStatus::Ready));
     assert_eq!(
         released,
         Err(ProjectBoardError::Rule(BoardRuleError::RunOpen(1)))
@@ -523,8 +529,7 @@ fn a_reviewed_task_a_change_links_is_not_archived() {
         vec![BoardArtifact::Change(board_artifacts::change("a", 1))],
     );
     let writes = store.writes();
-    let archived =
-        change(&store, "Bob", "14:00:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived));
+    let archived = change(&store, "Bob", "14:00:00").execute(&slug("a"), &mv(TaskStatus::Archived));
     assert_eq!(
         archived,
         Err(ProjectBoardError::Rule(BoardRuleError::ChangesLinked(
@@ -544,8 +549,7 @@ fn a_task_a_change_links_is_not_finished_by_its_holder() {
         &store,
         vec![BoardArtifact::Change(board_artifacts::change("a", 1))],
     );
-    let finished =
-        change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Done));
+    let finished = change(&store, "Ada", "10:00:00").execute(&slug("a"), &mv(TaskStatus::Done));
     assert_eq!(
         finished,
         Err(ProjectBoardError::Rule(BoardRuleError::ChangesLinked(
@@ -564,7 +568,7 @@ fn a_move_that_reads_a_set_aside_run_or_change_of_its_task_waits() {
         (
             ArtifactKey::Run(slug("a"), 1),
             "runs/a.1.md",
-            TaskStatus::InProgress,
+            TaskStatus::Claimed,
             TaskStatus::Ready,
         ),
         (
@@ -582,7 +586,7 @@ fn a_move_that_reads_a_set_aside_run_or_change_of_its_task_waits() {
             "changes/b.1.md",
             "malformed",
         );
-        let moved = change(&others, "Ada", "10:01:00").execute(&slug("a"), &BoardOp::Move(to));
+        let moved = change(&others, "Ada", "10:01:00").execute(&slug("a"), &mv(to));
         assert!(
             moved.is_ok(),
             "another task's files block nothing: {moved:?}"
@@ -590,7 +594,7 @@ fn a_move_that_reads_a_set_aside_run_or_change_of_its_task_waits() {
         let store = board();
         seed(&store, held_by_ada(from));
         store.quarantine_key(key.clone(), path, "malformed");
-        let moved = change(&store, "Ada", "10:01:00").execute(&slug("a"), &BoardOp::Move(to));
+        let moved = change(&store, "Ada", "10:01:00").execute(&slug("a"), &mv(to));
         assert_eq!(
             moved,
             Err(ProjectBoardError::Quarantined {
@@ -604,30 +608,29 @@ fn a_move_that_reads_a_set_aside_run_or_change_of_its_task_waits() {
     }
 }
 
-/// A move reads only what it needs: among the held statuses it reads
-/// neither runs nor changes, so set-aside ones block nothing; and a move
-/// the table refuses is refused as such, before anything is read.
+/// A move reads only what it needs: a claim reads neither runs nor
+/// changes, so set-aside ones block nothing; and a move the table refuses
+/// is refused as such, before anything is read.
 #[test]
 fn a_move_reads_only_what_it_needs() {
     let store = board();
-    seed(&store, held_by_ada(TaskStatus::InProgress));
+    seed(&store, fields("a"));
     store.quarantine_key(ArtifactKey::Run(slug("a"), 1), "runs/a.1.md", "malformed");
     store.quarantine_key(
         ArtifactKey::Change(slug("a"), 1),
         "changes/a.1.md",
         "malformed",
     );
-    let blocked = change(&store, "Ada", "10:00:00")
-        .execute(&slug("a"), &BoardOp::Move(TaskStatus::Blocked))
+    let claimed = change(&store, "Ada", "10:00:00")
+        .execute(&slug("a"), &mv(TaskStatus::Claimed))
         .unwrap();
-    assert_eq!(blocked.fields().status, TaskStatus::Blocked);
-    let skipped =
-        change(&store, "Ada", "10:01:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Done));
+    assert_eq!(claimed.fields().status, TaskStatus::Claimed);
+    let skipped = change(&store, "Ada", "10:01:00").execute(&slug("a"), &mv(TaskStatus::Review));
     assert_eq!(
         skipped,
         Err(ProjectBoardError::Rule(BoardRuleError::NotAllowed {
-            from: TaskStatus::Blocked,
-            to: TaskStatus::Done
+            from: TaskStatus::Claimed,
+            to: TaskStatus::Review
         }))
     );
 }
@@ -683,8 +686,7 @@ fn anyone_archives_a_reviewed_task_whose_run_ended_and_claim_lapsed() {
     );
     let writes = running.writes();
     assert_eq!(
-        change(&running, "Bob", "14:00:00")
-            .execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived)),
+        change(&running, "Bob", "14:00:00").execute(&slug("a"), &mv(TaskStatus::Archived)),
         Err(ProjectBoardError::Rule(BoardRuleError::RunOpen(1)))
     );
     assert_eq!(running.writes(), writes, "a refused archive writes nothing");
@@ -700,13 +702,13 @@ fn anyone_archives_a_reviewed_task_whose_run_ended_and_claim_lapsed() {
     );
     let writes = store.writes();
     assert_eq!(
-        change(&store, "Bob", "10:00:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived)),
+        change(&store, "Bob", "10:00:00").execute(&slug("a"), &mv(TaskStatus::Archived)),
         Err(ProjectBoardError::Rule(BoardRuleError::NotHolder)),
         "not while Ada's claim is live"
     );
     assert_eq!(store.writes(), writes, "a refused archive writes nothing");
     change(&store, "Bob", "14:00:00")
-        .execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived))
+        .execute(&slug("a"), &mv(TaskStatus::Archived))
         .unwrap();
     let archived = current(&store);
     assert_eq!(
@@ -724,8 +726,7 @@ fn an_archive_waits_while_a_task_file_is_set_aside() {
     seed(&store, fields("kid"));
     store.quarantine("kid", "malformed");
     assert_eq!(
-        change(&store, "Ada", "10:00:00")
-            .execute(&slug("epic"), &BoardOp::Move(TaskStatus::Archived)),
+        change(&store, "Ada", "10:00:00").execute(&slug("epic"), &mv(TaskStatus::Archived)),
         Err(set_aside_task("kid"))
     );
     // The move's own rules answer first (#2661 review round 2): a ready
@@ -741,7 +742,7 @@ fn an_archive_waits_while_a_task_file_is_set_aside() {
         },
     );
     assert_eq!(
-        change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived)),
+        change(&store, "Ada", "10:00:00").execute(&slug("a"), &mv(TaskStatus::Archived)),
         Err(ProjectBoardError::Rule(BoardRuleError::ChildrenActive(
             vec![slug("child")]
         )))

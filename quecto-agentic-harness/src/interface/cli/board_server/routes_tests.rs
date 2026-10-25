@@ -37,6 +37,7 @@ fn task(id: &str) -> Task {
         references: vec![],
         created: at.clone(),
         updated: at,
+        reason: None,
     })
     .unwrap()
 }

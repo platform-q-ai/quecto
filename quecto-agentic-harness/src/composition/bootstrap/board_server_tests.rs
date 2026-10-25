@@ -207,3 +207,56 @@ fn the_tokens_live_in_the_state_directory() {
     elsewhere.access.add("phone").unwrap();
     assert!(state.join("tokens.json").exists());
 }
+
+/// Board holding task `a`, ready, linking pull request 7.
+fn linking_seven() -> crate::infrastructure::test_support::memory_board_store::MemoryBoardStore {
+    use crate::domain::project_board::entities::task::{Task, TaskFields};
+    use crate::domain::project_board::value_objects::slug::Slug;
+    use crate::domain::project_board::value_objects::timestamp::Timestamp;
+    use crate::domain::project_board::value_objects::vocabulary::TaskKind;
+    let store =
+        crate::infrastructure::test_support::memory_board_store::MemoryBoardStore::default();
+    store.bootstrap().unwrap();
+    let at = Timestamp::parse("2026-10-10T08:00:00Z").unwrap();
+    let task = Task::new(TaskFields {
+        id: Slug::parse("a").unwrap(),
+        title: "Task a".into(),
+        kind: TaskKind::Task,
+        description_form: Default::default(),
+        description: String::new(),
+        status: TaskStatus::Ready,
+        parent: None,
+        depends_on: vec![],
+        accepted_plan: None,
+        claim: None,
+        prs: vec![7],
+        github_issue: None,
+        resolution: None,
+        superseded_by: vec![],
+        references: vec![],
+        created: at.clone(),
+        updated: at,
+        reason: None,
+    })
+    .unwrap();
+    let head = store.read().unwrap().head;
+    store.write_tasks(&head, &[task], "seed").unwrap();
+    store
+}
+
+#[test]
+fn done_without_a_run_has_its_pull_requests_read_before_the_write() {
+    use crate::application::project_board::ports::PullRequestState;
+    use crate::domain::project_board::value_objects::slug::Slug;
+    use crate::infrastructure::test_support::memory_pull_requests::MemoryPullRequests;
+    let store = linking_seven();
+    let host = MemoryPullRequests::default();
+    host.set(7, PullRequestState::Merged);
+    let request = BoardRequest::DoneWithoutRun {
+        task: Slug::parse("a").unwrap(),
+        reason: "Answered in chat".into(),
+    };
+    let stated = StatedPullRequests::read(&host, Some(&request), &store, Duration::from_secs(30));
+    assert_eq!(host.asked(), vec![7], "read before the write");
+    assert_eq!(stated.state(7).unwrap(), PullRequestState::Merged);
+}

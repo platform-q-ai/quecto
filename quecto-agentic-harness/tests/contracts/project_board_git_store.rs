@@ -523,8 +523,9 @@ fn the_git_store_takes_an_acceptance_of_three_files_in_one_commit() {
 }
 
 /// A started task's run folded back through the git store (#2481 S4): the
-/// run alone lands in `runs/`, its addresses linked and its secrets never
-/// written, and the board reads it back as folded.
+/// run lands in `runs/`, its addresses linked and its secrets never
+/// written, its task moved to review in the same commit (#2705 T5), and the
+/// board reads it back as folded.
 #[test]
 fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
     use quecto::application::project_board::dto::FoldedBack;
@@ -573,6 +574,7 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
         created: at.clone(),
         updated: at.clone(),
         description_form: Default::default(),
+        reason: None,
     })
     .unwrap();
     let plan = Plan::new(PlanFields {
@@ -649,7 +651,16 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
     assert!(matches!(folded, FoldedBack::Folded(_)), "{folded:?}");
 
     let board = alice.read().unwrap();
-    assert_eq!(board.tasks, [task], "the task is left as it was");
+    // The success moves the task to review in the same commit (#2705 T5).
+    let [moved] = board.tasks.as_slice() else {
+        panic!("one task: {:?}", board.tasks);
+    };
+    assert_eq!(moved.fields().status, TaskStatus::Review);
+    assert_eq!(
+        moved.fields().claim,
+        task.fields().claim,
+        "its holder keeps it"
+    );
     let [run] = board.runs.as_slice() else {
         panic!("one run: {:?}", board.runs);
     };

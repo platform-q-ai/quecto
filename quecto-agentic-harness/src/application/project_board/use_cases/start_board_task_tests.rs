@@ -322,10 +322,11 @@ fn a_failed_launch_folds_run_1_back_as_failed_and_releases_the_claim() {
     assert!(run.ended.is_some());
 }
 
-/// A task its starter held before keeps its claim when the launch fails:
-/// only the run is folded back.
+/// A task its starter held before, in progress with no run (a legacy
+/// state), is released too when the launch fails (#2705 T5): the run's
+/// end leaves no task in progress without a run.
 #[test]
-fn a_failed_launch_of_a_held_task_keeps_the_claim() {
+fn a_failed_launch_of_a_held_task_releases_it_too() {
     let store = seeded(held_by_ada, vec![plan(1, PlanState::Accepted)], vec![]);
     let refused = starter(&store, Some(Launcher::failing())).execute(&confirmed(1));
     assert!(
@@ -333,15 +334,18 @@ fn a_failed_launch_of_a_held_task_keeps_the_claim() {
             &refused,
             Err(ProjectBoardError::LaunchFailed {
                 run_state: RunAfterUndo::Folded,
-                released: None,
+                released: Some(true),
+                restored: None,
                 ..
             })
         ),
         "{refused:?}"
     );
     let (task, runs) = task_and_runs(&store);
-    assert_eq!(task.fields().status, TaskStatus::InProgress);
-    assert!(task.fields().claim.is_some());
+    assert_eq!(
+        (task.fields().status, &task.fields().claim),
+        (TaskStatus::Ready, &None)
+    );
     assert_eq!(runs[0].fields().outcome, Some(RunOutcome::Failed));
 }
 
@@ -538,9 +542,8 @@ fn an_undo_that_cannot_fold_back_says_so_and_keeps_the_claim() {
     assert_eq!(
         message,
         "the coordinator did not launch: no container runtime; run 1 could not be folded back: \
-         it is still open; end it with end_run(task, run 1, outcome failed), but the task could \
-         not be moved back to ready: you still hold it; once its run has ended, move it with \
-         move(task, to ready)"
+         it is still open, and you still hold the task; end it with end_run(task, run 1, \
+         outcome failed)"
     );
 }
 
@@ -555,3 +558,6 @@ mod undo;
 
 #[path = "start_board_task_dependency_tests.rs"]
 mod dependency;
+
+#[path = "start_board_task_restore_tests.rs"]
+mod restore;

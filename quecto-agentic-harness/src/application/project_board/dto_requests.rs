@@ -46,6 +46,12 @@ pub enum BoardRequest {
     UpdateDraft(DraftUpdate),
     Change(Slug, BoardOp),
     Complete(Slug),
+    /// A ready or claimed task done without a run, for the reason given
+    /// (#2705 T4).
+    DoneWithoutRun {
+        task: Slug,
+        reason: String,
+    },
     /// A new draft version of a task's plan (#2481 M4b).
     ProposePlan(PlanProposal),
     /// A draft plan patched: only the fields it gives change.
@@ -78,6 +84,7 @@ impl BoardRequest {
             | Self::UpdateDraft(_)
             | Self::Change(..)
             | Self::Complete(_)
+            | Self::DoneWithoutRun { .. }
             | Self::ProposePlan(_)
             | Self::EditPlan(_)
             | Self::AcceptPlan(_)
@@ -98,6 +105,7 @@ impl BoardRequest {
             | Self::UpdateDraft(_)
             | Self::Change(..)
             | Self::Complete(_)
+            | Self::DoneWithoutRun { .. }
             | Self::ProposePlan(_)
             | Self::EditPlan(_)
             | Self::AcceptPlan(_)
@@ -124,6 +132,7 @@ impl BoardRequest {
             | Self::UpdateDraft(_)
             | Self::Change(..)
             | Self::Complete(_)
+            | Self::DoneWithoutRun { .. }
             | Self::ProposePlan(_)
             | Self::EditPlan(_)
             | Self::AcceptPlan(_)

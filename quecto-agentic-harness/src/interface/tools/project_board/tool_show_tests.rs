@@ -58,6 +58,7 @@ fn task(description: String, accepted: u32) -> Task {
         created: at(),
         updated: at(),
         description_form: Default::default(),
+        reason: None,
     })
     .unwrap()
 }
@@ -300,6 +301,11 @@ fn the_task_is_whole_and_the_rest_counted() {
     assert_eq!(cut["runs_more"], json!(MAX_RUN_NUMBER));
     assert_eq!(cut["plans_more"], json!(MAX_PLAN_VERSION));
     assert_eq!(cut["quarantined_more"], json!(200));
+    // #2705 T5: its task items' states are counted too.
+    assert_eq!(
+        (&cut["item_states"], &cut["item_states_more"]),
+        (&json!([]), &json!(MAX_ITEMS))
+    );
     // The task and the answer's own fields, nothing more.
     let task = bytes(&cut["task"]);
     assert!(bytes(&cut) - task < 1_024, "{}", bytes(&cut) - task);
@@ -554,6 +560,7 @@ fn an_end_runs_answer_says_whether_its_swarm_was_looked_for() {
             "end_run",
             &BoardOutcome::RunEnded(EndedRun {
                 run: run(1, 1, 0),
+                status: TaskStatus::Ready,
                 liveness,
                 report: RunReport::Unreported,
                 unchecked: None,
@@ -564,6 +571,8 @@ fn an_end_runs_answer_says_whether_its_swarm_was_looked_for() {
     };
     let unchecked = answered(LivenessCheck::NotChecked);
     assert_eq!(unchecked["liveness"], json!("not_checked"));
+    // #2705 T5: where the run's end left its task.
+    assert_eq!(unchecked["status"], json!("ready"));
     assert_eq!(
         unchecked["liveness_note"],
         json!(
@@ -591,6 +600,7 @@ fn an_end_from_its_swarms_board_says_no_items_were_recorded_as_todo() {
             "end_run",
             &BoardOutcome::RunEnded(EndedRun {
                 run: run(1, 1, 0),
+                status: TaskStatus::Review,
                 liveness: LivenessCheck::Checked,
                 report,
                 unchecked: None,
@@ -623,6 +633,7 @@ fn a_lost_end_says_its_items_were_recorded_as_todo() {
             "end_run",
             &BoardOutcome::RunEnded(EndedRun {
                 run: lost.clone(),
+                status: TaskStatus::Ready,
                 liveness: LivenessCheck::Checked,
                 report,
                 unchecked: None,

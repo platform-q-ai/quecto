@@ -11,8 +11,8 @@ use crate::application::project_board::ports::{
 };
 use crate::application::project_board::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
-    CreateBoardTask, DiscardPlan, EditPlan, ProposePlan, QueryBoard, RunBoardOperation,
-    StartBoardTask, UpdateDraftTask,
+    CreateBoardTask, DiscardPlan, EditPlan, FinishWithoutRun, ProposePlan, QueryBoard,
+    RunBoardOperation, StartBoardTask, UpdateDraftTask,
 };
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 
@@ -79,6 +79,8 @@ pub fn assembled_reporting(
         liveness,
         reports,
     } = swarms;
+    let done_without_run =
+        FinishWithoutRun::reading(Arc::clone(&store), Arc::clone(&clock), prs.clone())?;
     let complete = CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs)?;
     Ok(RunBoardOperation::new(BoardOperationParts {
         bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
@@ -121,6 +123,7 @@ pub fn assembled_reporting(
         }),
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock))?,
         complete,
+        done_without_run,
         clock,
         listings,
         query: QueryBoard::new(store),

@@ -3,18 +3,17 @@
 //! between them on the clock's monotonic time.
 use super::*;
 use crate::application::project_board::telemetry::OpFacts;
+use crate::domain::project_board::services::transitions::MoveReason;
 use crate::domain::project_board::value_objects::telemetry::ClaimFacts;
 use std::time::Duration;
 
-/// A renew at 10:20 that loses once to a move to in progress.
+/// A renew at 10:20 that loses once to a pull request linked.
 fn renew_losing_once(store: &MemoryBoardStore) -> (ChangeBoardTask, Arc<SetClock>) {
     seed(store, held_by_ada(TaskStatus::Claimed));
     store.before_next_write(|board| {
         let other =
             ChangeBoardTask::new(Arc::new(board.client()), SetClock::at("10:10:00")).unwrap();
-        other
-            .execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress))
-            .unwrap();
+        other.execute(&slug("a"), &BoardOp::AddPr(5)).unwrap();
     });
     let clock = SetClock::at("10:20:00");
     *clock.tick.lock().unwrap() = Duration::from_millis(40);
@@ -36,8 +35,8 @@ fn a_change_that_lost_once_tells_two_attempts_and_the_task_it_built_on() {
         holder_is_writer: true,
     };
     let want = OpFacts {
-        status_from: Some(TaskStatus::InProgress),
-        status_to: Some(TaskStatus::InProgress),
+        status_from: Some(TaskStatus::Claimed),
+        status_to: Some(TaskStatus::Claimed),
         claim: Some(claim),
         attempts: Some(2),
         lost: Some(1),
@@ -116,7 +115,7 @@ fn a_refused_move_tells_its_target_and_the_claim_it_found() {
     let mut facts = OpFacts::default();
     let refused = change(&store, "Bob", "11:00:30").execute_noted(
         &slug("a"),
-        &BoardOp::Move(TaskStatus::Review),
+        &BoardOp::Move(TaskStatus::Review, MoveReason::Absent),
         Some(&mut facts),
     );
     assert!(
@@ -215,7 +214,7 @@ mod a_task_gone_on_retry {
             &store,
             TaskFields {
                 prs: vec![7],
-                ..held_by_ada(TaskStatus::InProgress)
+                ..held_by_ada(TaskStatus::Review)
             },
         );
         let host = MemoryPullRequests::default();

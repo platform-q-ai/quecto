@@ -1,10 +1,13 @@
+use crate::domain::project_board::services::transitions::MoveReason;
 use std::sync::Arc;
 
 use super::*;
 use crate::application::project_board::dto::{NewBoardTask, NewBoardTaskStatus};
 use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
 use crate::application::project_board::operations::{NoPullRequestHost, PlanView};
-use crate::application::project_board::ports::{PullRequestState, PullRequestStates};
+use crate::application::project_board::ports::{
+    ProjectBoardStore, PullRequestState, PullRequestStates,
+};
 use crate::application::project_board::use_cases::QueryBoard;
 use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, new_task, set_aside_task, slug,
@@ -21,6 +24,19 @@ fn operations(
     assembled(Arc::new(store.client()), clock, listings, prs).unwrap()
 }
 
+/// Task `id` moved to review as its run's end will move it (#2705 T4:
+/// `move` no longer does), its claim and stamp kept.
+fn in_review(store: &MemoryBoardStore, id: &str) {
+    let board = store.read().unwrap();
+    let task = board.tasks.iter().find(|task| task.fields().id == slug(id));
+    let mut fields = task.expect("the task is on the board").fields().clone();
+    fields.status = TaskStatus::Review;
+    let task = Task::new(fields).unwrap();
+    store
+        .write_tasks(&board.head, &[task], "a run's end")
+        .unwrap();
+}
+
 fn no_host() -> Result<Arc<dyn PullRequestStates>, NoPullRequestHost> {
     Err(NoPullRequestHost::NotAPullRequestHost)
 }
@@ -33,7 +49,7 @@ fn ready_task(id: &str) -> BoardRequest {
 }
 
 /// A completion waiting on pull requests not merged yet is pending, not an
-/// error; once they merge, the next move to review completes the task.
+/// error; once they merge, `complete` completes the reviewed task.
 #[test]
 fn a_completion_is_pending_until_the_pull_requests_merge() {
     let store = MemoryBoardStore::default();
@@ -48,11 +64,14 @@ fn a_completion_is_pending_until_the_pull_requests_merge() {
     for request in [
         BoardRequest::Bootstrap,
         ready_task("a"),
-        BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::Claimed)),
-        BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::InProgress)),
+        BoardRequest::Change(
+            a.clone(),
+            BoardOp::Move(TaskStatus::Claimed, MoveReason::Absent),
+        ),
     ] {
         ops.execute(&request).unwrap();
     }
+    in_review(&store, "a");
     let open = ops
         .execute(&BoardRequest::Change(a.clone(), BoardOp::AddPr(8)))
         .unwrap();
@@ -61,18 +80,9 @@ fn a_completion_is_pending_until_the_pull_requests_merge() {
     };
     assert_eq!(completion, Some(Completion::Pending(vec![8])));
     host.set(8, PullRequestState::Merged);
-    let review = ops
-        .execute(&BoardRequest::Change(
-            a.clone(),
-            BoardOp::Move(TaskStatus::Review),
-        ))
-        .unwrap();
-    let BoardOutcome::Changed {
-        completion: Some(Completion::Done(done)),
-        ..
-    } = review
-    else {
-        panic!("{review:?}")
+    let completed = ops.execute(&BoardRequest::Complete(a.clone())).unwrap();
+    let BoardOutcome::Changed { task: done, .. } = completed else {
+        panic!("{completed:?}")
     };
     assert_eq!(done.fields().status, TaskStatus::Done);
     let shown = ops
@@ -88,33 +98,36 @@ fn a_completion_is_pending_until_the_pull_requests_merge() {
     );
 }
 
-/// A move to review of a task linking no pull request has nothing to
-/// complete: no completion is reported.
+/// A pull request linked to a task not in review has nothing to complete
+/// (#2705 T4: only a reviewed task completes): no completion is reported,
+/// and no host is asked.
 #[test]
-fn a_task_linking_no_pull_request_reports_no_completion() {
+fn a_link_outside_review_reports_no_completion() {
     let store = MemoryBoardStore::default();
     let ops = operations(&store, SetClock::at("10:00:00"), no_host());
     let a = slug("a");
     for request in [
         BoardRequest::Bootstrap,
         ready_task("a"),
-        BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::Claimed)),
-        BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::InProgress)),
+        BoardRequest::Change(
+            a.clone(),
+            BoardOp::Move(TaskStatus::Claimed, MoveReason::Absent),
+        ),
     ] {
         ops.execute(&request).unwrap();
     }
-    let review = ops
-        .execute(&BoardRequest::Change(a, BoardOp::Move(TaskStatus::Review)))
+    let linked = ops
+        .execute(&BoardRequest::Change(a, BoardOp::AddPr(8)))
         .unwrap();
     assert!(
         matches!(
-            review,
+            linked,
             BoardOutcome::Changed {
                 completion: None,
                 ..
             }
         ),
-        "{review:?}"
+        "{linked:?}"
     );
 }
 
@@ -176,6 +189,7 @@ fn show_tells_a_task_set_aside_from_one_not_on_the_board() {
     // #2658: a task that links no pull request has nothing to ask a host
     // about: it is refused by the completion rule itself, as with a host.
     ops.execute(&ready_task("d")).unwrap();
+    in_review(&store, "d");
     assert_eq!(
         ops.execute(&BoardRequest::Complete(slug("d"))),
         Err(ProjectBoardError::Rule(BoardRuleError::NoPrs))
@@ -192,12 +206,15 @@ fn a_complete_with_no_host_needs_one_only_for_pull_requests() {
     let e = slug("e");
     for request in [
         ready_task("e"),
-        BoardRequest::Change(e.clone(), BoardOp::Move(TaskStatus::Claimed)),
-        BoardRequest::Change(e.clone(), BoardOp::Move(TaskStatus::InProgress)),
+        BoardRequest::Change(
+            e.clone(),
+            BoardOp::Move(TaskStatus::Claimed, MoveReason::Absent),
+        ),
         BoardRequest::Change(e.clone(), BoardOp::AddPr(8)),
     ] {
         ops.execute(&request).unwrap();
     }
+    in_review(&store, "e");
     assert_eq!(
         ops.execute(&BoardRequest::Complete(e)),
         Err(ProjectBoardError::NoPullRequestHost(
@@ -271,6 +288,7 @@ fn a_complete_with_no_host_looks_the_task_up_alone() {
     let ops = operations(&memory, SetClock::at("10:00:00"), no_host());
     ops.execute(&BoardRequest::Bootstrap).unwrap();
     ops.execute(&ready_task("a")).unwrap();
+    in_review(&memory, "a");
     let store: Arc<dyn crate::application::project_board::ports::ProjectBoardStore> =
         Arc::new(PlanTwice(memory.client()));
     let listings = Arc::new(QueryListings(QueryBoard::new(Arc::clone(&store))));
@@ -417,11 +435,14 @@ mod noted {
         for request in [
             BoardRequest::Bootstrap,
             ready_task("a"),
-            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::Claimed)),
-            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::InProgress)),
+            BoardRequest::Change(
+                a.clone(),
+                BoardOp::Move(TaskStatus::Claimed, MoveReason::Absent),
+            ),
         ] {
             ops.execute(&request).unwrap();
         }
+        in_review(&store, "a");
         let completion = |kind, prs_linked, prs_pending| CompletionFacts {
             completion: kind,
             completion_code: None,
@@ -447,8 +468,8 @@ mod noted {
             holder_is_writer: true,
         };
         let want = OpFacts {
-            status_from: Some(TaskStatus::InProgress),
-            status_to: Some(TaskStatus::InProgress),
+            status_from: Some(TaskStatus::Review),
+            status_to: Some(TaskStatus::Review),
             claim: Some(claim),
             completion: Some(written_once_more(completion(
                 CompletionKind::Pending,
@@ -461,7 +482,7 @@ mod noted {
         let (refused, pending) = noted(&ops, &BoardRequest::Complete(a.clone()));
         assert!(refused.is_err());
         let want = OpFacts {
-            status_from: Some(TaskStatus::InProgress),
+            status_from: Some(TaskStatus::Review),
             completion: Some(completion(CompletionKind::Pending, 1, Some(1))),
             ..OpFacts::default()
         };
@@ -475,7 +496,7 @@ mod noted {
         let (done, facts) = noted(&ops, &BoardRequest::Complete(a));
         assert!(done.is_ok(), "{done:?}");
         let want = OpFacts {
-            status_from: Some(TaskStatus::InProgress),
+            status_from: Some(TaskStatus::Review),
             status_to: Some(TaskStatus::Done),
             completion: Some(completion(CompletionKind::Done, 2, None)),
             ..OpFacts::default()
@@ -501,11 +522,14 @@ mod noted {
         for request in [
             BoardRequest::Bootstrap,
             ready_task("a"),
-            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::Claimed)),
-            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::InProgress)),
+            BoardRequest::Change(
+                a.clone(),
+                BoardOp::Move(TaskStatus::Claimed, MoveReason::Absent),
+            ),
         ] {
             ops.execute(&request).unwrap();
         }
+        in_review(&store, "a");
         *clock.tick.lock().unwrap() = std::time::Duration::from_millis(25);
         // Armed at the link's write, so it moves the board before the
         // completion's write is judged.

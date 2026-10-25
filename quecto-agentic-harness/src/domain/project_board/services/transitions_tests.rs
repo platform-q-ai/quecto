@@ -12,24 +12,19 @@ use crate::domain::project_board::value_objects::slug::Slug;
 const ALL: [TaskStatus; 8] = [
     Draft, Ready, Claimed, InProgress, Review, Blocked, Done, Archived,
 ];
-/// Written out independently of the production table.
-const ALLOWED: [(TaskStatus, TaskStatus); 18] = [
+/// Written out independently of the production table (#2705 T4: the
+/// lifecycle makes the rest, `transitions_lifecycle_tests`).
+const ALLOWED: [(TaskStatus, TaskStatus); 12] = [
     (Draft, Ready),
     (Draft, Archived),
     (Ready, Draft),
     (Ready, Claimed),
     (Ready, Archived),
-    (Claimed, InProgress),
-    (Claimed, Blocked),
     (Claimed, Ready),
-    (InProgress, Review),
-    (InProgress, Blocked),
     (InProgress, Ready),
     (Review, Done),
-    (Review, InProgress),
     (Review, Ready),
     (Review, Archived),
-    (Blocked, InProgress),
     (Blocked, Ready),
     (Done, Archived),
 ];
@@ -44,7 +39,8 @@ const ANYONES: [(TaskStatus, TaskStatus); 6] = [
 ];
 /// The holder's while the claim is live, anyone's once it is not.
 const WHILE_LIVE: [(TaskStatus, TaskStatus); 1] = [(Review, Archived)];
-/// The moves that hand a task back to the board.
+/// The moves that hand a task back to the board (#2705 T5: a task in
+/// progress only while no run of it is going).
 const RELEASES: [(TaskStatus, TaskStatus); 4] = [
     (Claimed, Ready),
     (InProgress, Ready),
@@ -52,16 +48,29 @@ const RELEASES: [(TaskStatus, TaskStatus); 4] = [
     (Blocked, Ready),
 ];
 
+/// `move_with_reason` with no runs, changes or tasks, giving a reason to
+/// the one move that takes one (back to ready from review).
+fn move_given(
+    task: &Task,
+    to: TaskStatus,
+    actor: &Identity,
+    now: &Timestamp,
+) -> Result<Task, BoardRuleError> {
+    let reason = match (task.fields().status, to) {
+        (Review, Ready) => MoveReason::Given("Back for a new plan".into()),
+        _ => MoveReason::Absent,
+    };
+    move_with_reason(task, (to, &reason), actor, (&[], &[]), &[], now)
+}
+
 #[test]
 fn only_the_table_allows_a_move_even_for_the_holder() {
     for from in ALL {
         for to in ALL {
-            let moved = move_task(
+            let moved = move_given(
                 &without_prs(task(from)),
                 to,
                 &person("Ada"),
-                (&[], &[]),
-                &[],
                 &at("10:00:00"),
             );
             match moved {
@@ -80,7 +89,11 @@ fn only_the_table_allows_a_move_even_for_the_holder() {
                         !ALLOWED.contains(&(from, to)),
                         "{from:?} -> {to:?}: {error}"
                     );
-                    assert_eq!(error, BoardRuleError::NotAllowed { from, to });
+                    let refused = match lifecycle_action(from, to) {
+                        Some(action) => BoardRuleError::UseLifecycle { from, to, action },
+                        None => BoardRuleError::NotAllowed { from, to },
+                    };
+                    assert_eq!(error, refused);
                 }
             }
         }
@@ -93,14 +106,7 @@ fn anyone_plans_readies_claims_and_archives_but_only_the_holder_moves_a_live_cla
     for (from, to) in ALLOWED {
         // No pull request linked: a reviewed task linking one is not
         // archived (`transitions_archive_tests`).
-        let moved = move_task(
-            &without_prs(task(from)),
-            to,
-            &bob,
-            (&[], &[]),
-            &[],
-            &at("10:00:00"),
-        );
+        let moved = move_given(&without_prs(task(from)), to, &bob, &at("10:00:00"));
         let anyones = ANYONES.contains(&(from, to));
         assert_eq!(
             moved.is_ok(),
@@ -119,17 +125,7 @@ fn the_holder_is_known_by_email_whatever_its_case() {
         name: "ADA".into(),
         email: "ADA@EXAMPLE.COM".into(),
     };
-    assert!(
-        move_task(
-            &task(Claimed),
-            InProgress,
-            &shouting,
-            (&[], &[]),
-            &[],
-            &at("10:00:00")
-        )
-        .is_ok()
-    );
+    assert!(move_given(&without_prs(task(Review)), Done, &shouting, &at("10:00:00")).is_ok());
 }
 
 #[test]
@@ -141,45 +137,24 @@ fn a_claim_is_taken_kept_or_cleared_by_the_move() {
         (claim.holder, claim.since, claim.expires),
         (person("Bob"), now.clone(), at("12:00:00"))
     );
-    for (from, to) in [
-        (Claimed, InProgress),
-        (Claimed, Blocked),
-        (InProgress, Blocked),
-        (Blocked, InProgress),
-        (Review, InProgress),
-    ] {
-        let moved = move_task(&task(from), to, &person("Ada"), (&[], &[]), &[], &now).unwrap();
-        assert_eq!(
-            moved.fields().claim,
-            task(from).fields().claim,
-            "{from:?} -> {to:?} keeps the claim"
-        );
-    }
+    // No move keeps a holder's claim since #2705 T4: the moves among the
+    // held statuses are the lifecycle's (`start`, `unstart`).
     let cleared = RELEASES.iter().chain(&[(Review, Done), (Review, Archived)]);
     for (from, to) in cleared.copied() {
-        let next = move_task(
-            &without_prs(task(from)),
-            to,
-            &person("Ada"),
-            (&[], &[]),
-            &[],
-            &now,
-        )
-        .unwrap();
+        let next = move_given(&without_prs(task(from)), to, &person("Ada"), &now).unwrap();
         assert_eq!(next.fields().claim, None, "{from:?} -> {to:?} clears it");
     }
 }
 
 #[test]
 fn a_holder_move_needs_a_claim() {
-    for (from, to) in [(Review, Done), (Review, InProgress), (Blocked, InProgress)] {
+    {
+        let (from, to) = (Review, Done);
         assert_eq!(
-            move_task(
-                &without_claim(task(from)),
+            move_given(
+                &without_prs(without_claim(task(from))),
                 to,
                 &person("Ada"),
-                (&[], &[]),
-                &[],
                 &at("10:00:00")
             ),
             Err(BoardRuleError::NoClaim),
@@ -195,14 +170,7 @@ fn a_holder_move_on_an_expired_claim_asks_for_a_renewal_except_a_release() {
     for (from, to) in ALLOWED {
         let anyones = ANYONES.contains(&(from, to));
         let release = RELEASES.contains(&(from, to)) || WHILE_LIVE.contains(&(from, to));
-        let moved = move_task(
-            &without_prs(task(from)),
-            to,
-            &ada,
-            (&[], &[]),
-            &[],
-            &expired,
-        );
+        let moved = move_given(&without_prs(task(from)), to, &ada, &expired);
         match (anyones, release) {
             (false, false) => assert_eq!(
                 moved,
@@ -212,8 +180,8 @@ fn a_holder_move_on_an_expired_claim_asks_for_a_renewal_except_a_release() {
             _ => assert!(moved.is_ok(), "{from:?} -> {to:?}: {moved:?}"),
         }
     }
-    let renewed = super::super::claims::renew(&task(Claimed), &ada, &expired).unwrap();
-    assert!(move_task(&renewed, InProgress, &ada, (&[], &[]), &[], &expired).is_ok());
+    let renewed = super::super::claims::renew(&without_prs(task(Review)), &ada, &expired).unwrap();
+    assert!(move_given(&renewed, Done, &ada, &expired).is_ok());
 }
 
 #[test]
@@ -224,7 +192,7 @@ fn anyone_readies_a_review_or_blocked_task_whose_claim_is_absent_or_expired() {
             (task(from), at("11:00:00")),
             (without_claim(task(from)), at("10:00:00")),
         ] {
-            let readied = move_task(&held, Ready, &bob, (&[], &[]), &[], &now).unwrap();
+            let readied = move_given(&held, Ready, &bob, &now).unwrap();
             assert_eq!(
                 (readied.fields().status, &readied.fields().claim),
                 (Ready, &None),
@@ -248,8 +216,7 @@ fn a_two_move_steal_of_a_live_claim_is_refused() {
             super::super::claims::take_over(&task(from), &bob, &live),
             Err(BoardRuleError::ClaimLive)
         );
-        let released =
-            move_task(&task(from), Ready, &person("Ada"), (&[], &[]), &[], &live).unwrap();
+        let released = move_given(&task(from), Ready, &person("Ada"), &live).unwrap();
         let claimed = move_task(&released, Claimed, &bob, (&[], &[]), &[], &live).unwrap();
         assert_eq!(
             claimed.fields().claim.as_ref().map(|claim| &claim.holder),
@@ -262,29 +229,21 @@ fn a_two_move_steal_of_a_live_claim_is_refused() {
 #[test]
 fn a_held_task_is_done_once_all_its_prs_merge_whoever_merged_them() {
     let merged = |prs: &[u64]| prs.iter().copied().collect::<BTreeSet<u64>>();
-    // Ready too: a holder released it with its pull requests linked, and
-    // no one holds it when they merge.
-    for from in [Ready, Claimed, InProgress, Review, Blocked] {
-        let done = complete_merged(
-            &task(from),
-            &merged(&[2482, 2483, 9]),
-            &[],
-            &[],
-            &at("10:00:00"),
-        )
-        .map(|done| done.task)
-        .unwrap();
+    // Only from review (#2705 T4), whoever holds it.
+    for held in [task(Review), without_claim(task(Review))] {
+        let done = complete_merged(&held, &merged(&[2482, 2483, 9]), &[], &[], &at("10:00:00"))
+            .map(|done| done.task)
+            .unwrap();
         let fields = done.fields();
         assert_eq!(
             (fields.status, &fields.claim, &fields.updated),
-            (Done, &None, &at("10:00:00")),
-            "{from:?}"
+            (Done, &None, &at("10:00:00"))
         );
     }
     let partly = complete_merged(&task(Review), &merged(&[2482]), &[], &[], &at("10:00:00"))
         .map(|done| done.task);
     assert_eq!(partly, Err(BoardRuleError::PrsUnmerged(vec![2483])));
-    for from in [Draft, Done, Archived] {
+    for from in [Draft, Ready, Claimed, InProgress, Blocked, Done, Archived] {
         let refused = complete_merged(
             &task(from),
             &merged(&[2482, 2483]),
@@ -293,7 +252,15 @@ fn a_held_task_is_done_once_all_its_prs_merge_whoever_merged_them() {
             &at("10:00:00"),
         )
         .map(|done| done.task);
-        assert_eq!(refused, Err(BoardRuleError::NotAllowed { from, to: Done }));
+        let way = match lifecycle_action(from, Done) {
+            Some(action) => BoardRuleError::UseLifecycle {
+                from,
+                to: Done,
+                action,
+            },
+            None => BoardRuleError::NotAllowed { from, to: Done },
+        };
+        assert_eq!(refused, Err(way), "{from:?}");
     }
     let mut unlinked = task(Review).into_fields();
     unlinked.prs.clear();
@@ -334,8 +301,8 @@ fn a_write_from_a_fast_clock_does_not_stop_another_clients_moves() {
         "the claim starts at the task's own time"
     );
     assert_eq!(claim.expires, second(2 + 2 * 60 * 60));
-    let started = move_task(&claimed, InProgress, &bob, (&[], &[]), &[], &now).unwrap();
-    assert_eq!(started.fields().status, InProgress);
+    let released = move_task(&claimed, Ready, &bob, (&[], &[]), &[], &now).unwrap();
+    assert_eq!(released.fields().updated, second(3));
     let done = complete_merged(
         &last_written(task(Review), &ahead),
         &BTreeSet::from([2482, 2483]),
@@ -352,45 +319,26 @@ fn a_write_from_a_fast_clock_does_not_stop_another_clients_moves() {
 fn expiry_is_judged_by_the_callers_clock() {
     // Ada's claim runs 09:00 to 11:00 though the task was last written in
     // 2036: at 11:00 by Bob's clock it has expired.
-    let ahead = last_written(task(InProgress), &far_future());
+    let ahead = last_written(without_prs(task(Review)), &far_future());
     let taken = super::super::claims::take_over(&ahead, &person("Bob"), &at("11:00:00")).unwrap();
     assert_eq!(
         taken.fields().updated,
         far_future().plus_seconds(1).unwrap()
     );
     assert_eq!(
-        move_task(
-            &ahead,
-            Review,
-            &person("Ada"),
-            (&[], &[]),
-            &[],
-            &at("11:00:00")
-        ),
+        move_given(&ahead, Done, &person("Ada"), &at("11:00:00")),
         Err(BoardRuleError::ClaimExpired)
     );
 }
 
 #[test]
-fn the_same_committer_under_another_name_moves_the_task_and_keeps_the_claim() {
+fn the_same_committer_under_another_name_moves_the_task() {
     let renamed = Identity {
         name: "A. Lovelace".into(),
         email: "ADA@example.com".into(),
     };
-    let moved = move_task(
-        &task(Claimed),
-        InProgress,
-        &renamed,
-        (&[], &[]),
-        &[],
-        &at("10:00:00"),
-    )
-    .unwrap();
-    assert_eq!(
-        moved.fields().claim,
-        task(Claimed).fields().claim,
-        "the holder keeps the name it claimed under"
-    );
+    let moved = move_given(&without_prs(task(Review)), Done, &renamed, &at("10:00:00"));
+    assert_eq!(moved.map(|task| task.fields().status), Ok(Done));
 }
 
 #[test]
@@ -547,41 +495,27 @@ fn a_done_task_is_resolved_as_completed() {
     assert_eq!(dropped.fields().resolution, None);
 }
 
-/// A run still going keeps its task held: moves among the held statuses
-/// pass, leaving for ready, done or archived waits until it ends.
+/// A run still going keeps its task held: leaving for ready, done or
+/// archived waits until it ends.
 #[test]
 fn a_task_with_a_run_going_stays_with_its_holder() {
     let running = crate::domain::project_board::services::fixtures_tests::open_run(1, 1);
     let ada = person("Ada");
-    for (from, to) in [
-        (Claimed, InProgress),
-        (InProgress, Review),
-        (Review, InProgress),
-    ] {
-        assert!(
-            move_task(
-                &task(from),
-                to,
-                &ada,
-                (std::slice::from_ref(&running), &[]),
-                &[],
-                &at("10:00:00")
-            )
-            .is_ok(),
-            "{from:?} -> {to:?}"
-        );
-    }
     for (from, to) in RELEASES.iter().copied() {
+        let reason = match from {
+            Review => MoveReason::Given("Back for a new plan".into()),
+            _ => MoveReason::Absent,
+        };
         assert_eq!(
-            move_task(
+            move_with_reason(
                 &without_prs(task(from)),
-                to,
+                (to, &reason),
                 &ada,
                 (std::slice::from_ref(&running), &[]),
                 &[],
                 &at("10:00:00")
             ),
-            Err(BoardRuleError::RunOpen(1)),
+            Err(held_back(from, to)),
             "{from:?} -> {to:?}"
         );
     }
@@ -594,7 +528,8 @@ fn a_task_with_a_run_going_stays_with_its_holder() {
 fn completing_a_task_ends_its_open_run_as_lost() {
     let merged = BTreeSet::from([2482, 2483]);
     let running = crate::domain::project_board::services::fixtures_tests::open_run(1, 1);
-    for from in [Claimed, InProgress, Review, Blocked] {
+    {
+        let from = Review;
         let done = complete_merged(
             &task(from),
             &merged,
@@ -663,8 +598,7 @@ fn a_move_reads_only_what_can_hold_it() {
     let now = at("10:00:00");
     let reads = |from, to| move_reads(&without_prs(task(from)), to, &ada, &now);
     let read = |runs, changes| Ok(MoveReads { runs, changes });
-    assert_eq!(reads(Claimed, InProgress), read(false, false));
-    assert_eq!(reads(InProgress, Review), read(false, false));
+    assert_eq!(reads(Ready, Claimed), read(false, false));
     assert_eq!(reads(InProgress, Ready), read(true, false));
     assert_eq!(reads(Review, Done), read(true, true));
     assert_eq!(reads(Review, Archived), read(true, true));
@@ -676,12 +610,20 @@ fn a_move_reads_only_what_can_hold_it() {
         })
     );
     assert_eq!(
+        reads(Claimed, InProgress),
+        Err(BoardRuleError::UseLifecycle {
+            from: Claimed,
+            to: InProgress,
+            action: crate::domain::project_board::value_objects::vocabulary::LifecycleAction::Start
+        })
+    );
+    assert_eq!(
         move_reads(&task(Review), Done, &ada, &now),
         Err(BoardRuleError::PrsLinked(task(Review).fields().prs.clone())),
         "a task linking pull requests is refused before its changes are read"
     );
     assert_eq!(
-        move_reads(&task(Claimed), InProgress, &person("Bob"), &now),
+        move_reads(&without_prs(task(Review)), Done, &person("Bob"), &now),
         Err(BoardRuleError::NotHolder)
     );
     assert_eq!(
@@ -701,22 +643,39 @@ fn a_run_going_holds_exactly_the_moves_that_read_runs() {
     let ada = person("Ada");
     let now = at("10:00:00");
     let running = crate::domain::project_board::services::fixtures_tests::open_run(1, 1);
-    for (from, to, _, _) in TRANSITIONS {
+    for (from, to, ..) in TRANSITIONS {
         let held = without_prs(task(*from));
         let reads = move_reads(&held, *to, &ada, &now).unwrap();
-        let moved = move_task(
+        let reason = match (from, to) {
+            (Review, Ready) => MoveReason::Given("Back for a new plan".into()),
+            _ => MoveReason::Absent,
+        };
+        let moved = move_with_reason(
             &held,
-            *to,
+            (*to, &reason),
             &ada,
             (std::slice::from_ref(&running), &[]),
             &[],
             &now,
         );
         assert_eq!(
-            moved == Err(BoardRuleError::RunOpen(1)),
+            moved == Err(held_back(*from, *to)),
             reads.runs,
             "{from:?} -> {to:?}: {moved:?}"
         );
         assert_eq!(reads.runs, super::super::runs::holds_moves_to(*to));
+    }
+}
+
+/// How a run going (run 1) refuses the move `from` -> `to`: a task in
+/// progress names its run's end (#2705 T5), any other `run_open`.
+fn held_back(from: TaskStatus, to: TaskStatus) -> BoardRuleError {
+    match (from, to) {
+        (InProgress, Ready) => BoardRuleError::UseLifecycle {
+            from,
+            to,
+            action: LifecycleAction::EndRun,
+        },
+        _ => BoardRuleError::RunOpen(1),
     }
 }

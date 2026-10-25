@@ -125,9 +125,10 @@ fn a_pull_request_not_read_as_merged_completes_nothing() {
 }
 
 /// A holder released the task with its pull request linked: it is ready,
-/// held by no one, and its merge still closes it.
+/// and its merge no longer closes it (#2705 T4: a merge completes a task
+/// only from review); the host is not asked.
 #[test]
-fn a_released_task_is_done_when_its_pull_request_merges() {
+fn a_released_task_is_not_done_when_its_pull_request_merges() {
     let store = board();
     let ready = Task::new(TaskFields {
         prs: vec![7],
@@ -139,17 +140,24 @@ fn a_released_task_is_done_when_its_pull_request_merges() {
     let head = store.read().unwrap().head;
     store.write_tasks(&head, &[ready], "seed").unwrap();
     let host = MemoryPullRequests::default();
-    host.set(7, PullRequestState::Merged);
-    let done = complete(&store, &host).execute(&slug("a")).unwrap();
-    assert_eq!(done.fields().status, TaskStatus::Done);
+    host.fail("must not be asked");
+    assert_eq!(
+        complete(&store, &host).execute(&slug("a")),
+        Err(ProjectBoardError::Rule(BoardRuleError::UseLifecycle {
+            from: TaskStatus::Ready,
+            to: TaskStatus::Done,
+            action: crate::domain::project_board::value_objects::vocabulary::LifecycleAction::DoneWithoutRun,
+        }))
+    );
 }
 
-/// Whoever holds the task, its merge closes it: the claim is cleared.
+/// Whoever holds the reviewed task, its merge closes it: the claim is
+/// cleared.
 #[test]
 fn a_merge_closes_a_held_task_whoever_holds_it() {
     let store = board();
     let held = Task::new(TaskFields {
-        status: TaskStatus::InProgress,
+        status: TaskStatus::Review,
         claim: Some(Claim {
             holder: person("Carol"),
             since: at("09:00:00"),
