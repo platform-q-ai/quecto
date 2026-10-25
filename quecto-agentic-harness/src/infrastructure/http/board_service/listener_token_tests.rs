@@ -200,3 +200,71 @@ fn a_capped_request_is_refused_after_its_body_is_read() {
     assert_eq!(body["error"], why, "{answer}");
     drop(held);
 }
+
+/// Review round 2 (H1): connections of a full token whose bodies never
+/// come stay counted among their source's unauthenticated connections
+/// (8, the oldest evicted, each closed past its first-request time), so
+/// however many there are they never fill the slots: another token is
+/// served at once.
+#[test]
+fn slow_bodies_on_a_full_token_never_fill_the_slots() {
+    let running = one_each();
+    let address = running.tcp.unwrap();
+    let held = held_as("alpha", address);
+    let head = "POST /v1/thing HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer alpha\r\n\
+                Content-Length: 5\r\n\r\n";
+    let slow: Vec<_> = (0..limits::MAX_CONNECTIONS)
+        .map(|_| {
+            let mut stream = from_source("127.0.0.1", address);
+            stream.write_all(head.as_bytes()).unwrap();
+            // Its head reaches the gate before the next connects, so
+            // newcomers never evict it before it has authenticated.
+            std::thread::sleep(Duration::from_millis(15));
+            stream
+        })
+        .collect();
+    std::thread::sleep(Duration::from_millis(300));
+    let began = Instant::now();
+    let mut beta = from_source("127.0.0.1", address);
+    beta.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let answer = exchange(beta, &closing_as("beta"));
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer:?}");
+    let took = began.elapsed();
+    assert!(took < Duration::from_secs(5), "served in {took:?}");
+    drop((held, slow));
+}
+
+/// Review round 2 (M1, L1): a request refused by its head still takes
+/// its connection's place, kept for the connection's life; on a full
+/// token the same refusal is answered as itself (never a retryable
+/// `busy`) and closes its connection, taking no place.
+#[test]
+fn a_refused_head_holds_its_place_and_on_a_full_token_is_closed_as_itself() {
+    let running = one_each();
+    let address = running.tcp.unwrap();
+    let nowhere = b"DELETE /nowhere HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer alpha\r\n\r\n";
+    let mut first = from_source("127.0.0.1", address);
+    let answer = reply_on(&mut first, nowhere);
+    assert!(answer.starts_with("HTTP/1.1 404"), "{answer}");
+    assert!(!answer.contains("connection: close"), "{answer}");
+    let refused = exchange(from_source("127.0.0.1", address), &kept_as("alpha"));
+    assert_busy_and_closed(&refused);
+    let over = "POST /v1/thing HTTP/1.1\r\nHost: board\r\nAuthorization: Bearer alpha\r\n\
+                Content-Length: 1048577\r\n\r\n";
+    for (sent, status, code) in [
+        (&nowhere[..], "404", "route"),
+        (over.as_bytes(), "413", "too_large"),
+    ] {
+        let answer = exchange(from_source("127.0.0.1", address), sent);
+        assert!(
+            answer.starts_with(&format!("HTTP/1.1 {status}")),
+            "{answer}"
+        );
+        assert!(answer.contains(&format!(r#""code":"{code}""#)), "{answer}");
+        assert!(answer.contains("connection: close"), "{answer}");
+    }
+    let answer = reply_on(&mut first, &kept_as("alpha"));
+    assert!(answer.starts_with("HTTP/1.1 200"), "still served: {answer}");
+    let calls = running.handler.calls.load(Ordering::SeqCst);
+    assert_eq!(calls, 1, "no refusal reached the handler");
+}
