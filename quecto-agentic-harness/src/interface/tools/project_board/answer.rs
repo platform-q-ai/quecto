@@ -631,7 +631,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             (C::ClockUnreadable, fields([("read", shown_json(read))]))
         }
         E::Clock(BoardClockError::Unsynced(why)) => {
-            (C::ClockUnreadable, fields([("read", shown_json(why))]))
+            (C::ClockUnsynced, fields([("reason", shown_json(why))]))
         }
         E::Quarantined { key, path, object } => set_aside::fields_of(key, path, object),
         E::Duplicate { key } => (C::DuplicateArtifact, key_fields(key)),

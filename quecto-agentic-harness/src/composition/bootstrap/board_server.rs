@@ -15,6 +15,7 @@ use crate::application::project_board::ports::{
     ProjectBoardStore, PullRequestState, PullRequestStates, PullRequestStatesError,
     RemoteRevisions, TimeSync,
 };
+use crate::application::project_board::synced_clock::SyncedBoardClock;
 use crate::application::project_board::use_cases::{
     BoardAccess, QueryBoard, READ_BUDGET, RunBoardOperation, ServeBoard, ServeBoardOperation,
 };
@@ -97,8 +98,8 @@ pub fn build_board_server_with(
             ))
         })?;
     let ops: Arc<dyn BoardOpStore> = Arc::new(ops);
-    let clock: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());
-    let _ = sync;
+    let host: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());
+    let clock: Arc<dyn BoardClock> = Arc::new(SyncedBoardClock::new(Arc::clone(&host), sync));
     let served = ServedOperations {
         clock: Arc::clone(&clock),
         prs: pull_request_states(&url, &environment.vars),
@@ -108,7 +109,7 @@ pub fn build_board_server_with(
     Ok(BoardServerHandles {
         serve: ServeBoard::new(ops.reads(), Arc::clone(&clock), board),
         operations: ServeBoardOperation::new(ops, Arc::new(served)),
-        access: BoardAccess::new(tokens, clock),
+        access: BoardAccess::new(tokens, host),
         peers: Arc::new(SocketPeerCredentials),
         uid: this_uid(),
         listen,

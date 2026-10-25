@@ -223,8 +223,12 @@ fn a_remote_client_reads_no_clock_and_decodes_no_board() {
     ];
     for file in REMOTE {
         let source = read(file);
+        // Allowed: the clock's error type, by name only, to hand back the
+        // server's `clock_unsynced` refusal (#2705); it reads no clock.
+        let unclocked = source.replace("BoardClockError::Unsynced", "");
+        let unclocked = unclocked.replace("BoardClockError,", "");
         assert_eq!(
-            dependency_scan::forbidden_hit(&source, &clock),
+            dependency_scan::forbidden_hit(&unclocked, &clock),
             Ok(()),
             "{file}"
         );

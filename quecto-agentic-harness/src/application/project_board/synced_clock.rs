@@ -1,9 +1,18 @@
 //! The board server's clock gate (epic #2705): a clock that tells the time
-//! only while the host says its clock is synchronised.
+//! only while the host affirms its clock is synchronised ([`TimeSync`]).
+//!
+//! - Synchronised: the clock's time, and that time is its own outside
+//!   reference (the host keeps it to an outside time), so a change is
+//!   bounded against it and its answer carries no clock note.
+//! - Anything else: no time (`BoardClockError::Unsynced`, which the server
+//!   refuses as `clock_unsynced` and rolls back) and no reference.
+//!
+//! The host is asked on each reading, so the gate follows it as it gains
+//! or loses synchronisation.
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::ports::{BoardClock, BoardClockError, ReferenceStatus, TimeSync};
+use super::ports::{BoardClock, BoardClockError, ClockSync, ReferenceStatus, TimeSync};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 
 /// `clock`, gated on `sync`.
@@ -20,16 +29,26 @@ impl SyncedBoardClock {
 
 impl BoardClock for SyncedBoardClock {
     fn now(&self) -> Result<Timestamp, BoardClockError> {
-        let _ = &self.sync;
-        self.clock.now()
+        match self.sync.sync() {
+            ClockSync::Synced => self.clock.now(),
+            ClockSync::Unsynced(why) => Err(BoardClockError::Unsynced(why)),
+        }
     }
 
+    /// The synchronised clock's own time: read after [`Self::now`], never
+    /// before it.
     fn reference(&self) -> Option<Timestamp> {
-        self.clock.reference()
+        match self.sync.sync() {
+            ClockSync::Synced => self.clock.now().ok(),
+            ClockSync::Unsynced(_) => None,
+        }
     }
 
     fn reference_status(&self) -> ReferenceStatus {
-        self.clock.reference_status()
+        match self.sync.sync() {
+            ClockSync::Synced => ReferenceStatus::Referenced,
+            ClockSync::Unsynced(why) => ReferenceStatus::NoReference(why),
+        }
     }
 
     fn pause(&self, attempt: usize) {
