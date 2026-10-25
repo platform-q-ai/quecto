@@ -3,6 +3,14 @@
 //! involved; raw identifiers, include! and path aliases are separate concerns.
 use std::{fs, path::Path, process::Command};
 
+/// Catches a checker that hangs; it is not a performance budget (#2736).
+/// Each checker syn-parses the whole copied crate (about 600k lines, in a
+/// debug build). That takes 10-20 s alone and well over 30 s at load
+/// average ~20, which is how a 30 s guard came to fail with no regression.
+/// Five minutes is far above any healthy run on a loaded machine and still
+/// stops a real hang well before CI's job timeout.
+const HANG_GUARD_SECS: u32 = 300;
+
 struct Fixture(tempfile::TempDir);
 
 impl Fixture {
@@ -48,19 +56,35 @@ impl Fixture {
     }
 
     fn check(&self, checker: &str, diagnostic: Option<&str>) {
+        let started = std::time::Instant::now();
         let output = Command::new("timeout")
-            .args(["-s", "KILL", "30"])
+            .args(["-s", "KILL", &HANG_GUARD_SECS.to_string()])
             .arg(std::env::current_exe().unwrap())
             .args([checker, "--exact", "--nocapture"])
             .current_dir(self.root())
             .output()
             .unwrap();
+        let elapsed = started.elapsed();
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        println!("fixture {}: {checker}\n{text}", self.0.path().display());
+        println!(
+            "fixture {}: {checker} ({elapsed:.1?})\n{text}",
+            self.0.path().display()
+        );
+        // Allowlist of the two outcomes a finished checker can have: 0 when
+        // it passed, 101 when it failed. Anything else means it crashed or
+        // ran into the hang guard (its SIGKILL ends GNU timeout too, so the
+        // status carries the signal and no exit code).
+        assert!(
+            matches!(output.status.code(), Some(0 | 101)),
+            "{checker} ended with {} after {elapsed:.1?}: a checker that ends \
+             any other way crashed or exceeded the {HANG_GUARD_SECS} s hang \
+             guard\n{text}",
+            output.status
+        );
         assert!(text.contains("running 1 test"), "{checker}: {text}");
         match diagnostic {
             Some(needle) => {
