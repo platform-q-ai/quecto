@@ -1,7 +1,12 @@
-//! Failure-only borrowed SQLite compilation surface.
+//! Borrowed SQLite operations; the owning adapter holds the pinned transaction.
 use crate::application::project_board::ports::backup::BackupError;
 use rusqlite::{Connection, InterruptHandle};
-use std::time::Duration;
+use std::{
+    sync::mpsc,
+    thread::JoinHandle,
+    time::{Duration, Instant},
+};
+
 pub trait BackupSqliteOps: Send + Sync {
     fn copy(
         &self,
@@ -16,17 +21,65 @@ pub struct SystemBackupSqliteOps;
 impl BackupSqliteOps for SystemBackupSqliteOps {
     fn copy(
         &self,
-        _: &Connection,
-        _: &mut Connection,
-        _: Duration,
-        _: Duration,
+        source: &Connection,
+        destination: &mut Connection,
+        remaining: Duration,
+        busy: Duration,
     ) -> Result<(), BackupError> {
-        Err(BackupError::Unavailable("B13-lite not implemented".into()))
+        let start = Instant::now();
+        source
+            .busy_timeout(busy.min(remaining))
+            .map_err(copy_error)?;
+        destination
+            .busy_timeout(busy.min(remaining))
+            .map_err(copy_error)?;
+        let backup = rusqlite::backup::Backup::new(source, destination).map_err(copy_error)?;
+        loop {
+            if start.elapsed() < remaining {
+            } else {
+                return Err(BackupError::BusyDeadline);
+            }
+            match backup.step(128).map_err(copy_error)? {
+                rusqlite::backup::StepResult::Done => return Ok(()),
+                rusqlite::backup::StepResult::More => {}
+                rusqlite::backup::StepResult::Busy | rusqlite::backup::StepResult::Locked => {
+                    std::thread::sleep(
+                        Duration::from_millis(1).min(remaining.saturating_sub(start.elapsed())),
+                    );
+                }
+                _ => return Err(BackupError::PublishFailed),
+            }
+        }
     }
-    fn integrity(&self, _: &Connection) -> rusqlite::Result<Vec<String>> {
-        Err(rusqlite::Error::InvalidQuery)
+    fn integrity(&self, connection: &Connection) -> rusqlite::Result<Vec<String>> {
+        connection
+            .prepare("PRAGMA integrity_check")?
+            .query_map([], |row| row.get(0))?
+            .collect()
     }
 }
+fn copy_error(error: rusqlite::Error) -> BackupError {
+    match error.sqlite_error_code() {
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) => {
+            BackupError::BusyDeadline
+        }
+        Some(rusqlite::ErrorCode::OperationInterrupted) => BackupError::ValidationDeadline,
+        Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase) => {
+            BackupError::IntegrityFailed
+        }
+        _ => BackupError::PublishFailed,
+    }
+}
+pub(super) fn classify(error: rusqlite::Error) -> BackupError {
+    match error.sqlite_error_code() {
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) => {
+            BackupError::BusyDeadline
+        }
+        Some(rusqlite::ErrorCode::OperationInterrupted) => BackupError::ValidationDeadline,
+        _ => BackupError::IntegrityFailed,
+    }
+}
+/// Cancellation must join before the connection can be released, including unwind.
 pub trait ValidationLease: Send {
     fn cancel_and_join(&mut self) -> Result<(), BackupError>;
 }
@@ -38,12 +91,53 @@ pub trait BackupValidationDeadline: Send + Sync {
     ) -> Result<Box<dyn ValidationLease>, BackupError>;
 }
 pub struct SystemValidationDeadline;
+struct Lease {
+    cancel: Option<mpsc::Sender<()>>,
+    thread: Option<JoinHandle<()>>,
+}
+impl ValidationLease for Lease {
+    fn cancel_and_join(&mut self) -> Result<(), BackupError> {
+        if let Some(cancel) = self.cancel.take() {
+            let _ = cancel.send(());
+        }
+        match self.thread.take() {
+            Some(thread) => thread
+                .join()
+                .map_err(|_| BackupError::Unavailable("validation watchdog failed".into())),
+            None => Ok(()),
+        }
+    }
+}
+impl Drop for Lease {
+    fn drop(&mut self) {
+        let _ = self.cancel_and_join();
+    }
+}
 impl BackupValidationDeadline for SystemValidationDeadline {
     fn arm(
         &self,
-        _: InterruptHandle,
-        _: Duration,
+        interrupt: InterruptHandle,
+        remaining: Duration,
     ) -> Result<Box<dyn ValidationLease>, BackupError> {
-        Err(BackupError::Unavailable("B13-lite not implemented".into()))
+        let (cancel, receive) = mpsc::channel();
+        let thread = std::thread::Builder::new()
+            .name("board-backup-validation".into())
+            .spawn(move || {
+                if matches!(
+                    receive.recv_timeout(remaining),
+                    Err(mpsc::RecvTimeoutError::Timeout)
+                ) {
+                    interrupt.interrupt();
+                }
+            })
+            .map_err(|_| BackupError::Unavailable("validation watchdog unavailable".into()))?;
+        Ok(Box::new(Lease {
+            cancel: Some(cancel),
+            thread: Some(thread),
+        }))
     }
 }
+
+#[cfg(test)]
+#[path = "backup_sqlite_tests.rs"]
+mod tests;

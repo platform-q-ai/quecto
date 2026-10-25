@@ -6,7 +6,12 @@ use super::backup_sqlite::{
 use crate::application::project_board::ports::{BoardClock, backup::*};
 use crate::infrastructure::time::board_clock::SystemBoardClock;
 use std::{path::PathBuf, sync::Arc};
-#[allow(dead_code)]
+#[path = "backup_admission.rs"]
+mod admission;
+#[cfg(target_os = "linux")]
+#[path = "backup_run.rs"]
+mod run;
+
 pub struct SqliteBoardBackup {
     source_root: PathBuf,
     files: Arc<dyn BackupFileOps>,
@@ -57,7 +62,15 @@ impl SqliteBoardBackup {
     }
 }
 impl BoardBackup for SqliteBoardBackup {
-    fn backup(&self, _request: &BackupRequest) -> Result<BackupReport, BackupError> {
-        Err(BackupError::Unavailable("B13-lite not implemented".into()))
+    fn backup(&self, request: &BackupRequest) -> Result<BackupReport, BackupError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.run(request)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = request;
+            Err(BackupError::UnsupportedPlatform)
+        }
     }
 }

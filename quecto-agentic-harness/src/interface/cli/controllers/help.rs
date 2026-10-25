@@ -92,6 +92,7 @@ pub(in crate::interface::cli) fn help_text(out: &mut String) {
     out.push_str("                  real control\n");
     out.push_str("  board-server import --repo <source> --board-id <16-hex> [--remote <name>]\n");
     out.push_str("  board-server export --repo <destination> --board-id <16-hex> --to-branch <branch> --format 3 [--dry-run]\n");
+    out.push_str("  board-server backup --to <dir> [--board-id <16-hex>]\n");
     out.push_str("  board-server serve --socket <path> --repo <clone> [--remote <name>]\n");
     out.push_str("              [--listen <ip:port>]... [--state <dir>]\n");
     out.push_str("              Serve the board over HTTP on a Unix socket (this user only)\n");

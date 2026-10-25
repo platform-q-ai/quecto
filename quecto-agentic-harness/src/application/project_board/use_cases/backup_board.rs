@@ -6,7 +6,6 @@ use crate::application::project_board::ports::{
 };
 use std::sync::Arc;
 
-#[allow(dead_code)]
 pub struct BackupBoard {
     backup: Arc<dyn BoardBackup>,
     clock: Arc<dyn BoardClock>,
@@ -16,7 +15,8 @@ impl BackupBoard {
         Self { backup, clock }
     }
     pub fn execute(&self, request: &BackupRequest) -> Result<BackupReport, BackupError> {
-        let _ = request;
-        Err(BackupError::Unavailable("B13-lite not implemented".into()))
+        let mut request = request.clone();
+        request.at = self.clock.now().map_err(|_| BackupError::ClockOutOfRange)?;
+        self.backup.backup(&request)
     }
 }
