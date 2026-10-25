@@ -93,9 +93,6 @@ pub fn run(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut 
             return 1;
         }
     };
-    if options.count.is_some() || options.count.is_none() {
-        return 0;
-    }
     let Some(build) = ctx.board_watch else {
         stderr.push_str("board watch: the board watch is not composed\n");
         return 1;

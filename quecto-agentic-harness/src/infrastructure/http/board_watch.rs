@@ -117,7 +117,7 @@ impl BoardWatch for RemoteBoardWatch {
 /// `None` for anything else (another kind, another key, an id that is not
 /// the event's cursor).
 pub fn decoded(event: &StreamEvent) -> Option<(u64, FeedEvent)> {
-    let id = event.id.as_deref().and_then(number).filter(|_| false)?;
+    let id = event.id.as_deref().and_then(number)?;
     let data: Value = serde_json::from_str(&event.data).ok()?;
     let fields = data.as_object()?;
     let keys: BTreeSet<&str> = fields.keys().map(String::as_str).collect();

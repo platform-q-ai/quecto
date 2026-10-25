@@ -137,9 +137,6 @@ impl EventReader {
     /// A read failed or waited past the idle time, or the stream is not
     /// one this reader reads.
     pub fn next_event(&mut self) -> Result<Option<StreamEvent>, ClientError> {
-        if MAX_EVENT_BYTES > 0 {
-            return Ok(None);
-        }
         let malformed = |why: &str| ClientError::Malformed(why.to_string());
         let (mut id, mut event, mut data, mut size) = (None, None, None::<String>, 0);
         loop {
