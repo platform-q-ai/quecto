@@ -56,6 +56,12 @@ pub fn cmd_board_server(
     {
         return history::run(ctx, rest, stdout, stderr);
     }
+    if let Some(("import", rest)) = args
+        .split_first()
+        .map(|(first, rest)| (first.as_str(), rest))
+    {
+        return history::run_import(ctx, rest, stdout, stderr);
+    }
     let began = std::time::Instant::now();
     if let Some(("token", rest)) = args
         .split_first()

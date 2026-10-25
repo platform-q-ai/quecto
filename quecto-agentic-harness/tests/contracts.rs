@@ -446,3 +446,13 @@ mod board_history_sink;
 #[cfg(feature = "test-support")]
 #[path = "contracts/board_history_snapshot.rs"]
 mod board_history_snapshot;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/board_history_source.rs"]
+mod board_history_source;
+#[cfg(feature = "test-support")]
+#[path = "contracts/board_history_store.rs"]
+mod board_history_store;
+#[cfg(feature = "test-support")]
+#[path = "contracts/prepared_history_import.rs"]
+mod prepared_history_import;

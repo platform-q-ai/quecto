@@ -89,7 +89,7 @@ pub fn build_history_cli(
     })
 }
 
-/// Additive RED-only graph, leaving the working export graph unchanged.
+/// Complete additive import graph, reusing the working export graph.
 pub struct BoardHistoryImportHandles {
     pub source: Arc<dyn BoardHistorySource>,
     pub store: Arc<dyn BoardHistoryStore>,
@@ -113,4 +113,34 @@ pub fn build_board_history_import_from_ports(
         store,
         sink,
     }
+}
+
+/// Offline import composes the same owned store and complete dry exporter.
+pub fn build_history_import_cli(
+    e: crate::interface::cli::board_server::history::ImportCliEnvironment,
+) -> Result<crate::application::project_board::use_cases::ImportBoardHistory, String> {
+    use crate::infrastructure::persistence::project_board::history::GitBoardHistorySource;
+    let data = dirs::data_dir()
+        .ok_or("no data directory")?
+        .join("quecto")
+        .join("boards");
+    std::fs::create_dir_all(&data).map_err(|e| e.to_string())?;
+    let store = Arc::new(SqliteBoardHistoryStore::new(
+        data.join(format!("{}.sqlite", e.board.as_str())),
+        Identity {
+            name: "Quecto".into(),
+            email: "board@quecto.invalid".into(),
+        },
+        e.board,
+    ));
+    // Import only dry-proves: this sink never publishes or writes source objects.
+    Ok(build_board_history_import_from_ports(
+        Arc::new(GitBoardHistorySource::new(e.repo.clone(), e.remote)),
+        store,
+        Arc::new(GitBoardHistorySink::new(
+            e.repo,
+            "refs/heads/quecto/board".into(),
+        )),
+    )
+    .import)
 }

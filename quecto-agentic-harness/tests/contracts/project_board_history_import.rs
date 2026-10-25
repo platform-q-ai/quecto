@@ -155,3 +155,92 @@ fn real_corrupt_original_reaches_owned_prepared_then_full_export_failure_rolls_b
         "count: 0\nsize: 0\nin-pack: 0\npacks: 0\nsize-pack: 0\nprune-packable: 0\ngarbage: 0\nsize-garbage: 0"
     );
 }
+
+fn offline(home: &std::path::Path, args: &[String]) -> std::process::Output {
+    std::process::Command::new("timeout")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .env("HOME", home)
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("QUECTO_BASE_DIR", home)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .args(["-s", "KILL", "60", env!("CARGO_BIN_EXE_quecto")])
+        .args(args)
+        .output()
+        .unwrap()
+}
+fn offline_transfer(algorithm: HistoryAlgorithm, count: usize) {
+    let f = Fixture::new(algorithm, count);
+    let home = f.directory.path().join("offline-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let objects = text(&f.repo, &["count-objects", "-v"]);
+    let refs = text(&f.repo, &["for-each-ref"]);
+    let args: Vec<String> = [
+        "board-server",
+        "import",
+        "--repo",
+        f.repo.to_str().unwrap(),
+        "--board-id",
+        "0123456789abcdef",
+        "--remote",
+        "local-provenance-only",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    let output = offline(&home, &args);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["revisions"], count);
+    assert_eq!(report["head"], format!("1:{count}"));
+    assert_eq!(report["source_head"], f.history.source_head);
+    assert_eq!(text(&f.repo, &["count-objects", "-v"]), objects);
+    assert_eq!(text(&f.repo, &["for-each-ref"]), refs);
+    let database = home.join(".local/share/quecto/boards/0123456789abcdef.sqlite");
+    let before = fingerprint(&database);
+    let output = offline(&home, &args);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("conflict"));
+    assert_eq!(fingerprint(&database), before);
+    let args: Vec<String> = [
+        "board-server",
+        "export",
+        "--repo",
+        f.destination.to_str().unwrap(),
+        "--board-id",
+        "0123456789abcdef",
+        "--to-branch",
+        "rollback",
+        "--format",
+        "3",
+        "--dry-run",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    let output = offline(&home, &args);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["revisions"], count);
+    assert_eq!(report["git_head"], f.history.source_head);
+    assert_eq!(fingerprint(&database), before);
+    assert!(text(&f.destination, &["for-each-ref"]).is_empty());
+    assert!(text(&f.destination, &["count-objects", "-v"]).starts_with("count: 0\n"));
+}
+#[test]
+fn offline_import_complete_owner12_corpus106_both_formats_preserves_source_and_export() {
+    for algorithm in [HistoryAlgorithm::Sha1, HistoryAlgorithm::Sha256] {
+        for count in [12, 106] {
+            offline_transfer(algorithm, count);
+        }
+    }
+}
