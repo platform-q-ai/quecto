@@ -404,3 +404,55 @@ mod declare_turn_outcome;
 #[cfg(feature = "test-support")]
 #[path = "contracts/project_board_sqlite_regression_red.rs"]
 mod project_board_sqlite_regression_red;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_sqlite_history_red.rs"]
+mod project_board_sqlite_history_red;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_history_fixture.rs"]
+mod project_board_history_fixture;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_history.rs"]
+mod project_board_history;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_history_import.rs"]
+mod project_board_history_import;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_history_orchestration.rs"]
+mod project_board_history_orchestration;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_history_safety.rs"]
+mod project_board_history_safety;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_history_native.rs"]
+mod project_board_history_native;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_history_lineage.rs"]
+mod project_board_history_lineage;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/board_history_read.rs"]
+mod board_history_read;
+#[cfg(feature = "test-support")]
+#[path = "contracts/board_history_sink.rs"]
+mod board_history_sink;
+#[cfg(feature = "test-support")]
+#[path = "contracts/board_history_snapshot.rs"]
+mod board_history_snapshot;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/board_history_source.rs"]
+mod board_history_source;
+#[cfg(feature = "test-support")]
+#[path = "contracts/board_history_store.rs"]
+mod board_history_store;
+#[cfg(feature = "test-support")]
+#[path = "contracts/prepared_history_import.rs"]
+mod prepared_history_import;

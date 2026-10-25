@@ -289,6 +289,9 @@ pub struct CliContext {
     pub board_cli_recording: Option<board::CliRecordingBuilder>,
     /// Composition's board server builder (epic #2705 B4).
     pub board_server: Option<board_server::BoardServerBuilder>,
+    /// Offline export graph, independent of the listener/token graph.
+    pub board_history: Option<board_server::history::BoardHistoryBuilder>,
+    pub board_history_import: Option<board_server::history::BoardHistoryImportBuilder>,
     /// Output reaches the real terminal (`run`, not `run_with_output`): a
     /// one-shot run writes its answer out before it settles its children.
     pub live_output: bool,
@@ -391,6 +394,8 @@ pub struct CliComposition {
     pub board_cli_recording: board::CliRecordingBuilder,
     /// Composition's `build_board_server` (epic #2705 B4).
     pub board_server: board_server::BoardServerBuilder,
+    pub board_history: board_server::history::BoardHistoryBuilder,
+    pub board_history_import: board_server::history::BoardHistoryImportBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -472,6 +477,8 @@ fn composed_context(
         project_board_recording: Some(composition.project_board_recording),
         board_cli_recording: Some(composition.board_cli_recording),
         board_server: Some(composition.board_server),
+        board_history: Some(composition.board_history),
+        board_history_import: Some(composition.board_history_import),
         swarm_board: Some(composition.swarm_board),
         swarm_board_wire: Some(composition.swarm_board_wire),
         swarm_board_log: Some(composition.swarm_board_log),

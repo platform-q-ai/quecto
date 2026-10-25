@@ -48,3 +48,9 @@ pub use update_draft_task::UpdateDraftTask;
 #[cfg(test)]
 #[path = "fixtures_tests.rs"]
 pub(in crate::application::project_board) mod fixtures_tests;
+
+mod export_board_history;
+pub use export_board_history::ExportBoardHistory;
+
+mod import_board_history;
+pub use import_board_history::ImportBoardHistory;
