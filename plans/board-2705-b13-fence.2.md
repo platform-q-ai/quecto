@@ -5,10 +5,12 @@
 |---|---|
 | Task | board-2705-b13-fence |
 | Version | 2 |
-| State | draft |
+| State | accepted |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-25T17:01:16Z |
 | Created | 2026-10-25T17:00:52Z |
-| Updated | 2026-10-25T17:00:52Z |
+| Updated | 2026-10-25T17:01:16Z |
 
 ## Approach
 Deliver the already owner-approved complete independent fence PR2 from the sealed, separately completed fresh RED phase. This is an execution-handoff refinement of accepted plan1, not a scope expansion or another RED/delivery rollover. Backup PR2747 has merged as3b965987a1d1da20e9acfc37b5004d6f04a4620b/version455; preserve its route/help/context and all current T4/T5/B7/operator changes. This run is DELIVERY ONLY with a fixed coordinator, one author/builder and one read-only source verifier; member_limit25/global maximum2 builders including operator/maximum1 owned builder, default worker models. No workflows/nested containers/mutation tools. Coordinator judges/integrates rather than redoing author probes.
