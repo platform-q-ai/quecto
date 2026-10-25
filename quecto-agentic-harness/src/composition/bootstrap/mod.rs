@@ -7,3 +7,5 @@ pub mod project_board;
 pub mod project_board_operations;
 
 pub mod project_board_history;
+
+pub mod board_backup;

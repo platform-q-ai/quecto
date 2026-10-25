@@ -456,3 +456,10 @@ mod board_history_store;
 #[cfg(feature = "test-support")]
 #[path = "contracts/prepared_history_import.rs"]
 mod prepared_history_import;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/board_backup.rs"]
+mod board_backup;
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_backup.rs"]
+mod project_board_backup;
