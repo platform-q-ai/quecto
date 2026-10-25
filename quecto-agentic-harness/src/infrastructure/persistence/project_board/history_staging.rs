@@ -91,6 +91,14 @@ impl GitBoardHistorySink {
         Ok(())
     }
 
+    /// git for one store call of `objects` objects, `bytes` long in all,
+    /// with that batch's own deadline ([`batch_timeout`]).
+    pub(super) fn store_git(&self, objects: usize, bytes: usize) -> HistoryResult<Git> {
+        let mut git = git(&self.repo)?;
+        git.local_timeout = batch_timeout(objects, bytes);
+        Ok(git)
+    }
+
     fn stage_unmarked(&self, k: HistoryKind, bytes: &[u8], id: &str) -> HistoryResult<()> {
         let mut staged = self.staged.lock().map_err(unavailable)?;
         if staged.seen.contains(id) {
@@ -126,12 +134,14 @@ impl GitBoardHistorySink {
 
     /// A private (0700) directory in the destination's own git directory,
     /// so a crash leaves it with the repository, on its filesystem; its
-    /// path checked once as a line git reads back unchanged.
+    /// path checked once as a line git reads back unchanged. Old ones a
+    /// crashed export left there are swept first.
     fn staging_dir(&self) -> HistoryResult<(tempfile::TempDir, String)> {
         let git_dir = self.git_dir()?;
+        sweep_leftovers(&git_dir);
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::Builder::new()
-            .prefix("quecto-export-")
+            .prefix(STAGING_PREFIX)
             .permissions(std::fs::Permissions::from_mode(0o700))
             .tempdir_in(&git_dir)
             .map_err(|e| {
@@ -143,8 +153,8 @@ impl GitBoardHistorySink {
         let line = listable(dir.path())
             .map_err(|_| {
                 unavailable(format!(
-                    "the destination git directory {git_dir:?} is not a plain absolute \
-                     path (visible characters and spaces), so export objects cannot be \
+                    "the destination git directory {git_dir:?} is not one absolute \
+                     UTF-8 line that git can read back, so export objects cannot be \
                      staged there"
                 ))
             })?
@@ -166,8 +176,7 @@ impl GitBoardHistorySink {
             );
             return Ok(());
         };
-        let mut git = git(&self.repo)?;
-        git.local_timeout = batch_timeout(ids.iter().map(Vec::len).sum(), bytes);
+        let git = self.store_git(ids.iter().map(Vec::len).sum(), bytes)?;
         for (k, ids) in STORE_ORDER.into_iter().zip(&ids) {
             if ids.is_empty() {
                 continue;
@@ -206,19 +215,52 @@ impl GitBoardHistorySink {
     }
 }
 
-/// `path` as a line `hash-object --stdin-paths` reads back unchanged: an
-/// absolute path of visible characters and spaces alone (no line breaks,
-/// no leading quote that git would unquote).
+/// How long a staging directory goes unchanged before it is taken for a
+/// crashed export's: a live export changes its own with every object.
+const LEFTOVER_AGE: Duration = Duration::from_secs(3600);
+/// Name prefix of every staging directory an export makes.
+const STAGING_PREFIX: &str = "quecto-export-";
+
+/// Removes, from `git_dir`, staging directories (and only those: a real
+/// directory named `quecto-export-*`) unchanged for [`LEFTOVER_AGE`].
+/// Called before this export makes its own, so its own is never one.
+/// Best effort: a directory that cannot be read or removed is left for the
+/// next export's sweep, and never fails this one. It is not logged: the
+/// board's persistence modules write no `tracing` record (an architecture
+/// rule, `project_board_telemetry`).
+fn sweep_leftovers(git_dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(git_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let ours = name
+            .to_str()
+            .is_some_and(|name| name.starts_with(STAGING_PREFIX));
+        // Not followed: a link named like ours is never a directory here.
+        let old = entry.metadata().is_ok_and(|meta| {
+            meta.file_type().is_dir()
+                && meta
+                    .modified()
+                    .ok()
+                    .and_then(|at| at.elapsed().ok())
+                    .is_some_and(|age| age >= LEFTOVER_AGE)
+        });
+        if ours && old {
+            let _left_for_the_next_sweep = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// `path` as a line `hash-object --stdin-paths` reads back unchanged:
+/// absolute UTF-8 that is one whole line, ending in neither a line feed nor
+/// a carriage return (git strips a CR before the LF). Starting with `/`, it
+/// never starts with the `"` git would unquote.
 pub(crate) fn listable(path: &std::path::Path) -> HistoryResult<&str> {
     match path.to_str() {
-        Some(text)
-            if text.starts_with('/')
-                && text
-                    .chars()
-                    .all(|c| c == ' ' || c.is_ascii_graphic() || c.is_alphanumeric()) =>
-        {
+        Some(text) if text.starts_with('/') && text.split(['\n', '\r']).next() == Some(text) => {
             Ok(text)
         }
-        _ => Err(unavailable("export staging path is not a plain line")),
+        _ => Err(unavailable("export staging path is not one absolute line")),
     }
 }

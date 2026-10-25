@@ -292,9 +292,24 @@ fn sink_stores_a_batch_before_it_would_pass_its_byte_bound() {
 }
 
 #[test]
-fn sink_lists_only_plain_absolute_paths_to_git() {
-    assert!(listable(std::path::Path::new("/tmp/quecto-export-1/ab")).is_ok());
-    for path in ["relative/ab", "/tmp/a\nb", "/tmp/a\rb", "/tmp/a\u{7f}b"] {
+fn sink_lists_only_absolute_single_line_paths_to_git() {
+    for path in [
+        "/tmp/quecto-export-1/ab",
+        "/tmp/board — notes/ab",
+        "/tmp/🦀 crab/ab",
+        "/tmp/ends in a space /ab",
+        "/tmp/\"quoted\"/ab",
+    ] {
+        let path = std::path::Path::new(path);
+        assert_eq!(listable(path).ok(), path.to_str(), "{path:?}");
+    }
+    for path in [
+        "relative/ab",
+        "/tmp/a\nb",
+        "/tmp/a\rb",
+        "/tmp/ab\r",
+        "/tmp/ab\n",
+    ] {
         let path = std::path::Path::new(path);
         assert!(
             matches!(listable(path), Err(HistoryError::Unavailable(_))),
@@ -450,4 +465,76 @@ fn a_store_deadline_grows_with_its_batch_from_gits_own() {
     assert!(batch_timeout(1, 0) < batch_timeout(1, 2 * 1024 * 1024));
     // Saturates rather than overflowing, however large a batch claims to be.
     assert!(batch_timeout(usize::MAX, usize::MAX) > full);
+}
+
+#[test]
+fn a_store_runs_git_with_its_batchs_own_deadline() {
+    let (_dir, _repo, sink) = destination("sha1");
+    for (objects, bytes) in [(1, 0), (WRITE_BATCH, WRITE_BATCH_BYTES)] {
+        let git = sink.store_git(objects, bytes).unwrap();
+        assert_eq!(git.local_timeout, batch_timeout(objects, bytes));
+        assert_ne!(git.local_timeout, super::super::git::LOCAL_TIMEOUT);
+    }
+}
+
+#[test]
+fn a_git_directory_ending_in_a_space_is_staged_in_exactly() {
+    let dir = tempfile::tempdir().unwrap();
+    let spaced = dir.path().join("d.git ");
+    scratch_ok(dir.path(), &["init", "-q", "--bare", "d.git "], b"");
+    let sink = GitBoardHistorySink::new(spaced.clone(), TARGET.into());
+    let (kind, _, bytes) = kinds().into_iter().next().unwrap();
+    let id = sink.raw(kind, &bytes, None, false).unwrap();
+    let file = sink.staged.lock().unwrap().file(&id).unwrap();
+    assert_eq!(file.parent().unwrap().parent().unwrap(), spaced);
+    let head = outside_commit(&spaced, "head");
+    sink.publish(None, &head).unwrap();
+    assert!(stored(&spaced, &id));
+}
+
+/// A `quecto-export-*` directory in `git_dir`, last changed `age` ago.
+fn leftover(git_dir: &std::path::Path, name: &str, age: std::time::Duration) -> PathBuf {
+    let dir = git_dir.join(name);
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("ab"), b"staged by an export that ended").unwrap();
+    let when = std::time::SystemTime::now() - age;
+    std::fs::File::open(&dir)
+        .unwrap()
+        .set_modified(when)
+        .unwrap();
+    dir
+}
+
+#[test]
+fn a_new_staging_directory_sweeps_old_export_leftovers_and_keeps_live_ones() {
+    use std::time::Duration;
+    let (dir, repo, sink) = destination("sha1");
+    let hour = Duration::from_secs(3600);
+    let old = leftover(&repo, "quecto-export-old", hour * 2);
+    let live = leftover(&repo, "quecto-export-live", Duration::from_secs(60));
+    let other = leftover(&repo, "not-quecto-export-old", hour * 2);
+    let elsewhere = leftover(dir.path(), "kept-outside", hour * 2);
+    let link = repo.join("quecto-export-link");
+    std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+    let old_file = repo.join("quecto-export-file");
+    std::fs::write(&old_file, b"not a directory").unwrap();
+    std::fs::File::open(&old_file)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - hour * 2)
+        .unwrap();
+    let (kind, _, bytes) = kinds().into_iter().next().unwrap();
+    sink.raw(kind, &bytes, None, true).unwrap();
+    assert!(
+        old.exists(),
+        "a dry run makes no staging directory, so sweeps none"
+    );
+    let id = sink.raw(kind, &bytes, None, false).unwrap();
+    assert!(!old.exists(), "an export's old leftover is swept");
+    assert!(live.exists(), "another export's live staging is kept");
+    assert!(other.exists(), "only quecto-export-* directories are swept");
+    assert!(old_file.exists(), "only directories are swept");
+    assert!(link.symlink_metadata().is_ok(), "a link is never followed");
+    assert!(elsewhere.join("ab").exists(), "nothing outside is touched");
+    let ours = sink.staged.lock().unwrap().file(&id).unwrap();
+    assert!(ours.exists());
 }

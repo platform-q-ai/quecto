@@ -83,10 +83,16 @@ impl GitBoardHistorySink {
         if let Some(dir) = self.git_dir.get() {
             return Ok(dir.clone());
         }
-        let dir = git(&self.repo)?
-            .text(&["rev-parse", "--absolute-git-dir"], None)
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = git(&self.repo)?
+            .ok(&["rev-parse", "--absolute-git-dir"], None)
             .map_err(unavailable)?;
-        let dir = PathBuf::from(dir);
+        // Exactly the path git printed: only its own line end is dropped,
+        // never a space or other byte the path itself ends in.
+        let Some(path) = bytes.strip_suffix(b"\n") else {
+            return Err(unavailable("destination git directory is not one line"));
+        };
+        let dir = PathBuf::from(std::ffi::OsStr::from_bytes(path));
         if dir.is_absolute() {
         } else {
             return Err(unavailable("destination git directory is not absolute"));
