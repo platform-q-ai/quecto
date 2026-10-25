@@ -42,3 +42,20 @@ impl GitBoardStore {
         Ok(Fence::Tree(tree))
     }
 }
+
+impl crate::application::project_board::ports::fence::BoardFence for GitBoardStore {
+    fn publish_fence(
+        &self,
+        _captured: &BoardHead,
+        _moved: &BoardMoved,
+    ) -> Result<
+        crate::application::project_board::ports::fence::FenceReport,
+        crate::application::project_board::ports::fence::FenceError,
+    > {
+        Err(
+            crate::application::project_board::ports::fence::FenceError::Unavailable(
+                "B13-lite not implemented".into(),
+            ),
+        )
+    }
+}
