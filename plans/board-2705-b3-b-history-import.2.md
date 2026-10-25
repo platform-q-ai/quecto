@@ -5,12 +5,12 @@
 |---|---|
 | Task | board-2705-b3-b-history-import |
 | Version | 2 |
-| State | accepted |
+| State | superseded |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted by | shane-pocket (`shane@platformq.co.uk`) |
 | Accepted at | 2026-10-24T23:22:58Z |
 | Created | 2026-10-24T23:22:46Z |
-| Updated | 2026-10-24T23:22:58Z |
+| Updated | 2026-10-25T00:47:30Z |
 
 ## Approach
 FRESH DELIVERY ONLY; complete accepted B scope/criteria unchanged from plan1 and parent coordination4. A actually merged PR2731 at9a7895d23e809cfa949fffea68463def9163adf3/version0.107.444 after exact26420 independent review/allCIgreen/noHM. Fresh scoped RB2eba71a1f996419c0004df95d4bcb20c5976f1b7 DIRECTPARENTactualAM9a7895 now independently sealed. Read FULL /home/shane-pocket/.quecto/artifacts/b3-b-red/{RB-hand-off.md,author-report.md,independent-verification.md,source-obligations.md,assertion-ledger50.json,assertion-adaptation.diff,helper-functions-ledger.json,fixture-functions-ledger.json,fixture-methods-ledger.json,orchestration-original-vs-current.diff,am-a-b2-preservation.json,command-audit-extracted.md,classified-results.json}. Verify board-2705-b3-b-red.bundle SHA256925e47497fe3ff2b9f82474011d22a364d3381c8ce54298d56aa4c7e2d174821/gitbundleverify/11committedblobs/frozenmanifest5f164993665fe3967eaaa7d17db42c1227717619c008257975e6b33413b93866. Branchfeat/board-2705-b3-b-history-import atRBUNCHANGED/FIRSTownPRcommitRB. Historical997/52dc immutable external/offshippingancestry; no wholeoldWIPmerge. CorrectedreferenceWIP82e1 bundle28e564... inb3-delivery/wip-preservation referenceBEXTRACTIONONLY, no oldAred/ownership/code overwrite.

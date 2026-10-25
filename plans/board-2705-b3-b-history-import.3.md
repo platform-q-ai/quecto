@@ -5,10 +5,12 @@
 |---|---|
 | Task | board-2705-b3-b-history-import |
 | Version | 3 |
-| State | draft |
+| State | accepted |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-25T00:47:30Z |
 | Created | 2026-10-25T00:47:19Z |
-| Updated | 2026-10-25T00:47:19Z |
+| Updated | 2026-10-25T00:47:30Z |
 
 ## Approach
 Fresh continuation DELIVERY ONLY after projectrun1 ended failed/incomplete; no PR exists. Complete accepted plan2 ALL scope/criteria/safety unchanged, FULL approach/items in /home/shane-pocket/.quecto/artifacts/b3-b-continuation/accepted-plan2-full.json and task/parent4. Read these FULL before work; no planning/RED/review role rollover. Fixedfreshcoordinator+ONEauthor/editor/builder+ONEreadonlysourceverifier/memberlimit25/globalmax2incloperator/no workflow/mutationtools. Parentrenew00:45:03next01:45:03; start renews child. All B7/operator/live/credential/playbook/resource/foregroundpush restrictions unchanged.
