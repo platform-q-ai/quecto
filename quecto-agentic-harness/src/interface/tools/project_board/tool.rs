@@ -49,8 +49,8 @@ use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult
 use crate::infrastructure::tools::registry::call_work::off_the_workers;
 
 /// What `end_run`'s `stop` field says, in its schema alone (#2705 T5).
-const RUN_STOP_DESCRIPTION: &str = "For outcome stopped when no swarm board was kept: blocked \
-     moves the task to blocked, cancelled (the default) to ready.";
+const RUN_STOP_DESCRIPTION: &str = "Outcome stopped only, unless the swarm's ended board was \
+     kept: blocked moves the task to blocked, cancelled (the default) to ready.";
 
 /// The tool's name.
 pub const BOARD_TOOL_NAME: &str = "board";

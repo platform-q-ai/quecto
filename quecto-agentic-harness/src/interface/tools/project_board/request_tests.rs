@@ -386,6 +386,10 @@ fn every_field_in_the_table_is_read_by_its_kind() {
                 };
                 object.insert(other.into(), value);
             }
+            // A stop's kind is taken with a stopped run alone (#2705 T5).
+            if *op == "end_run" && except == "stop" {
+                object.insert("outcome".into(), json!("stopped"));
+            }
             object
         };
         for field in *fields {
@@ -603,6 +607,11 @@ fn end_run_reads_its_run_outcome_and_pin() {
             json!({"op": "end_run", "task": "a", "run": 1, "outcome": "stopped", "stop": "paused"}),
             "stop",
             "must be one of blocked, cancelled",
+        ),
+        (
+            json!({"op": "end_run", "task": "a", "run": 1, "outcome": "failed", "stop": "blocked"}),
+            "stop",
+            "is taken only with outcome stopped",
         ),
         (
             json!({"op": "end_run", "task": "a", "run": 1, "outcome": "completed"}),

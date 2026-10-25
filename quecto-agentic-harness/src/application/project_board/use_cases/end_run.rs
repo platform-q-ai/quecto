@@ -157,15 +157,27 @@ impl EndRun {
         // Read once, before any write: the board its swarm left, if kept.
         // A success only from a run that ended there; any other end from
         // the board a run had reached as its owner stopped it too (#2674).
-        let report = self.reports.as_ref().and_then(|reports| {
-            let ended = reports.ended_run(id, number);
-            match request.outcome {
-                RunEndOutcome::Succeeded => ended,
-                RunEndOutcome::Stopped | RunEndOutcome::Failed | RunEndOutcome::Lost => {
-                    ended.or_else(|| reports.left_run(id, number))
-                }
+        let ended = self
+            .reports
+            .as_ref()
+            .and_then(|reports| reports.ended_run(id, number));
+        // How a stop stopped (#2705 T5): as the board its swarm ended on
+        // says, when one was kept; else as the caller says, a board left
+        // running included (it was read as cancelled only for its items),
+        // and a cancel when the caller says nothing.
+        let stop = match &ended {
+            Some(view) => view.end.stop(),
+            None => request.stop.unwrap_or(StopKind::Cancelled),
+        };
+        let report = match request.outcome {
+            RunEndOutcome::Succeeded => ended,
+            RunEndOutcome::Stopped | RunEndOutcome::Failed | RunEndOutcome::Lost => {
+                ended.or_else(|| {
+                    let reports = self.reports.as_ref();
+                    reports.and_then(|reports| reports.left_run(id, number))
+                })
             }
-        });
+        };
         let message = format!(
             "board: run {number} of {} ended, {}",
             id.as_str(),
@@ -181,7 +193,7 @@ impl EndRun {
         let mut written = self.write(
             request,
             &message,
-            report.as_ref(),
+            (report.as_ref(), stop),
             (Evidence::Kept, &mut asked, &mut items, &mut after),
             &mut facts,
         );
@@ -194,7 +206,7 @@ impl EndRun {
             written = self.write(
                 request,
                 &message,
-                report.as_ref(),
+                (report.as_ref(), stop),
                 (Evidence::Left, &mut asked, &mut items, &mut after),
                 &mut facts,
             );
@@ -293,7 +305,7 @@ impl EndRun {
         &self,
         request: &RunEnd,
         message: &str,
-        report: Option<&SwarmRunView>,
+        (report, stop): (Option<&SwarmRunView>, StopKind),
         (evidence, asked, kept, after): (Evidence, &mut Asked, &mut Kept, &mut After),
         facts: &mut Option<&mut OpFacts>,
     ) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
@@ -320,11 +332,7 @@ impl EndRun {
                     self.ended(request, report, (evidence, &mut *asked), board, when)?;
                 *kept = folded;
                 // The run's end moves its task, in the same write (#2705
-                // T5): a stop to blocked only when its swarm ended blocked.
-                // With no board kept, as the caller says (a cancel when it
-                // says nothing).
-                let unkept = request.stop.unwrap_or(StopKind::Cancelled);
-                let stop = report.map_or(unkept, |view| view.end.stop());
+                // T5), a stop as `stop` says.
                 let moved = task_after_end(task, &ended, stop, &when.now)?;
                 *after = Some(moved.as_ref().unwrap_or(task).fields().status);
                 Ok(run_end_writes(ended, moved))

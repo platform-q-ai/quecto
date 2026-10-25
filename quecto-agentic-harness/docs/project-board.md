@@ -637,6 +637,12 @@ and the answer lists them as `not_applied`.
   ready, `false` while it is still held, `null` when another writer's end
   moved it) and `restored` (`null`, or the `review` or `blocked` status the
   undo moved it back to).
+  A known gap: when the undo's own write fails (`run_state` `open`), the run
+  is ended later by `end_run`, which knows nothing of the start, so a task
+  the start took from review goes to ready, released (one from blocked can be
+  kept blocked with `outcome stopped, stop blocked`). To finish such a
+  review: `move(task, to claimed)`, then `done_without_run(task, reason)` once
+  its pull requests have merged, or plan and start it again.
 - A coordinator that came up outside a container is stopped, and the start
   undone. A launch waits for spawn at most 15 minutes.
 - Nothing is undone while a coordinator may still be running: one that came
@@ -681,10 +687,11 @@ that did not finish (cancelled, or ended without an answer). The words are the
 Pocket start prompt's, moved there unchanged, so that prompt can be one line,
 with one step added (#2666): before closing a run that succeeded, make sure
 every commit its evidence names is on the repository's remote. Since #2705 T4,
-which leaves the moves to review and blocked to the lifecycle, the last step
-links a succeeded run's pull request and releases any other run's task to
-ready, and the undo tells the user of a task left in progress rather than move
-it back.
+which leaves the moves to review and blocked to the lifecycle, and #2705 T5,
+whose run's end moves its task, the last step links a succeeded run's pull
+request and says the run's end has moved the task, and the undo ends a run it
+left open with `end_run` (outcome `failed`), which moves the task back to
+ready, and says why the launch failed.
 
 ## Ending a run
 
@@ -904,8 +911,11 @@ whether `end_run` ends it or a fold-back (a start's undo included):
 | `stopped` otherwise (cancelled, or no board kept and no `stop: "blocked"`), `failed` or `lost` | ready, its claim released |
 
 `end_run` takes an optional `stop`, `blocked` or `cancelled` (the default): how
-a `stopped` run stopped when no board of its swarm was kept to say it (the
-CLI's `--stop`). A kept board's own end wins, and any other outcome ignores it.
+a `stopped` run stopped when no board its swarm ended on was kept to say it
+(the CLI's `--stop`). A kept board its swarm ended on wins; a board kept while
+the run still ran or was paused (read as cancelled for its items alone) does
+not, and the caller's `stop` decides. Any other outcome refuses it
+(`invalid_request`, field `stop`).
 
 Only a held task moves (claimed, in progress, in review or blocked); a task in
 any other status, or already where the end moves it, is left, and the run is

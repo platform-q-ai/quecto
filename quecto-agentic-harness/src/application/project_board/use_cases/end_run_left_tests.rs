@@ -43,6 +43,29 @@ fn ender_left(store: &MemoryBoardStore) -> EndRun {
     .unwrap()
 }
 
+/// #2705 T5 review round 2: a board kept while its run still ran or was
+/// paused is read as cancelled for its items alone; how the stop stopped
+/// is the caller's `stop`, so blocked keeps the task with its holder, and
+/// none given releases it.
+#[test]
+fn a_left_board_never_overrides_the_callers_stop() {
+    use crate::domain::project_board::services::run_outcomes::StopKind;
+    for (stop, want) in [
+        (Some(StopKind::Blocked), TaskStatus::Blocked),
+        (None, TaskStatus::Ready),
+    ] {
+        let (store, _) = stranded();
+        let request = RunEnd {
+            stop,
+            ..ending(RunEndOutcome::Stopped)
+        };
+        let ended = ender_left(&store).execute(&request).unwrap();
+        assert_eq!(ended.report, RunReport::Kept, "{stop:?}");
+        assert_eq!(ended.status, want, "{stop:?}");
+        assert_eq!(store.read().unwrap().tasks[0].fields().status, want);
+    }
+}
+
 #[test]
 fn a_stop_records_the_board_its_run_had_reached() {
     for outcome in [
