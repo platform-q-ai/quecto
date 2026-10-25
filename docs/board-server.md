@@ -273,9 +273,10 @@ are refused. `board-server export --help` describes this command.
 
 This offline command runs before token or server dispatch: it starts no
 listener, opens no writable board connection, and creates no source DB or
-data directory. Import is not exposed. Earlier schemas (2, and 3 before B7) and foreign schemas are
-refused without migration or reset. Populated imported provenance is
-unsupported until the separate import delivery.
+data directory. Earlier schemas (2, and 3 before B7) and foreign schemas
+are refused without migration or reset. Imported originals require the
+destination to use their exact SHA1 or SHA256 format; validated pure-native
+history permits either.
 
 A readonly transaction pins the complete native revision frontier. Export
 writes deterministic real Git objects in the destination's SHA1 or SHA256
@@ -296,3 +297,29 @@ source frontier before retrying. Failed publication may leave verified
 unreachable destination objects. No distributed DB/Git atomic transaction is
 claimed, and export never mutates source board rows. Existing `serve`, `token`,
 HTTP routes, authentication, and timing behavior are unchanged.
+
+
+## Offline complete history import (B3-B)
+
+`quecto board-server import --repo <source> --board-id <16-hex>
+[--remote <name>]` captures the complete local `refs/heads/quecto/board`
+H0 once. `--remote` defaults to `origin` and is provenance only: no fetch,
+listener or token graph is started. `import --help` describes the command;
+stdout JSON contains `revisions`, `head` and `source_head`.
+
+An owned IMMEDIATE transaction requires all seven schema3 tables empty.
+It preserves original raw commits/trees/blobs, IDs, headers and exposed
+clear/seen/keep tokens; the SAME complete export dry-run verifies every
+original and H0 before commit. Error, Drop and owned precommit crash roll
+back every row/provenance; a newly initialized empty schema file may remain.
+Nonempty targets conflict without overwrite, staging or resume. Original
+replay through H0 and all later native children use the same exporter.
+
+Only complete local linear SHA1/SHA256 histories are supported; shallow,
+promisor, nonlinear, missing or malformed histories are refused wholly.
+Inclusive bounds: 4096 commits, 32768 unique blob/tree objects, 128 MiB raw
+including commits, 64 MiB blob, 64 KiB commit, 655360-byte tree, 65536 projected
+entries, 32 MiB metadata, 4096-byte raw names and tree depth128. Runner and
+Reader copies are additional bounded allocations, not an RSS guarantee.
+Scratch owner12/corpus106 in both formats prove the offline path, not a live
+cut-over. No live import, fence, deployment or service start is performed.

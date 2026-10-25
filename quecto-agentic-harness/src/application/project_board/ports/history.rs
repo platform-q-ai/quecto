@@ -86,6 +86,11 @@ pub struct HistoryCommit<'a> {
 }
 /// Git serialization and publication belong outward, never inside the SQL store.
 pub trait BoardHistorySink: Send + Sync {
+    /// None is format-neutral (e.g. a trace fake), not permission to accept
+    /// imported originals. Imported snapshots require an exact Some match.
+    fn algorithm(&self) -> HistoryResult<Option<HistoryAlgorithm>> {
+        Ok(None)
+    }
     fn raw(
         &self,
         kind: HistoryKind,
@@ -97,4 +102,33 @@ pub trait BoardHistorySink: Send + Sync {
     fn commit(&self, revision: HistoryCommit<'_>, dry_run: bool) -> HistoryResult<String>;
     fn publish(&self, expected: Option<&str>, new_head: &str) -> HistoryResult<()>;
     fn finish_dry_run(&self) -> HistoryResult<()>;
+}
+
+/// Complete local linear source value; raw original bodies remain authoritative.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinearHistory {
+    pub algorithm: HistoryAlgorithm,
+    pub source_ref: String,
+    pub source_remote: String,
+    pub source_head: String,
+    pub revisions: Vec<HistoryRevision>,
+    pub objects: Vec<HistoryObject>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryImportReport {
+    pub revisions: u64,
+    pub head: BoardHead,
+    pub source_head: String,
+}
+pub trait BoardHistorySource: Send + Sync {
+    fn capture(&self) -> HistoryResult<LinearHistory>;
+}
+pub trait PreparedHistoryImport: BoardHistorySnapshot {
+    fn commit(self: Box<Self>) -> HistoryResult<HistoryImportReport>;
+}
+pub trait BoardHistoryStore: BoardHistoryRead {
+    fn prepare_import(
+        &self,
+        history: &LinearHistory,
+    ) -> HistoryResult<Box<dyn PreparedHistoryImport>>;
 }
