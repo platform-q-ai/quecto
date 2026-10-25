@@ -473,3 +473,7 @@ mod project_board_backup;
 #[cfg(feature = "test-support")]
 #[path = "contracts/project_board_backup_cli.rs"]
 mod project_board_backup_cli;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_backup_state.rs"]
+mod project_board_backup_state;
