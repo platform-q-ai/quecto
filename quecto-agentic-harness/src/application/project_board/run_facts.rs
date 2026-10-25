@@ -106,7 +106,7 @@ impl RunFacts {
         let ended = self.reports.as_ref().and_then(|views| views.ended.as_ref());
         let named = ended.map(|view| evidence_revisions(plan, view).ids);
         let named = named.unwrap_or_default();
-        match named.len() <= MAX_ITEMS * MAX_PER_ITEM * 2 {
+        match named.len() <= MAX_ITEMS * MAX_PER_ITEM {
             true => Ok(named),
             false => Err(format!(
                 "the run's evidence names {} commits, more than the {} a success is checked for",
@@ -130,7 +130,7 @@ impl RunFacts {
         if let Some(views) = self
             .reports
             .as_mut()
-            .filter(|views| over && views.ended.is_none())
+            .filter(|views| over && views.ended.is_some())
         {
             views.left = None;
         }
@@ -139,10 +139,7 @@ impl RunFacts {
             let views = views.flat_map(|views| [&mut views.ended, &mut views.left]);
             let items = views.flatten().flat_map(|view| view.items.iter_mut());
             let named = |entry: &SwarmEvidence| commit_token(&entry.revision).is_some();
-            items.for_each(|item| {
-                item.evidence
-                    .retain(|entry| succeeds && named(entry) && entry.artifact.is_empty())
-            });
+            items.for_each(|item| item.evidence.retain(|entry| succeeds && named(entry)));
         }
         match (size(&self) <= bytes, succeeds) {
             (true, _) => Ok(self),

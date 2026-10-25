@@ -90,7 +90,7 @@ impl RemoteBoardOperations {
     pub fn begin(&self, read: ReadRequest<'_>, noting: OpNoting) -> BoardExecution {
         let asked = (ListSummaries::Omitted, noting);
         let (mut begun, resent) = self.executed(read, asked, Map::new(), true);
-        if let (Err(error @ ProjectBoardError::Unanswered(_)), true) = (&begun.result, resent) {
+        if let (Err(error), true) = (&begun.result, resent) {
             let why = match error {
                 ProjectBoardError::Unanswered(why) => why.clone(),
                 other => other.to_string(),

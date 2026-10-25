@@ -291,11 +291,7 @@ fn revisions_read(
     }
     match reading.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst) {
         Ok(_) => {}
-        Err(_) => {
-            return Ok(StatedRemoteRevisions::unread(
-                "the remote is still being read",
-            ));
-        }
+        Err(_) => return Err(ServeError::Busy),
     }
     /// Lets the next read go when the read ends, however it ends.
     struct Reading(Arc<AtomicBool>);

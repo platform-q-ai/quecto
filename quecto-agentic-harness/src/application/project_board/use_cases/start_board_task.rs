@@ -184,11 +184,12 @@ impl BeginBoardRun {
             false => return Err(invalid("undo", "is not of the start it is sent with")),
         }
         match undo.from {
-            TaskStatus::Ready | TaskStatus::Claimed | TaskStatus::Review | TaskStatus::Blocked => {}
-            TaskStatus::InProgress
-            | TaskStatus::Draft
-            | TaskStatus::Done
-            | TaskStatus::Archived => {
+            TaskStatus::Ready
+            | TaskStatus::Claimed
+            | TaskStatus::InProgress
+            | TaskStatus::Review
+            | TaskStatus::Blocked => {}
+            TaskStatus::Draft | TaskStatus::Done | TaskStatus::Archived => {
                 return Err(invalid("from", "is not a status a start takes a task from"));
             }
         }

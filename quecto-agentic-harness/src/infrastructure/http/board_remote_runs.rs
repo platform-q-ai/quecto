@@ -157,7 +157,7 @@ impl BegunStarts for RemoteBoardRuns {
         let undone = json!({"run": undo.run, "from": undo.from.as_str(), "reason": undo.reason});
         let beside = Map::from_iter([("undo".to_string(), undone)]);
         let asked = (ListSummaries::Omitted, OpNoting::Unnoted);
-        let (sent, _) = self.0.executed(read, asked, beside, false);
+        let (sent, _) = self.0.executed(read, asked, beside, true);
         let answer = sent.result.ok().as_ref().and_then(served);
         let answer = answer.unwrap_or(Value::Null);
         let error = &answer["error"];
@@ -167,9 +167,6 @@ impl BegunStarts for RemoteBoardRuns {
             (Some("launch_failed"), Some("folded"), _) => (RunAfterUndo::Folded, None, None),
             (Some("launch_failed"), Some("ended_already"), _) => {
                 (RunAfterUndo::EndedAlready, None, None)
-            }
-            (Some(_) | None, _, _) if code.is_some() || words.is_empty() => {
-                (RunAfterUndo::Open, None, None)
             }
             (Some("launch_failed") | None, _, _) => (RunAfterUndo::Open, None, None),
             (Some(code), _, Some(rule)) => (

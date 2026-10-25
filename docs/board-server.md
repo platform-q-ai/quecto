@@ -202,13 +202,19 @@ The facts are a strict wire contract: the swarm boards' fields (`end`,
 `stood_before_death`, `observed_tokens`) are read with unknown fields
 refused, so a client and server of different builds can refuse each
 other's ends. Upgrade every host that runs a board server or a client of
-one together. Facts past the request's 1 MiB go smaller: an end that is
-no success without its evidence, then any end without its boards (a
-success then records nothing reported, and is refused). An undo is made
-only by the holder of the task's live claim, while the task is in progress
-and the run is its latest, from `ready`, `claimed`, `review` or `blocked`.
-The server reads the remote for a success's plan items' evidence alone, at
-most 2,048 commits, one read at a time. A `409 standby` from a follower and its epoch come with B12.
+one together. Facts past the request's 1 MiB go smaller: first without the
+board a run was left on beside the one it ended on; an end that is no
+success then without its evidence, then without its boards; a success
+keeps only the evidence naming commits, and is refused on the client
+("the run's facts are too large to send") if still too large. An undo of
+an open run is made only by the holder of the task's live claim, while
+the task is in progress and the run is its latest, from `ready`,
+`claimed`, `in_progress`, `review` or `blocked`; a refused undo is
+answered in the start's `launch_failed` with the server's code and words
+(`run_state` `refused`). A lost begin or undo is sent once more, the same.
+The server reads the remote for a success's plan items' evidence alone,
+refusing one naming more than 2,048 commits, one read at a time: a success
+while one runs is answered 503 `busy`, nothing written. A `409 standby` from a follower and its epoch come with B12.
 
 **The clock gate.** The server's clock tells the time only while the
 host affirms its clock is synchronised. On Linux the server asks the
