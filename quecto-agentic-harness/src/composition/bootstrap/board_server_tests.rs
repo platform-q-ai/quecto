@@ -560,12 +560,16 @@ fn the_remote_is_read_for_one_write_at_a_time() {
         "past its budget: unread"
     );
     let second = revisions_read(&remote, named(), Duration::ZERO, &reading);
-    assert_eq!(second.err(), Some(ServeError::Busy), "one read in flight");
+    assert_eq!(
+        second.err(),
+        Some(ServeError::Reading),
+        "one read in flight"
+    );
     release.send(()).unwrap();
     release.send(()).unwrap();
     let third = loop {
         match revisions_read(&remote, named(), Duration::from_secs(30), &reading) {
-            Err(ServeError::Busy) => std::thread::yield_now(),
+            Err(ServeError::Reading) => std::thread::yield_now(),
             read => break read.unwrap(),
         }
     };

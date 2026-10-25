@@ -214,7 +214,7 @@ answered in the start's `launch_failed` with the server's code and words
 (`run_state` `refused`). A lost begin or undo is sent once more, the same.
 The server reads the remote for a success's plan items' evidence alone,
 refusing one naming more than 2,048 commits, one read at a time: a success
-while one runs is answered 503 `busy`, nothing written. A `409 standby` from a follower and its epoch come with B12.
+while one runs is answered 503 `busy` ("the remote is being read for another write: try again shortly"), nothing written. A `409 standby` from a follower and its epoch come with B12.
 
 **The clock gate.** The server's clock tells the time only while the
 host affirms its clock is synchronised. On Linux the server asks the
@@ -317,7 +317,7 @@ Every error reply the server makes is JSON, `{"error": "<why>", "code":
 | 500 | `handler` | the request's handler failed |
 | 503 | `unavailable` | the board's store, the clock or the tokens could not answer (over TCP a token failure says only `the token store is unavailable`) |
 | 503 | `clock_unsynced` | the host's clock is not synchronised, so a request that reads it is refused; `reason` says why |
-| 503 | `busy` | over TCP, the caller already has 4 answers in flight, or all TCP callers together have 12; or 2 writes are already held; or the token already holds 8 TCP connections (this one is then closed) |
+| 503 | `busy` | over TCP, the caller already has 4 answers in flight, or all TCP callers together have 12; or 2 writes are already held; or the token already holds 8 TCP connections (this one is then closed); or a success's end while the remote is read for another write ("the remote is being read for another write: try again shortly", nothing written) |
 
 Over TCP the token is checked first: an unauthenticated request is 401
 before any limit or route answers it (only the HTTP parser's own bodyless

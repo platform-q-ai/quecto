@@ -153,9 +153,12 @@ pub enum ErrorCode {
     /// `brief`: `{"code"}`, why the plan cannot brief a swarm (S4c).
     Brief,
     /// `reason` (the launch's), `run`, `run_state` (`folded`,
-    /// `ended_already`, `open`: for `end_run`, `refused` by a server), `released` (true: the
-    /// run's fold-back moved the task back to ready; false: the task is
-    /// still held; `null`: another end moved it, #2705 T5), `restored`
+    /// `ended_already`, `open`: for `end_run`, or `refused`: a board server
+    /// refused the undo, its code and words in `reason`), `released` (true:
+    /// the run's fold-back moved the task back to ready; false: the task is
+    /// still held; `null`: another end moved it, #2705 T5, or, after a
+    /// refused undo, unknown: the task is still held, nothing moved it),
+    /// `restored`
     /// (`null`, or the `review` or `blocked` status the fold-back moved the
     /// task back to, its claim kept), `still_running` (`null`, or the coordinator that may still run:
     /// nothing was undone): the coordinator did not launch, and the start

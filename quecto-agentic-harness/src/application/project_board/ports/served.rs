@@ -37,6 +37,8 @@ pub enum ServeError {
     NoWrite,
     WriteIdReused,
     Busy,
+    /// The remote is being read for another write (B8): busy, retried.
+    Reading,
 }
 
 /// A write's id (B7), a UUID, the same on every retry of the write.
