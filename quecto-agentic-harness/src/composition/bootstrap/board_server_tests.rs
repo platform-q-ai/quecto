@@ -280,3 +280,199 @@ fn done_without_a_run_has_its_pull_requests_read_before_the_write() {
     assert_eq!(host.asked(), vec![7], "read before the write");
     assert_eq!(stated.state(7).unwrap(), PullRequestState::Merged);
 }
+
+/// #2741: one resolver names the board's file, in the server's state
+/// directory keyed by the board id; `--state` replaces that directory.
+#[test]
+fn one_resolver_names_the_board_file() {
+    use crate::domain::project_board::value_objects::telemetry::BoardId;
+    let board = BoardId::of_hex("0123456789abcdef").unwrap();
+    let base = Path::new("/scratch/base");
+    assert_eq!(
+        board_database(base, None, &board),
+        base.join("board-server/0123456789abcdef/board.sqlite3")
+    );
+    assert_eq!(
+        board_database(base, Some(Path::new("/scratch/state")), &board),
+        Path::new("/scratch/state/board.sqlite3")
+    );
+}
+
+/// #2741: export reads the server's board file and never makes one.
+#[test]
+fn export_without_the_servers_board_file_is_refused() {
+    use crate::composition::bootstrap::project_board_history::build_history_cli;
+    use crate::domain::project_board::value_objects::telemetry::BoardId;
+    use crate::interface::cli::board_server::history::HistoryCliEnvironment;
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::of_hex("0123456789abcdef").unwrap();
+    let base = dir.path().join("base");
+    let refused = build_history_cli(HistoryCliEnvironment {
+        repo: dir.path().to_path_buf(),
+        board: board.clone(),
+        target: "refs/heads/rollback".into(),
+        base_dir: base.clone(),
+        state: None,
+    })
+    .err()
+    .unwrap();
+    let database = board_database(&base, None, &board);
+    assert!(
+        refused.contains(&database.display().to_string()),
+        "{refused}"
+    );
+    assert!(!database.exists() && !base.exists(), "nothing made");
+}
+
+/// #2741: import writes the board where serve serves it, and export reads
+/// it from there: one board file for one board.
+#[test]
+fn serve_import_and_export_use_one_board_file() {
+    use crate::composition::bootstrap::project_board_history::{
+        build_history_cli, build_history_import_cli,
+    };
+    use crate::interface::cli::board_server::history::{
+        HistoryCliEnvironment, ImportCliEnvironment,
+    };
+    let (dir, work) = seeded();
+    let base = dir.path().join("base");
+    let board = {
+        let handles = build_board_server(&environment(&dir, &work, "origin")).unwrap();
+        let board = handles.serve.board().clone();
+        let routes = BoardRoutes::new(handles.serve, handles.access, handles.operations);
+        assert_eq!(
+            get(&routes, "/v1/status").1["head"],
+            Value::Null,
+            "none yet"
+        );
+        board
+    };
+    // Import reads the clone's local board branch.
+    sh(
+        &work,
+        &["fetch", "-q", "origin", "quecto/board:quecto/board"],
+    );
+    let imported = build_history_import_cli(ImportCliEnvironment {
+        repo: work.clone(),
+        board: board.clone(),
+        remote: "origin".into(),
+        base_dir: base.clone(),
+        state: None,
+    })
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert!(imported.revisions > 0, "the seeded board has history");
+    // The head was null before import (above) and is set after (below).
+    let handles = build_board_server(&environment(&dir, &work, "origin")).unwrap();
+    let routes = BoardRoutes::new(handles.serve, handles.access, handles.operations);
+    let (status, body) = get(&routes, "/v1/status");
+    assert_eq!(status, 200, "{body}");
+    assert_ne!(body["head"], Value::Null, "serve reads the imported board");
+    drop(routes);
+    let exported = build_history_cli(HistoryCliEnvironment {
+        repo: work.clone(),
+        board,
+        target: "refs/heads/rollback".into(),
+        base_dir: base,
+        state: None,
+    })
+    .unwrap();
+    let report = exported
+        .export
+        .execute(true, exported.expected.as_deref())
+        .unwrap();
+    assert_eq!(report.revisions, imported.revisions, "export reads it too");
+}
+
+/// #2741 review M1: a `--state` directory names no board, so a file
+/// imported for another board is refused at start, naming both ids.
+#[test]
+fn serve_refuses_a_board_file_imported_for_another_board() {
+    use crate::composition::bootstrap::project_board_history::build_history_import_cli;
+    use crate::domain::project_board::value_objects::telemetry::BoardId;
+    use crate::interface::cli::board_server::history::ImportCliEnvironment;
+    let (dir, work) = seeded();
+    let state = dir.path().join("state");
+    let mut serving = environment(&dir, &work, "origin");
+    serving.state = Some(state.clone());
+    let board = build_board_server(&serving).unwrap().serve.board().clone();
+    let other = BoardId::of_hex("fedcba9876543210").unwrap();
+    assert_ne!(board, other);
+    sh(
+        &work,
+        &["fetch", "-q", "origin", "quecto/board:quecto/board"],
+    );
+    let imported = build_history_import_cli(ImportCliEnvironment {
+        repo: work.clone(),
+        board: other.clone(),
+        remote: "origin".into(),
+        base_dir: dir.path().join("base"),
+        state: Some(state.clone()),
+    })
+    .unwrap()
+    .execute();
+    assert!(imported.is_ok(), "{:?}", imported.err());
+    let refused = build_board_server(&serving).err().unwrap();
+    for named in [
+        board.as_str(),
+        other.as_str(),
+        &state.join(BOARD_FILE).display().to_string(),
+    ] {
+        assert!(refused.contains(named), "{named} in: {refused}");
+    }
+}
+
+/// #2741 review round 2: serve binds an unbound board file to its board at
+/// start, so a second clone's server on the same `--state` is refused, and
+/// export takes only the server's board id for it.
+#[test]
+fn serve_binds_its_board_file_to_its_board() {
+    use crate::composition::bootstrap::project_board_history::build_history_cli;
+    use crate::domain::project_board::value_objects::telemetry::BoardId;
+    use crate::infrastructure::persistence::sqlite::project_board::SqliteProjectBoardStore;
+    use crate::interface::cli::board_server::history::HistoryCliEnvironment;
+    use std::os::unix::fs::DirBuilderExt;
+    let (dir, work) = seeded();
+    // Another repository's clone: a board id is its remote's.
+    sh(
+        dir.path(),
+        &["init", "-q", "--bare", "-b", "main", "other.git"],
+    );
+    sh(dir.path(), &["clone", "-q", "other.git", "second"]);
+    let second = dir.path().join("second");
+    let state = dir.path().join("state");
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&state)
+        .unwrap();
+    SqliteProjectBoardStore::open(&state.join(BOARD_FILE), server_identity())
+        .unwrap()
+        .bootstrap()
+        .unwrap();
+    let mut serving = environment(&dir, &work, "origin");
+    serving.state = Some(state.clone());
+    let board = build_board_server(&serving).unwrap().serve.board().clone();
+    let mut other = environment(&dir, &second, "origin");
+    other.state = Some(state.clone());
+    let refused = build_board_server(&other).err().unwrap();
+    assert!(refused.contains(board.as_str()), "{refused}");
+    let export = |board: BoardId| {
+        let handles = build_history_cli(HistoryCliEnvironment {
+            repo: work.clone(),
+            board,
+            target: "refs/heads/rollback".into(),
+            base_dir: dir.path().join("base"),
+            state: Some(state.clone()),
+        })?;
+        let report = handles.export.execute(true, handles.expected.as_deref());
+        report.map_err(|error| error.to_string())
+    };
+    let wrong = export(BoardId::of_hex("fedcba9876543210").unwrap());
+    assert!(wrong.is_err(), "another board id is refused");
+    assert_eq!(
+        export(board).unwrap().revisions,
+        1,
+        "the server's id exports"
+    );
+}

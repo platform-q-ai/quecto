@@ -4,7 +4,8 @@ use crate::infrastructure::persistence::project_board::board_tree::{Entry, raw_e
 
 const VERSION: i64 = 4;
 const APPLICATION: i64 = 0x51424f32;
-const TABLES: [(&str, &str); 9] = [
+/// Every table a board holds: import requires each empty (#2741).
+pub(super) const TABLES: [(&str, &str); 9] = [
     (
         "objects",
         "CREATE TABLE objects (oid TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('blob','tree')), bytes BLOB, tree_size INTEGER, CHECK((kind='blob' AND typeof(bytes)='blob' AND tree_size IS NULL) OR (kind='tree' AND bytes IS NULL AND typeof(tree_size)='integer' AND tree_size>=0)))",

@@ -201,7 +201,7 @@ fn offline_transfer(algorithm: HistoryAlgorithm, count: usize) {
     assert_eq!(report["source_head"], f.history.source_head);
     assert_eq!(text(&f.repo, &["count-objects", "-v"]), objects);
     assert_eq!(text(&f.repo, &["for-each-ref"]), refs);
-    let database = home.join(".local/share/quecto/boards/0123456789abcdef.sqlite");
+    let database = home.join("board-server/0123456789abcdef/board.sqlite3");
     let before = fingerprint(&database);
     let output = offline(&home, &args);
     assert_eq!(output.status.code(), Some(1));

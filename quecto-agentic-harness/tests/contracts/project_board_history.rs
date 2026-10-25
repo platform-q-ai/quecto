@@ -609,9 +609,9 @@ fn feature_red_new_offline_cli_export_native_dryrun_without_server() {
     fixture.verify();
     let home = fixture.directory.path().join("export-home");
     let data = home.join(".local/share");
-    let boards = data.join("quecto/boards");
+    let boards = home.join("board-server/0123456789abcdef");
     std::fs::create_dir_all(&boards).unwrap();
-    let db = boards.join("0123456789abcdef.sqlite");
+    let db = boards.join("board.sqlite3");
     let store = SqliteProjectBoardStore::open(&db, writer()).unwrap();
     store.bootstrap().unwrap();
     let head = store.read().unwrap().head;

@@ -16,6 +16,8 @@ pub struct SqliteBoardHistoryStore {
     path: PathBuf,
     writer: Identity,
     board: BoardId,
+    /// A guard kept for the store's life: the state directory's lock (#2741).
+    _held: Option<Box<dyn std::any::Any + Send + Sync>>,
 }
 impl SqliteBoardHistoryStore {
     pub fn new(path: PathBuf, writer: Identity, board: BoardId) -> Self {
@@ -23,6 +25,14 @@ impl SqliteBoardHistoryStore {
             path,
             writer,
             board,
+            _held: None,
+        }
+    }
+    /// This store, keeping `guard` until it is dropped.
+    pub fn holding(self, guard: Box<dyn std::any::Any + Send + Sync>) -> Self {
+        Self {
+            _held: Some(guard),
+            ..self
         }
     }
 }
@@ -135,7 +145,7 @@ fn validate_native(c: &Connection, board: &BoardId) -> HistoryResult<()> {
     }
     let native: bool = c.query_row("SELECT NOT EXISTS(SELECT 1 FROM git_objects) AND NOT EXISTS(SELECT 1 FROM revisions WHERE git_commit IS NOT NULL OR git_meta IS NOT NULL)",[],|r|r.get(0)).map_err(error)?;
     if count == 0
-        && binding.is_none()
+        && binding.as_deref().is_none_or(|id| id == board.as_str())
         && algorithm == "sha256"
         && remote.is_none()
         && reference.is_none()
@@ -594,15 +604,7 @@ impl BoardHistoryStore for SqliteBoardHistoryStore {
             tip: u64::try_from(h.revisions.len()).map_err(error)?,
             algorithm: Some(h.algorithm),
         };
-        for table in [
-            "objects",
-            "tree_entries",
-            "revisions",
-            "state",
-            "git_objects",
-            "history_meta",
-            "epochs",
-        ] {
+        for (table, _) in storage::TABLES {
             let n: i64 = view
                 .c
                 .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))

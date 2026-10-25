@@ -6,8 +6,7 @@ use std::ffi::{CStr, CString};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
@@ -22,6 +21,9 @@ use crate::application::project_board::ports::{
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::shared::secret_compare::constant_time_eq;
+use crate::infrastructure::persistence::file::state_dir::{
+    SERVER_HOLDS, StateDirLock, locked, private_dir, this_uid,
+};
 
 /// The tokens file's name in the state directory.
 pub const TOKENS_FILE: &str = "tokens.json";
@@ -65,7 +67,7 @@ pub struct FileBoardTokens {
     writing: Mutex<Option<Stamp>>,
     /// The state directory, opened and locked for this adapter's life.
     state: PathBuf,
-    lock: fs::File,
+    lock: StateDirLock,
 }
 
 impl FileBoardTokens {
@@ -74,7 +76,7 @@ impl FileBoardTokens {
     /// A bad state directory, one another server holds, or a bad file.
     pub fn open(state: &Path) -> Result<Self, String> {
         private_dir(state)?;
-        let (state, lock) = (state.to_path_buf(), locked(state)?);
+        let (state, lock) = (state.to_path_buf(), locked(state, SERVER_HOLDS)?);
         let (held, writing) = (RwLock::default(), Mutex::default());
         let tokens = Self {
             held,
@@ -300,66 +302,6 @@ fn sha256(text: &str) -> String {
         .iter()
         .flat_map(|byte| [HEX[usize::from(byte >> 4)], HEX[usize::from(byte & 15)]]);
     hex.map(char::from).collect()
-}
-
-/// The state directory itself, opened never through a symlink and locked
-/// exclusively without waiting: no file removal undoes it.
-// `File::try_lock` stabilized in 1.89 (as the admission `SingletonLock` notes).
-#[expect(clippy::incompatible_msrv)]
-fn locked(state: &Path) -> Result<fs::File, String> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let refused = |why: String| format!("the state directory {}: {why}", state.display());
-    let dir = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(state)
-        .map_err(|error| refused(error.to_string()))?;
-    match dir.try_lock() {
-        Ok(()) => Ok(dir),
-        Err(fs::TryLockError::WouldBlock) => Err(refused(
-            "another board server holds it: one server per state directory (give this one --state <dir>)"
-                .into(),
-        )),
-        Err(fs::TryLockError::Error(error)) => Err(refused(error.to_string())),
-    }
-}
-
-/// `dir` as an absolute directory of mode 0700 of this user's, made so if
-/// missing (one ending in `/` would follow a symlink).
-fn private_dir(dir: &Path) -> Result<(), String> {
-    let refused = |why: &str| format!("the state directory {}: {why}", dir.display());
-    match (
-        dir.is_absolute(),
-        dir.as_os_str().as_bytes().ends_with(b"/"),
-    ) {
-        (true, false) => {}
-        (false, _) => return Err(refused("not absolute")),
-        (true, true) => return Err(refused("must not end in '/'")),
-    }
-    match fs::symlink_metadata(dir) {
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let made = fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(dir);
-            made.map_err(|error| refused(&error.to_string()))?;
-        }
-        Err(error) => return Err(refused(&error.to_string())),
-    }
-    let meta = fs::symlink_metadata(dir).map_err(|error| refused(&error.to_string()))?;
-    let mode = meta.permissions().mode() & 0o777;
-    match meta.is_dir() && meta.uid() == this_uid() && mode == 0o700 {
-        true => Ok(()),
-        false => Err(refused(
-            "must be a directory of this user's, mode 0700 (a symlink is not followed)",
-        )),
-    }
-}
-
-fn this_uid() -> u32 {
-    // SAFETY: `geteuid` has no preconditions and cannot fail.
-    unsafe { libc::geteuid() }
 }
 
 #[cfg(test)]
