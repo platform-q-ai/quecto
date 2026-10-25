@@ -7,9 +7,10 @@ use std::{fs, path::Path, process::Command};
 /// Each checker syn-parses the whole copied crate (about 600k lines, in a
 /// debug build). That takes 10-20 s alone and well over 30 s at load
 /// average ~20, which is how a 30 s guard came to fail with no regression.
-/// Five minutes is far above any healthy run on a loaded machine and still
-/// stops a real hang well before CI's job timeout.
-const HANG_GUARD_SECS: u32 = 300;
+/// Four minutes is far above any healthy run on a loaded machine, and it
+/// fires before nextest's CI profile kills the test at five minutes
+/// (`.config/nextest.toml`), so a hang fails with this guard's message.
+const HANG_GUARD_SECS: u32 = 240;
 
 struct Fixture(tempfile::TempDir);
 
