@@ -85,6 +85,17 @@ pub fn locked(state: &Path, held: &str) -> Result<StateDirLock, String> {
 #[derive(Debug)]
 pub struct StateDirLock(fs::File);
 
+impl StateDirLock {
+    /// A duplicate of the lock's descriptor sharing its open file
+    /// description, as a child forked while the lock is held inherits it.
+    /// # Errors
+    /// The descriptor cannot be duplicated.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inherited_descriptor(&self) -> io::Result<fs::File> {
+        self.0.try_clone()
+    }
+}
+
 impl std::ops::Deref for StateDirLock {
     type Target = fs::File;
     fn deref(&self) -> &fs::File {
@@ -106,3 +117,7 @@ pub(crate) fn this_uid() -> u32 {
     // SAFETY: `geteuid` has no preconditions and cannot fail.
     unsafe { libc::geteuid() }
 }
+
+#[cfg(test)]
+#[path = "state_dir_tests.rs"]
+mod tests;

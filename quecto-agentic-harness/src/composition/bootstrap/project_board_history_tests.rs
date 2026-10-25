@@ -86,3 +86,25 @@ fn import_refuses_while_a_server_holds_the_state_directory() {
     drop(serving);
     assert!(import(dir.path(), Some(state)).is_ok(), "free once stopped");
 }
+
+/// Review round 2: a server is refused while an import graph lives, and
+/// starts once it is dropped.
+#[test]
+fn a_server_refuses_while_an_import_holds_the_state_directory() {
+    use crate::infrastructure::persistence::file::board_tokens::FileBoardTokens;
+    use crate::infrastructure::persistence::file::state_dir::SERVER_HOLDS;
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("state");
+    let importing = build_history_import_cli(ImportCliEnvironment {
+        repo: PathBuf::from("/nonexistent/source"),
+        board: board(),
+        remote: "origin".into(),
+        base_dir: dir.path().to_path_buf(),
+        state: Some(state.clone()),
+    })
+    .unwrap();
+    let error = FileBoardTokens::open(&state).unwrap_err();
+    assert!(error.contains(SERVER_HOLDS), "{error}");
+    drop(importing);
+    assert!(FileBoardTokens::open(&state).is_ok(), "free once dropped");
+}

@@ -9,6 +9,15 @@ pub struct SqliteBoardOps {
     lock: Mutex<()>,
 }
 
+/// A served board file's binding to a board id (#2741).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BoardBinding {
+    /// Bound to the server's board, or holding no board yet.
+    Bound,
+    /// Bound to this other board.
+    Other(String),
+}
+
 impl SqliteBoardOps {
     /// The board at `path`, read as `reader` (a read never writes).
     /// # Errors
@@ -34,6 +43,13 @@ impl SqliteBoardOps {
             .optional()
             .map_err(unavailable)?;
         Ok(bound.flatten())
+    }
+
+    /// Red skeleton (#2741 review round 2).
+    /// # Errors
+    /// None yet.
+    pub fn bind(&self, _board: &str) -> Result<BoardBinding, BoardStoreError> {
+        Ok(BoardBinding::Bound)
     }
 
     /// Inside the transaction: the kept answer, or `op`'s, kept.
@@ -104,3 +120,7 @@ impl BoardOpStore for SqliteBoardOps {
         ended.map(|()| transacted).map_err(unavailable)
     }
 }
+
+#[cfg(test)]
+#[path = "op_store_tests.rs"]
+mod tests;

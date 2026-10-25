@@ -402,3 +402,52 @@ fn serve_refuses_a_board_file_imported_for_another_board() {
         assert!(refused.contains(named), "{named} in: {refused}");
     }
 }
+
+/// #2741 review round 2: serve binds an unbound board file to its board at
+/// start, so a second clone's server on the same `--state` is refused, and
+/// export takes only the server's board id for it.
+#[test]
+fn serve_binds_its_board_file_to_its_board() {
+    use crate::composition::bootstrap::project_board_history::build_history_cli;
+    use crate::domain::project_board::value_objects::telemetry::BoardId;
+    use crate::infrastructure::persistence::sqlite::project_board::SqliteProjectBoardStore;
+    use crate::interface::cli::board_server::history::HistoryCliEnvironment;
+    use std::os::unix::fs::DirBuilderExt;
+    let (dir, work) = seeded();
+    sh(dir.path(), &["clone", "-q", "remote.git", "second"]);
+    let second = dir.path().join("second");
+    let state = dir.path().join("state");
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&state)
+        .unwrap();
+    SqliteProjectBoardStore::open(&state.join(BOARD_FILE), server_identity())
+        .unwrap()
+        .bootstrap()
+        .unwrap();
+    let mut serving = environment(&dir, &work, "origin");
+    serving.state = Some(state.clone());
+    let board = build_board_server(&serving).unwrap().serve.board().clone();
+    let mut other = environment(&dir, &second, "origin");
+    other.state = Some(state.clone());
+    let refused = build_board_server(&other).err().unwrap();
+    assert!(refused.contains(board.as_str()), "{refused}");
+    let export = |board: BoardId| {
+        let handles = build_history_cli(HistoryCliEnvironment {
+            repo: work.clone(),
+            board,
+            target: "refs/heads/rollback".into(),
+            base_dir: dir.path().join("base"),
+            state: Some(state.clone()),
+        })?;
+        let report = handles.export.execute(true, handles.expected.as_deref());
+        report.map_err(|error| error.to_string())
+    };
+    let wrong = export(BoardId::of_hex("fedcba9876543210").unwrap());
+    assert!(wrong.is_err(), "another board id is refused");
+    assert_eq!(
+        export(board).unwrap().revisions,
+        1,
+        "the server's id exports"
+    );
+}
