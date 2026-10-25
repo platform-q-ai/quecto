@@ -5,10 +5,12 @@
 |---|---|
 | Task | board-2705-b13-backup |
 | Version | 2 |
-| State | draft |
+| State | accepted |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-25T08:17:56Z |
 | Created | 2026-10-25T08:17:35Z |
-| Updated | 2026-10-25T08:17:35Z |
+| Updated | 2026-10-25T08:17:56Z |
 
 ## Approach
 FRESH DELIVERY ONLY for backup PR1; the separate fresh RED phase is complete and independently accepted. Preserve the FULL safety/acceptance scope of plan1 and the parent B13 plan5. No new design, RED/observer framework, source optimisation or fence work. Reuse the already-tested A05 BACKUP assignment mechanically after reproducing this new RED; do not rebuild or merge the whole combined feature branch.
