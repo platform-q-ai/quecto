@@ -268,7 +268,8 @@ fn r9_backup_help_preserves_delivered_action_usage() {
     ] {
         assert!(help.contains(usage), "preserve {usage}");
     }
-    for usage in ["board-server backup --to <dir> [--board-id <16-hex>]"] {
+    {
+        let usage = "board-server backup --to <dir> [--board-id <16-hex>]";
         assert!(
             help.contains(usage),
             "positive offline maintenance help missing: {usage}"
