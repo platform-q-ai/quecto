@@ -330,11 +330,41 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
         "this process's own executable digest via `/proc/<self>/exe`",
     ),
     (
+        "src/infrastructure/persistence/sqlite/project_board/backup_unix.rs",
+        &["/proc/"],
+        "SQLite filesystem paths anchored to this process's held directory fd; \
+         only the exact own-fd expression admitted by backup_fd_effect is allowed",
+    ),
+    (
         "src/interface/uds/framing/uds_socket.rs",
         &["/proc/"],
         "the kernel's unix-socket table (`/proc/net/unix`) for socket liveness",
     ),
 ];
+
+/// This filesystem capability admits one own-held-fd expression, not process observation.
+fn backup_fd_effect(pattern: &str, line: &str) -> bool {
+    pattern == "/proc/"
+        && line.trim()
+            == r#"PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd())).join(name)"#
+}
+
+#[test]
+fn backup_fd_policy_admits_only_the_exact_own_held_directory_expression() {
+    let own = r#"PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd())).join(name)"#;
+    assert!(backup_fd_effect("/proc/", own));
+    for other in [
+        r#"PathBuf::from(format!("/proc/{pid}/stat"))"#,
+        r#"PathBuf::from("/proc/self/mem")"#,
+        r#"PathBuf::from(format!("/proc/self/fd/{}", other.as_raw_fd())).join(name)"#,
+        r#"PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd())).join(name); read("/proc/self/mem")"#,
+    ] {
+        assert!(!backup_fd_effect("/proc/", other), "{other}");
+    }
+    for signal in ["libc::kill", "kill(", "libc::SIGKILL"] {
+        assert!(!backup_fd_effect(signal, own), "{signal}");
+    }
+}
 
 #[test]
 fn process_effects_are_exactly_the_allowlisted_files_and_vocabulary() {
@@ -350,7 +380,15 @@ fn process_effects_are_exactly_the_allowlisted_files_and_vocabulary() {
                     continue;
                 }
                 match allowed {
-                    Some((file, patterns, _)) if patterns.contains(pattern) => {
+                    Some((file, patterns, _))
+                        if patterns.contains(pattern)
+                            && match *file {
+                                "src/infrastructure/persistence/sqlite/project_board/backup_unix.rs" => {
+                                    backup_fd_effect(pattern, &line)
+                                }
+                                _ => true,
+                            } =>
+                    {
                         seen.insert((file, pattern));
                     }
                     _ => violations.push(format!(

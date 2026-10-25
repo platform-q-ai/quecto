@@ -11,6 +11,7 @@ use crate::application::project_board::use_cases::{BoardAccess, ServeBoard, Serv
 use crate::infrastructure::http::board_service::listener::PeerCredentials;
 use crate::interface::cli::CliContext;
 
+pub mod backup;
 pub mod history;
 mod op;
 pub mod routes;
@@ -65,6 +66,12 @@ pub fn cmd_board_server(
         .map(|(first, rest)| (first.as_str(), rest))
     {
         return history::run_import(ctx, rest, stdout, stderr);
+    }
+    if let Some(("backup", rest)) = args
+        .split_first()
+        .map(|(first, rest)| (first.as_str(), rest))
+    {
+        return backup::run(ctx, rest, stdout, stderr);
     }
     let began = std::time::Instant::now();
     if let Some(("token", rest)) = args

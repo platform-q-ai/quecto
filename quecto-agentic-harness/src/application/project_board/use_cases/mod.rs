@@ -56,3 +56,6 @@ pub use export_board_history::ExportBoardHistory;
 
 mod import_board_history;
 pub use import_board_history::ImportBoardHistory;
+
+mod backup_board;
+pub use backup_board::BackupBoard;
