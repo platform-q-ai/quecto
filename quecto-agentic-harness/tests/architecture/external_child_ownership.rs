@@ -56,7 +56,7 @@ impl Fixture {
         fs::write(directory.join(format!("{name}.rs")), source).unwrap();
     }
 
-    fn check(&self, checker: &str, diagnostic: Option<&str>) {
+    fn check(&self, checker: &str, diagnostic: Option<&str>) -> String {
         let started = std::time::Instant::now();
         let output = Command::new("timeout")
             .args(["-s", "KILL", &HANG_GUARD_SECS.to_string()])
@@ -101,6 +101,7 @@ impl Fixture {
                 assert!(text.contains("1 passed"), "{checker}: {text}");
             }
         }
+        text
     }
 }
 
@@ -239,5 +240,170 @@ fn sessions_retention_still_rejects_another_production_file() {
     f.check(
         "sessions_capability::retained_context_has_exactly_one_owner_per_role",
         Some("src/application/sessions/services/history_paging.rs"),
+    );
+}
+
+// #2730: the sessions exceptions #2650 admits are two exact files, each for
+// exact roles: services/active_session/tests.rs constructs
+// ActiveSessionState and converts raw keys; services/conversation_ledger/
+// tests.rs holds the retention port. Each role's matrix pins that only the
+// approved child is admitted, so a broader exemption (a glob over
+// `*/active_session/tests.rs`, any `tests.rs`, a prefix or suffix match, a
+// whole folder, or the other approved file's role) fails here even though
+// the clean-tree inventories would still pass.
+const SESSIONS_SERVICES: &str = "src/application/sessions/services";
+
+/// Plants `bad` in a mounted cfg(test) child at `target`: appended when the
+/// file exists, otherwise created and declared by its parent module (which
+/// is itself created and declared when missing).
+fn plant(f: &Fixture, target: &str, bad: &str) {
+    let path = f.root().join(target);
+    if path.is_file() {
+        f.append(target, bad);
+        return;
+    }
+    let parent = Path::new(target).parent().unwrap();
+    let module = Path::new(target).file_stem().unwrap().to_str().unwrap();
+    let owner = parent.with_extension("rs");
+    let declaration = format!("#[cfg(test)] mod {module};");
+    if f.root().join(&owner).is_file() {
+        f.append(owner.to_str().unwrap(), &declaration);
+    } else {
+        let folder = parent.parent().unwrap();
+        let name = parent.file_name().unwrap().to_str().unwrap();
+        f.append(
+            folder.join("mod.rs").to_str().unwrap(),
+            &format!("mod {name};"),
+        );
+        fs::write(f.root().join(&owner), format!("{declaration}\n")).unwrap();
+    }
+    fs::create_dir_all(f.root().join(parent)).unwrap();
+    fs::write(&path, bad).unwrap();
+    assert!(path.is_file(), "planted {target}");
+}
+
+/// The role's checker must fail with its own diagnostic and name `target`.
+fn rejects(checker: &str, bad: &str, diagnostic: &str, target: &str) {
+    let f = Fixture::new();
+    plant(&f, target, bad);
+    let text = f.check(checker, Some(diagnostic));
+    assert!(
+        text.contains(target),
+        "{checker} must name {target}: {text}"
+    );
+}
+
+macro_rules! exception_role {
+    ($name:ident, $checker:expr, $allowed:expr, $opposite:expr, $bad:expr, $diagnostic:expr) => {
+        mod $name {
+            use super::{Fixture, SESSIONS_SERVICES, rejects};
+            fn approved() -> String {
+                format!("{SESSIONS_SERVICES}/{}/tests.rs", $allowed)
+            }
+            fn rejected(target: &str) {
+                rejects($checker, $bad, $diagnostic, target);
+            }
+            #[test]
+            fn approved_child_is_accepted() {
+                let f = Fixture::new();
+                f.append(&approved(), $bad);
+                f.check($checker, None);
+            }
+            // A production owner's inline cfg(test) items are not production
+            // code, so they need no policy role.
+            #[test]
+            fn production_owner_inline_tests_are_accepted() {
+                let f = Fixture::new();
+                f.append(
+                    &format!("{SESSIONS_SERVICES}/history_paging.rs"),
+                    &format!("#[cfg(test)] mod review_tests {{ {} }}", $bad),
+                );
+                f.check($checker, None);
+            }
+            #[test]
+            fn typo_child_is_rejected() {
+                rejected(&format!("{SESSIONS_SERVICES}/{}/test.rs", $allowed));
+            }
+            #[test]
+            fn prefixed_child_is_rejected() {
+                rejected(&format!("{SESSIONS_SERVICES}/{}/xtests.rs", $allowed));
+            }
+            #[test]
+            fn suffixed_child_is_rejected() {
+                rejected(&format!("{SESSIONS_SERVICES}/{}/tests_extra.rs", $allowed));
+            }
+            #[test]
+            fn same_basename_in_another_service_is_rejected() {
+                rejected(&format!("{SESSIONS_SERVICES}/history_paging/tests.rs"));
+            }
+            #[test]
+            fn same_child_under_another_role_folder_is_rejected() {
+                rejected(&format!(
+                    "src/application/sessions/ports/{}/tests.rs",
+                    $allowed
+                ));
+            }
+            #[test]
+            fn production_sibling_is_rejected() {
+                rejected(&format!("{SESSIONS_SERVICES}/session_home.rs"));
+            }
+            // The other approved file is exact for its own roles only.
+            #[test]
+            fn opposite_approved_child_is_rejected() {
+                rejected(&format!("{SESSIONS_SERVICES}/{}/tests.rs", $opposite));
+            }
+            // The exception names one file: a moved or renamed child fails
+            // rather than silently leaving the exception unused.
+            #[test]
+            fn missing_approved_child_fails() {
+                let f = Fixture::new();
+                std::fs::remove_file(f.root().join(approved())).unwrap();
+                let text = f.check($checker, Some("assertion `left == right` failed"));
+                assert!(text.contains(&approved()), "{text}");
+            }
+            #[test]
+            fn malformed_approved_child_fails() {
+                let f = Fixture::new();
+                f.append(&approved(), "fn malformed(");
+                f.check($checker, Some("parse module file"));
+            }
+        }
+    };
+}
+
+exception_role!(
+    sessions_constructor_exception,
+    "sessions_capability::sessions_graph_nodes_are_constructed_only_in_composition",
+    "active_session",
+    "conversation_ledger",
+    "fn review_bad() { ActiveSessionState::new(identity, store); }",
+    "ActiveSessionState::new( may appear only in"
+);
+exception_role!(
+    sessions_raw_key_exception,
+    "sessions_epic_close_retirement::raw_key_conversion_and_startup_key_sites_are_exact",
+    "active_session",
+    "conversation_ledger",
+    "fn review_bad() { SessionIdentity::from_persisted_key(key); }",
+    "the raw-key conversion sites are exact"
+);
+exception_role!(
+    sessions_retention_exception,
+    "sessions_capability::retained_context_has_exactly_one_owner_per_role",
+    "conversation_ledger",
+    "active_session",
+    "use crate::application::sessions::ports::ContextSpillStore;",
+    "the retention port's holders are exact"
+);
+
+// The constructor exception covers ActiveSessionState only: the approved
+// child gains no other composed constructor.
+#[test]
+fn sessions_approved_child_gains_no_other_constructor() {
+    rejects(
+        "sessions_capability::sessions_graph_nodes_are_constructed_only_in_composition",
+        "fn review_bad() { ListSessions::new(store); }",
+        "ListSessions::new( may appear only in",
+        "src/application/sessions/services/active_session/tests.rs",
     );
 }
