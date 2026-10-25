@@ -1,0 +1,20 @@
+{
+  "tests": [
+    "project_board_fence::board_fence::r6_fence_publishes_one_parented_commit",
+    "project_board_fence::board_fence::r7_fence_exact_repeat_noops_elsewhere_refuses",
+    "project_board_fence::board_fence::r8_fence_cas_preserves_competing_winner",
+    "project_board_fence::board_fence::r8_fence_transport_refusal_preserves_remote",
+    "project_board_fence::board_fence::r9_after_publication_ordinary_read_and_write_return_typed_moved",
+    "project_board_fence::board_fence::r7_elsewhere_is_typed_moved_without_remote_change",
+    "project_board_fence::board_fence::r9_existing_builder_moved_read_write_control",
+    "project_board_fence::board_fence::r7_missing_branch_never_bootstraps",
+    "project_board_fence::board_fence::r8_lost_push_answer_is_reconciled_against_real_remote",
+    "project_board_fence::board_fence::r8_lost_answer_and_unreadable_judge_reports_uncertain_without_retry",
+    "project_board_fence::board_fence::r8_competing_update_after_capture_before_push_uses_exact_lease",
+    "project_board_fence::guards::r9_fence_help_preserves_delivered_action_usage",
+    "project_board_fence::guards::r9_fence_allowlist_refuses_before_io_control",
+    "project_board_fence::board_fence::guards::r7_publication_refuses_malformed_moved_without_repair",
+    "project_board_fence::board_fence::guards::r7_publication_refuses_unsupported_marker_without_repair",
+    "project_board_fence::board_fence::guards::r7_exact_repeat_never_pushes_or_looks_up_fresh_commit_identity"
+  ]
+}

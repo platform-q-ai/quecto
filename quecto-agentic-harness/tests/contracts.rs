@@ -477,3 +477,17 @@ mod project_board_backup_cli;
 #[cfg(feature = "test-support")]
 #[path = "contracts/project_board_backup_state.rs"]
 mod project_board_backup_state;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/board_fence.rs"]
+mod board_fence;
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_fence.rs"]
+mod project_board_fence;
+
+#[cfg(feature = "test-support")]
+#[path = "contracts/project_board_fence_cli.rs"]
+mod project_board_fence_cli;
+
+#[path = "contracts/project_board_fence_remediation.rs"]
+mod project_board_fence_remediation;

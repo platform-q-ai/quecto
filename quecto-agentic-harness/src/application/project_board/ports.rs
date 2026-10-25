@@ -32,10 +32,9 @@ pub use tokens::{BoardTokens, IssuedToken, MAX_TOKENS, TokenError, TokenRecord};
 mod time_sync;
 pub use time_sync::{ClockSync, TimeSync};
 
-/// The board's head: the store's revision a write must start from (the
-/// git store's commit id).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct BoardHead(pub String);
+mod head;
+pub use head::BoardHead;
+pub mod fence;
 
 /// Which artifact a board file holds (#2481's artifact model): what names
 /// it on the board, one file each. A task by its id; a plan, run or change

@@ -43,6 +43,7 @@ const USE_CASES: &[&str] = &[
     "AdvanceAuthorityEpoch",
     "AmendRunContract",
     "BackupBoard",
+    "FenceBoard",
     "BindScope",
     "BlockTask",
     "BoardAccess",
