@@ -98,7 +98,9 @@ fn a_task_with_no_plan_or_run_summarises_none() {
             subtitle: None,
             plan: None,
             run: None,
+            items: None,
             may_be_incomplete: false,
+            inconsistent: vec![],
         }
     );
 }

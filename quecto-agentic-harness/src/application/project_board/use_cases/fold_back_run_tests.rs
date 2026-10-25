@@ -15,7 +15,7 @@ use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::runs::end_lost;
 use crate::domain::project_board::services::starts::start;
 use crate::domain::project_board::value_objects::telemetry::{ItemCounts, RunOutcomeKind};
-use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutcome};
+use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutcome, TaskStatus};
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 
@@ -119,7 +119,7 @@ fn run_on(store: &MemoryBoardStore) -> Run {
 }
 
 #[test]
-fn a_swarm_that_ended_folds_back_onto_its_run_alone_in_one_write() {
+fn a_swarm_that_ended_folds_back_onto_its_run_in_one_write() {
     let (store, task, _) = started();
     let writes = store.writes();
     let folded = fold_back(&store)
@@ -150,8 +150,11 @@ fn a_swarm_that_ended_folds_back_onto_its_run_alone_in_one_write() {
             ("docs", ItemState::Todo, None, 0),
         ]
     );
-    // The task is left as it was: its holder decides where it goes.
-    assert_eq!(store.read().unwrap().tasks, [task]);
+    // The success moves the task to review in the same write (#2705 T5),
+    // its holder keeping it.
+    let moved = store.read().unwrap().tasks[0].clone();
+    assert_eq!(moved.fields().status, TaskStatus::Review);
+    assert_eq!(moved.fields().claim, task.fields().claim);
     let head = store.read().unwrap().head;
     assert_eq!(
         store.message_at(&head).as_deref(),
@@ -341,14 +344,32 @@ fn any_other_invalid_write_is_refused_with_its_evidence_never_left_out() {
     assert!(run_on(&store).is_open());
 }
 
+/// A run's end writes its run, after its task when it moves (#2705 T5),
+/// never the task after the run, nor another task's.
 #[test]
 #[should_panic(expected = "a board change writes as it declares")]
-fn a_run_write_that_writes_its_task_too_is_a_bug() {
+fn a_run_write_that_writes_its_task_after_the_run_is_a_bug() {
     let (store, task, run) = started();
     let clock = SetClock::at("11:00:00");
     let _ = super::super::board_change::commit_run(&store, &*clock, "board: x", None, |_, _| {
         Ok(vec![
+            BoardArtifact::Run(run.clone()),
             BoardArtifact::Task(task.clone()),
+        ])
+    });
+}
+
+#[test]
+#[should_panic(expected = "a board change writes as it declares")]
+fn a_run_write_that_writes_another_task_is_a_bug() {
+    let (store, task, run) = started();
+    let mut other = task.into_fields();
+    other.id = slug("other");
+    let other = Task::new(other).unwrap();
+    let clock = SetClock::at("11:00:00");
+    let _ = super::super::board_change::commit_run(&store, &*clock, "board: x", None, |_, _| {
+        Ok(vec![
+            BoardArtifact::Task(other.clone()),
             BoardArtifact::Run(run.clone()),
         ])
     });
@@ -481,3 +502,6 @@ fn a_noted_fold_back_tells_kinds_and_counts_and_an_unnoted_one_nothing() {
         }
     );
 }
+
+#[path = "fold_back_run_moves_tests.rs"]
+mod moves;

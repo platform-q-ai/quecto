@@ -831,10 +831,12 @@
         "needs_goal": false
       },
       "plan": null,
+      "item_states": null,
       "plans": [],
       "runs": [],
       "may_be_incomplete": false,
-      "quarantined": []
+      "quarantined": [],
+      "inconsistent": []
     }
   },
   {
@@ -1626,6 +1628,7 @@
         "needs_goal": true
       },
       "plan": null,
+      "item_states": null,
       "plans": [
         {
           "version": 1,
@@ -1639,7 +1642,8 @@
       ],
       "runs": [],
       "may_be_incomplete": false,
-      "quarantined": []
+      "quarantined": [],
+      "inconsistent": []
     }
   },
   {
@@ -1915,6 +1919,7 @@
         "created": "2026-10-10T10:00:03Z",
         "updated": "2026-10-10T10:00:04Z"
       },
+      "item_states": [],
       "plans": [
         {
           "version": 1,
@@ -1946,7 +1951,8 @@
       ],
       "runs": [],
       "may_be_incomplete": false,
-      "quarantined": []
+      "quarantined": [],
+      "inconsistent": []
     }
   },
   {

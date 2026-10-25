@@ -25,8 +25,6 @@ pub fn op_kind(request: &BoardRequest) -> OpKind {
         BoardRequest::Create(_) => OpKind::Create,
         BoardRequest::UpdateDraft(_) => OpKind::UpdateDraft,
         BoardRequest::Change(_, BoardOp::Move(..)) => OpKind::Move,
-        // Only the start use case undoes a start: no request carries it.
-        BoardRequest::Change(_, BoardOp::UndoStart(_)) => OpKind::Start,
         BoardRequest::Change(_, BoardOp::Renew) => OpKind::Renew,
         BoardRequest::Change(_, BoardOp::TakeOver) => OpKind::TakeOver,
         BoardRequest::Change(_, BoardOp::AddPr(_)) => OpKind::LinkPr,
@@ -101,10 +99,7 @@ pub fn task_of(request: &BoardRequest) -> Option<&Slug> {
 pub fn pr_of(request: &BoardRequest) -> Option<u64> {
     match request {
         BoardRequest::Change(_, BoardOp::AddPr(pr) | BoardOp::RemovePr(pr)) => Some(*pr),
-        BoardRequest::Change(
-            _,
-            BoardOp::Move(..) | BoardOp::UndoStart(_) | BoardOp::Renew | BoardOp::TakeOver,
-        )
+        BoardRequest::Change(_, BoardOp::Move(..) | BoardOp::Renew | BoardOp::TakeOver)
         | BoardRequest::Bootstrap
         | BoardRequest::List(_)
         | BoardRequest::ListReady

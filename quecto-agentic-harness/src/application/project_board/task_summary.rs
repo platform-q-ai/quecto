@@ -19,8 +19,12 @@
 //!   ([`run_deadline_seconds`]); the swarm's own deadline starts a little
 //!   later, when its coordinator creates it. `None` while the plan the run
 //!   ran is not readable on the board, or past the year 9999.
+//! - **items:** where each task item of that plan stands, counted, as
+//!   `show` gives each ([`ShownTask::item_standings`], #2705 T5): not
+//!   started, or as the latest run of the plan recorded it.
 //! - **may_be_incomplete:** as `show` judges it
 //!   ([`ShownTask::may_be_incomplete`]).
+//! - **inconsistent:** as `show` names them ([`ShownTask::inconsistent`]).
 //! - **subtitle:** the task's goal on one line ([`Description::subtitle`],
 //!   #2705 T2); `None` for legacy text, which needs a goal.
 use super::dto::{BoardListing, ProjectBoardError, ShownTask};
@@ -30,8 +34,11 @@ use crate::domain::project_board::entities::run::{Run, RunItem};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::entities::task_parts::Description;
 use crate::domain::project_board::entities::team::run_deadline_seconds;
+use crate::domain::project_board::services::run_outcomes::ItemStanding;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::{ItemState, PlanState, RunOutcome};
+use crate::domain::project_board::value_objects::vocabulary::{
+    Inconsistency, ItemState, PlanState, RunOutcome,
+};
 
 /// What a listing says of one task.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,7 +46,46 @@ pub struct TaskSummary {
     pub subtitle: Option<String>,
     pub plan: Option<PlanSummary>,
     pub run: Option<RunSummary>,
+    /// Where the task items of `plan` stand, from the latest run, as
+    /// `show` gives each (#2705 T5); `None` with no plan.
+    pub items: Option<StandingCounts>,
     pub may_be_incomplete: bool,
+    /// As `show` names them ([`ShownTask::inconsistent`]).
+    pub inconsistent: Vec<Inconsistency>,
+}
+
+/// How many task items of a plan stand in each state (#2705 T5): not
+/// started, or as the latest run of the plan recorded it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StandingCounts {
+    pub not_started: usize,
+    /// The items started, counted by state.
+    pub started: ItemCounts,
+}
+
+impl StandingCounts {
+    /// `standings` counted.
+    pub fn of(standings: &[ItemStanding]) -> Self {
+        let mut counts = Self::default();
+        for standing in standings {
+            let count = match standing {
+                ItemStanding::NotStarted => &mut counts.not_started,
+                ItemStanding::In(ItemState::Todo) => &mut counts.started.todo,
+                ItemStanding::In(ItemState::Doing) => &mut counts.started.doing,
+                ItemStanding::In(ItemState::Review) => &mut counts.started.review,
+                ItemStanding::In(ItemState::Done) => &mut counts.started.done,
+                ItemStanding::In(ItemState::Blocked) => &mut counts.started.blocked,
+            };
+            *count += 1;
+        }
+        counts.started.total = standings.len() - counts.not_started;
+        counts
+    }
+
+    /// Every item counted.
+    pub fn total(&self) -> usize {
+        self.not_started + self.started.total
+    }
 }
 
 /// The task's current plan version: a draft or accepted one.
@@ -105,21 +151,23 @@ impl ItemCounts {
 
 /// The summary of `shown`, a task as `show` reads it.
 pub fn summary_of(shown: &ShownTask) -> TaskSummary {
-    let plan = shown
+    let current = shown
         .plans
         .iter()
         .filter(|plan| is_current(plan.fields().state))
-        .max_by_key(|plan| plan.fields().version)
-        .map(|plan| PlanSummary {
-            version: plan.fields().version,
-            state: plan.fields().state,
-        });
+        .max_by_key(|plan| plan.fields().version);
+    let plan = current.map(|plan| PlanSummary {
+        version: plan.fields().version,
+        state: plan.fields().state,
+    });
     let description = Description::read(&shown.task.fields().description);
     TaskSummary {
         subtitle: description.as_ref().map(Description::subtitle),
         plan,
         run: shown.latest_run().map(|run| run_summary(run, &shown.plans)),
+        items: current.map(|plan| StandingCounts::of(&shown.item_standings(plan))),
         may_be_incomplete: shown.may_be_incomplete(),
+        inconsistent: shown.inconsistent(),
     }
 }
 
@@ -177,7 +225,7 @@ pub enum RowSummaries {
 /// What one listed task's summary came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RowSummary {
-    Summary(TaskSummary),
+    Summary(Box<TaskSummary>),
     /// Its plans or runs could not be read, and why (the board holds one
     /// of them twice): this task alone goes without its summary.
     Skipped(Box<ProjectBoardError>),

@@ -184,6 +184,7 @@ fn show_answers_the_accepted_plan_each_version_and_the_runs() {
             "created": "2026-10-10T08:00:00Z",
             "updated": "2026-10-10T08:30:00Z",
         },
+        "item_states": [{"id": "build", "state": "done"}],
         "plans": [
             {"version": 1, "state": "superseded", "proposed_by": identity, "updated": "2026-10-10T08:30:00Z"},
             {"version": 2, "state": "accepted", "proposed_by": identity, "updated": "2026-10-10T08:30:00Z"},
@@ -215,6 +216,7 @@ fn show_answers_the_accepted_plan_each_version_and_the_runs() {
         ],
         "may_be_incomplete": false,
         "quarantined": [],
+        "inconsistent": [],
     });
     assert_eq!(answer, golden);
     // In this order, as a reader sees it.
@@ -426,3 +428,6 @@ fn a_page_answers_only_the_parts_it_names_from_where_it_names() {
     );
     assert_eq!(none["plan"], json!(null));
 }
+
+#[path = "answer_show_states_tests.rs"]
+mod states;

@@ -14,11 +14,10 @@
 //! - **The brief is rendered before the write.** Each attempt renders the
 //!   coordinator's text and checks its size, so nothing after the write
 //!   can refuse it.
-//! - **A failed launch is undone.** The run is folded back as failed, and
-//!   only then (a held task leaves its holder only once its run ended),
-//!   when the start took the claim, the task is moved back to ready,
-//!   releasing it (one held in review or blocked goes back there). The
-//!   refusal says how far that got; a run left open is for `end_run`. A
+//! - **A failed launch is undone.** The run is folded back as failed,
+//!   which moves the task back to ready, releasing it, in the same write
+//!   (#2705 T5), whatever status the start took it from. The refusal says
+//!   how far that got; a run left open is for `end_run`. A
 //!   call cancelled after the write launches nothing, and one cancelled
 //!   during the launch stops it; either is undone the same way, as is a
 //!   launch that panicked. The undo writes through a store that ignores
@@ -31,10 +30,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::board_change::{checked_writer, commit, owned, task_on};
-use super::{ChangeBoardTask, FoldBackRun, board_view};
+use super::{FoldBackRun, board_view};
 use crate::application::agent_turn::agent_loop::tool_panic_scope::catch_in_call_site;
 use crate::application::project_board::dto::{
-    BoardOp, FoldBackFacts, FoldedBack, ProjectBoardError, Restored, RunAfterUndo, TaskStart,
+    FoldBackFacts, FoldedBack, ProjectBoardError, RunAfterUndo, TaskStart,
 };
 use crate::application::project_board::fold_back::{SwarmEnd, SwarmRunView};
 use crate::application::project_board::ports::{
@@ -49,7 +48,6 @@ use crate::application::project_board::telemetry::{OpFacts, counted};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::services::plans::as_accepted;
 use crate::domain::project_board::services::starts::{Started, start};
-use crate::domain::project_board::services::transitions::MoveReason;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::StartClaim;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -72,7 +70,6 @@ pub struct StartBoardTask {
     cancelled: Option<Arc<AtomicBool>>,
     /// The undo's, over a store that ignores the call's cancel.
     fold_back: FoldBackRun,
-    change: ChangeBoardTask,
     /// Whether the run's coordinator still runs here, asked before an
     /// undo (`None`: this front end can see none).
     liveness: Option<Arc<dyn RunLiveness>>,
@@ -108,8 +105,7 @@ impl StartBoardTask {
             actor,
             "a start and its undo write as one identity"
         );
-        let fold_back = FoldBackRun::new(Arc::clone(&undo_store), Arc::clone(&clock), cells)?;
-        let change = ChangeBoardTask::new(undo_store, Arc::clone(&clock))?;
+        let fold_back = FoldBackRun::new(undo_store, Arc::clone(&clock), cells)?;
         Ok(Self {
             store,
             clock,
@@ -117,7 +113,6 @@ impl StartBoardTask {
             launcher,
             cancelled,
             fold_back,
-            change,
             liveness: None,
         })
     }
@@ -314,10 +309,9 @@ impl StartBoardTask {
     }
 
     /// The refusal of a start whose coordinator did not launch, once the
-    /// start is undone as far as it can be: its run folded back as failed
-    /// (or found ended already), then, only once the run has ended, the
-    /// task moved back to ready when the start took the claim, or to the
-    /// review or blocked status it was held in. A coordinator that may
+    /// start is undone as far as it can be: its run folded back as failed,
+    /// which moves the task back to ready, releasing it, in the same write
+    /// (#2705 T5), or found ended already. A coordinator that may
     /// still be running (one that came up wrong and could not be stopped)
     /// leaves the start as it is: its run open, for `end_run` once it is
     /// stopped, and the claim held. Noted in `facts`, when given, with the
@@ -346,31 +340,15 @@ impl StartBoardTask {
             // Never fold back, nor release, under a swarm that may run.
             Some(_) => (RunAfterUndo::Open, None),
             None => {
-                let (run_state, undo) = self.folded_back(id, run, facts.is_some());
+                let (run_state, undo) =
+                    self.folded_back((id, run), started.from(), facts.is_some());
                 (run_state, Some(undo))
             }
         };
-        // A held task leaves progress only once its run has ended.
-        let ended = matches!(run_state, RunAfterUndo::Folded | RunAfterUndo::EndedAlready);
-        let changed = |op: BoardOp| ended && self.change.execute(id, &op).is_ok();
-        let released = started
-            .took_claim()
-            .then(|| changed(BoardOp::Move(TaskStatus::Ready, MoveReason::Absent)));
-        // A task held in review or blocked goes back there, by the start's
-        // own undo (#2705 T4: `move` no longer takes a task out of
-        // progress there); one claimed or in progress stays in progress.
-        let restored = match started.from() {
-            status @ (TaskStatus::Review | TaskStatus::Blocked) => Some(Restored {
-                status,
-                moved: changed(BoardOp::UndoStart(status)),
-            }),
-            TaskStatus::Draft
-            | TaskStatus::Ready
-            | TaskStatus::Claimed
-            | TaskStatus::InProgress
-            | TaskStatus::Done
-            | TaskStatus::Archived => None,
-        };
+        // The run's end moves its task (#2705 T5): a fold-back as failed
+        // released it in its own write, whatever status the start took it
+        // from; nothing is moved after it.
+        let (released, restored) = undone_task(run_state, started.from());
         if let Some(facts) = facts {
             facts.run_state = Some(run_state);
             facts.released = released;
@@ -389,7 +367,12 @@ impl StartBoardTask {
     /// Run `run` of task `id` folded back as failed, as a swarm that
     /// reported nothing: where that left it, and the fold-back, timed and
     /// with its facts when `noting`.
-    fn folded_back(&self, id: &Slug, run: u32, noting: bool) -> (RunAfterUndo, NotedFoldBack) {
+    fn folded_back(
+        &self,
+        (id, run): (&Slug, u32),
+        from: TaskStatus,
+        noting: bool,
+    ) -> (RunAfterUndo, NotedFoldBack) {
         let failed = SwarmRunView {
             end: SwarmEnd::Failed,
             items: vec![],
@@ -397,9 +380,9 @@ impl StartBoardTask {
         };
         let before = self.clock.elapsed();
         let mut facts = FoldBackFacts::default();
-        let folded = self
-            .fold_back
-            .execute_noted(id, run, &failed, noting.then_some(&mut facts));
+        let folded =
+            self.fold_back
+                .undo_noted(id, run, (&failed, from), noting.then_some(&mut facts));
         let run_state = match &folded {
             Ok(FoldedBack::Folded(_)) => RunAfterUndo::Folded,
             Ok(FoldedBack::Ended(_)) => RunAfterUndo::EndedAlready,
@@ -413,6 +396,30 @@ impl StartBoardTask {
             elapsed: self.clock.elapsed().saturating_sub(before),
         };
         (run_state, undo)
+    }
+}
+
+/// Where a start's undo left its task, from where it left the run
+/// (`run_state`) and the status the start took the task `from` (#2705 T5):
+/// whether it was released (back to ready), and the review or blocked
+/// status it went back to, its claim kept. A run left open keeps the task
+/// held; one another writer ended moved it as that end says.
+fn undone_task(run_state: RunAfterUndo, from: TaskStatus) -> (Option<bool>, Option<TaskStatus>) {
+    match (run_state, from) {
+        (RunAfterUndo::Folded, TaskStatus::Review | TaskStatus::Blocked) => {
+            (Some(false), Some(from))
+        }
+        (
+            RunAfterUndo::Folded,
+            TaskStatus::Draft
+            | TaskStatus::Ready
+            | TaskStatus::Claimed
+            | TaskStatus::InProgress
+            | TaskStatus::Done
+            | TaskStatus::Archived,
+        ) => (Some(true), None),
+        (RunAfterUndo::Open, _) => (Some(false), None),
+        (RunAfterUndo::EndedAlready, _) => (None, None),
     }
 }
 

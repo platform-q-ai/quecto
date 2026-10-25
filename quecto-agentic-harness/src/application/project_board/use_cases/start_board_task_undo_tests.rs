@@ -61,13 +61,17 @@ fn a_run_another_writer_ended_is_left_as_it_ended_and_the_claim_released() {
             reason: "no container runtime".into(),
             run: 1,
             run_state: RunAfterUndo::EndedAlready,
-            released: Some(true),
+            released: None,
             restored: None,
             still_running: None,
         })
     );
+    // The other writer's end (a cancel) released the task (#2705 T5).
     let (task, runs) = task_and_runs(&store);
-    assert_eq!(task.fields().status, TaskStatus::Ready);
+    assert_eq!(
+        (task.fields().status, &task.fields().claim),
+        (TaskStatus::Ready, &None)
+    );
     assert_eq!(
         runs[0].fields().outcome,
         Some(RunOutcome::Stopped),
@@ -76,7 +80,7 @@ fn a_run_another_writer_ended_is_left_as_it_ended_and_the_claim_released() {
     assert_eq!(
         refused.unwrap_err().to_string(),
         "the coordinator did not launch: no container runtime; run 1 had already ended, and \
-         the task is ready again"
+         its end moved the task"
     );
 }
 

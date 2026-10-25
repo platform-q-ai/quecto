@@ -58,3 +58,38 @@ fn a_lost_run_is_refused_items_its_plan_does_not_have() {
         Err(BoardRuleError::Invalid(_))
     ));
 }
+
+/// #2705 T5: a run lost mid-claim (its host died while its holder's claim
+/// was live) moves its task back to ready, the claim released with it: a
+/// loss is no outcome its holder keeps the task for.
+#[test]
+fn a_run_lost_mid_claim_moves_its_task_back_to_ready_releasing_the_claim() {
+    use crate::domain::project_board::services::run_outcomes::{StopKind, task_after_end};
+    let held = task(InProgress);
+    let run = lost(&held, &open_run(1, 1), &person("Ada"), &at("10:00:00")).unwrap();
+    let moved = task_after_end(&held, &run, StopKind::Cancelled, &at("10:00:00"))
+        .unwrap()
+        .expect("a loss moves its task");
+    let fields = moved.fields();
+    assert_eq!((fields.status, fields.claim.clone()), (Ready, None));
+    assert_eq!(
+        fields.updated,
+        run.fields().ended.clone().unwrap(),
+        "one stamp"
+    );
+}
+
+/// One whose claim lapsed is taken over first, then lost: its taker's
+/// claim goes with the move back to ready too.
+#[test]
+fn a_run_lost_after_a_take_over_releases_the_takers_claim() {
+    use crate::domain::project_board::services::run_outcomes::{StopKind, task_after_end};
+    let bob = person("Bob");
+    let taken = take_over(&task(InProgress), &bob, &at("11:30:00")).unwrap();
+    let run = lost(&taken, &open_run(1, 1), &bob, &at("11:31:00")).unwrap();
+    let moved = task_after_end(&taken, &run, StopKind::Cancelled, &at("11:31:00"))
+        .unwrap()
+        .expect("a loss moves its task");
+    let fields = moved.fields();
+    assert_eq!((fields.status, fields.claim.clone()), (Ready, None));
+}

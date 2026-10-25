@@ -21,6 +21,7 @@ use crate::domain::project_board::entities::run::MAX_RUN_NUMBER;
 use crate::domain::project_board::entities::team::{
     MAX_DEADLINE_SECONDS, MAX_MEMBERS, MIN_DEADLINE_SECONDS, Role, RoleLimits, Team,
 };
+use crate::domain::project_board::services::run_outcomes::StopKind;
 use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
@@ -94,7 +95,23 @@ pub(super) fn discard_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError
 pub(super) fn end_run(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     let present = "a required field is present";
     let words: Vec<&str> = RunEndOutcome::ALL.iter().map(|end| end.as_str()).collect();
+    let stops: Vec<&str> = StopKind::ALL.iter().map(|stop| stop.as_str()).collect();
     let problem = format!("must be a run number from 1 to {MAX_RUN_NUMBER}");
+    let outcome = read
+        .word("outcome", RunEndOutcome::parse, &words)?
+        .expect(present);
+    let stop = read.word("stop", StopKind::parse, &stops)?;
+    // How a stop stopped is a stop's alone (an allowlist, #2705 T5).
+    match (outcome, stop) {
+        (_, None) | (RunEndOutcome::Stopped, Some(_)) => {}
+        (RunEndOutcome::Succeeded | RunEndOutcome::Failed | RunEndOutcome::Lost, Some(_)) => {
+            return Err(RequestError::of(
+                "stop",
+                "is taken only with outcome stopped",
+                FaultKind::InvalidValue,
+            ));
+        }
+    }
     Ok(BoardRequest::EndRun(RunEnd {
         task: read.task()?,
         run: number(
@@ -103,10 +120,9 @@ pub(super) fn end_run(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
             1..=MAX_RUN_NUMBER,
             &problem,
         )?,
-        outcome: read
-            .word("outcome", RunEndOutcome::parse, &words)?
-            .expect(present),
+        outcome,
         expected_updated: read.timestamp("expected_updated")?,
+        stop,
     }))
 }
 

@@ -262,3 +262,23 @@ fn task_looks_up_the_task_alone() {
         Err(ProjectBoardError::Quarantined { .. })
     ));
 }
+
+/// #2705 T5, the land-layout-2652 case: a task done with no plan accepted
+/// and no run is shown as `done_without_plan`, and the read rewrites
+/// nothing.
+#[test]
+fn a_contradictory_legacy_task_is_named_and_never_rewritten() {
+    use crate::application::project_board::use_cases::fixtures_tests::finished;
+    use crate::domain::project_board::value_objects::vocabulary::{Inconsistency, TaskStatus};
+    let done = Task::new(finished(TaskFields {
+        status: TaskStatus::Done,
+        ..fields("land-layout-2652")
+    }))
+    .unwrap();
+    let store = holding(vec![BoardArtifact::Task(done.clone())]);
+    let writes = store.writes();
+    let shown = shown(&store, "land-layout-2652").unwrap();
+    assert_eq!(shown.inconsistent(), [Inconsistency::DoneWithoutPlan]);
+    assert_eq!(shown.task, done, "as the board holds it");
+    assert_eq!(store.writes(), writes, "nothing written");
+}

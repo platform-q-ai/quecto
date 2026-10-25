@@ -39,7 +39,8 @@ const ANYONES: [(TaskStatus, TaskStatus); 6] = [
 ];
 /// The holder's while the claim is live, anyone's once it is not.
 const WHILE_LIVE: [(TaskStatus, TaskStatus); 1] = [(Review, Archived)];
-/// The moves that hand a task back to the board.
+/// The moves that hand a task back to the board (#2705 T5: a task in
+/// progress only while no run of it is going).
 const RELEASES: [(TaskStatus, TaskStatus); 4] = [
     (Claimed, Ready),
     (InProgress, Ready),
@@ -514,7 +515,7 @@ fn a_task_with_a_run_going_stays_with_its_holder() {
                 &[],
                 &at("10:00:00")
             ),
-            Err(BoardRuleError::RunOpen(1)),
+            Err(held_back(from, to)),
             "{from:?} -> {to:?}"
         );
     }
@@ -658,10 +659,23 @@ fn a_run_going_holds_exactly_the_moves_that_read_runs() {
             &now,
         );
         assert_eq!(
-            moved == Err(BoardRuleError::RunOpen(1)),
+            moved == Err(held_back(*from, *to)),
             reads.runs,
             "{from:?} -> {to:?}: {moved:?}"
         );
         assert_eq!(reads.runs, super::super::runs::holds_moves_to(*to));
+    }
+}
+
+/// How a run going (run 1) refuses the move `from` -> `to`: a task in
+/// progress names its run's end (#2705 T5), any other `run_open`.
+fn held_back(from: TaskStatus, to: TaskStatus) -> BoardRuleError {
+    match (from, to) {
+        (InProgress, Ready) => BoardRuleError::UseLifecycle {
+            from,
+            to,
+            action: LifecycleAction::EndRun,
+        },
+        _ => BoardRuleError::RunOpen(1),
     }
 }

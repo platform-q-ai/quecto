@@ -8,8 +8,8 @@
 //! start asks it about that move ([`move_reads`]) and composes it with the
 //! move to in progress, as two moves in a row would stamp the task twice.
 //! The move to in progress is the lifecycle's own (#2705 T4): `move` never
-//! makes it, a start is the only way there, and [`unstart`] its only way
-//! back to review or blocked.
+//! makes it, and a start is the only way there; the run's end is the only
+//! way out (#2705 T5), a start's undo included.
 use super::super::entities::claim::Identity;
 use super::super::entities::plan::Plan;
 use super::super::entities::run::Run;
@@ -18,8 +18,8 @@ use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::LifecycleAction;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
-use super::claims::{held_live_by, new_claim, renew, settle, stamp};
-use super::runs::{begin_run, open_of};
+use super::claims::{new_claim, renew, settle, stamp};
+use super::runs::begin_run;
 use super::transitions::{lifecycle_action, move_reads, relations_allow};
 
 /// A task started: in progress, held by its starter, and a run of its
@@ -151,50 +151,6 @@ pub fn start(
     })
 }
 
-/// A start undone (#2705 T4): `task`, in progress, back in the review or
-/// blocked status its start moved it from (`from`), by `actor`, the holder
-/// of a live claim, at `now`, once none of its `runs` is going. Its claim
-/// stays, as review and blocked keep one. A task the start claimed goes
-/// back to ready by a release (`move`), as any claimed one does.
-///
-/// # Errors
-/// A task not in progress, or `from` neither review nor blocked
-/// (`not_allowed`); not the holder of a live claim; a run going, or runs
-/// that contradict each other.
-pub fn unstart(
-    task: &Task,
-    from: TaskStatus,
-    runs: &[Run],
-    actor: &Identity,
-    now: &Timestamp,
-) -> Result<Task, BoardRuleError> {
-    let status = task.fields().status;
-    match (status, from) {
-        (InProgress, Review | Blocked) => {}
-        (Draft | Ready | Claimed | InProgress | Review | Blocked | Done | Archived, to) => {
-            return Err(BoardRuleError::NotAllowed { from: status, to });
-        }
-    }
-    held_live_by(task, actor, now)?;
-    match open_of(task, runs)? {
-        None => {}
-        Some(going) => return Err(BoardRuleError::RunOpen(going.fields().number)),
-    }
-    let at = stamp(task, now)?;
-    let mut next = task.fields().clone();
-    next.status = from;
-    let undone = settle(next, &at)?;
-    assert!(
-        undone.fields().claim.is_some(),
-        "an undone start keeps its holder's claim"
-    );
-    Ok(undone)
-}
-
 #[cfg(test)]
 #[path = "starts_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "starts_undo_tests.rs"]
-mod undo_tests;

@@ -64,6 +64,7 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
             | Kind::NewStatus
             | Kind::TaskKind
             | Kind::RunEnd
+            | Kind::RunStop
             | Kind::Path
             | Kind::ObjectId => Value::String(text.clone()),
             Kind::Repeated | Kind::PlanItems | Kind::Team | Kind::Lines => {

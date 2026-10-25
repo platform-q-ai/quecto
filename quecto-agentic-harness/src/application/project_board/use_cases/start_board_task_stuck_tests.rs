@@ -1,20 +1,19 @@
 //! S4c: every way a start can leave its run open with no coordinator to
 //! fold it back (its undo's fold-back refused, after a failed launch or a
-//! cancel) is recovered by `end_run`, and then the task leaves its holder.
+//! cancel) is recovered by `end_run`, which releases the task (#2705 T5).
 //! A write followed by a crash is `end_run`'s own test.
-use crate::domain::project_board::services::transitions::MoveReason;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{FreezingLauncher, confirmed, plan, ready, seeded, starter_of, task_and_runs};
 use crate::application::project_board::dto::{
-    BoardOp, ProjectBoardError, RunAfterUndo, RunEnd, RunEndOutcome,
+    ProjectBoardError, RunAfterUndo, RunEnd, RunEndOutcome,
 };
 use crate::application::project_board::ports::{
     CoordinatorLaunch, CoordinatorRequest, LaunchRefused, LaunchedCoordinator,
 };
+use crate::application::project_board::use_cases::EndRun;
 use crate::application::project_board::use_cases::fixtures_tests::{SetClock, person, slug};
-use crate::application::project_board::use_cases::{ChangeBoardTask, EndRun};
 use crate::domain::project_board::value_objects::vocabulary::{PlanState, RunOutcome, TaskStatus};
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
@@ -39,8 +38,8 @@ impl CoordinatorLaunch for CancelledAndFrozen {
     }
 }
 
-/// The run left open is ended by Ada with `end_run`, and the task then
-/// goes back to ready.
+/// The run left open is ended by Ada with `end_run`, which moves the task
+/// back to ready.
 fn recovered_by_end_run(store: &MemoryBoardStore) {
     let (task, runs) = task_and_runs(store);
     assert_eq!(task.fields().status, TaskStatus::InProgress);
@@ -60,21 +59,13 @@ fn recovered_by_end_run(store: &MemoryBoardStore) {
             run: 1,
             outcome: RunEndOutcome::Failed,
             expected_updated: Some(task.fields().updated.clone()),
+            stop: None,
         })
         .unwrap()
         .run;
     assert_eq!(ended.fields().outcome, Some(RunOutcome::Failed));
-    let release = ChangeBoardTask::new(
-        Arc::new(store.client_as(person("Ada"))),
-        SetClock::at("10:06:00"),
-    )
-    .unwrap();
-    let task = release
-        .execute(
-            &slug("a"),
-            &BoardOp::Move(TaskStatus::Ready, MoveReason::Absent),
-        )
-        .unwrap();
+    // The end released the task in its own write (#2705 T5).
+    let (task, _) = task_and_runs(store);
     assert_eq!(
         (task.fields().status, &task.fields().claim),
         (TaskStatus::Ready, &None)

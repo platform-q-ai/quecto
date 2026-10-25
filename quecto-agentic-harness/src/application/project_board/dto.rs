@@ -13,12 +13,17 @@ use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::entities::task_parts::Entry;
 use crate::domain::project_board::services::artifacts_of;
+use crate::domain::project_board::services::run_outcomes::{
+    ItemStanding, inconsistencies, item_standings,
+};
 use crate::domain::project_board::services::transitions::MoveReason;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskKind, TaskStatus};
+use crate::domain::project_board::value_objects::vocabulary::{
+    Inconsistency, PlanState, TaskKind, TaskStatus,
+};
 
 /// A new task: only the task's own fields. Its plan and team are plan
 /// artifacts (#2481's artifact model), and its claim, runs, reviews, pull
@@ -86,10 +91,6 @@ pub enum BoardOp {
     /// mover gives (#2705 T4: back to ready from review takes one);
     /// `Move(Claimed, _)` claims a ready task.
     Move(TaskStatus, MoveReason),
-    /// A start's own undo (#2705 T4): an in-progress task back in the
-    /// review or blocked status its start moved it from. No op names it:
-    /// only the start use case makes it.
-    UndoStart(TaskStatus),
     /// The holder links a pull request.
     AddPr(u64),
     /// The holder unlinks a pull request deliberately (a wrong or
@@ -107,7 +108,6 @@ impl BoardOp {
             Self::Renew => format!("board: renew {id}"),
             Self::TakeOver => format!("board: take over {id}"),
             Self::Move(to, _) => format!("board: move {id} to {}", to.as_str()),
-            Self::UndoStart(to) => format!("board: undo the start of {id} to {}", to.as_str()),
             Self::AddPr(pr) => format!("board: link pull request {pr} to {id}"),
             Self::RemovePr(pr) => format!("board: unlink pull request {pr} from {id}"),
         }
@@ -469,6 +469,23 @@ impl ShownTask {
     pub fn may_be_incomplete(&self) -> bool {
         !self.set_aside.is_empty()
     }
+
+    /// Where each task item of `plan` stands, in its order, from the
+    /// task's latest run (#2705 T5): `show` and a listing's summary read
+    /// them alike.
+    pub fn item_standings(&self, plan: &Plan) -> Vec<ItemStanding> {
+        item_standings(plan, self.latest_run())
+    }
+
+    /// The task's states that contradict its runs and plan (#2705 T5),
+    /// judged only from a whole read: with a file set aside, its runs may
+    /// be incomplete, and none is named.
+    pub fn inconsistent(&self) -> Vec<Inconsistency> {
+        match self.may_be_incomplete() {
+            false => inconsistencies(&self.task, &self.runs),
+            true => vec![],
+        }
+    }
 }
 
 /// An artifact besides a task that uses a task's id: a plan, run, change
@@ -497,21 +514,15 @@ impl IdUser {
     }
 }
 
-/// A held task's status a start's undo moved it back to, or tried to
-/// (S4c): a task started from review or blocked returns there once its
-/// run has ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Restored {
-    pub status: TaskStatus,
-    pub moved: bool,
-}
-
 /// Where a start's undo left its run (S4c).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunAfterUndo {
-    /// The undo folded it back as failed.
+    /// The undo folded it back as failed, which moved the task back to
+    /// ready, releasing it, or to the review or blocked status the start
+    /// took it from (#2705 T5).
     Folded,
-    /// It had ended already (another writer ended it).
+    /// It had ended already (another writer ended it, and its end moved
+    /// the task).
     EndedAlready,
     /// It could not be folded back: it is still open, for `end_run`.
     Open,
@@ -663,18 +674,20 @@ pub enum ProjectBoardError {
     /// The task and run `run` were written, but the coordinator did not
     /// launch (`reason`, as the launch said, or the call cancelled before
     /// it). The start was undone as far as it could be: the run where the
-    /// undo left it (`run_state`); when the start took the claim, whether
-    /// the task went back to ready, releasing it (`released`); and, for a
-    /// task held in review or blocked before, whether it went back there
-    /// (`restored`). With `still_running` (a coordinator that came up wrong
-    /// and could not be stopped) nothing was undone: the run is open and
-    /// the claim held.
+    /// undo left it (`run_state`), and with it the task (#2705 T5):
+    /// `released` true when the undo's fold-back moved it back to ready,
+    /// false while it is still held (the run open, or the task `restored`
+    /// to the review or blocked status the start took it from, its claim
+    /// kept), `None` when another writer ended the run first, its end moving
+    /// the task. With `still_running` (a coordinator that came up wrong and
+    /// could not be stopped) nothing was undone: the run is open and the
+    /// claim held.
     LaunchFailed {
         reason: String,
         run: u32,
         run_state: RunAfterUndo,
         released: Option<bool>,
-        restored: Option<Restored>,
+        restored: Option<TaskStatus>,
         still_running: Option<String>,
     },
 }

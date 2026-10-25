@@ -169,6 +169,7 @@ fn every_request() -> Vec<BoardRequest> {
             run: 1,
             outcome: crate::application::project_board::dto::RunEndOutcome::Lost,
             expected_updated: None,
+            stop: None,
         }),
         BoardRequest::Start(super::super::dto::TaskStart {
             task: a.clone(),

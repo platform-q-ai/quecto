@@ -19,7 +19,6 @@ use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::changes::Linked;
 use crate::domain::project_board::services::claims::{claim_facts, renew, renewal_due, take_over};
 use crate::domain::project_board::services::pull_requests::{add_pr, may_link, remove_pr};
-use crate::domain::project_board::services::starts::unstart;
 use crate::domain::project_board::services::transitions::{
     MoveReason, move_reads, move_with_reason,
 };
@@ -120,7 +119,7 @@ impl ChangeBoardTask {
                 facts.claim = claim;
             }
             facts.status_to = match op {
-                BoardOp::Move(to, _) | BoardOp::UndoStart(to) => Some(*to),
+                BoardOp::Move(to, _) => Some(*to),
                 BoardOp::Renew | BoardOp::TakeOver | BoardOp::AddPr(_) | BoardOp::RemovePr(_) => {
                     written.as_ref().ok().map(|task| task.fields().status)
                 }
@@ -233,10 +232,6 @@ fn apply(
             add_pr(task, actor, *pr, linked, now)
         }
         BoardOp::RemovePr(pr) => remove_pr(task, actor, *pr, now),
-        BoardOp::UndoStart(from) => {
-            let runs = owned(board_view::runs_of(board, id)?);
-            unstart(task, *from, &runs, actor, now)
-        }
     };
     ruled.map_err(ProjectBoardError::Rule)
 }

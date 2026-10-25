@@ -137,6 +137,25 @@ fn a_command_line_reaches_the_same_request_as_the_tools_json() {
         line("move", &["--task", "a", "--to", "ready"]),
         Ok(json!({"op": "move", "task": "a", "to": "ready"}))
     );
+    // #2705 T5 review round 1: how a stop stopped, from the command line.
+    assert_eq!(
+        line(
+            "end-run",
+            &[
+                "--task",
+                "a",
+                "--run",
+                "1",
+                "--outcome",
+                "stopped",
+                "--stop",
+                "blocked"
+            ]
+        ),
+        Ok(
+            json!({"op": "end_run", "task": "a", "run": 1, "outcome": "stopped", "stop": "blocked"})
+        )
+    );
     // A plan's nested fields are JSON, as the tool's (#2481 M4b).
     let items = r#"[{"id":"i","title":"I","criteria":["c"]}]"#;
     assert_eq!(

@@ -222,7 +222,7 @@ pub(crate) fn summarized_on(
     let mut rows = Vec::with_capacity(listing.tasks.len());
     for task in &listing.tasks {
         let row = match shown_on(board, &task.fields().id) {
-            Ok(shown) if shown.task == *task => RowSummary::Summary(summary_of(&shown)),
+            Ok(shown) if shown.task == *task => RowSummary::Summary(Box::new(summary_of(&shown))),
             // The board, where the listing was read, holds another task by
             // its id, none it can read, or the task twice: the index
             // disagrees with it.

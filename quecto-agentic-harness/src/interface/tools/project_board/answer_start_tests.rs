@@ -17,9 +17,8 @@ const PROMPT: &str = "Start the swarm for board task a on its accepted plan, ver
      reason, say why in a sentence and stop; do not start the task any other way. On \
      \"launch_failed\", undo by its fields: stop any coordinator still_running names with \
      agent_cmd kill; with run_state \"open\", call end_run(task \"a\", the run it names, \
-     outcome \"failed\"); then, if released is false, move(task \"a\", to \"ready\"), or, if \
-     released is null and restored.moved is false, tell the user the task stays in progress; \
-     say why the launch failed, and stop. Once it has started, you hold the task and you end its \
+     outcome \"failed\"), which moves the task back to ready; say why the launch failed, and \
+     stop. Once it has started, you hold the task and you end its \
      run as your playbook's \"Board task plans and swarm runs\" says. Renew the claim with \
      renew(task \"a\") once renew_after has passed; while agent_cmd swarm_control status \
      shows the run running, do nothing else. On \"not_holder\" from renew or end_run, stop the \
@@ -38,7 +37,7 @@ const PROMPT: &str = "Start the swarm for board task a on its accepted plan, ver
      run. On \"run_live\", kill the agent it names and call end_run again; after three tries, \
      tell the user here and stop. On \"claim_expired\", renew(task \"a\") and call it again. \
      Then, if the run succeeded, link_pr(task \"a\", pr) for the run's pull request, if it \
-     opened one; otherwise move(task \"a\", to \"ready\"). Say how it went.";
+     opened one; the run's end has moved the task. Say how it went.";
 
 /// Every step is a span of the prompt, word for word, the run number
 /// read back as the prompt put it; taken out, they leave only the call
@@ -83,9 +82,8 @@ fn the_fixed_steps_read_exactly() {
         undo(&slug("board-store")),
         "On \"launch_failed\", undo by its fields: stop any coordinator still_running names \
          with agent_cmd kill; with run_state \"open\", call end_run(task \"board-store\", the \
-         run it names, outcome \"failed\"); then, if released is false, move(task \
-         \"board-store\", to \"ready\"), or, if released is null and restored.moved is false, \
-         tell the user the task stays in progress; say why the launch failed, and stop."
+         run it names, outcome \"failed\"), which moves the task back to ready; say why the \
+         launch failed, and stop."
     );
     assert_eq!(
         PUSH_STEP,
@@ -110,7 +108,7 @@ fn the_fixed_steps_read_exactly() {
         "{steps}"
     );
     assert!(steps.ends_with("Say how it went."), "{steps}");
-    assert_eq!(steps.matches("\"board-store\"").count(), 5, "{steps}");
+    assert_eq!(steps.matches("\"board-store\"").count(), 4, "{steps}");
     assert!(
         !steps.contains("{task}") && !steps.contains("{run}"),
         "{steps}"
