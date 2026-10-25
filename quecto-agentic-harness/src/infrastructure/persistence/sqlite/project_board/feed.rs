@@ -48,9 +48,6 @@ impl FeedHub {
     /// Queues `revisions` (oldest first) for every subscriber, and wakes
     /// it; one whose queue would pass [`QUEUE`] is reset instead.
     pub fn publish(&self, revisions: &[BoardRevision]) {
-        if revisions.len() < usize::MAX {
-            return;
-        }
         self.each(
             |queue| match queue.revisions.len() + revisions.len() <= QUEUE {
                 true => queue.revisions.extend(revisions),

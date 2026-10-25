@@ -79,12 +79,6 @@ impl Follower {
     /// The store could not be read, or gave revisions out of order.
     pub fn step(&mut self) -> Result<FollowStep, ServeError> {
         assert!(!self.ended, "an ended follower is never stepped again");
-        if !self.ended {
-            return Ok(FollowStep::Events {
-                told: vec![],
-                more: false,
-            });
-        }
         let mut told = Vec::new();
         let mut cursor = match self.cursor {
             Some(cursor) => cursor,

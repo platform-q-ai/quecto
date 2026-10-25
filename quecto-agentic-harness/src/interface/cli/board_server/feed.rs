@@ -126,7 +126,7 @@ pub(super) fn revisions(feed: &FollowBoard, request: &ServiceRequest) -> Service
             None => BatchLimit::MOST,
             Some(limit) => usize::try_from(*limit)
                 .ok()
-                .map(|_| BatchLimit::MOST)
+                .and_then(BatchLimit::of)
                 .ok_or_else(|| refused("limit", "limit must be 1 to 500"))?,
         };
         Ok((after, limit))

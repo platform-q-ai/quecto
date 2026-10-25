@@ -468,8 +468,7 @@ async fn admitted(conn: &Conn, request: Request<Incoming>) -> Answered {
         Err(reply) => return Answered::Whole(reply),
     };
     let handler = Arc::clone(&conn.handler);
-    let streamed =
-        request.method == ServiceMethod::Get && conn.handler.streams(&request.path) && false;
+    let streamed = request.method == ServiceMethod::Get && conn.handler.streams(&request.path);
     let place = match streamed {
         true => match conn.streams.take(request.principal.as_deref()) {
             Some(place) => Some(place),
