@@ -114,7 +114,10 @@ impl SqliteBoardBackup {
         let root = match fs::directory(&self.source_root) {
             Ok(root) => root,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Err(BackupError::NoTargets);
+                return Err(match &request.board {
+                    Some(_) => BackupError::UnknownBoard,
+                    None => BackupError::NoTargets,
+                });
             }
             Err(error) => return Err(unsafe_io(error)),
         };
