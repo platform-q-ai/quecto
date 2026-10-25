@@ -5,10 +5,12 @@
 |---|---|
 | Task | board-2705-b13-fence |
 | Version | 1 |
-| State | draft |
+| State | accepted |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-25T07:55:06Z |
 | Created | 2026-10-25T07:54:35Z |
-| Updated | 2026-10-25T07:54:35Z |
+| Updated | 2026-10-25T07:55:06Z |
 
 ## Approach
 Deliver complete independent fence PR2 from then-current origin/master; backup PR opens first, not a runtime or branch dependency. Preserve current T4/T5/B7 and any already-merged backup route/help/context. Use SEPARATE fresh RED and delivery swarms, never phase rollover.
