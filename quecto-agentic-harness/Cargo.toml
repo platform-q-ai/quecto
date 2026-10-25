@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.107.454"
+version = "0.107.455"
 edition = "2024"
 default-run = "quecto"
 description = "Ultra-lightweight personal AI assistant"
@@ -63,7 +63,7 @@ ryu = "1"
 # The swarm board's SQLite driver (#2269): the same file format the Python
 # board writes. `bundled` compiles SQLite itself, so no system libsqlite3 is
 # needed; `limits` reads the variable limit the store checks on open.
-rusqlite = { version = "0.40", features = ["bundled", "limits"] }
+rusqlite = { version = "0.40", features = ["bundled", "limits", "backup"] }
 
 # Utilities
 uuid = { version = "1", features = ["v4"] }

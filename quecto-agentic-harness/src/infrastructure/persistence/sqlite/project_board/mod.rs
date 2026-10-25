@@ -152,3 +152,7 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
 mod project_board_sqlite_tests;
 
 pub mod history;
+
+pub mod backup;
+pub mod backup_files;
+pub mod backup_sqlite;

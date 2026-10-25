@@ -896,6 +896,7 @@ any other `libc::kill`, `kill(`, `start_kill`, process-group signal or
 | Tool-child containment (`rg`, `fd`) | `infrastructure/tools/native/grep_run.rs`, `infrastructure/tools/native/find_fd.rs` |
 | The swarm board's own `git merge-base` child (evidence carry, #2687), ended through its retained handle past its deadline | `infrastructure/workspace/checkout_history.rs` |
 | `/proc` observation (member start time, own executable, socket table) | `infrastructure/tools/swarm/swarm_bridge.rs`, `infrastructure/processes/runtime_identity.rs`, `interface/uds/framing/uds_socket.rs` |
+| Backup filesystem anchoring: only the exact `/proc/self/fd/{}` expression using the held directory fd; no signalling, PID lookup or other proc paths | `infrastructure/persistence/sqlite/project_board/backup_unix.rs` |
 
 The swarm board runs in the harness process (ADR-0030), so it has no
 interpreter of its own to contain.
