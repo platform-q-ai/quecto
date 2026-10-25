@@ -153,9 +153,10 @@ pub enum ErrorCode {
     Brief,
     /// `reason` (the launch's), `run`, `run_state` (`folded`,
     /// `ended_already`, or `open`: for `end_run`), `released` (true: the
-    /// run's fold-back moved the task back to ready; false: the run is
-    /// open, the task held; `null`: another end moved it, #2705 T5),
-    /// `still_running` (`null`, or the coordinator that may still run:
+    /// run's fold-back moved the task back to ready; false: the task is
+    /// still held; `null`: another end moved it, #2705 T5), `restored`
+    /// (`null`, or the `review` or `blocked` status the fold-back moved the
+    /// task back to, its claim kept), `still_running` (`null`, or the coordinator that may still run:
     /// nothing was undone): the coordinator did not launch, and the start
     /// was undone as far as it could be (S4c).
     LaunchFailed,
@@ -700,6 +701,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             run,
             run_state,
             released,
+            restored,
             still_running,
         } => (
             C::LaunchFailed,
@@ -708,6 +710,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
                 ("run", json!(run)),
                 ("run_state", json!(run_state.as_str())),
                 ("released", json!(released)),
+                ("restored", json!(restored.map(|status| status.as_str()))),
                 ("still_running", json!(still_running.as_deref().map(shown))),
             ]),
         ),

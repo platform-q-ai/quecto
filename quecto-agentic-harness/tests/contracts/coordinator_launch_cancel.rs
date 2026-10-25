@@ -256,6 +256,7 @@ async fn a_start_cancelled_during_its_launch_drops_it_and_is_undone() {
             run: 1,
             run_state: RunAfterUndo::Folded,
             released: Some(true),
+            restored: None,
             still_running: None,
         })
     );

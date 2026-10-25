@@ -239,3 +239,42 @@ fn a_task_that_contradicts_its_runs_reads_so_and_a_started_one_does_not() {
         []
     );
 }
+
+/// #2705 T5 review round 1: a start's undo puts a task it took from
+/// review or blocked back there, claim kept; any other goes as a failed
+/// run's end takes it, back to ready, released.
+#[test]
+fn a_starts_undo_restores_review_or_blocked_and_else_releases() {
+    let held = task(InProgress);
+    let failed = ended(1, 1, RunOutcome::Failed, &[]);
+    for from in [Review, Blocked] {
+        let restored = task_after_undo(&held, &failed, from, &at("10:00:00"))
+            .unwrap()
+            .expect("the task moves back");
+        assert_eq!(restored.fields().status, from);
+        assert_eq!(restored.fields().claim, held.fields().claim, "{from:?}");
+    }
+    for from in [Ready, Claimed, InProgress] {
+        let released = task_after_undo(&held, &failed, from, &at("10:00:00"))
+            .unwrap()
+            .expect("the task moves");
+        let fields = released.fields();
+        assert_eq!(
+            (fields.status, fields.claim.clone()),
+            (Ready, None),
+            "{from:?}"
+        );
+    }
+    assert_eq!(
+        task_after_undo(&held, &open_run(1, 1), Review, &at("10:00:00")),
+        Err(BoardRuleError::RunOpen(1))
+    );
+}
+
+#[test]
+fn a_stop_kind_is_named_by_its_allowlist() {
+    for stop in StopKind::ALL {
+        assert_eq!(StopKind::parse(stop.as_str()), Some(stop));
+    }
+    assert_eq!(StopKind::parse("paused"), None);
+}

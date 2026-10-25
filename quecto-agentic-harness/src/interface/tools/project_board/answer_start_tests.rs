@@ -130,6 +130,7 @@ fn each_refusal_of_a_start_carries_its_own_step() {
         run: 1,
         run_state: RunAfterUndo::Folded,
         released: Some(true),
+        restored: None,
         still_running: None,
     };
     assert_eq!(refused(&start, &failed), Some(undo(&slug("a"))));

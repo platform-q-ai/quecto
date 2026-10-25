@@ -21,10 +21,10 @@ fn another_renewing_or_releasing_an_expired_claim_is_told_to_take_it_over() {
         let store = board();
         seed(&store, held_by_ada(from));
         let writes = store.writes();
-        // A task in progress is released by its run's end (#2705 T5).
-        let release = (from == TaskStatus::Claimed)
-            .then_some(BoardOp::Move(TaskStatus::Ready, MoveReason::Absent));
-        for op in std::iter::once(BoardOp::Renew).chain(release) {
+        for op in [
+            BoardOp::Renew,
+            BoardOp::Move(TaskStatus::Ready, MoveReason::Absent),
+        ] {
             let refused = change(&store, "Bob", "14:00:00").execute(&slug("a"), &op);
             assert_eq!(
                 refused,

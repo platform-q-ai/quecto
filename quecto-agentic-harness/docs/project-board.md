@@ -626,15 +626,17 @@ and the answer lists them as `not_applied`.
   then nothing is launched; or during the launch, then the launch is dropped
   and a coordinator that came up anyway is stopped), or the launch fails
   unexpectedly, the start is undone as far as it can be: the run is folded
-  back as `failed`, which moves the task back to ready, releasing it, in the
-  same write, whatever status the start took it from (#2705 T5: a run's end
-  moves its task, "Ending a run", below). The undo writes even when the call
-  was cancelled. `launch_failed` gives the launch's `reason`, the `run`,
-  `run_state` (`folded` when the undo folded it back, `ended_already` when
-  another writer had ended it, `open` when it could not be folded back: end
-  it with `end_run`, below), and `released` (`true` when the undo released
-  the task, `false` while the run is open and the task held, `null` when
-  another writer's end moved it).
+  back as `failed`, which moves the task in the same write (#2705 T5): back
+  to the review or blocked status the start took it from, its claim kept (so
+  a review is still completed when its pull requests merge), or else back to
+  ready, released. The undo writes even when the call was cancelled.
+  `launch_failed` gives the launch's `reason`, the `run`, `run_state`
+  (`folded` when the undo folded it back, `ended_already` when another writer
+  had ended it, `open` when it could not be folded back: end it with
+  `end_run`, below), `released` (`true` when the undo released the task to
+  ready, `false` while it is still held, `null` when another writer's end
+  moved it) and `restored` (`null`, or the `review` or `blocked` status the
+  undo moved it back to).
 - A coordinator that came up outside a container is stopped, and the start
   undone. A launch waits for spawn at most 15 minutes.
 - Nothing is undone while a coordinator may still be running: one that came
@@ -898,23 +900,31 @@ whether `end_run` ends it or a fold-back (a start's undo included):
 |---|---|
 | `succeeded` | review, its holder keeping the claim |
 | `stopped`, its swarm's kept board ended blocked | blocked, its holder keeping the claim |
-| `stopped` otherwise (cancelled, or no board kept), `failed` or `lost` | ready, its claim released |
+| `stopped` with no board kept, and `stop: "blocked"` given | blocked, its holder keeping the claim |
+| `stopped` otherwise (cancelled, or no board kept and no `stop: "blocked"`), `failed` or `lost` | ready, its claim released |
+
+`end_run` takes an optional `stop`, `blocked` or `cancelled` (the default): how
+a `stopped` run stopped when no board of its swarm was kept to say it (the
+CLI's `--stop`). A kept board's own end wins, and any other outcome ignores it.
 
 Only a held task moves (claimed, in progress, in review or blocked); a task in
 any other status, or already where the end moves it, is left, and the run is
-written alone. Nothing follows the end: `move` refuses in_progress to ready,
-review or blocked (`use_lifecycle`, `end_run`). An `end_run` of a run that
-has ended answers `run_ended` before any claim is checked, as the end may
-have released the claim.
+written alone. Nothing follows the end: while a run is going, `move` refuses
+in_progress to ready, review or blocked (`use_lifecycle`, `end_run`). An
+`end_run` of a run that has ended answers `run_ended` before any claim is
+checked, as the end may have released the claim. A start's undo is a
+fold-back too, but it puts a task the start took from review or blocked back
+there (Starting a task, above).
 
 The Pocket relay's Stop (quecto-pocket `stop_board_run`) ends the run as
 `stopped` through `quecto board end-run`, which keeps no board, so the task
 goes back to ready, released. It then reads the task again and moves it back
 to ready only while it is still in progress or claimed: it finds it ready and
-moves nothing. A legacy task left in progress with no run going (a run ended
-by an older quecto) shows `in_progress_without_run` in `show`; no `move`
-releases it, and starting it again (`start`, from in progress, by its holder)
-then ending that run moves it on.
+moves nothing. A legacy task left in progress with no run going (no run at
+all, or only runs that have ended, as an older quecto left them) shows
+`in_progress_without_run` in `show`, and its holder releases it with
+`move(task, to ready)` (the claim live or lapsed); the Stop's own move does
+the same for one the relay's bot holds.
 
 ## Status moves
 
@@ -926,6 +936,7 @@ lifecycle makes the rest. Every move `move` makes:
 | draft to ready, ready to draft | Anyone |
 | ready to claimed | Anyone, taking a two-hour claim |
 | claimed to ready | Its holder, the claim live or lapsed (a release) |
+| in_progress to ready | Its holder, the claim live or lapsed, only while no run of it is going: no run at all, or only ended ones (a legacy state, #2705 T5). With a run going it answers `use_lifecycle` (`end_run`) |
 | review to done | Its holder, the task linking no pull request or change (Mark done) |
 | review to ready | Its holder while the claim is live, anyone once it is not, with a `reason` |
 | blocked to ready | Its holder while the claim is live, anyone once it is not |
@@ -938,13 +949,13 @@ lifecycle makes answers the rule `use_lifecycle`, with `action`, `from` and
 | Move | `action` |
 |---|---|
 | ready, claimed, review or blocked to in_progress | `start`: `start(task, plan_version)` is the only way to in progress |
-| in_progress to ready, review or blocked | `end_run`: the task's run decides it (#2705 T5) |
+| in_progress to review or blocked; in_progress to ready while a run is going | `end_run`: the task's run decides it (#2705 T5) |
 | claimed to blocked | `release`: blocking is a run's outcome, so work without a run is released with `move(task, to ready)` |
 | ready or claimed to done | `done_without_run` |
 
 Every other pair answers `not_allowed`. A merged pull request completes a task
 only from review (Claiming and completing a task, below). A start undone
-after its coordinator did not launch takes its task back to ready by its
+after its coordinator did not launch takes its task back (to review or blocked, or ready) by its
 run's end, never by `move`.
 
 ### A reason to move back
@@ -1011,7 +1022,8 @@ those not done yet in `tasks`, and those not on the board (or set aside) in
 `missing`.
 
 Only the claim's holder renews it, releases it (`move(task, to ready)` from
-claimed; a task in progress is released by its run's end) and links or unlinks a pull request: anyone else is
+claimed, or in progress with no run going; a task whose run is going is
+released by the run's end) and links or unlinks a pull request: anyone else is
 refused (`not_holder`), and once the claim has expired that refusal carries
 `expired: true` and says to take the task over first with `take_over(task)`,
 on every holder-only action alike (#2683). A link is judged on the task first:

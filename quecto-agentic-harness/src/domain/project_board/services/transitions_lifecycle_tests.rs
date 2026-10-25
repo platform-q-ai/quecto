@@ -14,13 +14,14 @@ const ALL: [TaskStatus; 8] = [
 ];
 
 /// Every move `move` makes, written out independently of the table.
-const ALLOWED: [(TaskStatus, TaskStatus); 11] = [
+const ALLOWED: [(TaskStatus, TaskStatus); 12] = [
     (Draft, Ready),
     (Draft, Archived),
     (Ready, Draft),
     (Ready, Claimed),
     (Ready, Archived),
     (Claimed, Ready),
+    (InProgress, Ready),
     (Review, Done),
     (Review, Ready),
     (Review, Archived),
@@ -29,12 +30,11 @@ const ALLOWED: [(TaskStatus, TaskStatus); 11] = [
 ];
 
 /// Every move the lifecycle makes, and the action `move` names for it.
-const LIFECYCLE: [(TaskStatus, TaskStatus, LifecycleAction); 10] = [
+const LIFECYCLE: [(TaskStatus, TaskStatus, LifecycleAction); 9] = [
     (Ready, InProgress, LifecycleAction::Start),
     (Claimed, InProgress, LifecycleAction::Start),
     (Review, InProgress, LifecycleAction::Start),
     (Blocked, InProgress, LifecycleAction::Start),
-    (InProgress, Ready, LifecycleAction::EndRun),
     (InProgress, Review, LifecycleAction::EndRun),
     (InProgress, Blocked, LifecycleAction::EndRun),
     (Claimed, Blocked, LifecycleAction::Release),
@@ -384,11 +384,13 @@ fn every_move_the_pocket_relay_sends_stays_accepted() {
             (Ready, &None)
         );
     }
-    // A Stop's release of a claimed task the bot holds, its run ended. A
-    // task in progress needs none (#2705 T5): the Stop's end_run moves it
-    // back to ready itself, so the relay reads it ready and moves nothing.
-    let next = moved(&held_by_bot(Claimed), Ready, &unasked, "Bot", "10:00:00");
-    assert_eq!(next.map(|t| t.fields().status), Ok(Ready));
+    // A Stop's release: claimed or in progress, held by the bot, its run
+    // ended (none going). Since #2705 T5 the Stop's end_run has moved a
+    // task in progress already; a legacy one still left there is released.
+    for from in [Claimed, InProgress] {
+        let next = moved(&held_by_bot(from), Ready, &unasked, "Bot", "10:00:00");
+        assert_eq!(next.map(|t| t.fields().status), Ok(Ready), "{from:?}");
+    }
     // Mark done of a review the bot holds, linking nothing.
     let done = moved(&held_by_bot(Review), Done, &unasked, "Bot", "10:00:00");
     assert_eq!(done.map(|t| t.fields().status), Ok(Done));
@@ -404,25 +406,57 @@ fn every_move_the_pocket_relay_sends_stays_accepted() {
     }
 }
 
-/// #2705 T5 retires T4's interim release from progress: a run's end moves
-/// its task, so `move` names `end_run`, run going or not.
+/// `move` of a task in progress the bot holds back to ready, given `runs`.
+fn released_from_progress(runs: &[Run]) -> MoveResult {
+    move_with_reason(
+        &held_by_bot(InProgress),
+        (Ready, &MoveReason::Unasked),
+        &person("Bot"),
+        (runs, &[]),
+        &[],
+        &at("10:00:00"),
+    )
+}
+
+/// #2705 T5: while a run of a task in progress is going, the run's end is
+/// the way out, and `move` names `end_run`.
 #[test]
-fn a_task_in_progress_leaves_only_by_its_runs_end() {
-    let refused = Err(BoardRuleError::UseLifecycle {
-        from: InProgress,
-        to: Ready,
-        action: LifecycleAction::EndRun,
-    });
-    for runs in [vec![open_run(1, 1)], vec![]] {
-        let answer = move_with_reason(
+fn a_task_in_progress_with_a_run_going_leaves_by_its_runs_end() {
+    let ended = super::super::runs::lost_at(&open_run(1, 1), &at("09:30:00")).unwrap();
+    assert_eq!(
+        released_from_progress(&[ended, open_run(2, 1)]),
+        Err(BoardRuleError::UseLifecycle {
+            from: InProgress,
+            to: Ready,
+            action: LifecycleAction::EndRun,
+        })
+    );
+}
+
+/// #2705 T5 review round 1, the live board's legacy tasks: one in
+/// progress with no run at all, or only ended runs (board-2705-b3), is
+/// released by its holder, its claim cleared; anyone else is refused.
+#[test]
+fn a_task_in_progress_with_no_run_going_is_released_by_its_holder() {
+    let ended = super::super::runs::lost_at(&open_run(1, 1), &at("09:30:00")).unwrap();
+    for runs in [vec![], vec![ended]] {
+        let released = released_from_progress(&runs).unwrap();
+        let fields = released.fields();
+        assert_eq!(
+            (fields.status, fields.claim.clone()),
+            (Ready, None),
+            "{} runs",
+            runs.len()
+        );
+        let by_ada = move_with_reason(
             &held_by_bot(InProgress),
-            (Ready, &MoveReason::Unasked),
-            &person("Bot"),
+            (Ready, &MoveReason::Absent),
+            &person("Ada"),
             (&runs, &[]),
             &[],
             &at("10:00:00"),
         );
-        assert_eq!(answer, refused, "{} runs going", runs.len());
+        assert_eq!(by_ada, Err(BoardRuleError::NotHolder));
     }
 }
 

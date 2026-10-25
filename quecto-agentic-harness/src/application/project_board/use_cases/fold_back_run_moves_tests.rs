@@ -58,3 +58,38 @@ fn a_run_ended_already_moves_nothing_more() {
         TaskStatus::Ready
     );
 }
+
+/// #2705 T5 review round 1: the holder renews the task between the
+/// fold-back's read and its write; the fold-back loses the race, is built
+/// again on the renewed task, and still moves it, keeping the renewal.
+#[test]
+fn a_fold_back_that_loses_the_race_to_a_renewal_still_moves_the_task() {
+    use crate::domain::project_board::services::claims::renew;
+    let (store, held, _) = started();
+    let other = store.client();
+    store.before_next_write(move |board| {
+        let snapshot = board.read().unwrap();
+        let renewed = renew(&snapshot.tasks[0], &person("Ada"), &at("10:40:00")).unwrap();
+        let written = other.write(
+            &snapshot.head,
+            &[BoardArtifact::Task(renewed)],
+            "board: renew",
+        );
+        assert!(matches!(written, Ok(BoardWrite::Written(_))), "{written:?}");
+    });
+    let mut facts = FoldBackFacts::default();
+    let folded = fold_back(&store).execute_noted(
+        &slug("board-store"),
+        1,
+        &done_swarm(SwarmEnd::Succeeded),
+        Some(&mut facts),
+    );
+    assert!(matches!(folded, Ok(FoldedBack::Folded(_))), "{folded:?}");
+    assert_eq!(facts.attempts, Some(2), "lost once, then written");
+    let board = store.read().unwrap();
+    let fields = board.tasks[0].fields();
+    assert_eq!(fields.status, TaskStatus::Review);
+    let claim = fields.claim.clone().unwrap();
+    assert_eq!(claim.since, at("10:40:00"), "built on the renewed task");
+    assert_ne!(Some(claim), held.fields().claim);
+}

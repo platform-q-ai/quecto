@@ -308,6 +308,7 @@ fn a_failed_launch_folds_run_1_back_as_failed_and_releases_the_claim() {
             run: 1,
             run_state: RunAfterUndo::Folded,
             released: Some(true),
+            restored: None,
             still_running: None,
         })
     );
@@ -334,6 +335,7 @@ fn a_failed_launch_of_a_held_task_releases_it_too() {
             Err(ProjectBoardError::LaunchFailed {
                 run_state: RunAfterUndo::Folded,
                 released: Some(true),
+                restored: None,
                 ..
             })
         ),
@@ -529,6 +531,7 @@ fn an_undo_that_cannot_fold_back_says_so_and_keeps_the_claim() {
             run: 1,
             run_state: RunAfterUndo::Open,
             released: Some(false),
+            restored: None,
             still_running: None,
         })
     );
@@ -555,3 +558,6 @@ mod undo;
 
 #[path = "start_board_task_dependency_tests.rs"]
 mod dependency;
+
+#[path = "start_board_task_restore_tests.rs"]
+mod restore;

@@ -117,6 +117,7 @@ fn a_start_cancelled_before_its_launch_launches_nothing_and_is_undone() {
             run: 1,
             run_state: RunAfterUndo::Folded,
             released: Some(true),
+            restored: None,
             still_running: None,
         })
     );
@@ -177,6 +178,7 @@ fn a_launch_that_panics_is_undone() {
             run: 1,
             run_state: RunAfterUndo::Folded,
             released: Some(true),
+            restored: None,
             still_running: None,
         })
     );

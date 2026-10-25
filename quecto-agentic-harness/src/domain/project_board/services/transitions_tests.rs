@@ -14,13 +14,14 @@ const ALL: [TaskStatus; 8] = [
 ];
 /// Written out independently of the production table (#2705 T4: the
 /// lifecycle makes the rest, `transitions_lifecycle_tests`).
-const ALLOWED: [(TaskStatus, TaskStatus); 11] = [
+const ALLOWED: [(TaskStatus, TaskStatus); 12] = [
     (Draft, Ready),
     (Draft, Archived),
     (Ready, Draft),
     (Ready, Claimed),
     (Ready, Archived),
     (Claimed, Ready),
+    (InProgress, Ready),
     (Review, Done),
     (Review, Ready),
     (Review, Archived),
@@ -39,9 +40,13 @@ const ANYONES: [(TaskStatus, TaskStatus); 6] = [
 /// The holder's while the claim is live, anyone's once it is not.
 const WHILE_LIVE: [(TaskStatus, TaskStatus); 1] = [(Review, Archived)];
 /// The moves that hand a task back to the board (#2705 T5: a task in
-/// progress goes back by its run's end).
-const RELEASES: [(TaskStatus, TaskStatus); 3] =
-    [(Claimed, Ready), (Review, Ready), (Blocked, Ready)];
+/// progress only while no run of it is going).
+const RELEASES: [(TaskStatus, TaskStatus); 4] = [
+    (Claimed, Ready),
+    (InProgress, Ready),
+    (Review, Ready),
+    (Blocked, Ready),
+];
 
 /// `move_with_reason` with no runs, changes or tasks, giving a reason to
 /// the one move that takes one (back to ready from review).
@@ -510,7 +515,7 @@ fn a_task_with_a_run_going_stays_with_its_holder() {
                 &[],
                 &at("10:00:00")
             ),
-            Err(BoardRuleError::RunOpen(1)),
+            Err(held_back(from, to)),
             "{from:?} -> {to:?}"
         );
     }
@@ -594,7 +599,7 @@ fn a_move_reads_only_what_can_hold_it() {
     let reads = |from, to| move_reads(&without_prs(task(from)), to, &ada, &now);
     let read = |runs, changes| Ok(MoveReads { runs, changes });
     assert_eq!(reads(Ready, Claimed), read(false, false));
-    assert_eq!(reads(Claimed, Ready), read(true, false));
+    assert_eq!(reads(InProgress, Ready), read(true, false));
     assert_eq!(reads(Review, Done), read(true, true));
     assert_eq!(reads(Review, Archived), read(true, true));
     assert_eq!(
@@ -654,10 +659,23 @@ fn a_run_going_holds_exactly_the_moves_that_read_runs() {
             &now,
         );
         assert_eq!(
-            moved == Err(BoardRuleError::RunOpen(1)),
+            moved == Err(held_back(*from, *to)),
             reads.runs,
             "{from:?} -> {to:?}: {moved:?}"
         );
         assert_eq!(reads.runs, super::super::runs::holds_moves_to(*to));
+    }
+}
+
+/// How a run going (run 1) refuses the move `from` -> `to`: a task in
+/// progress names its run's end (#2705 T5), any other `run_open`.
+fn held_back(from: TaskStatus, to: TaskStatus) -> BoardRuleError {
+    match (from, to) {
+        (InProgress, Ready) => BoardRuleError::UseLifecycle {
+            from,
+            to,
+            action: LifecycleAction::EndRun,
+        },
+        _ => BoardRuleError::RunOpen(1),
     }
 }

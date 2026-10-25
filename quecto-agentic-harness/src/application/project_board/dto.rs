@@ -518,7 +518,8 @@ impl IdUser {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunAfterUndo {
     /// The undo folded it back as failed, which moved the task back to
-    /// ready, releasing it (#2705 T5).
+    /// ready, releasing it, or to the review or blocked status the start
+    /// took it from (#2705 T5).
     Folded,
     /// It had ended already (another writer ended it, and its end moved
     /// the task).
@@ -533,17 +534,6 @@ impl RunAfterUndo {
             Self::Folded => "folded",
             Self::EndedAlready => "ended_already",
             Self::Open => "open",
-        }
-    }
-
-    /// Whether the undo released the task (#2705 T5): its fold-back moved
-    /// the task back to ready; a run left open keeps it in progress, held;
-    /// one another writer ended moved it as that end says (`None`).
-    pub fn released(self) -> Option<bool> {
-        match self {
-            Self::Folded => Some(true),
-            Self::Open => Some(false),
-            Self::EndedAlready => None,
         }
     }
 }
@@ -684,18 +674,20 @@ pub enum ProjectBoardError {
     /// The task and run `run` were written, but the coordinator did not
     /// launch (`reason`, as the launch said, or the call cancelled before
     /// it). The start was undone as far as it could be: the run where the
-    /// undo left it (`run_state`), and whether that released the task
-    /// (`released`, #2705 T5): true when the undo folded the run back as
-    /// failed, which moves the task back to ready in the same write; false
-    /// when the run is left open, the task in progress and held; `None`
-    /// when another writer ended the run first, its end moving the task.
-    /// With `still_running` (a coordinator that came up wrong and could not
-    /// be stopped) nothing was undone: the run is open and the claim held.
+    /// undo left it (`run_state`), and with it the task (#2705 T5):
+    /// `released` true when the undo's fold-back moved it back to ready,
+    /// false while it is still held (the run open, or the task `restored`
+    /// to the review or blocked status the start took it from, its claim
+    /// kept), `None` when another writer ended the run first, its end moving
+    /// the task. With `still_running` (a coordinator that came up wrong and
+    /// could not be stopped) nothing was undone: the run is open and the
+    /// claim held.
     LaunchFailed {
         reason: String,
         run: u32,
         run_state: RunAfterUndo,
         released: Option<bool>,
+        restored: Option<TaskStatus>,
         still_running: Option<String>,
     },
 }

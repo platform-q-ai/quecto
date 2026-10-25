@@ -137,6 +137,8 @@ pub enum Kind {
     Run,
     /// How a run is ended by hand: `stopped`, `failed` or `lost` (S4c).
     RunEnd,
+    /// How a stopped run with no kept board stopped (#2705 T5).
+    RunStop,
     /// A plan's task items: `[{"id", "title", "criteria", "depends_on"}]`,
     /// as `show` gives them.
     PlanItems,
@@ -290,6 +292,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             required("run", Kind::Run),
             required("outcome", Kind::RunEnd),
             optional("expected_updated", Kind::Timestamp),
+            optional("stop", Kind::RunStop),
         ],
     ),
     (

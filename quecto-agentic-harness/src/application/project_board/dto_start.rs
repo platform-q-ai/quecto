@@ -15,13 +15,17 @@ pub struct TaskStart {
 }
 
 /// Run `run` of task `task` ended by hand as `outcome`, pinned to the task
-/// as the caller read it when `expected_updated` is given.
+/// as the caller read it when `expected_updated` is given. `stop` says how
+/// a `stopped` run stopped when no board of its swarm was kept to say it
+/// (#2705 T5 review round 1); `None` is a cancel. A kept board's own end
+/// wins, and any other outcome ignores it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunEnd {
     pub task: Slug,
     pub run: u32,
     pub outcome: RunEndOutcome,
     pub expected_updated: Option<Timestamp>,
+    pub stop: Option<crate::domain::project_board::services::run_outcomes::StopKind>,
 }
 
 /// How a run is ended by hand: an allowlist. The claim's holder ends it

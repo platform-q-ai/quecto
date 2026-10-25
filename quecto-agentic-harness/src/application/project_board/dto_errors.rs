@@ -133,6 +133,7 @@ impl fmt::Display for ProjectBoardError {
                 run,
                 run_state,
                 released: _,
+                restored,
                 still_running,
             } => {
                 write!(f, "the coordinator did not launch: {reason}; ")?;
@@ -146,15 +147,21 @@ impl fmt::Display for ProjectBoardError {
                     );
                 }
                 // The run's end moves its task (#2705 T5): nothing else.
-                match run_state {
-                    RunAfterUndo::Folded => write!(
+                match (run_state, restored) {
+                    (RunAfterUndo::Folded, None) => write!(
                         f,
                         "run {run} was folded back as failed, and the task is ready again"
                     ),
-                    RunAfterUndo::EndedAlready => {
+                    (RunAfterUndo::Folded, Some(status)) => write!(
+                        f,
+                        "run {run} was folded back as failed, and the task is back in {}, \
+                         still yours",
+                        status.as_str()
+                    ),
+                    (RunAfterUndo::EndedAlready, _) => {
                         write!(f, "run {run} had already ended, and its end moved the task")
                     }
-                    RunAfterUndo::Open => write!(
+                    (RunAfterUndo::Open, _) => write!(
                         f,
                         "run {run} could not be folded back: it is still open, and you still \
                          hold the task; end it with end_run(task, run {run}, outcome failed)"

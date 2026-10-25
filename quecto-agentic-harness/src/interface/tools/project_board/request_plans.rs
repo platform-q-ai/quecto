@@ -21,6 +21,7 @@ use crate::domain::project_board::entities::run::MAX_RUN_NUMBER;
 use crate::domain::project_board::entities::team::{
     MAX_DEADLINE_SECONDS, MAX_MEMBERS, MIN_DEADLINE_SECONDS, Role, RoleLimits, Team,
 };
+use crate::domain::project_board::services::run_outcomes::StopKind;
 use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
@@ -94,6 +95,7 @@ pub(super) fn discard_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError
 pub(super) fn end_run(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     let present = "a required field is present";
     let words: Vec<&str> = RunEndOutcome::ALL.iter().map(|end| end.as_str()).collect();
+    let stops: Vec<&str> = StopKind::ALL.iter().map(|stop| stop.as_str()).collect();
     let problem = format!("must be a run number from 1 to {MAX_RUN_NUMBER}");
     Ok(BoardRequest::EndRun(RunEnd {
         task: read.task()?,
@@ -107,6 +109,7 @@ pub(super) fn end_run(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
             .word("outcome", RunEndOutcome::parse, &words)?
             .expect(present),
         expected_updated: read.timestamp("expected_updated")?,
+        stop: read.word("stop", StopKind::parse, &stops)?,
     }))
 }
 

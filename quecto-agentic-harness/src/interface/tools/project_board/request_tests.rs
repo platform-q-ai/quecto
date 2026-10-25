@@ -344,6 +344,7 @@ fn samples(kind: Kind) -> (Value, Value, Value) {
         Kind::AcceptedVersion => (json!(1), Value::Null, json!("1")),
         Kind::Run => (json!(1), json!(2), json!(0)),
         Kind::RunEnd => (json!("failed"), json!("lost"), json!("completed")),
+        Kind::RunStop => (json!("blocked"), json!("cancelled"), json!("paused")),
         Kind::PlanItems => (
             json!([{"id": "a", "title": "A"}]),
             json!([{"id": "b", "title": "B"}]),
@@ -427,6 +428,7 @@ fn sample(kind: Kind) -> Value {
         Kind::AcceptedVersion => Value::Null,
         Kind::Run => json!(1),
         Kind::RunEnd => json!("failed"),
+        Kind::RunStop => json!("blocked"),
         Kind::PlanItems => json!([]),
         Kind::Team => Value::Null,
     }
@@ -578,9 +580,30 @@ fn end_run_reads_its_run_outcome_and_pin() {
             run: 2,
             outcome: RunEndOutcome::Stopped,
             expected_updated: Some(at),
+            stop: None,
+        }))
+    );
+    // #2705 T5 review round 1: how a stop stopped, when no board was kept.
+    use crate::domain::project_board::services::run_outcomes::StopKind;
+    assert_eq!(
+        parse(
+            &json!({"op": "end_run", "task": "a", "run": 2, "outcome": "stopped",
+                      "stop": "blocked"})
+        ),
+        Ok(BoardRequest::EndRun(RunEnd {
+            task: slug("a"),
+            run: 2,
+            outcome: RunEndOutcome::Stopped,
+            expected_updated: None,
+            stop: Some(StopKind::Blocked),
         }))
     );
     for (value, field, problem) in [
+        (
+            json!({"op": "end_run", "task": "a", "run": 1, "outcome": "stopped", "stop": "paused"}),
+            "stop",
+            "must be one of blocked, cancelled",
+        ),
         (
             json!({"op": "end_run", "task": "a", "run": 1, "outcome": "completed"}),
             "outcome",

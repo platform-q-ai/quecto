@@ -26,17 +26,26 @@ use crate::application::project_board::ports::{
 };
 use crate::application::project_board::telemetry::{OpFacts, counted, summed};
 use crate::domain::project_board::entities::run::Run;
-use crate::domain::project_board::services::run_outcomes::task_after_end;
+use crate::domain::project_board::services::run_outcomes::{task_after_end, task_after_undo};
 use crate::domain::project_board::services::runs::{fold_back, run_and_plan};
 use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::RunOutcomeKind;
+use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
 pub struct FoldBackRun {
     store: Arc<dyn ProjectBoardStore>,
     clock: Arc<dyn BoardClock>,
     cells: Arc<dyn BoardTextCells>,
+}
+
+/// Whose end a fold-back records: a swarm's, or a start's undo, which
+/// names the status the start took its task from.
+#[derive(Debug, Clone, Copy)]
+enum Ending {
+    Swarm,
+    Undo(TaskStatus),
 }
 
 /// One pass at the write: the run written and what its items kept.
@@ -122,13 +131,40 @@ impl FoldBackRun {
         view: &SwarmRunView,
         facts: Option<&mut FoldBackFacts>,
     ) -> Result<FoldedBack, ProjectBoardError> {
+        self.folded(id, number, (view, Ending::Swarm), facts)
+    }
+
+    /// [`Self::execute_noted`] for the undo of a start whose coordinator
+    /// never launched (#2705 T5 review round 1): a task the start took
+    /// from review or blocked (`from`) goes back there in the same write,
+    /// its claim kept (`run_outcomes::task_after_undo`).
+    ///
+    /// # Errors
+    /// As [`Self::execute`].
+    pub fn undo_noted(
+        &self,
+        id: &Slug,
+        number: u32,
+        (view, from): (&SwarmRunView, TaskStatus),
+        facts: Option<&mut FoldBackFacts>,
+    ) -> Result<FoldedBack, ProjectBoardError> {
+        self.folded(id, number, (view, Ending::Undo(from)), facts)
+    }
+
+    fn folded(
+        &self,
+        id: &Slug,
+        number: u32,
+        (view, ending): (&SwarmRunView, Ending),
+        facts: Option<&mut FoldBackFacts>,
+    ) -> Result<FoldedBack, ProjectBoardError> {
         let mut write = facts.as_ref().map(|_| OpFacts::default());
-        let mut passed = self.pass(id, number, view, Evidence::Kept, write.as_mut());
+        let mut passed = self.pass(id, number, (view, ending), Evidence::Kept, write.as_mut());
         // Only a run past the board's bytes is folded again, smaller (an
         // allowlist): any other invalid write is the caller's to see.
         if let Err(ProjectBoardError::Store(BoardStoreError::WriteTooLarge(_))) = &passed {
             let mut again = facts.as_ref().map(|_| OpFacts::default());
-            passed = self.pass(id, number, view, Evidence::Left, again.as_mut());
+            passed = self.pass(id, number, (view, ending), Evidence::Left, again.as_mut());
             if let (Some(write), Some(again)) = (write.as_mut(), again) {
                 write.attempts = summed(write.attempts, again.attempts);
                 write.lost = summed(write.lost, again.lost);
@@ -153,7 +189,7 @@ impl FoldBackRun {
         &self,
         id: &Slug,
         number: u32,
-        view: &SwarmRunView,
+        (view, ending): (&SwarmRunView, Ending),
         evidence: Evidence,
         write: Option<&mut OpFacts>,
     ) -> Pass {
@@ -174,7 +210,10 @@ impl FoldBackRun {
             let cost = Some(cost_of(view));
             let folded = fold_back(run, plan, outcome, cost, items.items.clone(), &when.now)?;
             // The run's end moves its task, in the same write (#2705 T5).
-            let moved = task_after_end(task, &folded, view.end.stop(), &when.now)?;
+            let moved = match ending {
+                Ending::Swarm => task_after_end(task, &folded, view.end.stop(), &when.now)?,
+                Ending::Undo(from) => task_after_undo(task, &folded, from, &when.now)?,
+            };
             // This attempt's items, never an earlier one's.
             kept = Some(items);
             Ok(run_end_writes(folded, moved))

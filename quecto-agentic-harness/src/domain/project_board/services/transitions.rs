@@ -67,9 +67,12 @@ const TRANSITIONS: &[(TaskStatus, TaskStatus, Actor, ClaimEffect, Takes)] = &[
     // ([`held_by_links`], as it holds a draft's or a ready one's
     // archive); the claim goes with it.
     (Review,     Archived,   Actor::HolderWhileLive, ClaimEffect::Clear, Takes::Nothing),
-    // Release: the task goes back to the board. A task in progress goes
-    // back by its run's end (#2705 T5), never by `move`.
+    // Release: the task goes back to the board. A task in progress with a
+    // run going goes back by its run's end (#2705 T5: `move` names
+    // `end_run`, [`run_ends_it`]); one with no run going (a legacy state:
+    // no run, or only ended ones) is released by its holder.
     (Claimed,    Ready,      Actor::Releaser,        ClaimEffect::Clear, Takes::Nothing),
+    (InProgress, Ready,      Actor::Releaser,        ClaimEffect::Clear, Takes::Nothing),
     // Back to ready from review says why.
     (Review,     Ready,      Actor::HolderWhileLive, ClaimEffect::Clear, Takes::Reason),
     (Blocked,    Ready,      Actor::HolderWhileLive, ClaimEffect::Clear, Takes::Nothing),
@@ -88,7 +91,6 @@ const LIFECYCLE: &[(TaskStatus, TaskStatus, LifecycleAction)] = &[
     (Claimed,    InProgress, LifecycleAction::Start),
     (Review,     InProgress, LifecycleAction::Start),
     (Blocked,    InProgress, LifecycleAction::Start),
-    (InProgress, Ready,      LifecycleAction::EndRun),
     (InProgress, Review,     LifecycleAction::EndRun),
     (InProgress, Blocked,    LifecycleAction::EndRun),
     (Claimed,    Blocked,    LifecycleAction::Release),
@@ -347,7 +349,7 @@ pub fn move_with_reason(
     if held_by_links(from, to) && !linked.is_empty() {
         return Err(BoardRuleError::ChangesLinked(linked));
     }
-    may_move_with(task, runs, to)?;
+    may_move_with(task, runs, to).map_err(|error| run_ends_it(from, to, error))?;
     relations_allow(task, to, tasks)?;
     let at = stamp(task, now)?;
     let mut next = task.fields().clone();
@@ -370,6 +372,20 @@ pub fn move_with_reason(
         "{from:?} -> {to:?}: a task leaves its claim behind for a status that holds none"
     );
     settle(next, &at)
+}
+
+/// `error`, a move `from` -> `to` held back by a run, as the move answers
+/// it: a task in progress whose run is going leaves by the run's end
+/// (#2705 T5), so its release names `end_run`; any other is as it is.
+fn run_ends_it(from: TaskStatus, to: TaskStatus, error: BoardRuleError) -> BoardRuleError {
+    match (from, to, error) {
+        (InProgress, Ready, BoardRuleError::RunOpen(_)) => BoardRuleError::UseLifecycle {
+            from,
+            to,
+            action: LifecycleAction::EndRun,
+        },
+        (_, _, error) => error,
+    }
 }
 
 /// Whether the tasks `task` relates to on the board (`tasks`: every task

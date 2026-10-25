@@ -59,6 +59,7 @@ fn recovered_by_end_run(store: &MemoryBoardStore) {
             run: 1,
             outcome: RunEndOutcome::Failed,
             expected_updated: Some(task.fields().updated.clone()),
+            stop: None,
         })
         .unwrap()
         .run;
@@ -104,6 +105,7 @@ fn a_cancelled_start_whose_undo_could_not_fold_back_is_recovered() {
             run: 1,
             run_state: RunAfterUndo::Open,
             released: Some(false),
+            restored: None,
             still_running: None,
         })
     );

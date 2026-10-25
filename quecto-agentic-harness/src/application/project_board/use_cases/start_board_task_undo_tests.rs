@@ -62,6 +62,7 @@ fn a_run_another_writer_ended_is_left_as_it_ended_and_the_claim_released() {
             run: 1,
             run_state: RunAfterUndo::EndedAlready,
             released: None,
+            restored: None,
             still_running: None,
         })
     );
@@ -120,6 +121,7 @@ fn a_coordinator_that_may_still_run_leaves_the_start_as_it_is() {
             run: 1,
             run_state: RunAfterUndo::Open,
             released: Some(false),
+            restored: None,
             still_running: Some("7f3a".into()),
         })
     );
@@ -204,6 +206,7 @@ fn a_coordinator_seen_running_after_a_failed_launch_leaves_the_start_as_it_is() 
                 run: 1,
                 run_state,
                 released,
+                restored: None,
                 still_running,
             }),
             "running: {running}"
@@ -220,67 +223,5 @@ fn a_coordinator_seen_running_after_a_failed_launch_leaves_the_start_as_it_is() 
 impl crate::application::project_board::ports::StartedRuns for Seen {
     fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
         vec![]
-    }
-}
-
-/// #2705 T5: a failed launch's undo is its run's fold-back as failed,
-/// which moves the task back to ready, its claim released, in the same
-/// write, whatever status the start took it from: no task is left in
-/// progress without a run, and no move follows.
-#[test]
-fn a_failed_launch_leaves_any_started_task_ready_and_released_in_one_write() {
-    use crate::application::project_board::use_cases::fixtures_tests::{at, person};
-    use crate::domain::project_board::entities::claim::Claim;
-    use crate::domain::project_board::entities::task::TaskFields;
-    for from in [
-        TaskStatus::Ready,
-        TaskStatus::Claimed,
-        TaskStatus::Review,
-        TaskStatus::Blocked,
-    ] {
-        let shaped = move |fields: TaskFields| TaskFields {
-            status: from,
-            claim: (from != TaskStatus::Ready).then(|| Claim {
-                holder: person("Ada"),
-                since: at("09:00:00"),
-                expires: at("11:00:00"),
-            }),
-            ..fields
-        };
-        let store = seeded(shaped, vec![plan(1, PlanState::Accepted)], vec![]);
-        let writes = store.writes();
-        let refused =
-            super::starter(&store, Some(super::Launcher::failing())).execute(&confirmed(1));
-        assert!(
-            matches!(
-                &refused,
-                Err(ProjectBoardError::LaunchFailed {
-                    run_state: RunAfterUndo::Folded,
-                    released: Some(true),
-                    still_running: None,
-                    ..
-                })
-            ),
-            "{from:?}: {refused:?}"
-        );
-        assert_eq!(
-            store.writes(),
-            writes + 2,
-            "{from:?}: the start and its fold-back"
-        );
-        let (task, runs) = task_and_runs(&store);
-        assert_eq!(
-            (task.fields().status, task.fields().claim.clone()),
-            (TaskStatus::Ready, None),
-            "{from:?}"
-        );
-        assert_eq!(runs[0].fields().outcome, Some(RunOutcome::Failed));
-        assert!(
-            refused
-                .unwrap_err()
-                .to_string()
-                .ends_with("run 1 was folded back as failed, and the task is ready again"),
-            "{from:?}"
-        );
     }
 }

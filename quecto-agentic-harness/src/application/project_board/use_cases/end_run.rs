@@ -321,7 +321,10 @@ impl EndRun {
                 *kept = folded;
                 // The run's end moves its task, in the same write (#2705
                 // T5): a stop to blocked only when its swarm ended blocked.
-                let stop = report.map_or(StopKind::Cancelled, |view| view.end.stop());
+                // With no board kept, as the caller says (a cancel when it
+                // says nothing).
+                let unkept = request.stop.unwrap_or(StopKind::Cancelled);
+                let stop = report.map_or(unkept, |view| view.end.stop());
                 let moved = task_after_end(task, &ended, stop, &when.now)?;
                 *after = Some(moved.as_ref().unwrap_or(task).fields().status);
                 Ok(run_end_writes(ended, moved))

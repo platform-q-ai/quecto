@@ -21,6 +21,22 @@ pub enum StopKind {
     Cancelled,
 }
 
+impl StopKind {
+    pub const ALL: [Self; 2] = [Self::Blocked, Self::Cancelled];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Blocked => "blocked",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    /// The kind `text` names, when it is one of [`Self::ALL`].
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|stop| stop.as_str() == text)
+    }
+}
+
 /// The status a run's end moves its task to: a success to review, a
 /// blocked stop to blocked, any other end (a cancelled stop, a failure, a
 /// loss) back to ready. `stop` counts only for a stop.
@@ -82,6 +98,40 @@ pub fn task_after_end(
     next.status = to;
     next.claim = claim;
     settle(next, &at).map(Some)
+}
+
+/// `task` as the undo of its start leaves it, its run `ended` (folded back
+/// as failed): the run never launched, so a task the start took from
+/// review or blocked (`from`) goes back there, its holder keeping the
+/// claim, so a review is still completed when its pull requests merge;
+/// any other goes as a failed run's end takes it ([`task_after_end`]:
+/// back to ready, released).
+///
+/// # Errors
+/// As [`task_after_end`].
+pub fn task_after_undo(
+    task: &Task,
+    ended: &Run,
+    from: TaskStatus,
+    now: &Timestamp,
+) -> Result<Option<Task>, BoardRuleError> {
+    match (task.fields().status, from) {
+        (InProgress, Review | Blocked) => {
+            of_task(task, std::slice::from_ref(ended))?;
+            match ended.is_open() {
+                false => {}
+                true => return Err(BoardRuleError::RunOpen(ended.fields().number)),
+            }
+            let mut next = task.fields().clone();
+            next.status = from;
+            let restored = settle(next, &stamp(task, now)?)?;
+            debug_assert!(restored.fields().claim == task.fields().claim);
+            Ok(Some(restored))
+        }
+        (Draft | Ready | Claimed | InProgress | Review | Blocked | Done | Archived, _) => {
+            task_after_end(task, ended, StopKind::Cancelled, now)
+        }
+    }
 }
 
 /// Where one task item of a plan stands: as the task's latest run

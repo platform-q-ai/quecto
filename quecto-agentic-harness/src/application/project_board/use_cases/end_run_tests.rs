@@ -131,6 +131,7 @@ fn ending(outcome: RunEndOutcome) -> RunEnd {
         run: 1,
         outcome,
         expected_updated: None,
+        stop: None,
     }
 }
 
@@ -385,6 +386,7 @@ fn an_end_is_refused_for_a_run_ended_unknown_or_read_stale() {
     let ada = ender(&store, "Ada", "10:30:00");
     let stale = RunEnd {
         expected_updated: Some(at("09:00:00")),
+        stop: None,
         ..ending(RunEndOutcome::Failed)
     };
     assert_eq!(
@@ -405,6 +407,7 @@ fn an_end_is_refused_for_a_run_ended_unknown_or_read_stale() {
     );
     let pinned = RunEnd {
         expected_updated: Some(task.fields().updated.clone()),
+        stop: None,
         ..ending(RunEndOutcome::Failed)
     };
     assert!(ada.execute(&pinned).is_ok());
