@@ -458,8 +458,7 @@ board_rules! {
 #[test]
 fn every_rule_answers_its_code_and_its_own_keys() {
     let rules = every_rule();
-    // Each rule once, by its variant (two may share a code: #2659's
-    // not_holder on an expired claim).
+    // Each rule once, by its variant (two may share a code: #2659's not_holder on an expired claim).
     let variants: std::collections::HashSet<_> = rules
         .iter()
         .map(|(rule, ..)| {
