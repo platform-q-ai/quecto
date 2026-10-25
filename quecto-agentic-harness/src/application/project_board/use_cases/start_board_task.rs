@@ -164,7 +164,9 @@ impl BeginBoardRun {
     /// Nothing is seen running here: the client asks for an undo only once
     /// no coordinator of the run runs there.
     pub fn undone(&self, request: &TaskStart, undo: &StartUndo) -> ProjectBoardError {
-        let _red = self.undoable(request, undo);
+        if let Err(refused) = self.undoable(request, undo) {
+            return refused;
+        }
         let (run_state, _) = self.undo(undo, false);
         launch_failed(undo, run_state, None)
     }

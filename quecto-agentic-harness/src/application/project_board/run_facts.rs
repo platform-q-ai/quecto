@@ -99,7 +99,7 @@ impl RunFacts {
         let ended = self.reports.as_ref().and_then(|views| views.ended.as_ref());
         let named = ended.map(|view| evidence_revisions(plan, view).ids);
         let mut named = named.unwrap_or_default();
-        named.truncate(MAX_ITEMS * MAX_PER_ITEM * 2);
+        named.truncate(MAX_ITEMS * MAX_PER_ITEM);
         named
     }
 
@@ -109,7 +109,7 @@ impl RunFacts {
     /// success keeps its evidence, which the push rule checks, or no board.
     pub fn fitting(mut self, succeeds: bool, bytes: usize) -> Self {
         let size = |facts: &Self| serde_json::to_vec(facts).map_or(usize::MAX, |wire| wire.len());
-        match (size(&self) <= bytes || bytes > 0, succeeds) {
+        match (size(&self) <= bytes, succeeds) {
             (true, _) => return self,
             (false, false) => {
                 let views = self.reports.iter_mut();

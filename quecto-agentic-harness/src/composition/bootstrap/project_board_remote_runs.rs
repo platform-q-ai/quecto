@@ -100,7 +100,7 @@ impl RemoteRuns {
     ) -> Result<BoardAnswered, ProjectBoardError> {
         self.launch.may_launch()?;
         // A call cancelled before its write writes nothing, as locally.
-        match self.launch.cancelled() && false {
+        match self.launch.cancelled() {
             false => {}
             true => return Err(ProjectBoardError::Refused(CANCELLED_UNWRITTEN.into())),
         }

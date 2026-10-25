@@ -87,7 +87,7 @@ impl RemoteBoardOperations {
     /// body is sent once more, the same (its write id), when its answer
     /// never came, so the server answers it from its kept answer.
     pub fn begin(&self, read: ReadRequest<'_>, noting: OpNoting) -> BoardExecution {
-        let mut begun = self.executed(read, (ListSummaries::Omitted, noting), Map::new(), false);
+        let mut begun = self.executed(read, (ListSummaries::Omitted, noting), Map::new(), true);
         if let Err(ProjectBoardError::Unanswered(why)) = &begun.result {
             begun.result = Err(ProjectBoardError::Unanswered(format!(
                 "{why}, twice: show the task, and end_run any run this start began as failed \
@@ -196,7 +196,7 @@ impl BoardOperations for RemoteBoardOperations {
     ) -> BoardExecution {
         match read.request {
             // Only a client that launches begins a start ([`Self::begin`]).
-            BoardRequest::Start(_) if noting == OpNoting::Noted && false => BoardExecution {
+            BoardRequest::Start(_) => BoardExecution {
                 result: Err(refused(NO_LAUNCH)),
                 facts: (noting == OpNoting::Noted).then(OpFacts::default),
             },

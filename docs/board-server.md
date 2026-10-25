@@ -195,7 +195,20 @@ what its front end saw, as a local board trusts its own front end. A
 client could end a run it says is not running; the server cannot see the
 client's swarms. The remote's revisions and the pull requests' states the
 server reads itself. A write's `write_id` is bound to its facts or undo
-too. A `409 standby` from a follower and its epoch come with B12.
+too.
+
+The facts are a strict wire contract: the swarm boards' fields (`end`,
+`items` with `title`, `state`, `owner`, `evidence` and
+`stood_before_death`, `observed_tokens`) are read with unknown fields
+refused, so a client and server of different builds can refuse each
+other's ends. Upgrade every host that runs a board server or a client of
+one together. Facts past the request's 1 MiB go smaller: an end that is
+no success without its evidence, then any end without its boards (a
+success then records nothing reported, and is refused). An undo is made
+only by the holder of the task's live claim, while the task is in progress
+and the run is its latest, from `ready`, `claimed`, `review` or `blocked`.
+The server reads the remote for a success's plan items' evidence alone, at
+most 2,048 commits, one read at a time. A `409 standby` from a follower and its epoch come with B12.
 
 **The clock gate.** The server's clock tells the time only while the
 host affirms its clock is synchronised. On Linux the server asks the

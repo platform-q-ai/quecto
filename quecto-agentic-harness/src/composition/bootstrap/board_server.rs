@@ -282,7 +282,7 @@ fn revisions_read(
     if named.is_empty() {
         return StatedRemoteRevisions::unread("no revision was read before this write");
     }
-    match reading.compare_exchange(false, false, Ordering::SeqCst, Ordering::SeqCst) {
+    match reading.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst) {
         Ok(_) => {}
         Err(_) => return StatedRemoteRevisions::unread("the remote is still being read"),
     }
