@@ -269,6 +269,8 @@ fn plant(f: &Fixture, target: &str, bad: &str) {
     if f.root().join(&owner).is_file() {
         f.append(owner.to_str().unwrap(), &declaration);
     } else {
+        // No `X.rs` owner: its folder is folder-only and declared from the
+        // parent's `mod.rs` (true of `ports/`); a wrong guess panics here.
         let folder = parent.parent().unwrap();
         let name = parent.file_name().unwrap().to_str().unwrap();
         f.append(
@@ -359,13 +361,18 @@ macro_rules! exception_role {
                 let f = Fixture::new();
                 std::fs::remove_file(f.root().join(approved())).unwrap();
                 let text = f.check($checker, Some("assertion `left == right` failed"));
-                assert!(text.contains(&approved()), "{text}");
+                // The approved path shows on the exception equality's right side.
+                assert!(
+                    text.contains(&format!("right: {{\"{}\"}}", approved())),
+                    "{text}"
+                );
             }
             #[test]
             fn malformed_approved_child_fails() {
                 let f = Fixture::new();
                 f.append(&approved(), "fn malformed(");
-                f.check($checker, Some("parse module file"));
+                let text = f.check($checker, Some("parse module file"));
+                assert!(text.contains(&approved()), "{text}");
             }
         }
     };
