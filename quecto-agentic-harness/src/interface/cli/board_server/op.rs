@@ -246,3 +246,7 @@ impl BoardOperations for Captured<'_> {
         self.board.left_runs()
     }
 }
+
+#[cfg(test)]
+#[path = "op_tests.rs"]
+mod tests;

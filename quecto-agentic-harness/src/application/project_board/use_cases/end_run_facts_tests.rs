@@ -13,7 +13,8 @@ const DEF: &str = "def456def456def456def456def456def456def4";
 /// Ada's end at 10:30 on a board server: `facts` as its client sent them,
 /// the remote's revisions as `remote` answered before the write.
 fn served_ender(store: &MemoryBoardStore, facts: &RunFacts, remote: &Remote) -> EndRun {
-    let revisions = StatedRemoteRevisions::read(remote, &facts.named_commits());
+    let plan = crate::application::project_board::fold_back::tests::plan();
+    let revisions = StatedRemoteRevisions::read(remote, &facts.named_commits(&plan));
     EndRun::new(
         Arc::new(store.client_as(person("Ada"))),
         SetClock::at("10:30:00"),

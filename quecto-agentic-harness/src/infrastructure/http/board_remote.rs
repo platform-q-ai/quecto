@@ -9,8 +9,8 @@ use super::board_service::client::{
 };
 use super::board_service::limits::Method;
 use crate::application::project_board::dto::{
-    BoardAnswered, BoardExecution, BoardOutcome, ListSummaries, OpNoting, ProjectBoardError,
-    ReadRequest, RunEnd, ServedAnswer,
+    BoardAnswered, BoardExecution, BoardOutcome, BoardRequest, ListSummaries, OpNoting,
+    ProjectBoardError, ReadRequest, RunEnd, ServedAnswer,
 };
 use crate::application::project_board::ports::{
     BoardClockError, BoardHead, BoardOperations, BoardStoreError, ListenAddress,
@@ -23,6 +23,9 @@ use crate::domain::project_board::value_objects::telemetry::BoardId;
 pub const ATTEMPTS: u64 = 3;
 /// The most a request pauses, in all, while its server answers busy.
 pub const BUSY_MS: u64 = 10_000;
+/// Why a start sent other than by a client that launches its coordinator is refused.
+pub const NO_LAUNCH: &str =
+    "a start is begun on a board server only by a client that launches its coordinator";
 pub const URL_SHAPE: &str = "a board server URL is unix:///<socket path> or \
                              http://<ip>:<port> on loopback or a Tailscale address";
 
@@ -77,9 +80,37 @@ impl RemoteBoardOperations {
         (summaries, noting): (ListSummaries, OpNoting),
         beside: Map<String, Value>,
     ) -> BoardExecution {
+        self.executed(read, (summaries, noting), beside, false)
+    }
+
+    /// A start begun on the server, for this client to launch (B8). Its
+    /// body is sent once more, the same (its write id), when its answer
+    /// never came, so the server answers it from its kept answer.
+    pub fn begin(&self, read: ReadRequest<'_>, noting: OpNoting) -> BoardExecution {
+        let mut begun = self.executed(read, (ListSummaries::Omitted, noting), Map::new(), false);
+        if let Err(ProjectBoardError::Unanswered(why)) = &begun.result {
+            begun.result = Err(ProjectBoardError::Unanswered(format!(
+                "{why}, twice: show the task, and end_run any run this start began as failed \
+                 before starting it again"
+            )));
+        }
+        begun
+    }
+
+    fn executed(
+        &self,
+        read: ReadRequest<'_>,
+        (summaries, noting): (ListSummaries, OpNoting),
+        beside: Map<String, Value>,
+        again: bool,
+    ) -> BoardExecution {
         let noted = noting == OpNoting::Noted;
         let body = self.body(read, summaries == ListSummaries::Wanted, noted, beside);
-        let replied = body.and_then(|body| self.sent(&body, read.request.writes()));
+        let send = |body: &[u8]| self.sent(body, read.request.writes());
+        let replied = body.and_then(|body| match send(&body) {
+            Err(ProjectBoardError::Unanswered(_)) if again => send(&body),
+            replied => replied,
+        });
         let (result, facts) = match replied.and_then(|(status, body)| answered(status, &body)) {
             Ok((answer, facts)) => (Ok(answer), facts),
             Err(error) => (Err(error), None),
@@ -163,7 +194,14 @@ impl BoardOperations for RemoteBoardOperations {
         summaries: ListSummaries,
         noting: OpNoting,
     ) -> BoardExecution {
-        self.execute_with(read, (summaries, noting), Map::new())
+        match read.request {
+            // Only a client that launches begins a start ([`Self::begin`]).
+            BoardRequest::Start(_) if noting == OpNoting::Noted && false => BoardExecution {
+                result: Err(refused(NO_LAUNCH)),
+                facts: (noting == OpNoting::Noted).then(OpFacts::default),
+            },
+            _ => self.execute_with(read, (summaries, noting), Map::new()),
+        }
     }
 
     /// This adapter starts nothing (its client's runs are B8's

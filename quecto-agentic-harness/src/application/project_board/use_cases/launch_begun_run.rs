@@ -82,6 +82,13 @@ impl LaunchBegunRun {
         }
     }
 
+    /// Whether the call this start serves was cancelled: a start asks
+    /// before it writes, and a cancelled one writes nothing.
+    pub fn cancelled(&self) -> bool {
+        let cancelled = self.cancelled.as_deref();
+        cancelled.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst))
+    }
+
     /// `begun`'s coordinator launched, noting in `facts`, when given, what
     /// the begin saw, how long the launch took and, for one undone, where
     /// its undo left the run.

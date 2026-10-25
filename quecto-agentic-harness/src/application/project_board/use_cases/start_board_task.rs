@@ -29,7 +29,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use super::board_change::{checked_writer, commit, owned, task_on};
+use super::board_change::{checked_now, checked_writer, commit, owned, task_on};
 use super::{FoldBackRun, LaunchBegunRun, board_view};
 use crate::application::project_board::dto::{
     FoldBackFacts, FoldedBack, ProjectBoardError, RunAfterUndo, TaskStart,
@@ -47,8 +47,12 @@ use crate::application::project_board::swarm_brief::{
 };
 use crate::application::project_board::telemetry::{OpFacts, counted};
 use crate::domain::project_board::entities::claim::Identity;
+
+use crate::domain::project_board::services::claims::is_live;
 use crate::domain::project_board::services::plans::as_accepted;
 use crate::domain::project_board::services::starts::{Started, start};
+use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
+use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::telemetry::StartClaim;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
@@ -156,16 +160,62 @@ impl BeginBoardRun {
 
     /// A board server's undo of the start `request` names (B8), as
     /// `undo` says: the refusal its client's launch came to, the run folded
-    /// back as failed. Nothing is seen running here: the client asks for
-    /// an undo only once no coordinator of the run runs there.
+    /// back as failed; or why it may not be made ([`Self::undoable`]).
+    /// Nothing is seen running here: the client asks for an undo only once
+    /// no coordinator of the run runs there.
     pub fn undone(&self, request: &TaskStart, undo: &StartUndo) -> ProjectBoardError {
-        debug_assert_eq!(
-            (&undo.task, undo.plan_version),
-            (&request.task, request.plan_version),
-            "an undo is of the start it is sent with"
-        );
+        let _red = self.undoable(request, undo);
         let (run_state, _) = self.undo(undo, false);
         launch_failed(undo, run_state, None)
+    }
+
+    /// Whether `undo` may be made, read in the server's own write: it is
+    /// of the start it is sent with, from a status a start takes a task
+    /// from; and while its run is open, that is the task's latest run, the
+    /// task is in progress and the writer holds its live claim. A run that
+    /// has ended is left for the fold-back to find ended.
+    fn undoable(&self, request: &TaskStart, undo: &StartUndo) -> Result<(), ProjectBoardError> {
+        let invalid = |field, why| ProjectBoardError::Invalid(SchemaError::new(field, why));
+        let rule = ProjectBoardError::Rule;
+        match (&undo.task, undo.plan_version) == (&request.task, request.plan_version) {
+            true => {}
+            false => return Err(invalid("undo", "is not of the start it is sent with")),
+        }
+        match undo.from {
+            TaskStatus::Ready | TaskStatus::Claimed | TaskStatus::Review | TaskStatus::Blocked => {}
+            TaskStatus::Draft
+            | TaskStatus::InProgress
+            | TaskStatus::Done
+            | TaskStatus::Archived => {
+                return Err(invalid("from", "is not a status a start takes a task from"));
+            }
+        }
+        let board = self.store.read()?;
+        let task = task_on(&board, &undo.task)?;
+        let runs = board_view::runs_of(&board, &undo.task)?;
+        let run = runs
+            .iter()
+            .find(|run| run.fields().number == undo.run)
+            .ok_or(rule(BoardRuleError::NoSuchRun(undo.run)))?;
+        let latest = runs.iter().map(|run| run.fields().number).max();
+        let now = checked_now(&*self.clock)?.now;
+        let claim = task.fields().claim.as_ref();
+        let holds = claim.is_some_and(|claim| claim.holder.is(&self.actor));
+        let live = claim.is_some_and(|claim| is_live(claim, &now));
+        let status = task.fields().status;
+        match (run.is_open(), latest == Some(undo.run), status, holds, live) {
+            (false, _, _, _, _) | (true, true, TaskStatus::InProgress, true, true) => Ok(()),
+            (true, _, _, false, _) => Err(rule(BoardRuleError::NotHolder)),
+            (true, _, _, true, false) => Err(rule(BoardRuleError::ClaimExpired)),
+            (true, false, _, true, true) => Err(rule(BoardRuleError::RunsInconsistent(format!(
+                "run {} is not the task's latest run",
+                undo.run
+            )))),
+            (true, true, from, true, true) => Err(rule(BoardRuleError::NotAllowed {
+                from,
+                to: undo.from,
+            })),
+        }
     }
 
     /// The task and run 1 written in one change, with the start, its brief

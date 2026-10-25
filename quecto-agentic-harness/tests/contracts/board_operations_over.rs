@@ -51,6 +51,7 @@ fn served(remote: &Remote) -> ServedOperations {
         prs: Err(NoPullRequestHost::NotAPullRequestHost),
         revisions: Arc::new(revisions),
         read_budget: Duration::from_secs(30),
+        revision_reads: Arc::default(),
     }
 }
 
@@ -330,14 +331,24 @@ impl PullRequestStates for Merged {
 /// `value` served as the CLI sends it, a write as Ada with a fresh id,
 /// with what its client sent for its run (B8).
 fn serve_run(operations: &ServeBoardOperation, value: Value, sent: &ServedRun) -> Value {
+    serve_run_as(operations, value, sent, "Ada")
+}
+
+/// [`serve_run`], written as `who`.
+fn serve_run_as(
+    operations: &ServeBoardOperation,
+    value: Value,
+    sent: &ServedRun,
+    who: &str,
+) -> Value {
     let text = value.to_string();
     let request = parse(&value, EntryPolicy::SectionedOrLegacy).expect("a request");
     let write = OpWrite {
         write_id: WriteId::parse(&uuid::Uuid::new_v4().to_string()).expect("a UUID"),
         request: format!("{text}\n{sent:?}"),
         committer: Identity {
-            name: "Ada".into(),
-            email: "ada@example.com".into(),
+            name: who.into(),
+            email: format!("{}@example.com", who.to_lowercase()),
         },
         principal: "local".into(),
     };
@@ -496,6 +507,29 @@ fn a_begun_start_is_undone_on_the_server() {
         reason: "no container runtime".into(),
     });
     let start = json!({"op": "start", "task": "a", "plan_version": 1});
+    // Review round 1: only the holder undoes, and only from a status a
+    // start takes a task from; refused, the run stays open.
+    let not_hers = serve_run_as(&operations, start.clone(), &undo, "Bob");
+    assert_eq!(
+        (
+            &not_hers["error"]["code"],
+            &not_hers["error"]["rule"]["code"]
+        ),
+        (&json!("rule"), &json!("not_holder")),
+        "{not_hers}"
+    );
+    let ServedRun::Undo(mut done) = undo.clone() else {
+        unreachable!("an undo")
+    };
+    done.from = TaskStatus::Done;
+    let from_done = serve_run(&operations, start.clone(), &ServedRun::Undo(done));
+    assert_eq!(from_done["error"]["field"], json!("from"), "{from_done}");
+    let shown = serve(&operations, json!({"op": "show", "task": "a"})).expect("shown");
+    assert_eq!(
+        shown["runs"][0]["state"],
+        json!("running"),
+        "nothing undone"
+    );
     let undone = serve_run(&operations, start, &undo);
     let error = &undone["error"];
     assert_eq!(

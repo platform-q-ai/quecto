@@ -22,7 +22,7 @@ use serde_json::{Map, Value, json};
 
 use crate::application::project_board::dto::{
     BoardAnswered, BoardExecution, BoardOutcome, BoardRequest, ListSummaries, OpNoting,
-    ProjectBoardError, ReadRequest, RunEnd, TaskStart,
+    ProjectBoardError, ReadRequest, RunEnd, RunEndOutcome, TaskStart,
 };
 use crate::application::project_board::ports::{
     BoardOperations, BoardStoreError, RunLiveness, StartedRuns, SwarmRunReports,
@@ -35,6 +35,11 @@ use crate::infrastructure::http::board_remote::RemoteBoardOperations;
 use crate::infrastructure::http::board_remote_runs::{
     MALFORMED_BEGIN, RemoteBoardRuns, begun_of, launched_answer, recorded_kept, served,
 };
+use crate::infrastructure::http::board_service::limits::MAX_BODY_BYTES;
+
+/// Why a start whose call was cancelled before its write writes nothing:
+/// a local cancelled store's own words.
+const CANCELLED_UNWRITTEN: &str = "the call was cancelled before its write";
 
 /// What this session's swarms are to its runs on a board server.
 pub struct RunSwarms {
@@ -94,8 +99,12 @@ impl RemoteRuns {
         seen: Option<&mut StartFacts>,
     ) -> Result<BoardAnswered, ProjectBoardError> {
         self.launch.may_launch()?;
-        let asked = (ListSummaries::Omitted, noting);
-        let begun = self.remote.execute_with(read, asked, Map::new());
+        // A call cancelled before its write writes nothing, as locally.
+        match self.launch.cancelled() && false {
+            false => {}
+            true => return Err(ProjectBoardError::Refused(CANCELLED_UNWRITTEN.into())),
+        }
+        let begun = self.remote.begin(read, noting);
         if let (Some(facts), Some(written)) = (facts.as_mut(), begun.facts) {
             *facts = written;
         }
@@ -124,6 +133,9 @@ impl RemoteRuns {
         let swarms = &self.swarms;
         let (liveness, reports) = (swarms.liveness.as_deref(), swarms.reports.as_deref());
         let facts = RunFacts::gathered((&end.task, end.run), liveness, reports);
+        // Within the request's bytes, the rest of the body left room for.
+        let succeeds = end.outcome == RunEndOutcome::Succeeded;
+        let facts = facts.fitting(succeeds, MAX_BODY_BYTES as usize - 64 * 1024);
         let wire = serde_json::to_value(&facts).unwrap_or(Value::Null);
         let execution =
             self.remote

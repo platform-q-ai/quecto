@@ -121,7 +121,6 @@ fn the_stated_ports_answer_for_their_own_run_only() {
     assert_eq!(reports.left_run(&task, 2), None);
     let unseen = RunFacts::unseen();
     assert!(unseen.liveness((&task, 2)).is_none() && unseen.reports((&task, 2)).is_none());
-    assert_eq!(facts.named_commits(), vec!["abc123abc123".to_string()]);
 }
 
 /// A remote holding every commit but `missing`, recording what it is asked.
@@ -172,5 +171,73 @@ fn stated_revisions_answer_only_what_was_read_before_the_write() {
     assert_eq!(
         unread.commit_id_hex_len(),
         Err(BoardStoreError::Unavailable("not read in time".into()))
+    );
+}
+
+fn kept(items: Vec<SwarmItemView>) -> RunFacts {
+    let ended = SwarmRunView {
+        end: SwarmEnd::Succeeded,
+        items,
+        observed_tokens: 0,
+    };
+    RunFacts {
+        liveness: SeenLiveness::Unseen,
+        reports: Some(KeptViews {
+            ended: Some(ended),
+            left: None,
+        }),
+    }
+}
+
+/// Review round 1: the server reads the remote only for the commits the
+/// evidence of the plan's items names, at most `MAX_ITEMS × MAX_PER_ITEM`.
+#[test]
+fn only_the_plans_evidence_is_named_and_at_most_its_bound() {
+    use crate::application::project_board::fold_back::tests::{plan, swarm_item};
+    use crate::domain::project_board::entities::task_parts::{MAX_ITEMS, MAX_PER_ITEM};
+    let done = SwarmItemState::Completed;
+    let facts = kept(vec![
+        swarm_item("api: Build the api", done, None, &[("c", "abc123abc123")]),
+        swarm_item("extra: Not planned", done, None, &[("c", "0ff0ff0ff0ff")]),
+    ]);
+    assert_eq!(facts.named_commits(&plan()), ["abc123abc123"]);
+    let many: Vec<String> = (0..3000).map(|n| format!("{n:012x}")).collect();
+    let evidence: Vec<(&str, &str)> = many.iter().map(|id| ("c", id.as_str())).collect();
+    let facts = kept(vec![swarm_item(
+        "store: Build the store",
+        done,
+        None,
+        &evidence,
+    )]);
+    assert_eq!(facts.named_commits(&plan()).len(), MAX_ITEMS * MAX_PER_ITEM);
+}
+
+/// Review round 1: facts past the request's bytes are sent smaller rather
+/// than refused: an end that is no success without its evidence, then any
+/// end without its boards; facts that fit go as they are.
+#[test]
+fn facts_past_their_bytes_are_sent_smaller() {
+    use crate::application::project_board::fold_back::tests::swarm_item;
+    let long = "x".repeat(200);
+    let evidence: Vec<(&str, &str)> = (0..100).map(|_| ("notes", long.as_str())).collect();
+    let facts = kept(vec![swarm_item(
+        "api: Build the api",
+        SwarmItemState::Completed,
+        None,
+        &evidence,
+    )]);
+    let bytes = serde_json::to_vec(&facts).unwrap().len();
+    assert_eq!(facts.clone().fitting(false, bytes), facts, "it fits");
+    let left = facts.clone().fitting(false, 2_000);
+    let views = left.reports.expect("its boards are kept");
+    let items = views.ended.expect("its ended board").items;
+    assert!(
+        items.iter().all(|item| item.evidence.is_empty()),
+        "no evidence"
+    );
+    let success = facts.fitting(true, 2_000);
+    assert_eq!(
+        success.reports, None,
+        "a success keeps its evidence or no board"
     );
 }

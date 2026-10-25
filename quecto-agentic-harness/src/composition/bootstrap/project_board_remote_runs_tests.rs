@@ -270,29 +270,60 @@ fn a_remote_start_whose_launch_fails_is_undone_as_a_local_one() {
     }
 }
 
-/// A call cancelled during the launch, or before it, launches nothing that
-/// stays: the start is undone on the server, past the cancel.
+/// A call cancelled during the launch launches nothing that stays: the
+/// start is undone on the server, past the cancel. One cancelled before it
+/// writes nothing at all, as a local start's cancelled store does (review
+/// round 1).
 #[test]
 fn a_remote_start_cancelled_during_its_launch_is_undone() {
-    for before in [false, true] {
-        let served = startable();
-        let cancel = Arc::new(AtomicBool::new(before));
-        let swarms = Swarms::new(Launch::CancelledAsItCameUp(Arc::clone(&cancel)));
-        let refused = start(&*launching(&served, &swarms, Some(cancel)));
-        let error = &refused["error"];
-        assert_eq!(
-            (&error["code"], &error["run_state"], &error["released"]),
-            (&json!("launch_failed"), &json!("folded"), &json!(true)),
-            "{refused}"
-        );
-        let launched = swarms.launched.lock().unwrap().len();
-        assert_eq!(
-            launched,
-            usize::from(!before),
-            "launched only while not cancelled"
-        );
-        assert_eq!(on_server(&served), (json!("ready"), json!("failed")));
-    }
+    let served = startable();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let swarms = Swarms::new(Launch::CancelledAsItCameUp(Arc::clone(&cancel)));
+    let refused = start(&*launching(&served, &swarms, Some(Arc::clone(&cancel))));
+    let error = &refused["error"];
+    assert_eq!(
+        (&error["code"], &error["run_state"], &error["released"]),
+        (&json!("launch_failed"), &json!("folded"), &json!(true)),
+        "{refused}"
+    );
+    assert_eq!(on_server(&served), (json!("ready"), json!("failed")));
+    let served = startable();
+    let swarms = Swarms::new(Launch::Up);
+    let cancelled = Some(Arc::new(AtomicBool::new(true)));
+    let refused = start(&*launching(&served, &swarms, cancelled));
+    assert_eq!(refused["error"]["code"], json!("refused"), "{refused}");
+    assert!(
+        swarms.launched.lock().unwrap().is_empty(),
+        "nothing launched"
+    );
+    assert_eq!(
+        on_server(&served),
+        (json!("ready"), Value::Null),
+        "nothing written"
+    );
+}
+
+/// Review round 1: an end's facts or a start's undo are part of its write:
+/// the same write id with other facts is `write_id_reused`.
+#[test]
+fn a_write_id_is_bound_to_its_facts() {
+    let served = startable();
+    let client =
+        crate::infrastructure::http::board_remote::endpoint_of(&served.url(), None).unwrap();
+    let body = |facts: Value| {
+        json!({"request": {"op": "end_run", "task": "a", "run": 1, "outcome": "failed"},
+               "front_end": "cli", "write_id": ID,
+               "committer": {"name": "Ada", "email": "ada@example.com"}, "facts": facts})
+    };
+    let unseen = json!({"liveness": "unseen", "reports": null});
+    let first = posted(&client, &served.board, &body(unseen));
+    assert_eq!(first.0, 200, "{first:?}");
+    let seen = json!({"liveness": {"seen": null}, "reports": null});
+    let again = posted(&client, &served.board, &body(seen));
+    assert_eq!(
+        (again.0, &again.1["code"]),
+        (409, &json!("write_id_reused"))
+    );
 }
 
 /// An end is judged on the server by what this session saw: its
