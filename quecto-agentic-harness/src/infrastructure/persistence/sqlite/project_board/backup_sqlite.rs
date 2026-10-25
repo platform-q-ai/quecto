@@ -70,6 +70,7 @@ fn copy_error(error: rusqlite::Error) -> BackupError {
         _ => BackupError::PublishFailed,
     }
 }
+#[cfg(target_os = "linux")]
 pub(super) fn classify(error: rusqlite::Error) -> BackupError {
     match error.sqlite_error_code() {
         Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) => {
