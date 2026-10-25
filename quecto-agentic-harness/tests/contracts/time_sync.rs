@@ -1,7 +1,7 @@
 //! Contract for [`TimeSync`] (epic #2705), run against the kernel adapter
 //! on the host running the tests: it answers every time without failing,
 //! cheaply (it is asked on each reading of the board server's clock), and
-//! an unsynchronised answer says why. Off Linux (glibc) it never affirms
+//! an unsynchronised answer says why. Off Linux it never affirms
 //! the clock synchronised.
 use std::time::{Duration, Instant};
 
@@ -32,7 +32,7 @@ fn the_kernel_adapter_keeps_the_time_sync_contract() {
     contract(&KernelTimeSync);
 }
 
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+#[cfg(not(target_os = "linux"))]
 #[test]
 fn off_linux_the_clock_is_never_affirmed_synchronised() {
     assert!(matches!(KernelTimeSync.sync(), ClockSync::Unsynced(_)));

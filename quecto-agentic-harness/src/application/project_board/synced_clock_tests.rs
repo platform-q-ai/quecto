@@ -70,3 +70,25 @@ fn pauses_and_elapsed_time_are_the_clocks_own() {
     assert_eq!(*inner.pauses.lock().unwrap(), [2]);
     assert_eq!(clock.elapsed(), Duration::ZERO);
 }
+
+/// One op's clock asks the host once, however often the op reads the time.
+#[test]
+fn a_held_word_is_read_once() {
+    struct Counted(std::sync::atomic::AtomicUsize);
+    impl TimeSync for Counted {
+        fn sync(&self) -> ClockSync {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            ClockSync::Unsynced("drifting".into())
+        }
+    }
+    let counted = Counted(Default::default());
+    let held = Arc::new(HeldSync::read(&counted));
+    let clock = SyncedBoardClock::new(SetClock::at("08:00:00"), held);
+    for _ in 0..3 {
+        assert_eq!(
+            clock.now(),
+            Err(BoardClockError::Unsynced("drifting".into()))
+        );
+    }
+    assert_eq!(counted.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+}

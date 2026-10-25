@@ -166,23 +166,29 @@ runs yet (B8)`. A `409 standby` from a follower and its epoch come with
 B12.
 
 **The clock gate.** The server's clock tells the time only while the
-host affirms its clock is synchronised. On Linux (glibc) the server asks
-the kernel on every reading of the clock (`ntp_adjtime`, read-only): the
-clock is synchronised only when the kernel's state is one it keeps while
-synchronised (`TIME_OK`, or a leap second pending or passing) and
-`STA_UNSYNC` is clear. Anything else (`TIME_ERROR`, `STA_UNSYNC`, a failed
-read, a state this build does not know, or any other platform) is not.
-- Synchronised: the clock is its own outside reference, so a request that
-  reads it is bounded against it and its answer carries no `clock` note.
+host affirms its clock is synchronised. On Linux the server asks the
+kernel (`adjtimex`, read-only) once per op, as the op begins, and holds
+that word for the op: the clock is synchronised only when `STA_UNSYNC` is
+clear and the kernel's state is one it keeps while synchronised
+(`TIME_OK`, or a leap second pending or passing). Anything else
+(`STA_UNSYNC`, `TIME_ERROR`, a failed call, a state this build does not
+know, or any other platform) is not.
+- Synchronised: the server's time is the host's. It is still no outside
+  reference, so an answer to a request that reads the clock keeps its
+  `"clock": {"referenced": false, ...}` note, and the burst bound
+  (`task_ahead`) stays off on the server until B9, as in B7.
 - Not synchronised: a request that reads the clock (`create`,
   `update_draft`, a change, a plan op, `complete`, `done_without_run`,
-  `end_run`, `list_takeable`) is refused 503 `clock_unsynced`, `{"error", "code", "reason"}`, rolled
-  back and kept by no answer, so the same `write_id` runs again once the
-  clock is synchronised. A client answers its caller `clock_unsynced` with
-  the reason; stop and report it. Requests that read no clock (`show`,
-  `list`, `list_ready`, `bootstrap`, `clear_set_aside`) are served as ever,
-  and `GET /v1/time` is refused alike. Tokens are dated by the host's
-  clock as it is: a token's date bounds nothing.
+  `end_run`, `list_takeable`) is refused 503 `clock_unsynced`,
+  `{"error", "code", "reason"}`, rolled back and kept by no answer, so the
+  same `write_id` runs again once the clock is synchronised. A client
+  answers its caller `clock_unsynced` with the reason; stop and report it.
+  Requests that read no clock (`show`, `list`, `list_ready`, `bootstrap`,
+  `clear_set_aside`) are served as ever, and `GET /v1/time` is refused
+  alike.
+- Not gated: the board's own clock reads only. Tokens are dated by the
+  host's clock as it is (a token's date bounds nothing), and the SQLite
+  store stamps each revision with the host's time as it is.
 - A board on a clone's own branch has no gate: it reads the remote's time
   as before.
 

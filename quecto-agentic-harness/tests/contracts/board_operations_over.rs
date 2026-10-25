@@ -10,8 +10,9 @@ use quecto::application::project_board::dto::{
     BoardOutcome, ListSummaries, NoPullRequestHost, OpNoting, ReadRequest,
 };
 use quecto::application::project_board::ports::{
-    BoardOpStore, BoardOperations, BoardOperationsOver, OpWrite, ProjectBoardStore,
-    PullRequestState, PullRequestStates, PullRequestStatesError, ServeError, Transacted, WriteId,
+    BoardOpStore, BoardOperations, BoardOperationsOver, ClockSync, OpWrite, ProjectBoardStore,
+    PullRequestState, PullRequestStates, PullRequestStatesError, ServeError, TimeSync, Transacted,
+    WriteId,
 };
 use quecto::application::project_board::use_cases::ServeBoardOperation;
 use quecto::composition::bootstrap::board_server::ServedOperations;
@@ -30,10 +31,20 @@ use serde_json::{Value, json};
 
 use super::project_board_git_store::Remote;
 
+/// A host whose clock is synchronised (the board server's gate, #2705).
+struct Synced;
+
+impl TimeSync for Synced {
+    fn sync(&self) -> ClockSync {
+        ClockSync::Synced
+    }
+}
+
 fn served(remote: &Remote) -> ServedOperations {
     let revisions = GitRemoteRevisions::new(remote.git(0, "Ada"), "origin").expect("revisions");
     ServedOperations {
         clock: Arc::new(SystemBoardClock::default()),
+        sync: Arc::new(Synced),
         prs: Err(NoPullRequestHost::NotAPullRequestHost),
         revisions: Arc::new(revisions),
         read_budget: Duration::from_secs(30),

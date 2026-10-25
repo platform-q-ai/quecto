@@ -1,7 +1,7 @@
 //! The board server's clock gate (epic #2705) over a real SQLite board:
 //! while the host's clock is not synchronised, a request that reads the
 //! clock is refused `clock_unsynced`, rolled back and kept by no answer.
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 
 use super::*;
 use crate::application::project_board::ports::{ClockSync, TimeSync};
@@ -10,17 +10,19 @@ use crate::infrastructure::http::board_service::limits::Method;
 
 const UNSYNCED: &str = "the test host's clock drifts";
 
-/// The host's word on its clock, switched by the test.
-pub(super) struct Said(AtomicBool);
+/// The host's word on its clock, switched by the test, and how often it
+/// was asked.
+pub(super) struct Said(AtomicBool, AtomicUsize);
 
 impl Said {
     pub(super) fn synced() -> Self {
-        Self(AtomicBool::new(true))
+        Self(AtomicBool::new(true), AtomicUsize::new(0))
     }
 }
 
 impl TimeSync for Said {
     fn sync(&self) -> ClockSync {
+        self.1.fetch_add(1, Ordering::SeqCst);
         match self.0.load(Ordering::SeqCst) {
             true => ClockSync::Synced,
             false => ClockSync::Unsynced(UNSYNCED.into()),
@@ -35,7 +37,7 @@ fn write(id: &str) -> Value {
 
 #[test]
 fn an_unsynchronised_clock_refuses_a_clock_reading_write_and_keeps_no_answer() {
-    let said = Arc::new(Said(AtomicBool::new(false)));
+    let said = Arc::new(Said(AtomicBool::new(false), AtomicUsize::new(0)));
     let served = served_with(false, Arc::clone(&said) as Arc<dyn TimeSync>);
     let before = served.revisions().len();
     let raw = BoardServiceClient::unix(&served.socket);
@@ -98,8 +100,10 @@ fn an_unsynchronised_clock_refuses_a_clock_reading_write_and_keeps_no_answer() {
 /// stamps the task a second past the last.
 #[test]
 fn a_synchronised_server_takes_a_burst_of_changes_to_one_task() {
-    let served = served(false);
+    let said = Arc::new(Said::synced());
+    let served = served_with(false, Arc::clone(&said) as Arc<dyn TimeSync>);
     let writer = served.writer();
+    let asked = said.1.load(Ordering::SeqCst);
     let draft = json!({"op": "create", "task": "a", "title": "A", "status": "draft"});
     let created = run(&*writer, &draft.to_string());
     assert_eq!(created["ok"], json!(true), "{created}");
@@ -108,4 +112,6 @@ fn a_synchronised_server_takes_a_burst_of_changes_to_one_task() {
         let changed = run(&*writer, &change.to_string());
         assert_eq!(changed["ok"], json!(true), "change {at}: {changed}");
     }
+    // One reading of the host per op (the create and each change).
+    assert_eq!(said.1.load(Ordering::SeqCst) - asked, 121);
 }
