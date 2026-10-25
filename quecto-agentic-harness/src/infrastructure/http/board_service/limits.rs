@@ -4,8 +4,9 @@
 //! many headers 431, both bodyless); 32 headers in 8 KiB; 10 s for a head,
 //! which also ends an idle keep-alive, and 10 s for a body (408); 10 s for
 //! a peer to take any reply byte ([`WriteDeadline`]); 64 connections at
-//! once a listener (TCP: see below); and each connection at most 60 s or
-//! 1,000 requests, then it
+//! once a listener (TCP: see below); one token at most 8 TCP connections
+//! at once server-wide, across every TCP address, not per listener
+//! (#2727); and each connection at most 60 s or 1,000 requests, then it
 //! finishes what it answers within 15 s and closes. No peer holds a slot
 //! for good.
 use std::future::Future;
@@ -41,6 +42,9 @@ pub const FIRST_REQUEST_REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
 /// the server's 16 blocking threads always leave 4 for the Unix socket.
 pub const MAX_TCP_ANSWERS: usize = 12;
 pub const MAX_ANSWERS_PER_PRINCIPAL: usize = 4;
+/// The TCP connections one token may hold at once, from its first
+/// authenticated request to its close (#2727).
+pub const MAX_CONNECTIONS_PER_TOKEN: usize = 8;
 pub const CONNECTION_LIFETIME: Duration = Duration::from_secs(60);
 pub const MAX_REQUESTS: usize = 1_000;
 /// How long a connection past its life may take to finish what it answers.
