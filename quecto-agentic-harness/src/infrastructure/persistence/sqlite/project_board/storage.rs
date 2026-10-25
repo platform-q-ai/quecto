@@ -371,6 +371,85 @@ impl<'a> ObjectWriter<'a> {
         }
         Ok(oid)
     }
+    /// Original objects use the same physical writer/collision seam as native
+    /// rows; raw membership and the complete ordered projection are evidence.
+    pub(super) fn imported(
+        &mut self,
+        o: &crate::application::project_board::ports::history::HistoryObject,
+    ) -> Result<(), BoardStoreError> {
+        use crate::application::project_board::ports::history::HistoryKind;
+        use crate::infrastructure::persistence::project_board::board_tree::Reader;
+        let (kind, bytes, size, raw) = match o.kind {
+            HistoryKind::Blob => ("blob", Some(o.bytes.as_slice()), None, None),
+            HistoryKind::Tree => {
+                let mut size = 0usize;
+                for row in &o.entries {
+                    size = size
+                        .checked_add(raw_entry_bytes(&row.mode, &row.name, &row.oid))
+                        .ok_or_else(|| unavailable("import tree overflow"))?;
+                }
+                (
+                    "tree",
+                    None,
+                    Some(i64::try_from(size).map_err(unavailable)?),
+                    Some(o.bytes.as_slice()),
+                )
+            }
+            _ => return Err(unavailable("commit in object table")),
+        };
+        type Held = (String, Option<Vec<u8>>, Option<i64>, Option<Vec<u8>>);
+        let held: Option<Held> = self.connection.query_row("SELECT kind,bytes,tree_size,(SELECT raw_tree FROM git_objects WHERE oid=objects.oid) FROM objects WHERE oid=?1", [&o.oid], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(unavailable)?;
+        if let Some((k, b, n, r)) = held {
+            let member: bool = self
+                .connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM git_objects WHERE oid=?1)",
+                    [&o.oid],
+                    |r| r.get(0),
+                )
+                .map_err(unavailable)?;
+            if member && k == kind && b.as_deref() == bytes && n == size && r.as_deref() == raw {
+            } else {
+                return Err(unavailable("import object collision"));
+            }
+            if kind == "tree" {
+                let rows = super::reader::structural(self.connection)
+                    .listing(&o.oid, 4 * 655360)
+                    .map_err(|_| unavailable("import collision rows"))?;
+                if rows.len() == o.entries.len()
+                    && rows
+                        .iter()
+                        .zip(&o.entries)
+                        .all(|(a, b)| a.mode == b.mode && a.raw == b.name && a.oid == b.oid)
+                {
+                } else {
+                    return Err(unavailable("import tree collision"));
+                }
+            }
+            return Ok(());
+        }
+        self.insert(
+            "INSERT INTO objects VALUES (?1,?2,?3,?4)",
+            params![o.oid, kind, bytes, size],
+        )?;
+        self.insert(
+            "INSERT INTO git_objects VALUES (?1,?2)",
+            params![o.oid, raw],
+        )?;
+        for (i, e) in o.entries.iter().enumerate() {
+            self.insert(
+                "INSERT INTO tree_entries VALUES (?1,?2,?3,?4,?5)",
+                params![
+                    o.oid,
+                    i64::try_from(i).map_err(unavailable)?,
+                    e.mode,
+                    e.name,
+                    e.oid
+                ],
+            )?;
+        }
+        Ok(())
+    }
     pub(super) fn mapped_tree(
         &mut self,
         files: &BTreeMap<String, String>,

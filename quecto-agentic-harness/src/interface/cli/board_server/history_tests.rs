@@ -66,3 +66,70 @@ fn export_dispatch_uses_only_the_injected_export_builder() {
     assert!(err.contains("injected offline export graph"));
     assert!(out.is_empty());
 }
+
+#[test]
+fn import_parser_help_and_injected_graph_are_complete_and_allowlisted() {
+    let args: Vec<String> = [
+        "--repo",
+        "/scratch/source",
+        "--board-id",
+        "0123456789abcdef",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    let e = parse_import(&args).unwrap();
+    assert_eq!(e.repo, PathBuf::from("/scratch/source"));
+    assert_eq!(e.board.as_str(), "0123456789abcdef");
+    assert_eq!(e.remote, "origin");
+    for extra in [
+        vec!["--dry-run"],
+        vec!["--to-branch", "rollback"],
+        vec!["--format", "3"],
+        vec!["--remote", "-unsafe"],
+        vec!["--repo", "again"],
+    ] {
+        let mut bad = args.clone();
+        bad.extend(extra.into_iter().map(str::to_owned));
+        assert!(parse_import(&bad).is_err());
+    }
+    for id in ["../escape", "0123456789abcdeg", "0123456789abcdef0", ""] {
+        let mut bad = args.clone();
+        bad[3] = id.into();
+        assert!(parse_import(&bad).is_err());
+    }
+    let (mut out, mut err) = (String::new(), String::new());
+    assert_eq!(
+        run_import(
+            &CliContext::default(),
+            &["--help".into()],
+            &mut out,
+            &mut err
+        ),
+        0
+    );
+    assert!(
+        out.contains("board-server import --repo <source> --board-id <16-hex> [--remote <name>]")
+    );
+    assert!(err.is_empty());
+    fn build(
+        e: ImportCliEnvironment,
+    ) -> Result<crate::application::project_board::use_cases::ImportBoardHistory, String> {
+        assert_eq!(e.repo, PathBuf::from("/scratch/source"));
+        assert_eq!(e.remote, "origin");
+        Err("injected complete import graph".into())
+    }
+    let ctx = CliContext {
+        board_history_import: Some(build),
+        ..Default::default()
+    };
+    let mut command = vec!["import".into()];
+    command.extend(args);
+    out.clear();
+    assert_eq!(
+        super::super::cmd_board_server(&ctx, &command, &mut out, &mut err),
+        1
+    );
+    assert!(err.contains("injected complete import graph"));
+    assert!(out.is_empty());
+}

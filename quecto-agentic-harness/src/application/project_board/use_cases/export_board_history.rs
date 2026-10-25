@@ -125,11 +125,13 @@ pub(super) fn export(
     expected: Option<&str>,
 ) -> HistoryResult<HistoryExportReport> {
     let frontier = snapshot.frontier()?;
-    if snapshot.algorithm()?.is_none() {
-    } else {
-        return Err(HistoryError::Unsupported(
-            "imported provenance requires B".into(),
-        ));
+    if let Some(original) = snapshot.algorithm()? {
+        if sink.algorithm()? == Some(original) {
+        } else {
+            return Err(HistoryError::Unsupported(
+                "original/destination object format mismatch".into(),
+            ));
+        }
     }
     let mut traversal = Traversal {
         view: snapshot,
@@ -214,3 +216,7 @@ pub(super) fn export(
         git_head,
     })
 }
+
+#[cfg(test)]
+#[path = "export_board_history_tests.rs"]
+mod tests;

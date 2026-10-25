@@ -130,3 +130,88 @@ pub fn run(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut 
 #[cfg(test)]
 #[path = "history_tests.rs"]
 mod tests;
+
+pub struct ImportCliEnvironment {
+    pub repo: PathBuf,
+    pub board: BoardId,
+    pub remote: String,
+}
+pub type BoardHistoryImportBuilder =
+    fn(
+        ImportCliEnvironment,
+    ) -> Result<crate::application::project_board::use_cases::ImportBoardHistory, String>;
+pub const IMPORT_USAGE: &str = "usage: quecto board-server import --repo <source> --board-id <16-hex> [--remote <name>]. Offline complete local linear history only; remote is provenance, never fetched. Import requires an empty destination. All originals are verified by full dry export before atomic commit.";
+fn parse_import(args: &[String]) -> Result<ImportCliEnvironment, String> {
+    let mut values = BTreeMap::new();
+    let mut pairs = args.chunks_exact(2);
+    for pair in &mut pairs {
+        let (key, value) = (pair[0].as_str(), pair[1].as_str());
+        if ["--repo", "--board-id", "--remote"].contains(&key)
+            && value
+                .as_bytes()
+                .first()
+                .is_some_and(|b| (1..=44).contains(b) || (46..=255).contains(b))
+            && values.insert(key, value).is_none()
+        {
+        } else {
+            return Err(format!("invalid or duplicate import option {key}"));
+        }
+    }
+    if pairs.remainder().is_empty() {
+    } else {
+        return Err("missing import option value".into());
+    }
+    let board = BoardId::of_hex(values.get("--board-id").ok_or("missing --board-id")?)
+        .ok_or("invalid --board-id")?;
+    let repo = PathBuf::from(*values.get("--repo").ok_or("missing --repo")?);
+    let remote = values.get("--remote").copied().unwrap_or("origin");
+    if (1..=200).contains(&remote.len())
+        && remote
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        && remote
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_alphanumeric())
+    {
+    } else {
+        return Err("invalid --remote".into());
+    }
+    Ok(ImportCliEnvironment {
+        repo,
+        board,
+        remote: remote.into(),
+    })
+}
+pub fn run_import(
+    ctx: &CliContext,
+    args: &[String],
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
+    if matches!(args, [help] if ["--help","-h"].contains(&help.as_str())) {
+        stdout.push_str(IMPORT_USAGE);
+        stdout.push('\n');
+        return 0;
+    }
+    let result = (|| -> Result<serde_json::Value, String> {
+        let environment = parse_import(args)?;
+        let builder = ctx
+            .board_history_import
+            .ok_or("import history is not composed")?;
+        let report = builder(environment)?.execute().map_err(|e| e.to_string())?;
+        Ok(
+            serde_json::json!({"revisions":report.revisions,"head":report.head.0,"source_head":report.source_head}),
+        )
+    })();
+    match result {
+        Ok(report) => {
+            stdout.push_str(&format!("{report}\n"));
+            0
+        }
+        Err(why) => {
+            stderr.push_str(&format!("board-server: {why}\n{IMPORT_USAGE}\n"));
+            1
+        }
+    }
+}

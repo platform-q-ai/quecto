@@ -17,15 +17,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Corpus {
-    pub algorithm: HistoryAlgorithm,
-    pub source_ref: String,
-    pub source_remote: String,
-    pub source_head: String,
-    pub revisions: Vec<HistoryRevision>,
-    pub objects: Vec<HistoryObject>,
-}
+pub type Corpus = LinearHistory;
 pub const BOARD: &str = "refs/heads/quecto/board";
 pub const TARGET: &str = "refs/heads/quecto/rollback";
 pub fn writer() -> Identity {
@@ -61,6 +53,7 @@ pub fn git(repo: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
+        // SAFETY: pre_exec runs only async-signal-safe setrlimit in the forked child.
         unsafe {
             command.pre_exec(|| {
                 let limit = libc::rlimit {
@@ -662,4 +655,53 @@ impl Fixture {
     {
         quecto::infrastructure::persistence::sqlite::project_board::history::SqliteBoardHistoryStore::new(self.database.clone(), writer(), BoardId::of_hex("0123456789abcdef").unwrap())
     }
+}
+
+impl Fixture {
+    pub fn current_git_snapshot(&self) -> BoardSnapshot {
+        let clone = self.directory.path().join("writer");
+        let vars: Vec<(OsString, OsString)> = vec![
+            ("PATH".into(), std::env::var_os("PATH").unwrap()),
+            ("HOME".into(), self.directory.path().into()),
+            ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
+            ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+        ];
+        let store = GitBoardStore::new(
+            Git::new(&clone, GitEnvironment::allowlisted(vars), writer()).unwrap(),
+            "origin",
+        )
+        .unwrap();
+        store.read().unwrap()
+    }
+    pub fn b_handles(
+        &self,
+    ) -> quecto::composition::bootstrap::project_board_history::BoardHistoryImportHandles {
+        import_handles(
+            &self.repo,
+            &self.database,
+            &self.destination,
+            BoardId::of_hex("0123456789abcdef").unwrap(),
+        )
+    }
+}
+pub fn import_handles(
+    source: &Path,
+    database: &Path,
+    destination: &Path,
+    board: BoardId,
+) -> quecto::composition::bootstrap::project_board_history::BoardHistoryImportHandles {
+    use quecto::infrastructure::persistence::{
+        project_board::history::{GitBoardHistorySink, GitBoardHistorySource},
+        sqlite::project_board::history::SqliteBoardHistoryStore,
+    };
+    use std::sync::Arc;
+    quecto::composition::bootstrap::project_board_history::build_board_history_import_from_ports(
+        Arc::new(GitBoardHistorySource::new(source.into(), "origin".into())),
+        Arc::new(SqliteBoardHistoryStore::new(
+            database.into(),
+            writer(),
+            board,
+        )),
+        Arc::new(GitBoardHistorySink::new(destination.into(), TARGET.into())),
+    )
 }
