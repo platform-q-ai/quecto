@@ -1,4 +1,7 @@
 use super::*;
+fn base() -> &'static std::path::Path {
+    std::path::Path::new("/scratch/base")
+}
 fn args() -> Vec<String> {
     [
         "--repo",
@@ -17,7 +20,7 @@ fn args() -> Vec<String> {
 }
 #[test]
 fn export_parser_is_allowlisted_and_help_needs_no_builder() {
-    let (environment, dry) = parse(&args()).unwrap();
+    let (environment, dry) = parse(&args(), base()).unwrap();
     assert_eq!(environment.repo, PathBuf::from("/scratch/destination"));
     assert_eq!(environment.board.as_str(), "0123456789abcdef");
     assert_eq!(environment.target, "refs/heads/rollback");
@@ -30,7 +33,7 @@ fn export_parser_is_allowlisted_and_help_needs_no_builder() {
     ] {
         let mut command = args();
         command.extend(extra.into_iter().map(str::to_owned));
-        assert!(parse(&command).is_err());
+        assert!(parse(&command, base()).is_err());
     }
     let (mut out, mut err) = (String::new(), String::new());
     assert_eq!(
@@ -78,7 +81,7 @@ fn import_parser_help_and_injected_graph_are_complete_and_allowlisted() {
     .into_iter()
     .map(str::to_owned)
     .collect();
-    let e = parse_import(&args).unwrap();
+    let e = parse_import(&args, base()).unwrap();
     assert_eq!(e.repo, PathBuf::from("/scratch/source"));
     assert_eq!(e.board.as_str(), "0123456789abcdef");
     assert_eq!(e.remote, "origin");
@@ -91,12 +94,12 @@ fn import_parser_help_and_injected_graph_are_complete_and_allowlisted() {
     ] {
         let mut bad = args.clone();
         bad.extend(extra.into_iter().map(str::to_owned));
-        assert!(parse_import(&bad).is_err());
+        assert!(parse_import(&bad, base()).is_err());
     }
     for id in ["../escape", "0123456789abcdeg", "0123456789abcdef0", ""] {
         let mut bad = args.clone();
         bad[3] = id.into();
-        assert!(parse_import(&bad).is_err());
+        assert!(parse_import(&bad, base()).is_err());
     }
     let (mut out, mut err) = (String::new(), String::new());
     assert_eq!(
@@ -108,9 +111,9 @@ fn import_parser_help_and_injected_graph_are_complete_and_allowlisted() {
         ),
         0
     );
-    assert!(
-        out.contains("board-server import --repo <source> --board-id <16-hex> [--remote <name>]")
-    );
+    assert!(out.contains(
+        "board-server import --repo <source> --board-id <16-hex> [--remote <name>] [--state <dir>]"
+    ));
     assert!(err.is_empty());
     fn build(
         e: ImportCliEnvironment,
@@ -132,4 +135,37 @@ fn import_parser_help_and_injected_graph_are_complete_and_allowlisted() {
     );
     assert!(err.contains("injected complete import graph"));
     assert!(out.is_empty());
+}
+
+/// #2741: export and import take the server's `--state` (absolute), and
+/// carry the base directory the server's default state is under.
+#[test]
+fn export_and_import_take_the_servers_state_directory() {
+    let (export, _) = parse(&args(), base()).unwrap();
+    assert_eq!((export.base_dir.as_path(), export.state), (base(), None));
+    let import: Vec<String> = [
+        "--repo",
+        "/scratch/source",
+        "--board-id",
+        "0123456789abcdef",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    assert_eq!(parse_import(&import, base()).unwrap().state, None);
+    for state in ["/scratch/state", "relative/state", ""] {
+        let given = ["--state".to_owned(), state.to_owned()];
+        let mut command = args();
+        command.extend(given.clone());
+        let mut imported = import.clone();
+        imported.extend(given);
+        let (export, import) = (parse(&command, base()), parse_import(&imported, base()));
+        match state {
+            "/scratch/state" => {
+                assert_eq!(export.unwrap().0.state, Some(PathBuf::from(state)));
+                assert_eq!(import.unwrap().state, Some(PathBuf::from(state)));
+            }
+            _ => assert!(export.is_err() && import.is_err(), "{state:?} refused"),
+        }
+    }
 }

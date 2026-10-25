@@ -260,3 +260,74 @@ fn done_without_a_run_has_its_pull_requests_read_before_the_write() {
     assert_eq!(host.asked(), vec![7], "read before the write");
     assert_eq!(stated.state(7).unwrap(), PullRequestState::Merged);
 }
+
+/// #2741: one resolver names the board's file, in the server's state
+/// directory keyed by the board id; `--state` replaces that directory.
+#[test]
+fn one_resolver_names_the_board_file() {
+    use crate::domain::project_board::value_objects::telemetry::BoardId;
+    let board = BoardId::of_hex("0123456789abcdef").unwrap();
+    let base = Path::new("/scratch/base");
+    assert_eq!(
+        board_database(base, None, &board),
+        base.join("board-server/0123456789abcdef/board.sqlite3")
+    );
+    assert_eq!(
+        board_database(base, Some(Path::new("/scratch/state")), &board),
+        Path::new("/scratch/state/board.sqlite3")
+    );
+    assert_eq!(
+        board_state_dir(base, None, &board).join(BOARD_FILE),
+        board_database(base, None, &board)
+    );
+}
+
+/// #2741: import writes the board where serve serves it, and export reads
+/// it from there: one board file for one board.
+#[test]
+fn serve_import_and_export_use_one_board_file() {
+    use crate::composition::bootstrap::project_board_history::{
+        build_history_cli, build_history_import_cli,
+    };
+    use crate::interface::cli::board_server::history::{
+        HistoryCliEnvironment, ImportCliEnvironment,
+    };
+    let (dir, work) = seeded();
+    let base = dir.path().join("base");
+    let board = {
+        let handles = build_board_server(&environment(&dir, &work, "origin")).unwrap();
+        handles.serve.board().clone()
+    };
+    let database = board_database(&base, None, &board);
+    let imported = build_history_import_cli(ImportCliEnvironment {
+        repo: work.clone(),
+        board: board.clone(),
+        remote: "origin".into(),
+        base_dir: base.clone(),
+        state: None,
+    })
+    .unwrap()
+    .execute()
+    .unwrap();
+    assert!(imported.revisions > 0, "the seeded board has history");
+    assert!(database.is_file(), "import wrote {}", database.display());
+    let handles = build_board_server(&environment(&dir, &work, "origin")).unwrap();
+    let routes = BoardRoutes::new(handles.serve, handles.access, handles.operations);
+    let (status, body) = get(&routes, "/v1/status");
+    assert_eq!(status, 200, "{body}");
+    assert_ne!(body["head"], Value::Null, "serve reads the imported board");
+    drop(routes);
+    let exported = build_history_cli(HistoryCliEnvironment {
+        repo: work.clone(),
+        board,
+        target: "refs/heads/rollback".into(),
+        base_dir: base,
+        state: None,
+    })
+    .unwrap();
+    let report = exported
+        .export
+        .execute(true, exported.expected.as_deref())
+        .unwrap();
+    assert_eq!(report.revisions, imported.revisions, "export reads it too");
+}
