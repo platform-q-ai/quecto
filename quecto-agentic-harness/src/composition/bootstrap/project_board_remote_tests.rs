@@ -692,3 +692,6 @@ impl SendRead for crate::infrastructure::http::board_service::client::BoardServi
 
 #[path = "project_board_remote_clock_tests.rs"]
 mod clock;
+
+#[path = "project_board_remote_runs_tests.rs"]
+mod runs;

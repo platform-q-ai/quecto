@@ -64,12 +64,17 @@ fn a_reply_is_an_answer_or_a_refusal_by_its_code() {
     );
 }
 
-/// A start is refused before anything is sent: no server starts runs yet.
+/// B8: a start is a write like any other, sent with its write id and
+/// committer, and with what is sent beside it (a start's undo).
 #[test]
-fn a_start_is_refused_unsent() {
+fn a_start_is_sent_with_what_goes_beside_it() {
     let client = endpoint_of("unix:///nonexistent/board.sock", None).unwrap();
     let board = BoardId::of_hex("0123456789abcdef").unwrap();
-    let remote = RemoteBoardOperations::new(vec![client], board, None);
+    let ada = Identity {
+        name: "Ada".into(),
+        email: "ada@example.com".into(),
+    };
+    let remote = RemoteBoardOperations::new(vec![client], board, Some(ada));
     let value = json!({"op": "start", "task": "a", "plan_version": 1});
     let policy = crate::domain::project_board::entities::task_parts::EntryPolicy::Sectioned;
     let request = crate::interface::tools::project_board::request::parse(&value, policy).unwrap();
@@ -78,11 +83,13 @@ fn a_start_is_refused_unsent() {
         text: &value.to_string(),
         front_end: crate::domain::project_board::value_objects::telemetry::FrontEnd::Tool,
     };
-    let refused = remote.execute(read, ListSummaries::Omitted, OpNoting::Unnoted);
-    assert_eq!(
-        refused.result,
-        Err(ProjectBoardError::Refused(NO_START.into()))
-    );
+    let undo = json!({"run": 1, "from": "ready", "reason": "no runtime"});
+    let beside = Map::from_iter([("undo".to_string(), undo.clone())]);
+    let body = remote.body(read, false, false, beside).unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!((&body["request"], &body["undo"]), (&value, &undo));
+    assert!(body["write_id"].as_str().is_some(), "{body}");
+    assert_eq!(body["committer"]["name"], json!("Ada"));
 }
 
 /// B7 round 3: a server that accepts and never replies fails a read once

@@ -3,11 +3,18 @@
 //! git is asked only the board's id when not given, and a write's committer.
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::project_board::{BoardLocation, board_committer, store_reason, write_refusal};
+use super::project_board::{
+    BoardLocation, board_committer, kept_reports, store_reason, write_refusal,
+};
+use super::project_board_remote_runs::{RemoteRuns, RunSwarms};
+use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness, StartedRuns};
+use crate::application::project_board::use_cases::LaunchBegunRun;
 use crate::infrastructure::http::board_remote::{RemoteBoardOperations, endpoint_of};
+use crate::infrastructure::http::board_remote_runs::RemoteBoardRuns;
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
 use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
 use crate::interface::cli::controllers::board::{
@@ -52,7 +59,28 @@ pub fn remote_handles(
         Some(board) => board.clone(),
         None => located(environment, vars)?,
     };
-    let operations = RemoteBoardOperations::new(vec![client], board.clone(), committer);
+    let remote = Arc::new(RemoteBoardOperations::new(
+        vec![client],
+        board.clone(),
+        committer,
+    ));
+    // A start is begun there and launched here, undone there on failure;
+    // an end carries what this session's swarms saw of its run (B8).
+    let swarms = environment.launcher.clone();
+    let launch = LaunchBegunRun::new(
+        Arc::new(RemoteBoardRuns(Arc::clone(&remote))),
+        swarms
+            .clone()
+            .map(|swarms| swarms as Arc<dyn CoordinatorLaunch>),
+        environment.cancelled.clone(),
+    );
+    let liveness = swarms.clone().map(|swarms| swarms as Arc<dyn RunLiveness>);
+    let swarms = RunSwarms {
+        started: swarms.map(|swarms| swarms as Arc<dyn StartedRuns>),
+        liveness: liveness.clone(),
+        reports: kept_reports(environment),
+    };
+    let operations = RemoteRuns::new(remote, launch.seeing(liveness), swarms);
     Ok(ProjectBoardHandles {
         operations: Box::new(operations),
         board: Some(board),

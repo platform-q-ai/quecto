@@ -76,7 +76,12 @@ impl BoardOperations for Nothing {
 }
 
 impl BoardOperationsOver for Over {
-    fn prepare(&self, _: Option<&BoardRequest>, _: &dyn ProjectBoardStore) -> OperationsOver {
+    fn prepare(
+        &self,
+        _: Option<&BoardRequest>,
+        _: &crate::application::project_board::ports::ServedRun,
+        _: &dyn ProjectBoardStore,
+    ) -> OperationsOver {
         self.prepared.fetch_add(1, Ordering::SeqCst);
         let refused = self.refused;
         Box::new(move |_| match refused {

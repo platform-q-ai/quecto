@@ -328,6 +328,9 @@ mod find_paths;
 mod composition_exit_readiness;
 #[path = "contracts/coordinator_launch.rs"]
 mod coordinator_launch;
+// A start across the wire undone where it was begun (#2705 B8).
+#[path = "contracts/begun_starts.rs"]
+mod begun_starts;
 #[path = "contracts/delegated_agent_registry.rs"]
 mod delegated_agent_registry;
 #[path = "contracts/device_code_flow.rs"]

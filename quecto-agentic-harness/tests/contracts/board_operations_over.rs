@@ -1,7 +1,7 @@
 //! Contract for [`BoardOperationsOver`] (epic #2705 B7), on the operations
 //! a board server assembles for each request: they run on the store they
 //! are handed, so every write of a request lands in that store alone, and
-//! they launch nothing (a start crosses the wire with B8).
+//! they launch nothing: a start is begun for its client to launch (B8).
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -11,15 +11,18 @@ use quecto::application::project_board::dto::{
 };
 use quecto::application::project_board::ports::{
     BoardOpStore, BoardOperations, BoardOperationsOver, ClockSync, OpWrite, ProjectBoardStore,
-    PullRequestState, PullRequestStates, PullRequestStatesError, ServeError, TimeSync, Transacted,
-    WriteId,
+    PullRequestState, PullRequestStates, PullRequestStatesError, ServeError, ServedRun, TimeSync,
+    Transacted, WriteId,
 };
+use quecto::application::project_board::run_facts::RunFacts;
+use quecto::application::project_board::start::StartUndo;
 use quecto::application::project_board::use_cases::ServeBoardOperation;
 use quecto::composition::bootstrap::board_server::ServedOperations;
 use quecto::domain::project_board::entities::claim::Identity;
 use quecto::domain::project_board::entities::task_parts::EntryPolicy;
 use quecto::domain::project_board::value_objects::telemetry::Client;
 use quecto::domain::project_board::value_objects::telemetry::FrontEnd;
+use quecto::domain::project_board::value_objects::vocabulary::TaskStatus;
 use quecto::infrastructure::persistence::project_board::remote_revisions::GitRemoteRevisions;
 use quecto::infrastructure::persistence::sqlite::project_board::SqliteBoardOps;
 use quecto::infrastructure::test_support::memory_board_store::MemoryBoardStore;
@@ -59,7 +62,7 @@ fn the_operations_run_on_the_store_they_are_handed() {
     for store in [&here, &there] {
         store.bootstrap().expect("a board");
     }
-    let over = served.prepare(None, &there.client());
+    let over = served.prepare(None, &ServedRun::Plain, &there.client());
     let operations = over(Arc::new(here.client())).expect("the operations are built");
     let value = json!({"op": "create", "task": "a", "title": "A", "status": "ready"});
     let request = parse(&value, EntryPolicy::SectionedOrLegacy).expect("a request");
@@ -313,4 +316,206 @@ fn a_replay_reads_no_host() {
         Err(ServeError::WriteIdReused)
     );
     assert_eq!(host.calls.load(Ordering::SeqCst), 1, "no read for a replay");
+}
+
+/// A host that answers every pull request merged.
+struct Merged;
+
+impl PullRequestStates for Merged {
+    fn state(&self, _: u64) -> Result<PullRequestState, PullRequestStatesError> {
+        Ok(PullRequestState::Merged)
+    }
+}
+
+/// `value` served as the CLI sends it, a write as Ada with a fresh id,
+/// with what its client sent for its run (B8).
+fn serve_run(operations: &ServeBoardOperation, value: Value, sent: &ServedRun) -> Value {
+    let text = value.to_string();
+    let request = parse(&value, EntryPolicy::SectionedOrLegacy).expect("a request");
+    let write = OpWrite {
+        write_id: WriteId::parse(&uuid::Uuid::new_v4().to_string()).expect("a UUID"),
+        request: format!("{text}\n{sent:?}"),
+        committer: Identity {
+            name: "Ada".into(),
+            email: "ada@example.com".into(),
+        },
+        principal: "local".into(),
+    };
+    let mut present = |board: &dyn BoardOperations| {
+        let mut call = BoardCall::start(None, FrontEnd::Cli, Client::Cli);
+        Ok(run_recorded_with(board, &text, ListSummaries::Omitted, &mut call).to_string())
+    };
+    match operations.execute_run(Some(&request), Some(&write), sent, &mut present) {
+        Ok(Transacted::Answered(answer)) => serde_json::from_str(&answer).expect("JSON"),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A board server's operations over a fresh SQLite board whose pull
+/// requests `host` reads, task `a` ready with plan 1 accepted, and run 1
+/// begun there: the server's half of a start (B8), which launches nothing
+/// and answers what its client launches with.
+fn begun(
+    remote: &Remote,
+    host: Arc<dyn PullRequestStates>,
+) -> (tempfile::TempDir, ServeBoardOperation) {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let identity = Identity {
+        name: "Server".into(),
+        email: "server@example.com".into(),
+    };
+    let ops = SqliteBoardOps::open(&dir.path().join("board.sqlite3"), identity).expect("a board");
+    let served = ServedOperations {
+        prs: Ok(host),
+        ..served(remote)
+    };
+    let operations =
+        ServeBoardOperation::new(Arc::new(ops) as Arc<dyn BoardOpStore>, Arc::new(served));
+    let plain = ServedRun::Plain;
+    for value in [
+        json!({"op": "bootstrap"}),
+        json!({"op": "create", "task": "a", "title": "A", "status": "ready"}),
+        json!({"op": "propose_plan", "task": "a", "approach": "Build it.",
+               "items": [{"id": "schema", "title": "Schema"}]}),
+    ] {
+        let answer = serve_run(&operations, value.clone(), &plain);
+        assert_eq!(answer["ok"], json!(true), "{value}: {answer}");
+    }
+    let shown = serve(
+        &operations,
+        json!({"op": "show", "task": "a", "version": 1}),
+    )
+    .expect("shown");
+    let accept = json!({"op": "accept_plan", "task": "a", "version": 1,
+                        "expected_updated": shown["plan"]["updated"], "expected_accepted": null});
+    assert_eq!(serve_run(&operations, accept, &plain)["ok"], json!(true));
+    let started = serve_run(
+        &operations,
+        json!({"op": "start", "task": "a", "plan_version": 1}),
+        &plain,
+    );
+    assert_eq!(started["ok"], json!(true), "{started}");
+    let launch = &started["launch"];
+    assert!(
+        launch["brief"]
+            .as_str()
+            .is_some_and(|brief| brief.contains("schema")),
+        "{started}"
+    );
+    assert_eq!(
+        (&started["from"], &started.get("coordinator")),
+        (&json!("ready"), &None)
+    );
+    (dir, operations)
+}
+
+fn facts(running: Option<&str>, ended: Value) -> ServedRun {
+    let wire = json!({"liveness": {"seen": running}, "reports": {"ended": ended, "left": null}});
+    ServedRun::Facts(serde_json::from_value::<RunFacts>(wire).expect("facts"))
+}
+
+/// Every plan item done, its evidence at `revision`.
+fn done_at(revision: &str) -> Value {
+    json!({"end": "succeeded", "observed_tokens": 10, "items": [{
+        "title": "schema: Schema", "state": "completed", "owner": "w-1",
+        "evidence": [{"artifact": "commit", "revision": revision}], "stood_before_death": null}]})
+}
+
+fn end(outcome: &str) -> Value {
+    json!({"op": "end_run", "task": "a", "run": 1, "outcome": outcome})
+}
+
+/// B8: an end on the server is judged on its client's facts: refused
+/// `run_live` while its coordinator ran there, `not_pushed` over evidence
+/// the remote (read before the write) lacks.
+#[test]
+fn an_end_is_judged_on_its_clients_facts() {
+    let remote = Remote::new();
+    let (_dir, operations) = begun(&remote, Arc::new(Merged));
+    let live = serve_run(
+        &operations,
+        end("failed"),
+        &facts(Some("7f3a"), Value::Null),
+    );
+    assert_eq!(
+        (&live["error"]["code"], &live["error"]["agent"]),
+        (&json!("run_live"), &json!("7f3a")),
+        "{live}"
+    );
+    let unpushed = done_at("def456def456def456def456def456def456def4");
+    let refused = serve_run(&operations, end("succeeded"), &facts(None, unpushed));
+    assert_eq!(
+        (&refused["error"]["code"], &refused["error"]["rule"]["code"]),
+        (&json!("rule"), &json!("not_pushed")),
+        "{refused}"
+    );
+}
+
+/// B8: a success recorded from its client's kept board moves the task to
+/// review, and a merged pull request linked there completes it.
+#[test]
+fn a_merged_pull_request_completes_a_task_its_run_moved_to_review() {
+    let remote = Remote::new();
+    let (_dir, operations) = begun(&remote, Arc::new(Merged));
+    let ended = serve_run(
+        &operations,
+        end("succeeded"),
+        &facts(None, done_at("notes.md")),
+    );
+    assert_eq!(
+        (&ended["ok"], &ended["status"]),
+        (&json!(true), &json!("review")),
+        "{ended}"
+    );
+    let linked = serve_run(
+        &operations,
+        json!({"op": "link_pr", "task": "a", "pr": 7}),
+        &ServedRun::Plain,
+    );
+    assert_eq!(
+        (
+            &linked["completion"]["done"],
+            &linked["completion"]["task"]["status"]
+        ),
+        (&json!(true), &json!("done")),
+        "{linked}"
+    );
+}
+
+/// B8: a start whose launch failed is undone on the server, folded back
+/// as failed, its task released, answered as a local undo's refusal.
+#[test]
+fn a_begun_start_is_undone_on_the_server() {
+    let remote = Remote::new();
+    let (_dir, operations) = begun(&remote, Arc::new(Merged));
+    let undo = ServedRun::Undo(StartUndo {
+        task: quecto::domain::project_board::value_objects::slug::Slug::parse("a").expect("a slug"),
+        plan_version: 1,
+        run: 1,
+        from: TaskStatus::Ready,
+        reason: "no container runtime".into(),
+    });
+    let start = json!({"op": "start", "task": "a", "plan_version": 1});
+    let undone = serve_run(&operations, start, &undo);
+    let error = &undone["error"];
+    assert_eq!(
+        (
+            &error["code"],
+            &error["run_state"],
+            &error["released"],
+            &error["reason"]
+        ),
+        (
+            &json!("launch_failed"),
+            &json!("folded"),
+            &json!(true),
+            &json!("no container runtime")
+        ),
+        "{undone}"
+    );
+    let shown = serve(&operations, json!({"op": "show", "task": "a"})).expect("shown");
+    assert_eq!(
+        (&shown["task"]["status"], &shown["runs"][0]["state"]),
+        (&json!("ready"), &json!("failed"))
+    );
 }

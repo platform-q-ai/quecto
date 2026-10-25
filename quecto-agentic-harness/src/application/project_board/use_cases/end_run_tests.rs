@@ -625,3 +625,6 @@ mod left;
 
 #[path = "end_run_moves_tests.rs"]
 mod moves;
+
+#[path = "end_run_facts_tests.rs"]
+mod facts;

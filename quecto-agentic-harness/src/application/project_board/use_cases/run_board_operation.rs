@@ -21,6 +21,7 @@ use crate::application::project_board::dto::{
 };
 use crate::application::project_board::operations::{
     BoardOperationParts, BoardOutcome, BoardRequest, Completion, ListFilter, ListSummaries,
+    Starting,
 };
 use crate::application::project_board::ports::{BoardBootstrap, BoardStoreError, ReferenceStatus};
 use crate::application::project_board::task_summary::{Listed, SkipReason, Summarized};
@@ -202,9 +203,13 @@ impl RunBoardOperation {
             BoardRequest::AcceptPlan(acceptance) => Ok(BoardOutcome::Accepted(Box::new(
                 self.parts.accept_plan.execute_noted(acceptance, facts)?,
             ))),
-            BoardRequest::Start(start) => Ok(BoardOutcome::Started(Box::new(
-                self.parts.start.execute_noted(start, facts)?,
-            ))),
+            BoardRequest::Start(start) => match &self.parts.start {
+                Starting::Launched(task) => Ok(BoardOutcome::Started(Box::new(
+                    task.execute_noted(start, facts)?,
+                ))),
+                // Red (B8): the server halves are not built yet.
+                Starting::Begun(_) | Starting::Undone(..) => Err(ProjectBoardError::NoLauncher),
+            },
             BoardRequest::DiscardPlan(discard) => Ok(BoardOutcome::Planned(
                 self.parts.discard_plan.execute_noted(discard, facts)?,
             )),

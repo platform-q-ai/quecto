@@ -10,7 +10,7 @@ use super::{
     PlanProposal, ProjectBoardError, RunEnd, ShownTask, TaskStart,
 };
 use crate::application::project_board::ports::{BoardHead, KeepCopy};
-use crate::application::project_board::start::StartedTask;
+use crate::application::project_board::start::{Begun, StartWrite, StartedTask};
 use crate::application::project_board::task_summary::Listed;
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::plan::Plan;
@@ -257,6 +257,8 @@ pub enum BoardOutcome {
     RunEnded(EndedRun),
     /// A task started and its coordinator launched (S4c).
     Started(Box<StartedTask>),
+    /// A task started on a board server, for its client to launch (B8).
+    Begun(Box<Begun<StartWrite>>),
     /// What a board server answered (epic #2705 B7), rendered there as
     /// this front end renders an answer.
     Served(ServedAnswer),

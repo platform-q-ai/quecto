@@ -19,15 +19,17 @@ pub fn carried_by(front_end: FrontEnd) -> bool {
     }
 }
 
-/// The steps an answered `outcome` carries: a started task's.
+/// The steps an answered `outcome` carries: a started task's, or one a
+/// board server began for its client to launch (B8).
 pub fn started(outcome: &BoardOutcome) -> Option<String> {
-    let BoardOutcome::Started(started) = outcome else {
-        return None;
-    };
-    Some(running(
-        &started.task.fields().id,
-        started.run.fields().number,
-    ))
+    match outcome {
+        BoardOutcome::Started(started) => Some(running(
+            &started.task.fields().id,
+            started.run.fields().number,
+        )),
+        BoardOutcome::Begun(begun) => Some(running(&begun.launch.task, begun.launch.run)),
+        _ => None,
+    }
 }
 
 /// The op whose answers carry steps.

@@ -286,7 +286,7 @@ impl BoardCall {
                 | BoardOutcome::Planned(_)
                 | BoardOutcome::Accepted(_)
                 | BoardOutcome::RunEnded(_) => None,
-                BoardOutcome::Started(_) | BoardOutcome::Served(_) => None,
+                BoardOutcome::Started(_) | BoardOutcome::Begun(_) | BoardOutcome::Served(_) => None,
             };
             record.outcome = OpOutcome::Ok;
             // A write's own commit is its use case's to note (#2663).

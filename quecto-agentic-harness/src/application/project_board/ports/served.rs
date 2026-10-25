@@ -2,7 +2,9 @@
 use std::sync::Arc;
 
 use super::{BoardHead, BoardOperations, BoardStoreError, ProjectBoardStore};
-use crate::application::project_board::dto::{BoardRequest, ProjectBoardError};
+use crate::application::project_board::dto::{BoardRequest, ProjectBoardError, RunAfterUndo};
+use crate::application::project_board::run_facts::RunFacts;
+use crate::application::project_board::start::{NotedFoldBack, StartUndo};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 
@@ -107,10 +109,39 @@ pub type OperationsOver = Box<
 
 /// Port: the board's operations, as composition assembles them (B7).
 pub trait BoardOperationsOver: Send + Sync {
-    /// The operations for `request`, its host reads made now, before any lock.
+    /// The operations for `request` and what its client sent for its
+    /// `run`, its host reads made now, before any lock.
     fn prepare(
         &self,
         request: Option<&BoardRequest>,
+        run: &ServedRun,
         reads: &dyn ProjectBoardStore,
     ) -> OperationsOver;
+}
+
+/// What a client sends beside a request for its run (B8): an end's
+/// facts, or the undo of a start it began and could not launch. Facts
+/// are trusted cooperatively: a client that lets an end through says what
+/// its own front end saw (its coordinator still running, its swarm's
+/// board), as the local board trusts its own front end; the server reads
+/// the remote and the host itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServedRun {
+    Plain,
+    Facts(RunFacts),
+    Undo(StartUndo),
+}
+
+/// Port: where a begun start is undone (B8): the board it was begun on,
+/// this machine's or a board server's.
+pub trait BegunStarts: Send + Sync {
+    /// `undo`'s run folded back as failed, as a swarm that reported
+    /// nothing, moving its task back as the start's undo does: where that
+    /// left the run (open when it could not be folded back), and the
+    /// fold-back for its record where it was made here, when `noting`.
+    fn undo(&self, undo: &StartUndo, noting: bool) -> (RunAfterUndo, Option<NotedFoldBack>);
+
+    /// The time since this board's clock was made, on a monotonic clock;
+    /// `None` where no clock is read (a board server's client).
+    fn elapsed(&self) -> Option<std::time::Duration>;
 }

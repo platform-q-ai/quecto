@@ -1,12 +1,16 @@
 //! What a start comes to (S4c): the task started, its run, and the
-//! coordinator launched for it; and what it saw, for its record.
+//! coordinator launched for it; and what it saw, for its record. A start
+//! across the wire (epic #2705 B8) is begun on the board, launched by its
+//! client, and undone on the board when its launch fails.
 use super::dto::{FoldBackFacts, FoldedBack, ProjectBoardError};
-use super::ports::LaunchedCoordinator;
+use super::ports::{CoordinatorRequest, LaunchedCoordinator};
 use super::swarm_brief::NotApplied;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::services::starts::Started;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::StartClaim;
+use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
 /// A task started: as written, with its run, the coordinator launched for
 /// it, the worker roles whose models were not applied, and whether the
@@ -54,4 +58,54 @@ pub struct NotedFoldBack {
     pub result: Result<FoldedBack, ProjectBoardError>,
     pub facts: FoldBackFacts,
     pub elapsed: std::time::Duration,
+}
+
+/// A start begun (epic #2705 B8): its task and run written, its
+/// coordinator not launched yet. `written` is the start as its board
+/// answered it: written on this machine ([`StartWrite`]), or a board
+/// server's answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Begun<W> {
+    /// What the coordinator is launched with: the task, the run, the brief.
+    pub launch: CoordinatorRequest,
+    /// The status the start took the task from: its undo puts a task
+    /// taken from review or blocked back there (#2705 T5).
+    pub from: TaskStatus,
+    pub claim: StartClaim,
+    /// What the begin saw, for the start's record: counts and kinds only.
+    pub noted: StartFacts,
+    pub written: W,
+}
+
+impl<W> Begun<W> {
+    /// The undo of this start, whose coordinator did not launch for `reason`.
+    pub fn undo(&self, reason: &str) -> StartUndo {
+        StartUndo {
+            task: self.launch.task.clone(),
+            plan_version: self.launch.plan_version,
+            run: self.launch.run,
+            from: self.from,
+            reason: reason.to_string(),
+        }
+    }
+}
+
+/// A start as this machine's board wrote it, and the worker roles whose
+/// models were not applied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartWrite {
+    pub started: Started,
+    pub not_applied: Vec<NotApplied>,
+}
+
+/// The undo of a begun start whose coordinator did not launch (B8): run
+/// `run` of `task`, begun on plan `plan_version` from status `from`,
+/// folded back as failed, and why the launch failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartUndo {
+    pub task: Slug,
+    pub plan_version: u32,
+    pub run: u32,
+    pub from: TaskStatus,
+    pub reason: String,
 }

@@ -17,18 +17,23 @@
 //! is written or traced.
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::SystemTime;
 
-use crate::application::project_board::operations::{BoardOperationParts, NoPullRequestHost};
-use crate::application::project_board::ports::{
-    BoardClock, BoardStoreError, CoordinatorLaunch, ProjectBoardStore, PullRequestStates,
-    PullRequestStatesError, RemoteRevisions, RunLiveness, StartedRuns, SwarmRunReports,
+use crate::application::project_board::operations::{
+    BoardOperationParts, NoPullRequestHost, Starting,
 };
+use crate::application::project_board::ports::{
+    BoardClock, BoardStoreError, BoardTextCells, CoordinatorLaunch, ProjectBoardStore,
+    PullRequestStates, PullRequestStatesError, RemoteRevisions, RunLiveness, StartedRuns,
+    SwarmRunReports,
+};
+use crate::application::project_board::start::StartUndo;
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
-    AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
-    CreateBoardTask, DiscardPlan, EditPlan, EndRun, FinishWithoutRun, ListLeftRuns, ProposePlan,
-    QueryBoard, RunBoardOperation, StartBoardTask, UpdateDraftTask,
+    AcceptPlan, BeginBoardRun, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside,
+    CompleteMergedTask, CreateBoardTask, DiscardPlan, EditPlan, EndRun, FinishWithoutRun,
+    ListLeftRuns, ProposePlan, QueryBoard, RunBoardOperation, StartBoardTask, UpdateDraftTask,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
@@ -54,6 +59,7 @@ use crate::infrastructure::tools::agents::coordinator_launch::KeptRunReports;
 use crate::interface::cli::controllers::board::{
     Access, BuildError, KnownLocation, ProjectBoardEnvironment, ProjectBoardHandles,
 };
+use crate::interface::tools::project_board::site::Launcher;
 
 /// # Errors
 /// A write with no committer configured, or one git would not record as
@@ -134,15 +140,8 @@ fn build_with_warnings(
     let built = |error: crate::application::project_board::dto::ProjectBoardError| {
         unavailable(error.to_string())
     };
-    let parts = operation_parts(
-        (store, undo_store),
-        clock,
-        listings,
-        prs,
-        revisions,
-        Some(environment),
-    )
-    .map_err(built)?;
+    let sight = RunSight::of_front_end(environment, revisions);
+    let parts = operation_parts((store, undo_store), clock, listings, prs, sight).map_err(built)?;
     Ok(ProjectBoardHandles {
         // The front ends reach the use case only through the port (#2705 B6).
         operations: Box::new(super::project_board_operations::LocalBoardOperations::new(
@@ -152,8 +151,57 @@ fn build_with_warnings(
     })
 }
 
-/// The board's operations over `store` (a server's too, B7), with the
-/// swarms, session and cancel of `environment` (none for a server).
+/// How the operations see and start runs (epic #2705 B8): with a front
+/// end's own swarms, or with what a board server's client sent.
+pub(super) struct RunSight {
+    pub revisions: Arc<dyn RemoteRevisions>,
+    pub liveness: Option<Arc<dyn RunLiveness>>,
+    pub reports: Option<Arc<dyn SwarmRunReports>>,
+    pub start: StartSide,
+}
+
+/// Where a start's coordinator is launched.
+pub(super) enum StartSide {
+    /// Here, by this front end's swarms (`None`: it may not), with its
+    /// call's cancel.
+    Launch(Option<Launcher>, Option<Arc<AtomicBool>>),
+    /// By a board server's client: the server begins the start, or undoes
+    /// one as its client asks.
+    Serve(Option<StartUndo>),
+}
+
+impl RunSight {
+    /// The sight of the front end in `environment`: its swarms, the boards
+    /// its session kept, and `revisions` for the remote.
+    pub(super) fn of_front_end(
+        environment: &ProjectBoardEnvironment,
+        revisions: Arc<dyn RemoteRevisions>,
+    ) -> Self {
+        let launcher = environment.launcher.clone();
+        Self {
+            revisions,
+            liveness: launcher
+                .clone()
+                .map(|swarms| swarms as Arc<dyn RunLiveness>),
+            reports: kept_reports(environment),
+            start: StartSide::Launch(launcher, environment.cancelled.clone()),
+        }
+    }
+}
+
+/// The boards `environment`'s session's teardown kept, that a run's end
+/// reads (none for a front end that keeps none).
+pub(super) fn kept_reports(
+    environment: &ProjectBoardEnvironment,
+) -> Option<Arc<dyn SwarmRunReports>> {
+    environment.swarm_session.as_deref().map(|session| {
+        let kept = super::super::environments::kept_swarm_boards();
+        Arc::new(KeptRunReports::new(kept, session)) as Arc<dyn SwarmRunReports>
+    })
+}
+
+/// The board's operations over `store` (a server's too, B7), seeing and
+/// starting runs as `sight` says.
 ///
 /// # Errors
 /// One of them could not be built.
@@ -162,12 +210,46 @@ pub(super) fn operation_parts(
     clock: Arc<dyn BoardClock>,
     listings: Arc<dyn crate::application::project_board::ports::BoardListings>,
     prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
-    revisions: Arc<dyn RemoteRevisions>,
-    environment: Option<&ProjectBoardEnvironment>,
+    sight: RunSight,
 ) -> Result<BoardOperationParts, crate::application::project_board::dto::ProjectBoardError> {
-    let launcher = environment.and_then(|environment| environment.launcher.clone());
-    let swarm_session = environment.and_then(|environment| environment.swarm_session.as_deref());
-    let cancelled = environment.and_then(|environment| environment.cancelled.clone());
+    let RunSight {
+        revisions,
+        liveness,
+        reports,
+        start,
+    } = sight;
+    let cells = || Arc::new(MarkdownTextCells) as Arc<dyn BoardTextCells>;
+    // A session's end ends the runs its starts left open (#2655).
+    let left_runs = match &start {
+        StartSide::Launch(Some(swarms), _) => Some(ListLeftRuns::new(
+            Arc::clone(&store),
+            Arc::clone(swarms) as Arc<dyn StartedRuns>,
+        )),
+        StartSide::Launch(None, _) | StartSide::Serve(_) => None,
+    };
+    let begin = || {
+        BeginBoardRun::new(
+            Arc::clone(&store),
+            Arc::clone(&undo_store),
+            Arc::clone(&clock),
+            cells(),
+        )
+    };
+    let start = match start {
+        StartSide::Launch(launcher, cancelled) => Starting::Launched(
+            StartBoardTask::new(
+                Arc::clone(&store),
+                Arc::clone(&undo_store),
+                Arc::clone(&clock),
+                cells(),
+                launcher.map(|swarms| swarms as Arc<dyn CoordinatorLaunch>),
+                cancelled,
+            )?
+            .seeing(liveness.clone()),
+        ),
+        StartSide::Serve(None) => Starting::Begun(begin()?),
+        StartSide::Serve(Some(undo)) => Starting::Undone(begin()?, undo),
+    };
     let done_without_run =
         FinishWithoutRun::reading(Arc::clone(&store), Arc::clone(&clock), prs.clone())?;
     let complete = CompleteMergedTask::reading(Arc::clone(&store), Arc::clone(&clock), prs)?;
@@ -191,37 +273,13 @@ pub(super) fn operation_parts(
         end_run: EndRun::new(
             Arc::clone(&store),
             Arc::clone(&clock),
-            Arc::new(MarkdownTextCells),
-            Arc::clone(&revisions),
-            launcher
-                .clone()
-                .map(|swarms| swarms as Arc<dyn RunLiveness>),
-            // A run's end reads the boards its session's teardown kept.
-            swarm_session.map(|session| {
-                Arc::new(KeptRunReports::new(
-                    super::super::environments::kept_swarm_boards(),
-                    session,
-                )) as Arc<dyn SwarmRunReports>
-            }),
+            cells(),
+            revisions,
+            liveness,
+            reports,
         )?,
-        start: StartBoardTask::new(
-            Arc::clone(&store),
-            undo_store,
-            Arc::clone(&clock),
-            Arc::new(MarkdownTextCells),
-            launcher
-                .clone()
-                .map(|swarms| swarms as Arc<dyn CoordinatorLaunch>),
-            cancelled,
-        )?
-        .seeing(
-            launcher
-                .clone()
-                .map(|swarms| swarms as Arc<dyn RunLiveness>),
-        ),
-        // A session's end ends the runs its starts left open (#2655).
-        left_runs: launcher
-            .map(|swarms| ListLeftRuns::new(Arc::clone(&store), swarms as Arc<dyn StartedRuns>)),
+        start,
+        left_runs,
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock))?,
         complete,
         done_without_run,

@@ -90,6 +90,7 @@ pub(in crate::interface::cli::board_server) fn operating(
         fn prepare(
             &self,
             _: Option<&crate::application::project_board::dto::BoardRequest>,
+            _: &crate::application::project_board::ports::ServedRun,
             _: &dyn ProjectBoardStore,
         ) -> crate::application::project_board::ports::OperationsOver {
             use crate::composition::bootstrap::project_board_operations::fixtures::{

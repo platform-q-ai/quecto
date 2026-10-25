@@ -22,8 +22,8 @@ use crate::domain::project_board::value_objects::vocabulary::{Effort, TaskStatus
 
 mod served;
 pub use served::{
-    BoardOpStore, BoardOperationsOver, OpWrite, OperationsOver, ServeError, ServedStatus,
-    ServerRole, Transacted, WriteId,
+    BegunStarts, BoardOpStore, BoardOperationsOver, OpWrite, OperationsOver, ServeError, ServedRun,
+    ServedStatus, ServerRole, Transacted, WriteId,
 };
 mod listen_address;
 pub use listen_address::ListenAddress;
@@ -718,11 +718,9 @@ pub trait CoordinatorLaunch: Send + Sync {
 /// answers are owned values and refusals the board's own typed errors: no
 /// store handle crosses. The local adapter runs every request on this
 /// machine's board; a board server's (B7) sends each request's text there
-/// and hands back the server's answer ([`BoardOutcome::Served`]). A start
-/// (its coordinator's launch) and [`Self::left_runs`] read this session's
-/// swarms, so they cross the wire only with B8. Blocking: the board's
-/// store, clock, host and server all block, so callers run it off the
-/// async workers.
+/// and hands back the server's answer ([`BoardOutcome::Served`]); a start
+/// is begun there and launched here, and an end sends what this session
+/// saw of its run (B8). Blocking: callers run it off the async workers.
 ///
 /// [`BoardOutcome::Served`]: super::dto::BoardOutcome::Served
 pub trait BoardOperations: Send + Sync {

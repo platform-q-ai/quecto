@@ -48,6 +48,10 @@ const FRONT_END_REACHES: &[&str] = &[
     "crate::application::project_board::use_cases",
     "crate::application::project_board::dto",
     "crate::application::project_board::telemetry::OpFacts",
+    // B8: what a client sends beside an end (its facts) and a start (its undo).
+    "crate::application::project_board::run_facts::RunFacts",
+    "crate::application::project_board::start::StartUndo",
+    "crate::domain::project_board::value_objects::vocabulary::TaskStatus",
     "crate::domain::project_board::entities::claim::Identity",
     "crate::domain::project_board::value_objects::telemetry",
     "crate::domain::shared::redaction",
@@ -195,6 +199,9 @@ const REMOTE: &[&str] = &[
     "src/infrastructure/http/board_remote.rs",
     "src/infrastructure/http/board_service/client.rs",
     "src/composition/bootstrap/project_board_remote.rs",
+    // B8: a start begun there and launched here, an end sent with its facts.
+    "src/infrastructure/http/board_remote_runs.rs",
+    "src/composition/bootstrap/project_board_remote_runs.rs",
 ];
 
 /// B7 acceptance: a remote client never reads the clock (the server's is

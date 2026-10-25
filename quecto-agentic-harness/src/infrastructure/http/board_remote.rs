@@ -2,15 +2,15 @@
 //! request's text to `POST /v1/boards/{id}/op`, its answer as the server
 //! rendered it ([`BoardOutcome::Served`]): no board decoded, no clock read.
 //! One endpoint until followers (B12).
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::board_service::client::{
     BearerToken, BoardServiceClient, ClientError, Endpoint, READ_REPLY, WRITE_REPLY,
 };
 use super::board_service::limits::Method;
 use crate::application::project_board::dto::{
-    BoardAnswered, BoardExecution, BoardOutcome, BoardRequest, ListSummaries, OpNoting,
-    ProjectBoardError, ReadRequest, RunEnd, ServedAnswer,
+    BoardAnswered, BoardExecution, BoardOutcome, ListSummaries, OpNoting, ProjectBoardError,
+    ReadRequest, RunEnd, ServedAnswer,
 };
 use crate::application::project_board::ports::{
     BoardClockError, BoardHead, BoardOperations, BoardStoreError, ListenAddress,
@@ -23,7 +23,6 @@ use crate::domain::project_board::value_objects::telemetry::BoardId;
 pub const ATTEMPTS: u64 = 3;
 /// The most a request pauses, in all, while its server answers busy.
 pub const BUSY_MS: u64 = 10_000;
-pub const NO_START: &str = "the board server can't start runs yet (B8)";
 pub const URL_SHAPE: &str = "a board server URL is unix:///<socket path> or \
                              http://<ip>:<port> on loopback or a Tailscale address";
 
@@ -70,17 +69,40 @@ impl RemoteBoardOperations {
         }
     }
 
+    /// [`BoardOperations::execute`], sending `beside` the request (B8: an
+    /// end's `facts`, a start's `undo`).
+    pub fn execute_with(
+        &self,
+        read: ReadRequest<'_>,
+        (summaries, noting): (ListSummaries, OpNoting),
+        beside: Map<String, Value>,
+    ) -> BoardExecution {
+        let noted = noting == OpNoting::Noted;
+        let body = self.body(read, summaries == ListSummaries::Wanted, noted, beside);
+        let replied = body.and_then(|body| self.sent(&body, read.request.writes()));
+        let (result, facts) = match replied.and_then(|(status, body)| answered(status, &body)) {
+            Ok((answer, facts)) => (Ok(answer), facts),
+            Err(error) => (Err(error), None),
+        };
+        let facts = noted.then(|| facts.unwrap_or_default());
+        BoardExecution { result, facts }
+    }
+
     /// The body; a write's with a fresh write id and its committer.
     fn body(
         &self,
         read: ReadRequest<'_>,
         wanted: bool,
         noted: bool,
+        beside: Map<String, Value>,
     ) -> Result<Vec<u8>, ProjectBoardError> {
         let request: Value = serde_json::from_str(read.text)
             .map_err(|error| refused(&format!("the request is not JSON: {error}")))?;
         let mut body = json!({"request": request, "front_end": read.front_end.as_str(),
                               "summary": wanted, "noted": noted});
+        body.as_object_mut()
+            .expect("a body is an object")
+            .extend(beside.into_iter().filter(|_| false));
         match (read.request.writes(), &self.committer) {
             (true, Some(committer)) => {
                 body["write_id"] = json!(uuid::Uuid::new_v4().to_string());
@@ -141,21 +163,11 @@ impl BoardOperations for RemoteBoardOperations {
         summaries: ListSummaries,
         noting: OpNoting,
     ) -> BoardExecution {
-        let noted = noting == OpNoting::Noted;
-        let body = match read.request {
-            BoardRequest::Start(_) => Err(ProjectBoardError::Refused(NO_START.into())),
-            _ => self.body(read, summaries == ListSummaries::Wanted, noted),
-        };
-        let replied = body.and_then(|body| self.sent(&body, read.request.writes()));
-        let (result, facts) = match replied.and_then(|(status, body)| answered(status, &body)) {
-            Ok((answer, facts)) => (Ok(answer), facts),
-            Err(error) => (Err(error), None),
-        };
-        let facts = noted.then(|| facts.unwrap_or_default());
-        BoardExecution { result, facts }
+        self.execute_with(read, (summaries, noting), Map::new())
     }
 
-    /// No start is served until B8, so none is left open.
+    /// This adapter starts nothing (its client's runs are B8's
+    /// `RemoteRuns`), so it leaves none open.
     fn left_runs(&self) -> Result<Vec<RunEnd>, ProjectBoardError> {
         Ok(vec![])
     }
@@ -213,7 +225,7 @@ fn answered(
 }
 
 /// `text` without control characters, cut to 512 characters.
-fn shown(text: &str) -> String {
+pub(super) fn shown(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).take(512).collect()
 }
 
