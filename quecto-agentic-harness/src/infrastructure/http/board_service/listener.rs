@@ -156,6 +156,9 @@ pub struct ConnectionLimits {
     pub per_token: usize,
     /// How often an idle stream sends its keep-alive.
     pub ping: Duration,
+    /// How long a request's head may take to arrive, which also ends an
+    /// idle keep-alive.
+    pub head: Duration,
 }
 
 impl ConnectionLimits {
@@ -168,6 +171,7 @@ impl ConnectionLimits {
         per_source: limits::MAX_UNPROVEN_PER_SOURCE,
         per_token: limits::MAX_CONNECTIONS_PER_TOKEN,
         ping: limits::STREAM_PING,
+        head: limits::READ_TIMEOUT,
     };
 }
 
@@ -369,7 +373,7 @@ where
         answer(Arc::clone(&shared), request, last)
     });
     let io = TokioIo::new(WriteDeadline::new(stream, bounds.write_timeout, heard));
-    let builder = limits::http1_builder();
+    let builder = limits::http1_builder(bounds.head);
     let connection = builder.serve_connection(io, service);
     let unproven_end = async move {
         tokio::select! {

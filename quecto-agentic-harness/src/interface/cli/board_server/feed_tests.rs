@@ -275,3 +275,50 @@ fn a_stream_opens_from_its_last_event_id_else_its_after_else_the_tip() {
         assert_eq!(body["code"], code);
     }
 }
+
+/// Review (#2756 L3): a limit of 21 digits or more is out of range, 400
+/// `limit` like any other, not a malformed query.
+#[test]
+fn a_limit_of_any_length_out_of_range_is_400_limit() {
+    let (routes, feed) = routes(3);
+    for refused in [
+        "after=0&limit=999999999999999999999",
+        "after=0&limit=00000000000000000000001000",
+    ] {
+        let (status, body) = revisions_at(&routes, refused);
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (400, Some("limit")),
+            "{refused}"
+        );
+    }
+    let (status, body) = revisions_at(&routes, "after=0&limit=00000000000000000000003");
+    assert_eq!(status, 200, "leading zeros are still a number: {body}");
+    assert_eq!(*feed.limits.lock().unwrap(), vec![3]);
+}
+
+/// Review (#2756 L2): over TCP a request the gate let through with no
+/// principal reaches neither feed route: 401 `token`.
+#[test]
+fn both_feed_routes_over_tcp_without_a_principal_are_401() {
+    let (routes, feed) = routes(3);
+    let tcp = |path: String, query: Option<&str>| ServiceRequest {
+        transport: Transport::Tcp,
+        ..request(&path, query, None)
+    };
+    let events = tcp(format!("/v1/boards/{BOARD}/events"), None);
+    let refused = routes
+        .stream(&events, Arc::new(|| {}))
+        .err()
+        .expect("refused");
+    let body: Value = serde_json::from_slice(&refused.body).unwrap();
+    assert_eq!(
+        (refused.status, body["code"].as_str()),
+        (401, Some("token"))
+    );
+    let revisions = tcp(format!("/v1/boards/{BOARD}/revisions"), Some("after=0"));
+    let reply = routes.answer(&revisions);
+    let body: Value = serde_json::from_slice(&reply.body).unwrap();
+    assert_eq!((reply.status, body["code"].as_str()), (401, Some("token")));
+    assert!(feed.limits.lock().unwrap().is_empty(), "nothing was read");
+}

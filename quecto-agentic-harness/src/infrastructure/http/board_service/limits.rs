@@ -128,12 +128,13 @@ pub fn admit(
     }
 }
 
-/// An HTTP/1.1 connection builder with the head limits and timeout set.
-pub fn http1_builder() -> http1::Builder {
+/// An HTTP/1.1 connection builder with the head limits set, and `head`
+/// for a head to arrive ([`READ_TIMEOUT`] in production).
+pub fn http1_builder(head: Duration) -> http1::Builder {
     let mut builder = http1::Builder::new();
     builder
         .timer(TokioTimer::new())
-        .header_read_timeout(READ_TIMEOUT)
+        .header_read_timeout(head)
         .max_headers(MAX_HEADERS)
         .max_buf_size(MAX_HEAD_BYTES)
         .keep_alive(true);

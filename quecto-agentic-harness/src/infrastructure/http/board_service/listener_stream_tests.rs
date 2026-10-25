@@ -33,6 +33,24 @@ fn read_for(stream: &mut impl Read, until: Duration) -> (String, bool) {
     (String::from_utf8_lossy(&seen).into(), false)
 }
 
+/// Reads what `stream` sends until its reply's head (and the start of its
+/// body) is in, it closes, or 2 s pass: the text, and whether it closed.
+fn read_head(stream: &mut impl Read) -> (String, bool) {
+    let began = Instant::now();
+    let mut seen = Vec::new();
+    let mut buf = [0u8; 4096];
+    while began.elapsed() < Duration::from_secs(2) && !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+        match stream.read(&mut buf) {
+            Ok(0) => return (String::from_utf8_lossy(&seen).into(), true),
+            Ok(read) => seen.extend_from_slice(&buf[..read]),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(_) => return (String::from_utf8_lossy(&seen).into(), true),
+        }
+    }
+    (String::from_utf8_lossy(&seen).into(), false)
+}
+
 fn unix_stream(socket: &std::path::Path, request: &[u8]) -> UnixStream {
     let mut stream = UnixStream::connect(socket).unwrap();
     stream
@@ -84,20 +102,52 @@ fn a_stream_lives_on_its_keepalives_and_ends_with_its_connection() {
     );
 }
 
-/// The 10 s head timeout, which ends an idle keep-alive, never ends a
-/// healthy stream: hyper reads no next head while a reply is sent.
+/// The head timeout (10 s in production, 500 ms here), which ends an idle
+/// keep-alive, never ends a healthy stream: hyper reads no next head while
+/// a reply is sent.
 #[test]
 fn a_stream_outlives_the_head_timeout() {
     let limits = ConnectionLimits {
         lifetime: Duration::from_secs(30),
-        ping: Duration::from_secs(1),
+        ping: Duration::from_millis(200),
+        head: Duration::from_millis(500),
         ..ConnectionLimits::PRODUCTION
     };
     let running = start_with(SERVER_UID, 0, limits);
     let mut stream = unix_stream(&running.socket, STREAM);
-    let (seen, closed) = read_for(&mut stream, Duration::from_secs(11));
-    assert!(!closed, "still open past 11 s: {seen}");
-    assert!(seen.matches(": ping").count() >= 9, "{seen}");
+    let (seen, closed) = read_for(&mut stream, Duration::from_millis(1_500));
+    assert!(!closed, "still open at three head timeouts: {seen}");
+    assert!(seen.matches(": ping").count() >= 5, "{seen}");
+}
+
+/// Review (#2756 M): a reader that goes gives back its stream's places at
+/// once, not at the next keep-alive: a token that drops both its streams
+/// opens a new one within a second.
+#[test]
+fn a_reader_that_goes_gives_its_places_back_at_once() {
+    let running = start_tcp_with(SERVER_UID, ConnectionLimits::PRODUCTION);
+    let address = running.tcp.unwrap();
+    let held: Vec<_> = (0..MAX_STREAMS_PER_TOKEN)
+        .map(|_| tcp_stream(address, "Bearer a"))
+        .collect();
+    for (_, seen) in &held {
+        assert!(seen.starts_with("HTTP/1.1 200"), "{seen}");
+    }
+    assert_eq!(running.handler.streams.load(Ordering::SeqCst), 2);
+    drop(held);
+    let began = Instant::now();
+    while running.handler.streams.load(Ordering::SeqCst) > 0
+        && began.elapsed() < Duration::from_secs(1)
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let (_again, seen) = tcp_stream(address, "Bearer a");
+    assert!(seen.starts_with("HTTP/1.1 200"), "reopened at once: {seen}");
+    assert!(
+        began.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        began.elapsed()
+    );
 }
 
 /// A reader that takes nothing never holds the server: its writes stall,
@@ -148,7 +198,7 @@ fn tcp_stream(address: std::net::SocketAddr, bearer: &str) -> (TcpStream, String
     let request =
         format!("GET /v1/stream HTTP/1.1\r\nHost: board\r\nAuthorization: {bearer}\r\n\r\n");
     stream.write_all(request.as_bytes()).unwrap();
-    let (seen, _) = read_for(&mut stream, Duration::from_millis(500));
+    let (seen, _) = read_head(&mut stream);
     (stream, seen)
 }
 
@@ -181,13 +231,13 @@ fn the_server_holds_at_most_32_streams() {
     let held: Vec<_> = (0..MAX_STREAMS)
         .map(|_| {
             let mut stream = unix_stream(&running.socket, STREAM);
-            let (seen, _) = read_for(&mut stream, Duration::from_millis(300));
+            let (seen, _) = read_head(&mut stream);
             assert!(seen.starts_with("HTTP/1.1 200"), "{seen}");
             stream
         })
         .collect();
     let mut refused = unix_stream(&running.socket, STREAM);
-    let (seen, _) = read_for(&mut refused, Duration::from_millis(500));
+    let (seen, _) = read_head(&mut refused);
     assert!(seen.starts_with("HTTP/1.1 503"), "{seen}");
     drop(held);
 }
