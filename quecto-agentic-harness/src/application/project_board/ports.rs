@@ -746,6 +746,5 @@ pub trait BoardOperations: Send + Sync {
     fn left_runs(&self) -> Result<Vec<RunEnd>, ProjectBoardError>;
 }
 
-pub mod history;
-
 pub mod backup;
+pub mod history;
