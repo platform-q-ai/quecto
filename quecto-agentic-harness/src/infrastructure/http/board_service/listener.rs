@@ -520,6 +520,10 @@ async fn admitted(conn: &Conn, request: Request<Incoming>) -> ServiceReply {
         Transport::Local => None,
     };
     let handler = &conn.handler;
+    // Past the token, every answer (a refusal too) needs the connection's
+    // place among its token's connections, taken once its body is read
+    // (or refused unread), so a busy refusal never races a late body.
+    let or_busy = |reply| placed(conn, principal.as_deref()).err().unwrap_or(reply);
     // hyper has parsed `Content-Length` (refusing one that is no number):
     // the body's exact size is the length it declared.
     let length = hyper::body::Body::size_hint(request.body()).exact();
@@ -528,23 +532,26 @@ async fn admitted(conn: &Conn, request: Request<Incoming>) -> ServiceReply {
         Ok(admitted) => admitted,
         // A method outside the allowlist: 405 naming what its path takes.
         Err(Refusal::Method) => {
-            return match handler.allowed(&path) {
+            return or_busy(match handler.allowed(&path) {
                 Some(allow) => ServiceReply {
                     allow: Some(allow),
                     ..error(405, "method", Refusal::Method.verdict().2)
                 },
                 None => error(404, "route", "no such route"),
-            };
+            });
         }
         Err(refusal) => {
             let (status, code, why) = refusal.verdict();
-            return error(status, code, why);
+            return or_busy(error(status, code, why));
         }
     };
     let body = match read_body(request.into_body(), admitted.body_bytes).await {
         Ok(body) => body,
-        Err(reply) => return reply,
+        Err(reply) => return or_busy(reply),
     };
+    if let Err(busy) = placed(conn, principal.as_deref()) {
+        return busy;
+    }
     let held = match principal
         .as_deref()
         .map(|principal| conn.answers.admit(principal))
@@ -596,29 +603,45 @@ async fn read_body(body: Incoming, declared: u64) -> Result<Vec<u8>, ServiceRepl
     }
 }
 
-/// A TCP request's principal (its connection leaves its source's queue
-/// and holds a place among its token's connections), or a refusal that
-/// ends the connection, before anything else is judged: the gate's own,
-/// or 503 `busy` when the token holds all its connections already.
+/// A TCP request's principal (its connection leaves its source's queue),
+/// or a refusal that ends the connection, before anything else is judged.
 fn gate(conn: &Conn, headers: &header::HeaderMap) -> Result<String, ServiceReply> {
-    let closing = |refusal| ServiceReply {
-        close: true,
-        ..refusal
-    };
-    let principal = conn
+    match conn
         .handler
         .authenticate_remote(authorization(headers).as_deref())
-        .map_err(closing)?;
-    match hold(conn, &principal) {
-        true => {
+    {
+        Ok(principal) => {
             drop(conn.pending.lock().map(|mut place| place.take()));
             Ok(principal)
         }
-        false => Err(closing(error(
-            503,
-            "busy",
-            "too many connections for this token: close one, or try again shortly",
-        ))),
+        Err(refusal) => Err(ServiceReply {
+            close: true,
+            ..refusal
+        }),
+    }
+}
+
+/// Room for a request of `principal`'s: a TCP one holds a place among its
+/// token's connections (the gate gave its principal); a Unix one needs
+/// none. With none left, 503 `busy`, ending the connection.
+fn placed(conn: &Conn, principal: Option<&str>) -> Result<(), ServiceReply> {
+    let held = match (conn.transport, principal) {
+        (Transport::Local, _) => true,
+        (Transport::Tcp, Some(principal)) => hold(conn, principal),
+        // The gate gives every TCP request its principal; were one
+        // without, it would hold nothing, so it is refused.
+        (Transport::Tcp, None) => false,
+    };
+    match held {
+        true => Ok(()),
+        false => Err(ServiceReply {
+            close: true,
+            ..error(
+                503,
+                "busy",
+                "too many connections for this token: close one, or try again shortly",
+            )
+        }),
     }
 }
 
@@ -633,6 +656,10 @@ fn hold(conn: &Conn, principal: &str) -> bool {
         Some(_) | None => match conn.connections.take(principal) {
             Some(place) => {
                 *held = Some((principal.to_owned(), place));
+                debug_assert!(
+                    held.as_ref().is_some_and(|(holder, _)| holder == principal),
+                    "the place taken is held for its principal"
+                );
                 true
             }
             None => false,
