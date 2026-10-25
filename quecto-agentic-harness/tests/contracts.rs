@@ -488,3 +488,6 @@ mod project_board_fence;
 #[cfg(feature = "test-support")]
 #[path = "contracts/project_board_fence_cli.rs"]
 mod project_board_fence_cli;
+
+#[path = "contracts/project_board_fence_remediation.rs"]
+mod project_board_fence_remediation;
