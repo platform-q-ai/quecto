@@ -14,7 +14,8 @@ fn the_kernel_is_asked_without_failing() {
 mod linux {
     use super::*;
 
-    const NO_DAEMON: &str = "no time daemon keeps it in step";
+    const NO_DAEMON: &str = "no time daemon has told it the clock is in step \
+         (systemd-timesyncd, or chrony with rtcsync, does)";
 
     fn unsynced(ret: libc::c_int, status: libc::c_int, errno: i32) -> String {
         match classified(ret, status, errno) {

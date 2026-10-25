@@ -115,3 +115,49 @@ fn a_synchronised_server_takes_a_burst_of_changes_to_one_task() {
     // One reading of the host per op (the create and each change).
     assert_eq!(said.1.load(Ordering::SeqCst) - asked, 121);
 }
+
+/// The host's word, synchronised for as many asks as are left, then not.
+struct Asks(std::sync::atomic::AtomicIsize);
+
+impl TimeSync for Asks {
+    fn sync(&self) -> ClockSync {
+        match self.0.fetch_sub(1, Ordering::SeqCst) > 0 {
+            true => ClockSync::Synced,
+            false => ClockSync::Unsynced(UNSYNCED.into()),
+        }
+    }
+}
+
+/// One op is judged on one word from the host, however often it reads the
+/// time: a renewal that is due (here, of a task nobody holds) reads the
+/// time to judge it, then again to write it. The host says synchronised
+/// once, then not; the renewal is answered by the board's own rule, never
+/// refused `clock_unsynced` halfway through.
+#[test]
+fn an_op_that_reads_the_time_twice_holds_one_word_from_the_host() {
+    let asks = Arc::new(Asks(std::sync::atomic::AtomicIsize::new(isize::MAX)));
+    let served = served_with(false, Arc::clone(&asks) as Arc<dyn TimeSync>);
+    let raw = BoardServiceClient::unix(&served.socket);
+    let (status, created) = posted(&raw, &served.board, &write("a"));
+    assert_eq!(
+        (status, &created["answer"]["ok"]),
+        (200, &json!(true)),
+        "{created}"
+    );
+    asks.0.store(1, Ordering::SeqCst);
+    let renew = json!({"request": {"op": "renew", "task": "a"}, "front_end": "cli",
+                       "write_id": "0b7a1c0d-e000-4000-8000-000000000002",
+                       "committer": {"name": "Ada", "email": "ada@example.com"}});
+    let (status, renewed) = posted(&raw, &served.board, &renew);
+    assert_eq!(status, 200, "one word for the whole op: {renewed}");
+    assert_eq!(
+        renewed["answer"]["error"]["code"],
+        json!("rule"),
+        "{renewed}"
+    );
+    // The next op asks again, and is refused.
+    let mut other = write("b");
+    other["write_id"] = json!("0b7a1c0d-e000-4000-8000-000000000003");
+    let again = posted(&raw, &served.board, &other).1;
+    assert_eq!(again["code"], json!("clock_unsynced"), "{again}");
+}
