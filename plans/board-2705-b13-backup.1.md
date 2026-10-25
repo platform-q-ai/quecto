@@ -5,10 +5,12 @@
 |---|---|
 | Task | board-2705-b13-backup |
 | Version | 1 |
-| State | draft |
+| State | accepted |
 | Proposed by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted by | shane-pocket (`shane@platformq.co.uk`) |
+| Accepted at | 2026-10-25T07:55:03Z |
 | Created | 2026-10-25T07:54:00Z |
-| Updated | 2026-10-25T07:54:00Z |
+| Updated | 2026-10-25T07:55:03Z |
 
 ## Approach
 Complete independently mergeable backup PR1 from then-current origin/master. This overall task uses SEPARATE fresh RED and delivery swarms; no phase rollover. Refresh master and preserve T4/T5/operator B7. No fence dependency, types, graph or fixture. Open this PR before fence.
