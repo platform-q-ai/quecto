@@ -8,7 +8,9 @@ use std::sync::PoisonError;
 use serde_json::json;
 
 use crate::application::project_board::dto::ProjectBoardError;
-use crate::application::project_board::ports::{BoardStoreError, ServeError, TokenError};
+use crate::application::project_board::ports::{
+    BoardClockError, BoardStoreError, ServeError, TokenError,
+};
 use crate::application::project_board::use_cases::{
     BoardAccess, Principal, Refused, Scope, ServeBoard, ServeBoardOperation,
 };
@@ -300,9 +302,19 @@ fn token_failed(error: &TokenError) -> ServiceReply {
 }
 
 /// A failed request's reply: 404 `no_board` while there is no board, 400
-/// `write` for a write without its id and committer, else 503
-/// `unavailable`; a store error may quote its remote, so it is redacted.
+/// `write` for a write without its id and committer, 503 `clock_unsynced`
+/// with the host's `reason` while its clock is not synchronised (#2705),
+/// else 503 `unavailable`; a store error may quote its remote, so it is
+/// redacted.
 fn failed(error: &ServeError) -> ServiceReply {
+    let shown = |text: &str| redact_secrets(&redact_url_userinfo(text));
+    if let ServeError::Board(clock @ ProjectBoardError::Clock(BoardClockError::Unsynced(why))) =
+        error
+    {
+        let (message, reason) = (shown(&clock.to_string()), shown(why));
+        let body = json!({ "error": message, "code": "clock_unsynced", "reason": reason });
+        return ServiceReply::json(503, &body);
+    }
     let (status, code, why) = match error {
         ServeError::Board(error @ ProjectBoardError::Store(BoardStoreError::NoBoard)) => {
             (404, "no_board", error.to_string())
@@ -324,7 +336,7 @@ fn failed(error: &ServeError) -> ServiceReply {
             "too many writes at once: try again shortly".into(),
         ),
     };
-    coded(status, code, &redact_secrets(&redact_url_userinfo(&why)))
+    coded(status, code, &shown(&why))
 }
 
 #[cfg(test)]

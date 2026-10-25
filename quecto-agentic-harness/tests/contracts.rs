@@ -368,6 +368,8 @@ mod teardown_compensation;
 mod teardown_fixture;
 #[path = "contracts/teardown_loop_adapters.rs"]
 mod teardown_loop_adapters;
+#[path = "contracts/time_sync.rs"]
+mod time_sync;
 #[path = "contracts/tui_clipboard_reader.rs"]
 mod tui_clipboard_reader;
 #[path = "contracts/turn_cancellation.rs"]

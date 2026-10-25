@@ -211,6 +211,12 @@ fn a_remote_client_reads_no_clock_and_decodes_no_board() {
         "Timestamp",
         "humantime",
         "chrono",
+        "TimeSync",
+        "ClockSync",
+        "KernelTimeSync",
+        "kernel_time_sync",
+        "adjtimex",
+        "ntp_adjtime",
     ];
     let board = [
         "BoardSnapshot",
@@ -223,8 +229,9 @@ fn a_remote_client_reads_no_clock_and_decodes_no_board() {
     ];
     for file in REMOTE {
         let source = read(file);
+        let unclocked = unclocked(&source);
         assert_eq!(
-            dependency_scan::forbidden_hit(&source, &clock),
+            dependency_scan::forbidden_hit(&unclocked, &clock),
             Ok(()),
             "{file}"
         );
@@ -236,4 +243,27 @@ fn a_remote_client_reads_no_clock_and_decodes_no_board() {
     }
     let seen = "fn f() { let _ = std::time::SystemTime::now(); }";
     assert!(dependency_scan::forbidden_hit(seen, &clock).is_err());
+    // The stripping takes the refusal's name alone: any other clock name
+    // in the same source is still caught.
+    for still in [
+        "use crate::application::project_board::ports::{BoardClockError, BoardClock};",
+        "fn f() -> BoardClockError { BoardClockError::OutOfRange(String::new()) }",
+        "fn f(_: &dyn BoardClock) {}",
+        "fn f() { let _ = (BoardClockError::Unsynced(String::new()), KernelTimeSync); }",
+    ] {
+        let stripped = unclocked(still);
+        assert!(
+            dependency_scan::forbidden_hit(&stripped, &clock).is_err(),
+            "{still}"
+        );
+    }
+}
+
+/// `source` without the one clock name a remote client may hold: the
+/// clock's error type, to hand back the server's `clock_unsynced` refusal
+/// (#2705). Naming it reads no clock.
+fn unclocked(source: &str) -> String {
+    source
+        .replace("BoardClockError::Unsynced", "")
+        .replace("BoardClockError,", "")
 }

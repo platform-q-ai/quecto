@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::{Value, json};
 
-use super::super::board_server::{BOARD_FILE, build_board_server};
+use super::super::board_server::{BOARD_FILE, build_board_server_with};
 use super::super::project_board::build_project_board_handles;
 use super::super::project_board_operations::fixtures::{QueryListings, assembled};
 use super::*;
@@ -139,8 +139,17 @@ impl Served {
 }
 
 /// A clone of a bare remote, served from its own state directory, its
-/// board made; on 127.0.0.1 too when `tcp`, with a token `laptop`.
+/// board made; on 127.0.0.1 too when `tcp`, with a token `laptop`. The
+/// host's clock is said to be synchronised.
 fn served(tcp: bool) -> Served {
+    served_with(tcp, Arc::new(clock::Said::synced()))
+}
+
+/// [`served`], the host's word on its clock from `sync`.
+fn served_with(
+    tcp: bool,
+    sync: Arc<dyn crate::application::project_board::ports::TimeSync>,
+) -> Served {
     let dir = tempfile::tempdir().unwrap();
     sh(
         dir.path(),
@@ -158,7 +167,7 @@ fn served(tcp: bool) -> Served {
         state: Some(dir.path().join("state")),
         base_dir: dir.path().join("base"),
     };
-    let handles = build_board_server(&environment).unwrap();
+    let handles = build_board_server_with(&environment, sync).unwrap();
     let board = handles.serve.board().clone();
     let token = tcp.then(|| handles.access.add("laptop").unwrap().secret);
     let socket = dir.path().join("s").join("board.sock");
@@ -680,3 +689,6 @@ impl SendRead for crate::infrastructure::http::board_service::client::BoardServi
         self.send(method, path, body, reply)
     }
 }
+
+#[path = "project_board_remote_clock_tests.rs"]
+mod clock;

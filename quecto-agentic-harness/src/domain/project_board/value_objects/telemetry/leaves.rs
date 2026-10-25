@@ -305,6 +305,9 @@ const KNOWN_KINDS: &[&str] = &[
     // How a stopped run stopped, when no board of its swarm was kept
     // (#2705 T5 review round 1).
     "stop",
+    // The board server's clock gate: its host clock is not synchronised
+    // (#2705).
+    "clock_unsynced",
 ];
 
 /// Whether every one of [`KNOWN_KINDS`] is shaped as a kind (checked as

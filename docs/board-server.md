@@ -78,7 +78,7 @@ SQLite store as admin revisions.)
 | Route | Answer |
 |---|---|
 | `GET /v1/status` | `{"role": "primary", "board": "<id>", "head": "<head>" or null}` |
-| `GET /v1/time` | `{"time": "<RFC 3339, to the second>"}` (the server's clock) |
+| `GET /v1/time` | `{"time": "<RFC 3339, to the second>"}` (the server's clock; 503 `clock_unsynced` while it is not synchronised) |
 | `POST /v1/boards/{id}/op` | one board operation (below): `{"answer": {..}, "facts": {..} or null}` |
 | `GET /v1/admin/tokens` | `{"tokens": [{"name": "<name>", "created": "<RFC 3339>"}]}` (Unix socket only) |
 | `POST /v1/admin/tokens` `{"name": "<name>"}` | 201 `{"name", "created", "token"}`: the one time the token is shown (Unix socket only) |
@@ -110,7 +110,8 @@ bound:
   field, a task not on the board, a task that exists) is still 200, its
   refusal in `answer`. A failure of the store itself (`store_unavailable`,
   `clock_unreadable`) is 503 `unavailable` instead: a write is rolled back
-  and keeps no answer, so its retry runs it again.
+  and keeps no answer, so its retry runs it again. So is the clock gate's
+  refusal, as 503 `clock_unsynced` with the host's `reason` (see below).
 - `front_end` is the client's to choose, so a device token may send
   `"cli"` and have its request read by the CLI's entry policy (which still
   takes a legacy free-text description). This is accepted: tokens are for
@@ -163,9 +164,44 @@ The server runs no start, and `left_runs` is empty, until B8 carries
 start and `end_run` across the wire: a client refuses a `start` before
 sending it, `the board refused the write: the board server can't start
 runs yet (B8)`. A `409 standby` from a follower and its epoch come with
-B12. The server's clock reads no outside time yet, so an answer to a
-request that reads it carries `"clock": {"referenced": false, ...}`; the
-`TimeSync` gate (`clock_unsynced`) is a follow-up.
+B12.
+
+**The clock gate.** The server's clock tells the time only while the
+host affirms its clock is synchronised. On Linux the server asks the
+kernel (`adjtimex`, read-only) once per op, as the op begins, and holds
+that word for the op: the clock is synchronised only when `STA_UNSYNC` is
+clear and the kernel's state is one it keeps while synchronised
+(`TIME_OK`, or a leap second pending or passing). Anything else
+(`STA_UNSYNC`, `TIME_ERROR`, a failed call, a state this build does not
+know, or any other platform) is not.
+- Synchronised: the server's time is the host's. It is still no outside
+  reference, so an answer to a request that reads the clock keeps its
+  `"clock": {"referenced": false, ...}` note, and the burst bound
+  (`task_ahead`) stays off on the server until B9, as in B7.
+- Not synchronised: a request that reads the clock (`create`,
+  `update_draft`, a change, a plan op, `complete`, `done_without_run`,
+  `end_run`, `list_takeable`) is refused 503 `clock_unsynced`,
+  `{"error", "code", "reason"}`, rolled back and kept by no answer, so the
+  same `write_id` runs again once the clock is synchronised. A client
+  answers its caller `clock_unsynced` with the reason; stop and report it.
+  Requests that read no clock (`show`, `list`, `list_ready`, `bootstrap`,
+  `clear_set_aside`) are served as ever, and `GET /v1/time` is refused
+  alike.
+- Not gated: the board's own clock reads only. Tokens are dated by the
+  host's clock as it is (a token's date bounds nothing), and the SQLite
+  store stamps each revision with the host's time as it is.
+- What the gate reads is the kernel's sync flag, not the daemon itself.
+  systemd-timesyncd and ntpd clear `STA_UNSYNC` once they are in step;
+  chrony clears it only with `rtcsync` (on by default in most distro
+  configs), so a synchronised chrony host without it is refused. Check a
+  host with `timedatectl show -p NTPSynchronized` (`yes` is what the gate
+  needs).
+- The kernel sets `STA_UNSYNC` by itself only once its `maxerror` passes
+  16 s, so if the time daemon dies without clearing sync, the gate can
+  still say synchronised for hours (16 s at 500 ppm is about 9 h). Setting
+  the time by hand (`date -s`, `settimeofday`) sets the flag at once.
+- A board on a clone's own branch has no gate: it reads the remote's time
+  as before.
 
 ## Clients
 
@@ -230,6 +266,7 @@ Every error reply the server makes is JSON, `{"error": "<why>", "code":
 | 413 | `too_large` | a body past 1 MiB |
 | 500 | `handler` | the request's handler failed |
 | 503 | `unavailable` | the board's store, the clock or the tokens could not answer (over TCP a token failure says only `the token store is unavailable`) |
+| 503 | `clock_unsynced` | the host's clock is not synchronised, so a request that reads it is refused; `reason` says why |
 | 503 | `busy` | over TCP, the caller already has 4 answers in flight, or all TCP callers together have 12; or 2 writes are already held |
 
 Over TCP the token is checked first: an unauthenticated request is 401
