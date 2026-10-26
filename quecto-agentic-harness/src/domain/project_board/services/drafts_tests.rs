@@ -98,7 +98,7 @@ fn an_edit_the_schema_refuses_and_a_stamp_from_a_slow_clock() {
     let before_last_write = edit_draft(&task(Draft), &renamed, &at("08:30:00")).unwrap();
     assert_eq!(
         before_last_write.fields().updated,
-        at("09:00:01"),
+        at("09:00:00"),
         "never backwards"
     );
 }

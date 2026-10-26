@@ -1,4 +1,5 @@
 use super::UpdateDraftTask;
+use crate::application::project_board::dto::ReadPin;
 use crate::application::project_board::dto::{DraftUpdate, ProjectBoardError};
 use crate::application::project_board::ports::ProjectBoardStore;
 use crate::application::project_board::use_cases::fixtures_tests::{
@@ -51,7 +52,7 @@ fn of(id: &str) -> DraftUpdate {
         description: None,
         parent: None,
         depends_on: None,
-        expected_updated: None,
+        expected: None,
         entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
     }
 }
@@ -204,19 +205,19 @@ fn a_draft_changed_since_it_was_read_is_refused_as_stale() {
     let store = holding(&[("a", TaskStatus::Draft, None, &[])]);
     let read = store.read().unwrap().tasks[0].fields().updated.clone();
     let stale = DraftUpdate {
-        expected_updated: Some(at("08:00:00")),
+        expected: Some(ReadPin::Updated(at("08:00:00"))),
         ..retitle("a")
     };
     assert_eq!(
         update(&store).execute(&stale),
         Err(ProjectBoardError::Stale {
             id: slug("a"),
-            expected: at("08:00:00"),
+            expected: ReadPin::Updated(at("08:00:00")),
             updated: read.clone(),
         })
     );
     let fresh = DraftUpdate {
-        expected_updated: Some(read),
+        expected: Some(ReadPin::Updated(read)),
         ..retitle("a")
     };
     assert!(update(&store).execute(&fresh).is_ok());
@@ -238,29 +239,64 @@ fn board_text_is_normalised_before_the_schema_reads_it() {
     );
 }
 
+/// #2705 B9: two edits in one second share a stamp, so the board's
+/// revision tells them apart: an edit pinned to the rev read before the
+/// other landed is stale.
 #[test]
-fn two_edits_in_one_second_are_told_apart() {
+fn two_edits_in_one_second_are_told_apart_by_rev() {
     let store = holding(&[("a", TaskStatus::Draft, None, &[])]);
-    let first = update(&store).execute(&retitle("a")).unwrap();
-    let read = first.fields().updated.clone();
+    update(&store).execute(&retitle("a")).unwrap();
+    let read = store.read().unwrap().head;
     let second = DraftUpdate {
         title: Some("Second".into()),
-        expected_updated: Some(read.clone()),
+        expected: Some(ReadPin::Rev(read.clone())),
         ..of("a")
     };
     let second = update(&store).execute(&second).unwrap();
-    assert_ne!(
-        second.fields().updated,
-        read,
-        "the same second moves updated on"
-    );
+    assert_eq!(second.fields().updated, at("10:00:00"), "one shared stamp");
     let late = DraftUpdate {
         title: Some("Late".into()),
-        expected_updated: Some(read),
+        expected: Some(ReadPin::Rev(read.clone())),
         ..of("a")
     };
-    assert!(matches!(
+    assert_eq!(
         update(&store).execute(&late),
-        Err(ProjectBoardError::Stale { .. })
-    ));
+        Err(ProjectBoardError::Stale {
+            id: slug("a"),
+            expected: ReadPin::Rev(read),
+            updated: at("10:00:00"),
+        })
+    );
+}
+
+/// #2705 B9: changes are ordered by revision, so a burst of quick edits
+/// to one task never runs its stamp ahead of a referenced clock: 100
+/// edits within 2 s all land (the board once refused them after about
+/// 60, by its burst bound).
+#[test]
+fn a_hundred_edits_to_one_task_within_two_seconds_all_land() {
+    let store = holding(&[("a", TaskStatus::Draft, None, &[])]);
+    let cells = || {
+        Arc::new(crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells)
+    };
+    let mut stamps = Vec::new();
+    for edit in 0..100 {
+        let second = match edit < 50 {
+            true => "10:00:00",
+            false => "10:00:01",
+        };
+        let clock = SetClock::with_reference(second, Some("10:00:00"));
+        let update = UpdateDraftTask::new(Arc::new(store.client()), clock, cells()).unwrap();
+        let retitled = DraftUpdate {
+            title: Some(format!("Title {edit}")),
+            ..of("a")
+        };
+        let edited = update.execute(&retitled);
+        assert!(edited.is_ok(), "edit {edit}: {edited:?}");
+        stamps.push((edited.unwrap().fields().updated.clone(), at(second)));
+    }
+    // Each stamp is the clock's, for display: never pushed past it.
+    for (edit, (stamped, clock)) in stamps.iter().enumerate() {
+        assert_eq!(stamped, clock, "edit {edit}");
+    }
 }

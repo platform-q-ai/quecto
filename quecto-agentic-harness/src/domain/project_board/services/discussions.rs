@@ -85,7 +85,7 @@ pub fn begin(opening: Opening<'_>, when: &Moment) -> Result<Discussion, BoardRul
 }
 
 /// `discussion` with the batch `messages` added after its own, written
-/// `when` (a second past its last change at the earliest, and no earlier
+/// `when` (its last change at the earliest, #2705 B9, and no earlier
 /// than the batch's last message). A refusal of one of the batch's
 /// messages names it by its place in the batch (`batch/{i}/…`).
 ///
@@ -129,7 +129,7 @@ pub fn append(
         .try_for_each(|(index, message)| message_shape(&format!("batch/{index}"), message))
         .map_err(BoardRuleError::Invalid)?;
     let mut next = fields.clone();
-    next.updated = after_last(&fields.updated, &when.now)?.max(last);
+    next.updated = after_last(&fields.updated, &when.now).max(last);
     next.messages.extend(messages);
     room(&next)?;
     Discussion::new(next).map_err(|error| BoardRuleError::Invalid(in_batch(error, before)))
@@ -160,7 +160,7 @@ pub fn link(
     }
     let mut next = fields.clone();
     next.task = Some(task.fields().id.clone());
-    next.updated = after_last(&fields.updated, &when.now)?;
+    next.updated = after_last(&fields.updated, &when.now);
     Discussion::new(next).map_err(BoardRuleError::Invalid)
 }
 
@@ -174,7 +174,7 @@ pub fn close(discussion: &Discussion, when: &Moment) -> Result<Discussion, Board
     let fields = discussion.fields();
     let mut next = fields.clone();
     next.state = DiscussionState::Closed;
-    next.updated = after_last(&fields.updated, &when.now)?;
+    next.updated = after_last(&fields.updated, &when.now);
     Discussion::new(next).map_err(BoardRuleError::Invalid)
 }
 

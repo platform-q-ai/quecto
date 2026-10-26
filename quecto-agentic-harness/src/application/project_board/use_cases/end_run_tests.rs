@@ -1,6 +1,7 @@
 //! S4c: a run is ended by hand: as succeeded, stopped or failed by its
 //! task's holder, from its swarm's board as this front end kept it (or as
 //! a swarm that reported nothing), as lost by whoever the domain lets.
+use crate::application::project_board::dto::ReadPin;
 use crate::domain::project_board::services::transitions::MoveReason;
 use std::sync::Arc;
 
@@ -130,7 +131,7 @@ fn ending(outcome: RunEndOutcome) -> RunEnd {
         task: slug("board-store"),
         run: 1,
         outcome,
-        expected_updated: None,
+        expected: None,
         stop: None,
     }
 }
@@ -385,7 +386,7 @@ fn an_end_is_refused_for_a_run_ended_unknown_or_read_stale() {
     let (store, task) = stranded();
     let ada = ender(&store, "Ada", "10:30:00");
     let stale = RunEnd {
-        expected_updated: Some(at("09:00:00")),
+        expected: Some(ReadPin::Updated(at("09:00:00"))),
         stop: None,
         ..ending(RunEndOutcome::Failed)
     };
@@ -393,7 +394,7 @@ fn an_end_is_refused_for_a_run_ended_unknown_or_read_stale() {
         ada.execute(&stale),
         Err(ProjectBoardError::Stale {
             id: slug("board-store"),
-            expected: at("09:00:00"),
+            expected: ReadPin::Updated(at("09:00:00")),
             updated: task.fields().updated.clone(),
         })
     );
@@ -406,7 +407,7 @@ fn an_end_is_refused_for_a_run_ended_unknown_or_read_stale() {
         Err(ProjectBoardError::Rule(BoardRuleError::NoSuchRun(2)))
     );
     let pinned = RunEnd {
-        expected_updated: Some(task.fields().updated.clone()),
+        expected: Some(ReadPin::Updated(task.fields().updated.clone())),
         stop: None,
         ..ending(RunEndOutcome::Failed)
     };
@@ -417,6 +418,40 @@ fn an_end_is_refused_for_a_run_ended_unknown_or_read_stale() {
         Err(ProjectBoardError::Rule(BoardRuleError::RunEnded(1)))
     );
     assert_eq!(store.writes(), writes, "nothing written");
+}
+
+/// #2705 B9: an end pinned to a rev holds while the task is as it was at
+/// that rev, whatever else the board took since, and is stale once the
+/// task changed after it.
+#[test]
+fn an_end_pinned_by_rev_holds_until_the_task_changes() {
+    let (store, _) = stranded();
+    let read = store.read().unwrap().head;
+    let ada = ender(&store, "Ada", "10:30:00");
+    let pinned = |rev: &crate::application::project_board::ports::BoardHead| RunEnd {
+        expected: Some(ReadPin::Rev(rev.clone())),
+        stop: None,
+        ..ending(RunEndOutcome::Failed)
+    };
+    let linked = ChangeBoardTask::new(
+        Arc::new(store.client_as(person("Ada"))),
+        SetClock::at("10:10:00"),
+    )
+    .unwrap()
+    .execute(&slug("board-store"), &BoardOp::AddPr(9))
+    .unwrap();
+    let writes = store.writes();
+    assert_eq!(
+        ada.execute(&pinned(&read)),
+        Err(ProjectBoardError::Stale {
+            id: slug("board-store"),
+            expected: ReadPin::Rev(read.clone()),
+            updated: linked.fields().updated.clone(),
+        })
+    );
+    assert_eq!(store.writes(), writes, "nothing written");
+    let fresh = store.read().unwrap().head;
+    assert!(ada.execute(&pinned(&fresh)).is_ok());
 }
 
 /// An outcome is one of the allowlist, by its own name.

@@ -1,8 +1,8 @@
 //! Edits a draft in place (its title, description, parent and
 //! dependencies) as a compare-and-swap, as every change is. Drafts are
 //! shared planning: anyone with access to the board edits any draft (it has
-//! no holder). A caller that read the draft passes the `updated` it read,
-//! and a draft changed since is refused as stale rather than edited over;
+//! no holder). A caller that read the draft passes the `rev` it read at
+//! (#2705 B9), and a draft changed since is refused as stale rather than edited over;
 //! that refusal is never retried.
 //!
 //! The edit's own refusals come first (not a draft, nothing changed, the
@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, task_on, written_task};
 use super::description_cells::held;
+use super::read_pins::task_as_read;
 use super::task_pointers::{Pointers, pointers_hold};
 use crate::application::project_board::dto::{DraftUpdate, ProjectBoardError};
 use crate::application::project_board::ports::{
@@ -105,17 +106,7 @@ impl UpdateDraftTask {
                 read = task.as_ref().ok().map(|task| task.fields().status);
             }
             let task = task?;
-            when.may_build_on(task)?;
-            match &update.expected_updated {
-                Some(expected) if *expected != task.fields().updated => {
-                    return Err(ProjectBoardError::Stale {
-                        id: id.clone(),
-                        expected: expected.clone(),
-                        updated: task.fields().updated.clone(),
-                    });
-                }
-                Some(_) | None => {}
-            }
+            task_as_read(store, board, task, update.expected.as_ref())?;
             let edited = edit_draft(task, &edit, &when.now).map_err(ProjectBoardError::Rule)?;
             let set = edited.fields();
             // Only a description the edit gives enters: one it leaves is

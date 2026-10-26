@@ -83,13 +83,13 @@ pub struct DraftOf<'a> {
     pub plan: &'a Plan,
 }
 
-/// What an acceptance's caller read (#2481 M4c): the draft's `updated`,
-/// so the content accepted is the content reviewed, and the version the
-/// task named as accepted (`None`: none), so no acceptance the caller did
-/// not see is superseded.
+/// What an acceptance's caller read (#2481 M4c): the draft, as `read`
+/// pins it ([`PlanRead`]), so the content accepted is the content
+/// reviewed; and the version the task named as accepted (`None`: none),
+/// so no acceptance the caller did not see is superseded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AsRead<'a> {
-    pub updated: &'a Timestamp,
+    pub read: PlanRead<'a>,
     pub accepted: Option<u32>,
 }
 
@@ -161,10 +161,10 @@ pub fn propose_at(
 /// A done or archived task; a plan of another task, or not a draft, or
 /// changed since it was read, or stamped ahead of `when`'s bound; an edit
 /// that changes nothing; or a plan its schema refuses.
-pub fn edit_draft(
+pub fn edit_draft<'r>(
     of: DraftOf<'_>,
     content: PlanContent,
-    expected: Option<&Timestamp>,
+    expected: impl Into<PlanRead<'r>>,
     actor: &Identity,
     when: &Moment,
 ) -> Result<Plan, BoardRuleError> {
@@ -182,7 +182,7 @@ pub fn edit_draft(
     of_task(task, std::slice::from_ref(plan))?;
     of_task(task, versions)?;
     draft(plan)?;
-    as_read(plan, expected)?;
+    as_read(plan, expected.into())?;
     when.may_build_on(plan)?;
     let fields = plan.fields();
     entered(&content, Some(&fields.approach))?;
@@ -236,7 +236,7 @@ fn entered(content: &PlanContent, held: Option<&str>) -> Result<(), BoardRuleErr
 /// superseded. With `expected`, the draft must still be as the caller read
 /// it (its `updated`), so the content accepted is the content reviewed,
 /// and the task must still name the accepted version the caller saw.
-/// The task, both plans and the acceptance share one stamp, later than
+/// The task, both plans and the acceptance share one stamp, no earlier than
 /// each one's last change (a proposer's clock may have run ahead).
 ///
 /// # Errors
@@ -267,7 +267,7 @@ pub fn accept(
         .ok_or(BoardRuleError::UnknownPlanVersion(version))?;
     draft(chosen)?;
     if let Some(read) = expected {
-        as_read(chosen, Some(read.updated))?;
+        as_read(chosen, read.read)?;
         as_accepted(task, read.accepted)?;
     }
     decides(task, actor, now)?;
@@ -282,11 +282,11 @@ pub fn accept(
     for plan in std::iter::once(chosen).chain(before) {
         when.may_build_on(plan)?;
     }
-    // One stamp, after the task's, the chosen plan's and the superseded
+    // One stamp, no earlier than the task's, the chosen plan's and the superseded
     // plan's last changes.
-    let mut at = stamp(task, now)?;
+    let mut at = stamp(task, now);
     for plan in std::iter::once(chosen).chain(before) {
-        at = after_last(&plan.fields().updated, &at)?;
+        at = after_last(&plan.fields().updated, &at);
     }
     // Never before any of the task's plans within the bound (#2662).
     at = not_before(task, stamps_of(versions, when), &at);
@@ -340,9 +340,9 @@ pub fn accept(
 /// A done or archived task; a plan of another task, or not a draft, or
 /// changed since it was read, or stamped ahead of `when`'s bound; or an
 /// actor who may not decide for the task.
-pub fn discard(
+pub fn discard<'r>(
     of: DraftOf<'_>,
-    expected: Option<&Timestamp>,
+    expected: impl Into<PlanRead<'r>>,
     actor: &Identity,
     when: &Moment,
 ) -> Result<Plan, BoardRuleError> {
@@ -360,7 +360,7 @@ pub fn discard(
     of_task(task, std::slice::from_ref(plan))?;
     of_task(task, versions)?;
     draft(plan)?;
-    as_read(plan, expected)?;
+    as_read(plan, expected.into())?;
     when.may_build_on(plan)?;
     decides(task, actor, now)?;
     moved(
@@ -451,13 +451,40 @@ pub fn as_accepted(task: &Task, expected: Option<u32>) -> Result<(), BoardRuleEr
     }
 }
 
-/// `plan` as the caller read it: unchanged since `expected`, when given.
-fn as_read(plan: &Plan, expected: Option<&Timestamp>) -> Result<(), BoardRuleError> {
+/// How a plan's change is pinned to its caller's read (#2705 B9): by no
+/// pin; by a board revision, which the caller judges against the board's
+/// history (these rules cannot read it) and hands in as its verdict, told
+/// here in the order the rules check a pin; or, deprecated, by the plan's
+/// stamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanRead<'a> {
+    Unpinned,
+    /// Pinned by a revision at which the plan was as it is now.
+    Unchanged,
+    /// Pinned by a revision at which the plan was otherwise, or none.
+    Changed,
+    /// Pinned by the plan's `updated` as read (deprecated).
+    Stamped(&'a Timestamp),
+}
+
+/// A stamp pin, when given; none otherwise.
+impl<'a> From<Option<&'a Timestamp>> for PlanRead<'a> {
+    fn from(stamp: Option<&'a Timestamp>) -> Self {
+        stamp.map_or(Self::Unpinned, Self::Stamped)
+    }
+}
+
+/// `plan` as the caller read it, as `read` pins it.
+fn as_read(plan: &Plan, read: PlanRead<'_>) -> Result<(), BoardRuleError> {
     let updated = &plan.fields().updated;
-    match expected {
-        None => Ok(()),
-        Some(expected) if expected == updated => Ok(()),
-        Some(_) => Err(BoardRuleError::PlanChanged {
+    let unchanged = match read {
+        PlanRead::Unpinned | PlanRead::Unchanged => true,
+        PlanRead::Changed => false,
+        PlanRead::Stamped(expected) => expected == updated,
+    };
+    match unchanged {
+        true => Ok(()),
+        false => Err(BoardRuleError::PlanChanged {
             version: plan.fields().version,
             updated: updated.clone(),
         }),
@@ -497,10 +524,10 @@ fn moved(plan: &Plan, state: PlanState, now: &Timestamp) -> Result<Plan, BoardRu
     restamped(next, plan, now)
 }
 
-/// `next`, updated at `now` or a second past `plan`'s own `updated`,
-/// whichever is later, so every change moves it strictly forward.
+/// `next`, updated at `now` or `plan`'s own `updated`, whichever is later,
+/// so no change moves it backwards (#2705 B9: for display alone).
 fn restamped(mut next: PlanFields, plan: &Plan, now: &Timestamp) -> Result<Plan, BoardRuleError> {
-    next.updated = after_last(&plan.fields().updated, now)?;
+    next.updated = after_last(&plan.fields().updated, now);
     Plan::new(next).map_err(BoardRuleError::InvalidPlan)
 }
 

@@ -2,44 +2,59 @@
 //! over an expired claim on a task that may hold one.
 //!
 //! **Time.** Each rule is given the caller's clock, `now`. A change is
-//! stamped with [`stamp`], `max(now, task.updated + 1 s)`, a hybrid
-//! logical clock: `updated`, a new claim's `since` and `expires` and an
-//! ended run's `ended` always move forward, and a write from a clock that ran
-//! ahead never locks the task for clients whose clocks are right. Whether a
+//! stamped with [`stamp`], `max(now, task.updated)`: the board orders its
+//! changes by revision (#2705 B9), so a stamp is for display alone. It is
+//! never pushed past the clock, and never runs backwards, so `updated`, a
+//! new claim's `since` and `expires` and an ended run's `ended` stay
+//! within what the schema holds. A claim runs from the caller's own clock
+//! ([`claim_start`]), never from a stamp, so a task a fast clock stamped
+//! ahead never stretches a claim a right clock takes on it. Whether a
 //! claim has expired is judged by the caller's real `now`, so a client
-//! whose clock runs fast sees claims expire early, and a claim stamped by
-//! such a clock lasts until its stamped expiry. S1c's write path bounds
-//! both against an outside reading of the current time when one can be
-//! read: it refuses a `now`, or a task `updated`, more than
-//! [`CLOCK_AHEAD_SECONDS`] ahead of it.
+//! whose clock runs fast sees claims expire early, and a claim such a
+//! clock took lasts until its own expiry. A task created more than
+//! [`CLOCK_AHEAD_SECONDS`] ahead of the caller's clock is never claimed
+//! ([`claimable_at`], `task_clock_ahead`): its claim could only start at
+//! its creation and so outlast the caller's two hours. S1c's write path
+//! bounds `now` against an outside reading of the current time when one
+//! can be read: it refuses a `now` more than [`CLOCK_AHEAD_SECONDS`] ahead
+//! of it.
 use super::super::entities::claim::{CLAIM_TTL_SECONDS, Claim, Identity};
 use super::super::entities::task::{Task, TaskFields};
 use super::super::value_objects::rule_error::BoardRuleError;
+use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::telemetry::ClaimFacts;
 use super::super::value_objects::timestamp::Timestamp;
 
-/// The room the strictly-forward stamp needs past the latest time a
-/// write may build on: each change stamps a second past the task it read,
-/// so a run of quick changes from a clock near the bound edges past it,
-/// and the next honest writer must still build on the task.
+/// The room past the latest time a write may build on that a plan, change
+/// or review stamped by a clock near the bound may take.
 pub const STAMP_SLACK_SECONDS: u64 = 30;
 
 /// How far a clock may run ahead of an outside reading of the current
-/// time before the board refuses to take its time, or to build on a task
-/// it stamped.
+/// time before the board refuses to take its time; and how far ahead of
+/// the caller's clock a task may have been created and still be claimed
+/// ([`claimable_at`]).
 pub const CLOCK_AHEAD_SECONDS: u64 = 60;
 
 /// The holder's claim runs again from now for [`CLAIM_TTL_SECONDS`]: a
 /// claim never spans more than that, so renewing restarts its window. An
-/// expired claim is renewed too, until someone takes it over.
+/// expired claim is renewed too, until someone takes it over. A renewal
+/// from a clock slower than the one that took the claim never shortens
+/// it, nor moves its start back (#2705 B9 review round 2).
 pub fn renew(task: &Task, holder: &Identity, now: &Timestamp) -> Result<Task, BoardRuleError> {
     let claim = held_or_lapsed_by(task, holder, now)?;
-    let at = stamp(task, now)?;
-    let mut next = task.fields().clone();
-    next.claim = Some(Claim {
+    let at = stamp(task, now);
+    let fresh = new_claim(holder, task, now)?;
+    let renewed = Claim {
         holder: claim.holder.clone(),
-        ..new_claim(holder, &at)?
-    });
+        since: fresh.since.max(claim.since.clone()),
+        expires: fresh.expires.max(claim.expires.clone()),
+    };
+    assert!(
+        renewed.since < renewed.expires && renewed.expires >= claim.expires,
+        "a renewal never shortens the claim"
+    );
+    let mut next = task.fields().clone();
+    next.claim = Some(renewed);
     settle(next, &at)
 }
 
@@ -55,12 +70,15 @@ pub fn take_over(task: &Task, taker: &Identity, now: &Timestamp) -> Result<Task,
     if claim.holder.is(taker) {
         return Err(BoardRuleError::AlreadyHolder);
     }
+    // After the status and holder refusals, which say more; before the
+    // claim's liveness, which a claim on a task created ahead would hide.
+    claimable_at(task, now)?;
     if is_live(claim, now) {
         return Err(BoardRuleError::ClaimLive);
     }
-    let at = stamp(task, now)?;
+    let at = stamp(task, now);
     let mut next = fields.clone();
-    next.claim = Some(new_claim(taker, &at)?);
+    next.claim = Some(new_claim(taker, task, now)?);
     settle(next, &at)
 }
 
@@ -156,9 +174,9 @@ pub fn is_live(claim: &Claim, now: &Timestamp) -> bool {
 /// What a change by `writer` at `now` finds of `task`'s claim (epic
 /// #2481 T4), `None` when it holds none: how long it has been held and
 /// has left, and whether the writer holds it ([`Identity::is`]); never
-/// who does. A claim's `since` is a [`stamp`], which may run a second or
-/// more past the wall clock, so a `now` before it finds the claim held
-/// for no time, never less (#2662).
+/// who does. A claim's `since` is its taker's clock ([`claim_start`]),
+/// which may read ahead of the writer's, so a `now` before it finds the
+/// claim held for no time, never less (#2662).
 pub fn claim_facts(task: &Task, writer: &Identity, now: &Timestamp) -> Option<ClaimFacts> {
     task.fields().claim.as_ref().map(|claim| ClaimFacts {
         held_s: now.seconds_since(&claim.since).max(0),
@@ -170,10 +188,9 @@ pub fn claim_facts(task: &Task, writer: &Identity, now: &Timestamp) -> Option<Cl
 /// Whether something stamped `updated` may be built on, given the
 /// `latest` time an outside reference allows (`None`: no reference, and
 /// nothing is refused): no later than that time plus
-/// [`STAMP_SLACK_SECONDS`], the room the strictly-forward stamp needs.
-/// The bound is inclusive, as the clock's own is. A latest time so late
-/// that adding the slack overflows what the board can spell tightens the
-/// bound to the latest time itself.
+/// [`STAMP_SLACK_SECONDS`]. The bound is inclusive, as the clock's own
+/// is. A latest time so late that adding the slack overflows what the
+/// board can spell tightens the bound to the latest time itself.
 pub fn within_slack(updated: &Timestamp, latest: Option<&Timestamp>) -> bool {
     match latest {
         None => true,
@@ -186,15 +203,11 @@ pub fn within_slack(updated: &Timestamp, latest: Option<&Timestamp>) -> bool {
     }
 }
 
-/// When a change to `task` happens: the caller's `now`, or a second past
-/// the task's own `updated` if the caller's clock reads no later. Every
-/// change moves `updated` strictly forward, so two changes in one second,
-/// or one from a clock running behind, never share a stamp (a caller's
-/// `expected_updated` tells them apart).
-///
-/// # Errors
-/// A task stamped at the last moment the board can spell.
-pub(super) fn stamp(task: &Task, now: &Timestamp) -> Result<Timestamp, BoardRuleError> {
+/// When a change to `task` happens, for display: the caller's `now`, or
+/// the task's own `updated` if the caller's clock reads earlier. No stamp
+/// is pushed past the clock, so two changes in one second share one: the
+/// board's revision, never the stamp, orders them (#2705 B9).
+pub(super) fn stamp(task: &Task, now: &Timestamp) -> Timestamp {
     after_last(&task.fields().updated, now)
 }
 
@@ -220,34 +233,88 @@ pub(super) fn not_before<'a>(
     at
 }
 
-/// When a change to an artifact last changed at `updated` happens: `now`,
-/// or a second past `updated` if `now` reads no later. The one rule the
+/// When a change to an artifact last changed at `updated` happens, for
+/// display: `now`, or `updated` if `now` reads earlier. The one rule the
 /// board's stamps follow (tasks, plans, changes, reviews and
-/// discussions), so each
-/// change moves its `updated` strictly forward.
-///
-/// # Errors
-/// An artifact stamped at the last moment the board can spell.
-pub(super) fn after_last(
-    updated: &Timestamp,
-    now: &Timestamp,
-) -> Result<Timestamp, BoardRuleError> {
-    let next = updated
-        .plus_seconds(1)
-        .map_err(|error| BoardRuleError::Invalid(error.at("updated")))?;
-    let at = now.max(&next).clone();
-    assert!(at > *updated, "a change moves updated strictly forward");
-    Ok(at)
+/// discussions): a stamp never runs backwards and is never pushed past
+/// the clock (#2705 B9: the board's revision orders changes).
+pub(super) fn after_last(updated: &Timestamp, now: &Timestamp) -> Timestamp {
+    let at = now.max(updated).clone();
+    assert!(at >= *updated, "a stamp never runs backwards");
+    at
 }
 
-/// A claim for `holder` from `at` (a [`stamp`]) for two hours.
-pub(super) fn new_claim(holder: &Identity, at: &Timestamp) -> Result<Claim, BoardRuleError> {
-    let expires = at
-        .plus_seconds(CLAIM_TTL_SECONDS)
-        .map_err(|error| BoardRuleError::Invalid(error.at("claim/expires")))?;
+/// When a claim on `task` taken or renewed at `now` begins (#2705 B9
+/// review round 1): the caller's clock, never the task's stamp, so a task
+/// a fast clock stamped ahead never stretches the claim; and never before
+/// the task was created, as the schema holds a claim within its task's
+/// life. It is never after the change's [`stamp`], which is no earlier
+/// than `now`.
+pub(super) fn claim_start(task: &Task, now: &Timestamp) -> Timestamp {
+    let since = now.max(&task.fields().created).clone();
+    assert!(
+        since <= stamp(task, now),
+        "a claim begins no later than the change that takes it"
+    );
+    since
+}
+
+/// Whether `task` may be claimed at `now` (#2705 B9 review round 3): only
+/// when it was created no more than [`CLOCK_AHEAD_SECONDS`] ahead of the
+/// caller's clock. A claim starts no earlier than its task's creation, so
+/// one on a task created further ahead would outlast the caller's two
+/// hours: refused as `task_clock_ahead`, since a clock is wrong. It reads
+/// `created`, never `updated`, so no burst of changes is ever bounded.
+///
+/// # Errors
+/// The task was created past that bound.
+pub(super) fn claimable_at(task: &Task, now: &Timestamp) -> Result<(), BoardRuleError> {
+    let created = &task.fields().created;
+    let within = match now.plus_seconds(CLOCK_AHEAD_SECONDS) {
+        Ok(bound) => *created <= bound,
+        // A clock at the end of time bounds nothing it could spell past.
+        Err(_) => true,
+    };
+    match within {
+        true => Ok(()),
+        false => Err(BoardRuleError::TaskClockAhead {
+            created: created.clone(),
+            // When the caller's clock reaches the bound: past 1970 always,
+            // as the task was created more than the bound after it.
+            until: created
+                .minus_seconds(CLOCK_AHEAD_SECONDS)
+                .unwrap_or_else(|_| created.clone()),
+        }),
+    }
+}
+
+/// A claim on `task` for `holder`, taken or renewed at `now`: from
+/// [`claim_start`] until two hours from `now` by the caller's clock
+/// (#2705 B9 review round 2), so a task created ahead never stretches it:
+/// one created more than [`CLOCK_AHEAD_SECONDS`] ahead is never claimed
+/// ([`claimable_at`]).
+///
+/// # Errors
+/// A task created past that bound; a time the board cannot spell.
+pub(super) fn new_claim(
+    holder: &Identity,
+    task: &Task,
+    now: &Timestamp,
+) -> Result<Claim, BoardRuleError> {
+    claimable_at(task, now)?;
+    let since = claim_start(task, now);
+    let spelt = |at: Result<Timestamp, SchemaError>| {
+        at.map_err(|error| BoardRuleError::Invalid(error.at("claim/expires")))
+    };
+    let expires = spelt(now.plus_seconds(CLAIM_TTL_SECONDS))?;
+    assert!(
+        since < expires && expires <= spelt(since.plus_seconds(CLAIM_TTL_SECONDS))?,
+        "a claim ends after it starts, within two hours of its start: \
+         its task was created within the clock bound"
+    );
     Ok(Claim {
         holder: holder.clone(),
-        since: at.clone(),
+        since,
         expires,
     })
 }

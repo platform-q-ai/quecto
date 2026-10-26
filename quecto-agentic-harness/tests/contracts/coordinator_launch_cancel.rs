@@ -210,7 +210,9 @@ pub(crate) fn ready_board(store: &MemoryBoardStore) {
         .execute(&PlanAcceptance {
             task: id,
             version: 1,
-            expected_updated: plan.fields().updated.clone(),
+            expected: quecto::application::project_board::dto::ReadPin::Updated(
+                plan.fields().updated.clone(),
+            ),
             expected_accepted: None,
         })
         .unwrap();

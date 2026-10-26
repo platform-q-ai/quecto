@@ -64,7 +64,7 @@ fn an_acceptance_judges_its_pin_beside_its_read() {
             },
             2,
             Some(AsRead {
-                updated: &updated,
+                read: Some(&updated).into(),
                 accepted: seen,
             }),
             &person("Ada"),

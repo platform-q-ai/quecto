@@ -26,6 +26,14 @@ struct Cancellable {
 }
 
 impl ProjectBoardStore for Cancellable {
+    fn object_at(
+        &self,
+        rev: &crate::application::project_board::ports::BoardHead,
+        key: &crate::application::project_board::ports::ArtifactKey,
+    ) -> Result<Option<String>, crate::application::project_board::ports::BoardStoreError> {
+        self.inner.object_at(rev, key)
+    }
+
     fn read(&self) -> Result<BoardSnapshot, BoardStoreError> {
         self.inner.read()
     }

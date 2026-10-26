@@ -190,7 +190,7 @@ fn linkable(pr: u64, head: &Head, host: &HostPrs) -> Result<(), BoardRuleError> 
 }
 
 /// Change `number` of `task`, one of its `changes`, unlinked by `actor`,
-/// the holder of a live claim, `when` (a second past its last change at
+/// the holder of a live claim, `when` (its last change at
 /// the earliest): a wrong or abandoned change no longer delivers the task,
 /// and is kept. `host` reads its pull request, if it has one: a merged one
 /// stays linked.
@@ -236,7 +236,7 @@ pub fn unlink(
     let at = after(
         change,
         &not_before(task, change_stamps(changes, when), &when.now),
-    )?;
+    );
     let mut next = fields.clone();
     next.unlinked = Some((actor.clone(), at.clone()));
     next.updated = at;
@@ -326,7 +326,7 @@ pub fn complete(
         .map(|(change, commit)| {
             let mut next = change.fields().clone();
             next.merged = Some(commit);
-            next.updated = at.clone().max(after(change, &when.now)?);
+            next.updated = at.clone().max(after(change, &when.now));
             Change::new(next).map_err(BoardRuleError::Invalid)
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -408,8 +408,8 @@ fn change_stamps<'a>(
     })
 }
 
-/// `now`, or a second past `change`'s last change if that is later.
-fn after(change: &Change, now: &Timestamp) -> Result<Timestamp, BoardRuleError> {
+/// `now`, or `change`'s last change if that is later.
+fn after(change: &Change, now: &Timestamp) -> Timestamp {
     after_last(&change.fields().updated, now)
 }
 

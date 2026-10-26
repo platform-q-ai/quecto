@@ -55,7 +55,7 @@ pub(super) fn edit_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         handoff,
         items: read.value("items").map(items).transpose()?,
         team: read.value("team").map(team).transpose()?,
-        expected_updated: read.timestamp("expected_updated")?,
+        expected: read.pin()?,
     };
     match edit.sets_something() {
         true => Ok(BoardRequest::EditPlan(edit)),
@@ -68,30 +68,33 @@ pub(super) fn edit_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     }
 }
 
-/// A draft accepted, pinned to the draft as it was read (#2481 M4c).
+/// A draft accepted, pinned to the draft as it was read (#2481 M4c): a
+/// pin, `expected_rev` (or the deprecated `expected_updated`), is required.
 pub(super) fn accept_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     let present = "a required field is present";
     Ok(BoardRequest::AcceptPlan(PlanAcceptance {
         task: read.task()?,
         version: version(read.value("version").expect(present))?,
-        expected_updated: read.timestamp("expected_updated")?.expect(present),
+        expected: read
+            .pin()?
+            .ok_or_else(|| RequestError::of("expected_rev", "is required", FaultKind::Missing))?,
         expected_accepted: accepted(read.value("expected_accepted").expect(present))?,
     }))
 }
 
 /// A draft discarded, pinned to the draft as it was read when the
-/// request gives `expected_updated`.
+/// request gives a pin.
 pub(super) fn discard_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     Ok(BoardRequest::DiscardPlan(PlanDiscard {
         task: read.task()?,
         version: version(read.value("version").expect("a required field is present"))?,
-        expected_updated: read.timestamp("expected_updated")?,
+        expected: read.pin()?,
     }))
 }
 
 /// A run ended by hand (S4c): its outcome one of [`RunEndOutcome::ALL`],
 /// pinned to the task as it was read when the request gives
-/// `expected_updated`.
+/// a pin.
 pub(super) fn end_run(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     let present = "a required field is present";
     let words: Vec<&str> = RunEndOutcome::ALL.iter().map(|end| end.as_str()).collect();
@@ -121,7 +124,7 @@ pub(super) fn end_run(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
             &problem,
         )?,
         outcome,
-        expected_updated: read.timestamp("expected_updated")?,
+        expected: read.pin()?,
         stop,
     }))
 }

@@ -25,7 +25,8 @@ use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{PlanState, RunOutcome};
 
 /// What `show` answers (#2481 M4a), all as one read of the board found
-/// it: its `head`; the whole `task`; `plan`, the version `version` names
+/// it: its `head`, and as `rev` the revision a pin names (#2705 B9); the
+/// whole `task`; `plan`, the version `version` names
 /// whole (#2481 M4b), or with none named the task's accepted plan
 /// (`null` while it has none, or while its file is set aside);
 /// `item_states`, each of its task items' state ([`item_states_json`],
@@ -49,6 +50,7 @@ pub(super) fn shown_fields(shown: &ShownTask, version: Option<u32>) -> Map<Strin
     let inconsistent: Vec<&str> = shown.inconsistent().iter().map(|i| i.as_str()).collect();
     Map::from_iter([
         ("head".to_string(), head_json(&shown.head)),
+        ("rev".to_string(), head_json(&shown.head)),
         ("task".to_string(), task_json(&shown.task)),
         ("plan".to_string(), plan.map_or(Value::Null, plan_json)),
         (
@@ -185,7 +187,7 @@ fn item_json(item: &PlanItem) -> Value {
 }
 
 /// What a `show` given a page answers (#2481 M4a review round 2): its
-/// `head`; the task's id as `task`; `plan`, the `version` of the plan
+/// `head` and `rev`, as `show` names them; the task's id as `task`; `plan`, the `version` of the plan
 /// `version` names, or of the accepted plan, and its `updated` (#2481
 /// M4b review round 2: a reader sees an edit land between its pages),
 /// with only the parts the page names: `approach_from` and the
@@ -227,6 +229,7 @@ pub(super) fn page_fields(
     });
     Map::from_iter([
         ("head".to_string(), head_json(&shown.head)),
+        ("rev".to_string(), head_json(&shown.head)),
         ("task".to_string(), slug_json(&shown.task.fields().id)),
         ("plan".to_string(), plan.unwrap_or(Value::Null)),
         (

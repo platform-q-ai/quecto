@@ -2,7 +2,7 @@
 //! words), moved beside `dto.rs` unchanged as it grew past its room.
 use std::fmt;
 
-use super::{IdUser, ProjectBoardError, RunAfterUndo};
+use super::{IdUser, ProjectBoardError, ReadPin, RunAfterUndo};
 use crate::application::project_board::ports::{
     BoardClockError, BoardStoreError, PullRequestStatesError,
 };
@@ -86,12 +86,6 @@ impl fmt::Display for ProjectBoardError {
             Self::PullRequests(PullRequestStatesError::Unavailable(why)) => {
                 write!(f, "the pull requests' states are unavailable: {why}")
             }
-            Self::TaskAhead { id, updated } => write!(
-                f,
-                "task {} was stamped {} by a clock that ran ahead",
-                id.as_str(),
-                updated.as_str()
-            ),
             Self::ClockOutOfRange(reference) => write!(
                 f,
                 "the reference time {} is out of range",
@@ -113,7 +107,17 @@ impl fmt::Display for ProjectBoardError {
             }
             Self::Stale {
                 id,
-                expected,
+                expected: ReadPin::Rev(rev),
+                ..
+            } => write!(
+                f,
+                "task {} changed since it was read at rev {}; read it again",
+                id.as_str(),
+                rev.0
+            ),
+            Self::Stale {
+                id,
+                expected: ReadPin::Updated(expected),
                 updated,
             } => write!(
                 f,

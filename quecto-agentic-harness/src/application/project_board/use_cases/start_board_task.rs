@@ -106,8 +106,8 @@ impl BeginBoardRun {
     /// write in `facts`, when given.
     ///
     /// # Errors
-    /// No such task, or its file, one of its plans' or runs' set aside; a
-    /// task stamped ahead; another plan accepted than the one confirmed;
+    /// No such task, or its file, one of its plans' or runs' set aside;
+    /// another plan accepted than the one confirmed;
     /// the rules' (no accepted plan, a task not startable or held by
     /// another, a run still going); a plan that cannot brief a swarm; the
     /// clock's; a board that kept moving; the store's.
@@ -246,7 +246,6 @@ impl BeginBoardRun {
                 if noting {
                     read = Some(task.fields().status);
                 }
-                when.may_build_on(task)?;
                 match task.fields().accepted_plan {
                     // The domain's start refuses a task with no accepted plan.
                     None => {}

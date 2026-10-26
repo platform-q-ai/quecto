@@ -136,7 +136,6 @@ const KNOWN_KINDS: &[&str] = &[
     "closes_cycle",
     "pr_state_unknown",
     "pull_requests_unavailable",
-    "task_ahead",
     "clock_out_of_range",
     "clock_ahead",
     "contended",
@@ -167,6 +166,8 @@ const KNOWN_KINDS: &[&str] = &[
     "plan_changed",
     "plans_inconsistent",
     "plan_ahead",
+    // A task created past the clock bound (#2705 B9).
+    "task_clock_ahead",
     "runs_inconsistent",
     "plan_not_accepted",
     "change_already_linked",
@@ -256,6 +257,8 @@ const KNOWN_KINDS: &[&str] = &[
     "dependents_of",
     "depends_on",
     "expected_updated",
+    // A pin by revision (#2705 B9).
+    "expected_rev",
     "to",
     "pr",
     "path",

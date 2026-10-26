@@ -228,8 +228,8 @@ clear and the kernel's state is one it keeps while synchronised
 know, or any other platform) is not.
 - Synchronised: the server's time is the host's. It is still no outside
   reference, so an answer to a request that reads the clock keeps its
-  `"clock": {"referenced": false, ...}` note, and the burst bound
-  (`task_ahead`) stays off on the server until B9, as in B7.
+  `"clock": {"referenced": false, ...}` note. The board orders its
+  changes by revision (B9), so no burst of quick changes is bounded.
 - Not synchronised: a request that reads the clock (`create`,
   `update_draft`, a change, a plan op, `complete`, `done_without_run`,
   `end_run`, `list_takeable`) is refused 503 `clock_unsynced`,

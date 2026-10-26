@@ -36,8 +36,8 @@ use super::board_tree::{
 use super::git::{Git, GitError, SHORT_OUTPUT, failed, quoted};
 use super::push_report::{PushReport, RefStatus, Rejection, ref_status, remote_rejection};
 use crate::application::project_board::ports::{
-    BoardArtifact, BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite,
-    ProjectBoardStore, SetAsideClear,
+    ArtifactKey, BoardArtifact, BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError,
+    BoardWrite, ProjectBoardStore, SetAsideClear,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
@@ -425,28 +425,6 @@ impl GitBoardStore {
         Ok(base)
     }
 
-    /// Whether `commit` is a commit here and `tip` or one of its ancestors.
-    fn on_board(&self, commit: &str, tip: &str) -> Result<bool, BoardStoreError> {
-        Ok(self.is_commit(commit)? && self.is_ancestor(commit, tip)?)
-    }
-
-    /// The board's commit as this clone last fetched it, if it has.
-    fn local_tip(&self) -> Result<Option<String>, BoardStoreError> {
-        let commit = format!("{}^{{commit}}", self.tracking());
-        let args = ["rev-parse", "--verify", "--quiet", commit.as_str()];
-        let output = self
-            .git
-            .local(&args, None, SHORT_OUTPUT)
-            .map_err(unavailable)?;
-        match output.status.code() {
-            Some(0) => Ok(Some(object_id(
-                String::from_utf8_lossy(&output.stdout).trim_end(),
-            )?)),
-            Some(1) => Ok(None),
-            _ => Err(unavailable(failed(&args, &output))),
-        }
-    }
-
     fn is_commit(&self, oid: &str) -> Result<bool, BoardStoreError> {
         let args = ["cat-file", "-t", oid];
         let output = self
@@ -643,6 +621,14 @@ impl ProjectBoardStore for GitBoardStore {
         Ok(board.snapshot(BoardHead(head)).asserted())
     }
 
+    fn object_at(
+        &self,
+        rev: &BoardHead,
+        key: &ArtifactKey,
+    ) -> Result<Option<String>, BoardStoreError> {
+        self.held_at(rev, key)
+    }
+
     /// Writes `artifacts`, each as its kind's canonical markdown file, on
     /// top of `expected` in one commit and pushes it only if the board is
     /// still there.
@@ -722,6 +708,8 @@ pub use fence::{Fence, GitBoardFence};
 mod fetch_state;
 #[path = "store_fetch.rs"]
 mod fetching;
+#[path = "store_revisions.rs"]
+mod revisions;
 #[path = "store_write.rs"]
 mod writing;
 

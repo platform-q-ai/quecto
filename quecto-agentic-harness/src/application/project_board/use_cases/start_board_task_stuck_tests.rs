@@ -2,6 +2,7 @@
 //! fold it back (its undo's fold-back refused, after a failed launch or a
 //! cancel) is recovered by `end_run`, which releases the task (#2705 T5).
 //! A write followed by a crash is `end_run`'s own test.
+use crate::application::project_board::dto::ReadPin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -58,7 +59,7 @@ fn recovered_by_end_run(store: &MemoryBoardStore) {
             task: slug("a"),
             run: 1,
             outcome: RunEndOutcome::Failed,
-            expected_updated: Some(task.fields().updated.clone()),
+            expected: Some(ReadPin::Updated(task.fields().updated.clone())),
             stop: None,
         })
         .unwrap()

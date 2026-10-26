@@ -85,12 +85,12 @@ fn rounds_build_one_review_per_change_in_order() {
             &round.at,
             round.findings.len()
         ),
-        (&commit('b'), &person("Carol"), &at("10:00:01"), 0),
-        "after the round before"
+        (&commit('b'), &person("Carol"), &at("10:00:00"), 0),
+        "no earlier than the round before"
     );
     assert_eq!(
         (&fields.created, &fields.updated),
-        (&at("10:00:00"), &at("10:00:01"))
+        (&at("10:00:00"), &at("10:00:00"))
     );
     let third = add_round(
         &target,
@@ -210,8 +210,8 @@ fn a_review_stamped_ahead_is_refused() {
     let taken = adding("10:29:30").unwrap();
     assert_eq!(
         taken.fields().updated,
-        at("10:30:01"),
-        "after the round before"
+        at("10:30:00"),
+        "no earlier than the round before"
     );
 }
 
@@ -252,28 +252,25 @@ fn a_first_round_is_stamped_no_earlier_than_its_change() {
     );
 }
 
-/// A review last changed at the last moment the board can spell takes no
-/// later round: the overflow is refused, never wrapped.
+/// A review last changed at the last moment the board can spell still
+/// takes a round (#2705 B9: no stamp is pushed past it), stamped then.
 #[test]
-fn a_review_at_the_end_of_time_takes_no_round() {
+fn a_review_at_the_end_of_time_still_takes_a_round() {
     let target = change(1, Some(7));
     let end = Timestamp::parse("9999-12-31T23:59:59Z").unwrap();
     let mut fields = first(&target).into_fields();
     fields.created = end.clone();
     fields.updated = end.clone();
-    fields.rounds[0].at = end;
+    fields.rounds[0].at = end.clone();
     let review = Review::new(fields).unwrap();
-    let refused = add_round(
+    let added = add_round(
         &target,
         Some(&review),
         draft(ReviewVerdict::Approved),
         &person("Bob"),
         &when("10:00:00"),
     );
-    assert!(
-        matches!(&refused, Err(BoardRuleError::Invalid(error)) if error.field == "updated"),
-        "{refused:?}"
-    );
+    assert_eq!(added.map(|review| review.fields().updated.clone()), Ok(end));
 }
 
 /// The verdict is the reviewer's call: an approval may carry a critical

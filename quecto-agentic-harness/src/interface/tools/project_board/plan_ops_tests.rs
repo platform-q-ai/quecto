@@ -16,7 +16,7 @@ use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
 
 /// The board's operations as `name` writes them.
-fn as_writer(store: &MemoryBoardStore, name: &str) -> LocalBoardOperations {
+pub(super) fn as_writer(store: &MemoryBoardStore, name: &str) -> LocalBoardOperations {
     let client = store.client_as(Identity {
         name: name.into(),
         email: format!("{}@example.com", name.to_lowercase()),
@@ -30,23 +30,23 @@ fn as_writer(store: &MemoryBoardStore, name: &str) -> LocalBoardOperations {
     .unwrap()
 }
 
-fn call(operations: &LocalBoardOperations, request: Value) -> Value {
+pub(super) fn call(operations: &LocalBoardOperations, request: Value) -> Value {
     run(operations, &request.to_string())
 }
 
-fn ok(operations: &LocalBoardOperations, request: Value) -> Value {
+pub(super) fn ok(operations: &LocalBoardOperations, request: Value) -> Value {
     let answer = call(operations, request);
     assert_eq!(answer["ok"], json!(true), "{answer}");
     answer
 }
 
-fn item(id: &str) -> Value {
+pub(super) fn item(id: &str) -> Value {
     json!({"id": id, "title": format!("Item {id}"), "criteria": [format!("{id} proved")], "depends_on": []})
 }
 
 /// A board with task `a` and two drafts of its plan by Ada, the second
 /// with two task items.
-fn drafted() -> (MemoryBoardStore, LocalBoardOperations, LocalBoardOperations) {
+pub(super) fn drafted() -> (MemoryBoardStore, LocalBoardOperations, LocalBoardOperations) {
     let store = MemoryBoardStore::default();
     store.bootstrap().unwrap();
     let (ada, bob) = (as_writer(&store, "Ada"), as_writer(&store, "Bob"));
@@ -113,11 +113,12 @@ fn a_named_version_is_paged() {
     );
 }
 
-/// Review round 2: a page names the version's `updated`, so a reader
-/// paging through a draft sees when another edit landed between its
-/// pages, and reads again rather than mixing two edits.
+/// Review round 2: a page names the board's `rev` (#2705 B9: two edits in
+/// one second share a stamp), so a reader paging through a draft sees when
+/// another edit landed between its pages, and reads again rather than
+/// mixing two edits.
 #[test]
-fn a_page_after_an_edit_names_the_new_updated() {
+fn a_page_after_an_edit_names_the_new_rev() {
     let (_store, ada, bob) = drafted();
     let first = ok(
         &bob,
@@ -131,7 +132,7 @@ fn a_page_after_an_edit_names_the_new_updated() {
         &bob,
         json!({"op": "show", "task": "a", "version": 2, "items_from": 0}),
     );
-    let (was, now) = (&first["plan"]["updated"], &next["plan"]["updated"]);
+    let (was, now) = (&first["rev"], &next["rev"]);
     assert!(was.is_string() && now.is_string(), "{first} {next}");
     assert_ne!(was, now, "the edit between the pages shows");
     assert_eq!(next["plan"]["items"], json!([item("other")]));

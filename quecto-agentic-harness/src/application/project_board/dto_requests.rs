@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use super::{
     BoardOp, DraftUpdate, EndedRun, NewBoardTask, PlanAcceptance, PlanDiscard, PlanEdit,
-    PlanProposal, ProjectBoardError, RunEnd, ShownTask, TaskStart,
+    PlanProposal, ProjectBoardError, ReadPin, RunEnd, ShownTask, TaskStart,
 };
 use crate::application::project_board::ports::{BoardHead, KeepCopy};
 use crate::application::project_board::start::{Begun, StartWrite, StartedTask};
@@ -121,6 +121,31 @@ impl BoardRequest {
         }
     }
 
+    /// The pin the request gives to what its caller read, when it gives
+    /// one (#2705 B9): an update of a draft, a plan's edit, acceptance or
+    /// discard, and a run's end take one.
+    pub fn pin(&self) -> Option<&ReadPin> {
+        match self {
+            Self::UpdateDraft(update) => update.expected.as_ref(),
+            Self::EditPlan(edit) => edit.expected.as_ref(),
+            Self::AcceptPlan(acceptance) => Some(&acceptance.expected),
+            Self::DiscardPlan(discard) => discard.expected.as_ref(),
+            Self::EndRun(end) => end.expected.as_ref(),
+            Self::Bootstrap
+            | Self::List(_)
+            | Self::ListReady
+            | Self::ListTakeable
+            | Self::Show(..)
+            | Self::Create(_)
+            | Self::Change(..)
+            | Self::Complete(_)
+            | Self::DoneWithoutRun { .. }
+            | Self::ProposePlan(_)
+            | Self::Start(_)
+            | Self::Clear { .. } => None,
+        }
+    }
+
     /// The request lists tasks: the requests a [`ListSummaries::Wanted`]
     /// may be asked of (an allowlist).
     pub fn is_listing(&self) -> bool {
@@ -158,7 +183,7 @@ pub enum ListSummaries {
 /// Which plan a `show` gives and how much of it (#2481 M4b): the version
 /// named (`None`: the task's accepted plan), whole, or only the page
 /// named. The default is the accepted plan, whole.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlanView {
     pub version: Option<u32>,
     pub page: Option<PlanPage>,
@@ -168,12 +193,16 @@ pub struct PlanView {
 /// round 2): the approach from its character `approach_from`, the handoff
 /// from its character `handoff_from` (#2705 T3), the task items from the
 /// index `items_from`. A part not named is not shown, so a page names at
-/// least one ([`Self::paged`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// least one ([`Self::paged`]). A page may be pinned to the revision its
+/// first page was read at ([`Self::pinned`], #2705 B9): it is refused
+/// (`plan_changed`) once that plan changed since, so a reader reads again
+/// from 0, never mixing two edits. Only a page takes a pin.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanPage {
     approach_from: Option<usize>,
     handoff_from: Option<usize>,
     items_from: Option<usize>,
+    pin: Option<BoardHead>,
 }
 
 impl PlanPage {
@@ -196,8 +225,23 @@ impl PlanPage {
                 approach_from,
                 handoff_from,
                 items_from,
+                pin: None,
             }),
         }
+    }
+
+    /// The page pinned to `rev`, its first page's revision.
+    #[must_use]
+    pub fn pinned(self, rev: BoardHead) -> Self {
+        Self {
+            pin: Some(rev),
+            ..self
+        }
+    }
+
+    /// The revision the page is pinned to, if it is.
+    pub fn pin(&self) -> Option<&BoardHead> {
+        self.pin.as_ref()
     }
 
     pub fn approach_from(&self) -> Option<usize> {

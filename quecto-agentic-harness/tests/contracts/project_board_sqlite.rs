@@ -81,6 +81,57 @@ macro_rules! shared {
 // All fifteen store checks; the shared assertion bodies remain untouched.
 shared!(bootstrap, store::check_bootstrap);
 shared!(write_and_read, store::check_write_and_read);
+shared!(object_at, store::check_object_at);
+
+/// #2705 B9 review round 2 (F1): after an epoch is opened, the head names
+/// the held revision in the new epoch (`2:2`), which no revision row
+/// names: a pin to it, or to the same revision by its old epoch (`1:2`),
+/// names the file that revision held; a revision outside an epoch's
+/// interval names none.
+#[test]
+fn object_at_resolves_a_revision_across_an_opened_epoch() {
+    use quecto::application::project_board::ports::{ArtifactKey, BoardHead};
+    use quecto::domain::project_board::value_objects::slug::Slug;
+    use quecto::domain::project_board::value_objects::telemetry::BoardId;
+    use quecto::infrastructure::persistence::sqlite::project_board::history::SqliteBoardHistoryStore;
+    let database = Database::new();
+    let store = database.named("Alice");
+    store.bootstrap().unwrap();
+    let head = store.read().unwrap().head;
+    let written = store
+        .write_tasks(&head, &[store::task("a", "First")], "board: add a")
+        .unwrap();
+    let BoardWrite::Written(first) = written else {
+        panic!("{written:?}")
+    };
+    assert_eq!(first, BoardHead("1:2".into()));
+    let board = BoardId::of_hex("0123456789abcdef").unwrap();
+    let promoted = SqliteBoardHistoryStore::new(database.path(), identity("History"), board)
+        .open_epoch(1, "promoted", 1_700_000_000)
+        .unwrap();
+    assert_eq!(promoted, BoardHead("2:2".into()));
+    assert_eq!(store.read().unwrap().head, promoted);
+    let key = ArtifactKey::Task(Slug::parse("a").unwrap());
+    let at = |rev: &str| store.object_at(&BoardHead(rev.into()), &key).unwrap();
+    let held = at("1:2");
+    assert!(held.is_some(), "revision 2 names a's file");
+    assert_eq!(at("2:2"), held, "the head names the same revision");
+    // #2705 B9 review round 3: a revision written after the epoch opened
+    // lies in the new epoch alone, past the old one's interval.
+    let renamed = store
+        .write_tasks(&promoted, &[store::task("a", "Renamed")], "board: rename a")
+        .unwrap();
+    assert_eq!(renamed, BoardWrite::Written(BoardHead("2:3".into())));
+    let now = at("2:3");
+    assert!(
+        now.is_some() && now != held,
+        "revision 3 names a's new file"
+    );
+    assert_eq!(at("1:3"), None, "revision 3 lies past epoch 1");
+    for outside in ["2:1", "3:2", "0:2", "2:02", "2:4"] {
+        assert_eq!(at(outside), None, "{outside}");
+    }
+}
 shared!(lock_races, store::check_lock_races);
 shared!(unchanged_write, store::check_unchanged_write);
 shared!(compare_and_swap, store::check_compare_and_swap);

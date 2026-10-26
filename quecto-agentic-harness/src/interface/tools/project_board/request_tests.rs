@@ -1,4 +1,6 @@
 use super::*;
+use crate::application::project_board::dto::{DraftUpdate, ReadPin};
+use crate::application::project_board::operations::{PlanPage, PlanView};
 use crate::domain::project_board::entities::task_parts::Entry;
 use crate::domain::project_board::services::transitions::MoveReason;
 use serde_json::json;
@@ -218,7 +220,9 @@ fn update_draft_sets_only_what_it_names_and_null_takes_the_parent_away() {
             description: None,
             parent: Some(None),
             depends_on: None,
-            expected_updated: Some(Timestamp::parse("2026-10-10T08:00:00Z").unwrap()),
+            expected: Some(ReadPin::Updated(
+                Timestamp::parse("2026-10-10T08:00:00Z").unwrap()
+            )),
             entry: Entry::Sectioned,
         }
     );
@@ -323,6 +327,7 @@ fn samples(kind: Kind) -> (Value, Value, Value) {
         Kind::Slugs => (json!(["a"]), json!(["b"]), json!("a")),
         Kind::Lines => (json!(["a"]), json!(["b"]), json!("a")),
         Kind::Text => (json!("x"), json!("y"), json!(7)),
+        Kind::Rev => (json!("r1"), json!("2:7"), json!(7)),
         Kind::Timestamp => (
             json!("2026-10-10T08:00:00Z"),
             json!("2026-10-10T09:00:00Z"),
@@ -390,6 +395,18 @@ fn every_field_in_the_table_is_read_by_its_kind() {
             if *op == "end_run" && except == "stop" {
                 object.insert("outcome".into(), json!("stopped"));
             }
+            // An acceptance takes one pin, either one; a show's pin is a
+            // page's (#2705 B9).
+            match (*op, except) {
+                ("accept_plan", "expected_rev" | "expected_updated") => {}
+                ("accept_plan", _) => {
+                    object.insert("expected_rev".into(), json!("r1"));
+                }
+                ("show", "expected_rev") => {
+                    object.insert("items_from".into(), json!(0));
+                }
+                _ => {}
+            }
             object
         };
         for field in *fields {
@@ -420,6 +437,7 @@ fn sample(kind: Kind) -> Value {
         Kind::Slugs | Kind::Lines => json!([]),
         Kind::Text => json!("t"),
         Kind::Timestamp => json!("2026-10-10T08:00:00Z"),
+        Kind::Rev => json!("r1"),
         Kind::Status => json!("review"),
         Kind::NewStatus => json!("draft"),
         Kind::TaskKind => json!("task"),
@@ -583,7 +601,7 @@ fn end_run_reads_its_run_outcome_and_pin() {
             task: slug("a"),
             run: 2,
             outcome: RunEndOutcome::Stopped,
-            expected_updated: Some(at),
+            expected: Some(ReadPin::Updated(at)),
             stop: None,
         }))
     );
@@ -598,7 +616,7 @@ fn end_run_reads_its_run_outcome_and_pin() {
             task: slug("a"),
             run: 2,
             outcome: RunEndOutcome::Stopped,
-            expected_updated: None,
+            expected: None,
             stop: Some(StopKind::Blocked),
         }))
     );

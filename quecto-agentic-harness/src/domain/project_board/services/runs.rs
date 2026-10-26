@@ -22,7 +22,8 @@ use super::super::value_objects::vocabulary::{ItemState, PlanState, RunOutcome, 
 use super::claims::{held_live_by, stamp};
 
 /// A new run of `task`'s accepted `plan`, begun by `actor`, the holder of
-/// a live claim on it, at `now`, numbered after every run in `runs`.
+/// a claim on it live at `now` (the caller's clock, #2705 B9), stamped as
+/// the task's change is ([`stamp`]), numbered after every run in `runs`.
 ///
 /// # Errors
 /// Not the holder of a live claim; a run of another task, or runs that
@@ -71,7 +72,7 @@ pub fn begin_run(
         task: fields.id.clone(),
         number: last + 1,
         plan_version: planned.version,
-        started: now.clone(),
+        started: stamp(task, now),
         ended: None,
         outcome: None,
         cost: None,
@@ -152,7 +153,7 @@ pub fn end_lost(
     of_task(task, std::slice::from_ref(run))?;
     // A loss is judged by nothing it reports: no success is claimed.
     let Reported { items, cost, .. } = reported;
-    let lost = fold_back(run, plan, RunOutcome::Lost, cost, items, &stamp(task, now)?)?;
+    let lost = fold_back(run, plan, RunOutcome::Lost, cost, items, &stamp(task, now))?;
     debug_assert_eq!(lost.fields().outcome, Some(RunOutcome::Lost));
     Ok(lost)
 }
@@ -232,7 +233,7 @@ pub fn end_held(
     } = reported;
     // Folded first, so a run that has ended, or items the plan does not
     // have, answer as such before the items are judged.
-    let folded = fold_back(run, plan, end.outcome(), cost, items, &stamp(task, now)?)?;
+    let folded = fold_back(run, plan, end.outcome(), cost, items, &stamp(task, now))?;
     match end {
         HeldEnd::Succeeded => {
             let undone = undone_items(plan, &folded.fields().items);

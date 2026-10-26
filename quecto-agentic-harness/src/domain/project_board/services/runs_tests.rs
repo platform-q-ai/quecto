@@ -335,7 +335,7 @@ fn a_lost_run_ends_at_the_tasks_stamp() {
         &at("08:00:00"),
     )
     .unwrap();
-    assert_eq!(ended.fields().ended, Some(at("09:00:01")));
+    assert_eq!(ended.fields().ended, Some(at("09:00:00")));
 }
 
 #[test]
@@ -488,7 +488,7 @@ fn a_held_end_is_stamped_after_the_tasks_last_change() {
         &at("09:30:00"),
     )
     .unwrap();
-    assert_eq!(ended.fields().ended, Some(at("10:00:01")));
+    assert_eq!(ended.fields().ended, Some(at("10:00:00")));
     let lost = lost(&held, &run, &person("Ada"), &at("09:30:00")).unwrap();
     assert_eq!(
         lost.fields().ended,

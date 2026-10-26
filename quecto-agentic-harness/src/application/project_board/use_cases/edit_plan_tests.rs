@@ -1,6 +1,7 @@
 //! #2481 M4b: an edit of a draft is a patch: what it leaves out stays as
 //! the board holds it, byte for byte, and a stale edit is refused.
 use super::EditPlan;
+use crate::application::project_board::dto::ReadPin;
 use crate::application::project_board::dto::{PlanEdit, ProjectBoardError};
 use crate::application::project_board::ports::ProjectBoardStore;
 use crate::application::project_board::telemetry::OpFacts;
@@ -30,7 +31,7 @@ fn of(version: u32) -> PlanEdit {
         approach: None,
         items: None,
         team: None,
-        expected_updated: None,
+        expected: None,
     }
 }
 
@@ -53,7 +54,7 @@ fn an_edit_of_the_items_alone_keeps_the_approach_byte_for_byte() {
         handoff: None,
         entry: PlanEntry::Legacy,
         items: Some(vec![plan_item("only", &[])]),
-        expected_updated: Some(at("09:00:00")),
+        expected: Some(ReadPin::Updated(at("09:00:00"))),
         ..of(1)
     };
     let edited = edit_as(&store, "Cy").execute(&edit).unwrap();
@@ -129,7 +130,7 @@ fn a_stale_expected_updated_is_refused_as_plan_changed() {
         handoff: None,
         entry: PlanEntry::Legacy,
         items: Some(vec![plan_item("only", &[])]),
-        expected_updated: Some(at("08:00:00")),
+        expected: Some(ReadPin::Updated(at("08:00:00"))),
         ..of(1)
     };
     let mut facts = OpFacts::default();
@@ -258,7 +259,7 @@ fn a_pinned_edit_that_loses_the_race_is_refused_as_plan_changed() {
         handoff: None,
         entry: PlanEntry::Legacy,
         items: Some(vec![plan_item("mine", &[])]),
-        expected_updated: Some(at("09:00:00")),
+        expected: Some(ReadPin::Updated(at("09:00:00"))),
         ..of(1)
     };
     let mut facts = OpFacts::default();

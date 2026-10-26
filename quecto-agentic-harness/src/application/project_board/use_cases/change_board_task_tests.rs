@@ -210,10 +210,12 @@ fn a_change_no_longer_allowed_on_the_fresh_task_is_refused() {
     assert_eq!(current(&store).claim.unwrap().holder, person("Ada"));
 }
 
-/// A task stamped past the reference by a clock that ran ahead is not
-/// built on; the store's refusal is reported as it is.
+/// #2705 B9: a task stamped past the reference by a clock that ran ahead
+/// is built on (a stamp is for display; the board's revision orders
+/// changes), its stamp never running backwards; the store's refusal is
+/// reported as it is.
 #[test]
-fn a_task_from_the_future_and_a_refusal_are_reported() {
+fn a_task_from_the_future_is_built_on_and_a_refusal_is_reported() {
     let store = board();
     seed(&store, held_by_ada(TaskStatus::Claimed));
     let skewed = ChangeBoardTask::new(
@@ -222,16 +224,10 @@ fn a_task_from_the_future_and_a_refusal_are_reported() {
     )
     .unwrap();
     // A write (a renewal this early writes nothing, #2656).
-    let ahead = skewed.execute(&slug("a"), &mv(TaskStatus::Ready));
-    assert_eq!(
-        ahead,
-        Err(ProjectBoardError::TaskAhead {
-            id: slug("a"),
-            updated: at("09:10:00")
-        })
-    );
+    let ahead = skewed.execute(&slug("a"), &mv(TaskStatus::Ready)).unwrap();
+    assert_eq!(ahead.fields().updated, at("09:10:00"));
     store.refuse_next_write("a hook said no");
-    let refused = change(&store, "Ada", "10:00:00").execute(&slug("a"), &mv(TaskStatus::Ready));
+    let refused = change(&store, "Ada", "10:00:00").execute(&slug("a"), &mv(TaskStatus::Draft));
     assert_eq!(
         refused,
         Err(ProjectBoardError::Refused("a hook said no".into()))
@@ -265,11 +261,11 @@ fn the_holder_unlinks_a_pull_request_and_then_finishes_the_task() {
     assert_eq!(done.fields().status, TaskStatus::Done);
 }
 
-/// The bound on a task stamped ahead is inclusive, as the clock's own is:
-/// a task stamped exactly the reference plus 60 s plus the stamp's slack
-/// (30 s) is built on; a second later it is not.
+/// #2705 B9: no bound holds a task stamped ahead: one stamped past the
+/// reference plus 60 s plus 30 s is built on as one within it is, each
+/// change stamped the clock's time or the task's own, whichever is later.
 #[test]
-fn a_task_stamped_at_the_bound_is_built_on_and_a_second_past_it_is_not() {
+fn a_task_stamped_past_the_old_bound_is_built_on() {
     let built_on = |updated: &str| {
         let store = board();
         let task = Task::new(TaskFields {
@@ -287,19 +283,11 @@ fn a_task_stamped_at_the_bound_is_built_on_and_a_second_past_it_is_not() {
         .unwrap()
         .execute(&slug("a"), &mv(TaskStatus::Ready))
     };
-    let at_bound = built_on("09:01:30").unwrap();
-    assert_eq!(
-        at_bound.fields().updated,
-        at("09:01:31"),
-        "a second past the task it built on"
-    );
-    assert_eq!(
-        built_on("09:01:31"),
-        Err(ProjectBoardError::TaskAhead {
-            id: slug("a"),
-            updated: at("09:01:31")
-        })
-    );
+    for updated in ["09:00:10", "09:01:30", "09:01:31", "11:00:00"] {
+        let built = built_on(updated).unwrap();
+        let stamp = at(updated).max(at("09:00:30"));
+        assert_eq!(built.fields().updated, stamp, "{updated}");
+    }
 }
 
 /// A reference the board cannot add 60 s to is refused before anything
@@ -347,8 +335,8 @@ fn a_store_with_an_invalid_writer_is_refused_when_built() {
 }
 
 /// A client 55 s fast (inside the 60 s bound) writes a dozen times in a
-/// row (moves, as a renewal this early writes nothing, #2656); each stamp
-/// is a second past the last, edging past the bound, yet a writer whose
+/// row (moves, as a renewal this early writes nothing, #2656); each is
+/// stamped its clock's time, never pushed past it (#2705 B9), and a writer whose
 /// clock is right still builds on the task.
 #[test]
 fn quick_writes_from_a_fast_clock_never_lock_out_a_right_one() {
@@ -370,8 +358,8 @@ fn quick_writes_from_a_fast_clock_never_lock_out_a_right_one() {
         fast.execute(&slug("a"), &mv(to)).unwrap();
     }
     assert!(
-        current(&store).updated > at("09:01:00"),
-        "past the bound itself"
+        current(&store).updated == at("09:00:55"),
+        "never pushed past the clock"
     );
     let right = ChangeBoardTask::new(
         Arc::new(store.client_as(person("Ada"))),

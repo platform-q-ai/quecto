@@ -10,7 +10,9 @@ use super::board_view;
 use crate::application::project_board::dto::{
     ArtifactListing, ArtifactScope, BoardListing, ProjectBoardError, ShownTask,
 };
-use crate::application::project_board::ports::{ArtifactKey, BoardSnapshot, ProjectBoardStore};
+use crate::application::project_board::ports::{
+    ArtifactKey, BoardHead, BoardSnapshot, ProjectBoardStore,
+};
 use crate::application::project_board::task_summary::{RowSummary, Summarized, summary_of};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::discussion::Discussion;
@@ -169,6 +171,21 @@ impl QueryBoard {
     /// in the answer, never refused.
     pub fn show(&self, id: &Slug) -> Result<ShownTask, ProjectBoardError> {
         shown_on(&self.store.read()?, id)
+    }
+
+    /// The plan `shown` gives for `version` as it was at `rev` (#2705
+    /// B9): a page pinned to the revision of its first page.
+    ///
+    /// # Errors
+    /// The plan changed since (`plan_changed`); the store's.
+    pub fn page_as_read(
+        &self,
+        shown: &ShownTask,
+        version: Option<u32>,
+        rev: &BoardHead,
+    ) -> Result<(), ProjectBoardError> {
+        let plan = shown.plan(version);
+        super::read_pins::page_as_read(&*self.store, &shown.head, plan, rev)
     }
 
     /// What one read of the whole board makes of the summaries of the

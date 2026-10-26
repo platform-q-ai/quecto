@@ -22,6 +22,22 @@ pub struct FolderFile {
     pub bytes: Vec<u8>,
 }
 
+/// The folder and the name under which a read finds `key`'s file (#2705
+/// B9): `tasks` for a task, else its kind's folder.
+pub fn artifact_path(key: &ArtifactKey) -> (&'static str, String) {
+    let numbered = |id: &crate::domain::project_board::value_objects::slug::Slug, n: u32| {
+        format!("{}.{n}.md", id.as_str())
+    };
+    match key {
+        ArtifactKey::Task(id) => (TASKS.trim_end_matches('/'), super::task_file(id)),
+        ArtifactKey::Plan(id, n) => ("plans", numbered(id, *n)),
+        ArtifactKey::Run(id, n) => ("runs", numbered(id, *n)),
+        ArtifactKey::Change(id, n) => ("changes", numbered(id, *n)),
+        ArtifactKey::Review(id, n) => ("reviews", numbered(id, *n)),
+        ArtifactKey::Discussion(id) => ("discussions", format!("{}.md", id.as_str())),
+    }
+}
+
 /// The file of `key`'s artifact, `bytes`, where a read finds it: its
 /// kind's folder, under the name that spells `key` there.
 ///
@@ -29,16 +45,13 @@ pub struct FolderFile {
 /// A task's key (its file lies in `tasks/`), or a file a read would set
 /// aside: a name that spells another key or none, or past its kind's cap.
 pub fn folder_file(key: &ArtifactKey, bytes: Vec<u8>) -> Result<FolderFile, String> {
-    let numbered = |id: &crate::domain::project_board::value_objects::slug::Slug, n: u32| {
-        format!("{}.{n}.md", id.as_str())
-    };
     let (folder, name) = match key {
         ArtifactKey::Task(_) => return Err(format!("{key}: a task's file lies in {TASKS}")),
-        ArtifactKey::Plan(id, n) => ("plans", numbered(id, *n)),
-        ArtifactKey::Run(id, n) => ("runs", numbered(id, *n)),
-        ArtifactKey::Change(id, n) => ("changes", numbered(id, *n)),
-        ArtifactKey::Review(id, n) => ("reviews", numbered(id, *n)),
-        ArtifactKey::Discussion(id) => ("discussions", format!("{}.md", id.as_str())),
+        ArtifactKey::Plan(..)
+        | ArtifactKey::Run(..)
+        | ArtifactKey::Change(..)
+        | ArtifactKey::Review(..)
+        | ArtifactKey::Discussion(_) => artifact_path(key),
     };
     let found = FOLDERS.iter().find(|found| found.naming.folder == folder);
     let Some(found) = found else {

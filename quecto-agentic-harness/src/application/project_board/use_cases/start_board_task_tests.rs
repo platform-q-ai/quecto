@@ -1,5 +1,6 @@
 //! S4c: a start writes the task and run 1 together, then launches the
 //! coordinator; a failed launch is undone as far as it can be.
+use crate::application::project_board::dto::ReadPin;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
@@ -476,7 +477,7 @@ fn a_start_racing_an_acceptance_launches_nothing_unconfirmed() {
             .execute(&PlanAcceptance {
                 task: slug("a"),
                 version: 2,
-                expected_updated: at("09:00:00"),
+                expected: ReadPin::Updated(at("09:00:00")),
                 expected_accepted: Some(1),
             })
             .unwrap();
