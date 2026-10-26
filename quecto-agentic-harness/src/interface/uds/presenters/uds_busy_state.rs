@@ -1,8 +1,5 @@
-//! A guarded harness's own `get_state` while its loop is busy (#2708): the
-//! loop is serial and the Pocket relay reads state under a 15 s timeout, so
-//! the connection answers it from the snapshot (with the connect-time
-//! overlays) to the requester only, once the frames broadcast before have
-//! gone out. Idle or unguarded, the loop answers it.
+//! A guarded harness's own `get_state` while its serial loop is busy (#2708):
+//! the connection answers it from the snapshot, to the requester only.
 use crate::interface::uds::wire::protocol::{AgentCommand, AgentEvent};
 
 /// What a busy `get_state` is answered from, shared by the connections.
@@ -38,10 +35,8 @@ pub(in crate::interface) fn asked(line: &str, source: Option<&BusyState>) -> Opt
 }
 
 impl BusyState {
-    /// The answer's frame, computed now: the loop's `get_state` data from
-    /// the snapshot with the live overlays; while busy, a phase that has
-    /// already gone idle (between a run's end and its `agent_end`, or
-    /// between turns) reads `finalizing`, never `idle`.
+    /// The answer's frame, computed now; while busy, an idle phase (a run
+    /// ended before its `agent_end`, or between turns) reads `finalizing`.
     pub(crate) async fn answer(&self, (id, since): Asked) -> String {
         // Release the async snapshot lock before taking either sync mutex.
         let mut snapshot = self.state.read().await.clone();

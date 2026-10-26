@@ -85,8 +85,18 @@ async fn issue_2708_liveness_only_a_holding_coordinator_is_owned_work() {
             vec![agent_end(), swarm_state("paused", "paused")],
             WorkLiveness::Empty,
         ),
+        // Round 4 (L5): a failed turn or an unknown report can't say
+        // whether its workers still run.
         (
             vec![swarm_state("hold", "running"), failed.clone()],
+            WorkLiveness::Unknown,
+        ),
+        (
+            vec![agent_end(), swarm_state("unknown", "running")],
+            WorkLiveness::Unknown,
+        ),
+        (
+            vec![failed.clone(), swarm_state("finished", "succeeded")],
             WorkLiveness::Empty,
         ),
         (

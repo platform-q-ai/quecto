@@ -47,7 +47,7 @@ fn issue_2708_liveness_retained_idle_and_dead_rows_are_empty() {
 /// Review #2762 round 3 (1): an idle coordinator the parent launched holds
 /// work only while its last report was a hold. One that never reported (a
 /// coordinator that ended its first turn without a board sends none) holds
-/// none, nor does one in error or exited. (The reported kinds are driven
+/// none, nor does one that exited. (The reported kinds are driven
 /// through the monitor in the swarm-wake tests.)
 #[test]
 fn issue_2708_liveness_a_launched_coordinator_holds_work_only_after_a_hold() {
@@ -56,12 +56,19 @@ fn issue_2708_liveness_a_launched_coordinator_holds_work_only_after_a_hold() {
         (SubagentStatus::Idle, None, WorkLiveness::Empty),
         (
             SubagentStatus::Idle,
+            Some(WakeKind::Unknown),
+            WorkLiveness::Unknown,
+        ),
+        (
+            SubagentStatus::Idle,
             Some(WakeKind::Hold),
             WorkLiveness::Live,
         ),
+        // Round 4 (L5): an errored coordinator reads by its wake (a failed
+        // turn not yet reported is unknown: see the swarm-wake tests).
         (
             SubagentStatus::Error,
-            Some(WakeKind::Hold),
+            Some(WakeKind::Finished),
             WorkLiveness::Empty,
         ),
         (
