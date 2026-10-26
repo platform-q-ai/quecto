@@ -46,6 +46,24 @@ fn a_rev_pin_holds_while_its_task_is_as_read_whatever_else_moved() {
     assert_eq!(task_as_read(&store, &now, a, None), Ok(()));
 }
 
+/// #2705 B9 review round 2 (F1, F4): a store that names no file at the
+/// head it was read at (a board rewound, an epoch the store cannot
+/// resolve) never panics a pinned change: the pin does not hold.
+#[test]
+fn a_head_the_store_names_no_file_at_leaves_a_pin_unheld_never_panics() {
+    let store = board();
+    let read = written(&store, &[task("a", "A")]);
+    let mut now = store.read().unwrap();
+    now.head = BoardHead("r999".into());
+    let a = now.tasks[0].clone();
+    assert!(matches!(
+        task_as_read(&store, &now, &a, Some(&rev(&read))),
+        Err(ProjectBoardError::Stale { .. })
+    ));
+    let pages = page_as_read(&store, &now.head, None, &read);
+    assert_eq!(pages, Ok(()), "no plan, no pin to judge");
+}
+
 #[test]
 fn a_rev_pin_from_before_a_change_or_of_no_revision_is_stale() {
     let store = board();

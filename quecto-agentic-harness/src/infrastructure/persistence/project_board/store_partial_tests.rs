@@ -45,6 +45,42 @@ fn partial(repos: &Repos, filter: &str, name: &str) -> PathBuf {
     repos.dir.path().join(name)
 }
 
+/// #2705 B9 review round 2 (F2): a clone made with no trees names a
+/// file at an older revision of the board from that revision's root and
+/// folder trees alone, fetched for it: never the file itself, nor any
+/// other file of that revision.
+#[test]
+fn a_partial_clone_names_a_file_at_an_older_rev_from_its_trees_alone() {
+    use crate::application::project_board::ports::ArtifactKey;
+    let repos = Repos::new();
+    let carol = partial(&repos, "tree:0", "carol");
+    let alice = store(&repos.alice);
+    let head = created(&alice);
+    let first = written(alice.write_tasks(&head, &[task("a"), task("b")], "board: add a, b"));
+    let mut renamed = task("a").into_fields();
+    renamed.title = "Renamed".into();
+    let renamed = Task::new(renamed).unwrap();
+    let second = written(alice.write_tasks(&first, &[renamed], "board: rename a"));
+    let partial = store(&carol);
+    assert_eq!(partial.read().unwrap().head, second);
+    let remote = repos.remote();
+    let at =
+        |rev: &BoardHead, path: &str| sh(&remote, &["rev-parse", &format!("{}:{path}", rev.0)]);
+    let old = at(&first, "tasks/a.md");
+    assert!(
+        !held(&carol, &old),
+        "the clone holds the head's files alone"
+    );
+    let key = ArtifactKey::Task(Slug::parse("a").unwrap());
+    assert_eq!(partial.object_at(&first, &key).unwrap(), Some(old.clone()));
+    assert!(held(&carol, &at(&first, "tasks")), "its folder's tree came");
+    assert!(!held(&carol, &old), "the file itself never came");
+    assert_eq!(
+        partial.object_at(&second, &key).unwrap(),
+        Some(at(&second, "tasks/a.md"))
+    );
+}
+
 /// A clone made with no trees, before the board existed, fetches the
 /// board's commits, its root, its folders and the archive's tree alone:
 /// it reads every kind and a write carries the archive, and nothing under
