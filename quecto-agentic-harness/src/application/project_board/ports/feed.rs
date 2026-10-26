@@ -104,6 +104,15 @@ pub struct Told {
     pub event: FeedEvent,
 }
 
+impl Told {
+    /// An id as a reader sends it back (`Last-Event-ID`) or a stream tells
+    /// it: 1 to 20 ASCII digits that fit a `u64`, nothing else.
+    pub fn parse_id(text: &str) -> Option<u64> {
+        let digits = (1..=20).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_digit());
+        digits.then(|| text.parse().ok()).flatten()
+    }
+}
+
 /// Whether a watcher goes on after an event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchFlow {

@@ -18,7 +18,7 @@ pub const MAX_EVENT_BYTES: usize = 8 * 1024;
 /// The longest reconnection delay a stream's `retry:` is taken at.
 pub const MAX_RETRY: Duration = Duration::from_secs(60);
 /// The shortest, so no `retry:` makes a reader spin.
-pub const MIN_RETRY: Duration = Duration::from_millis(0);
+pub const MIN_RETRY: Duration = Duration::from_millis(100);
 
 /// One event as the stream sent it: its id, its name, its data lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,7 +195,8 @@ impl EventReader {
                     let digits = !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit());
                     if digits {
                         let millis = value.parse::<u64>().unwrap_or(u64::MAX);
-                        self.retry = Some(Duration::from_millis(millis).min(MAX_RETRY));
+                        self.retry =
+                            Some(Duration::from_millis(millis).clamp(MIN_RETRY, MAX_RETRY));
                     }
                 }
                 _ => return Err(malformed("a field this reader does not read")),
@@ -278,7 +279,17 @@ impl Read for Chunked {
 /// One CRLF-ended line of at most `most` bytes, without its CRLF.
 fn bounded_line(wire: &mut Wire, most: usize) -> io::Result<String> {
     let mut line = Vec::new();
-    wire.take((most + 2) as u64).read_until(b'\n', &mut line)?;
+    let read = wire.take((most + 2) as u64).read_until(b'\n', &mut line)?;
+    // The connection ended before the line did (a clean close at a chunk
+    // boundary, or mid-line): a cut in transport, not wrong bytes.
+    let full = read == most + 2 || line.last() == Some(&b'\n');
+    match full {
+        true => {}
+        false => {
+            let cut = "the connection ended mid-stream";
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, cut));
+        }
+    }
     match line.strip_suffix(b"\r\n") {
         Some(text) => String::from_utf8(text.to_vec())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "a line not UTF-8")),

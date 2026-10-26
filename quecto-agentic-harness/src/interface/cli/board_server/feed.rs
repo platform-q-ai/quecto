@@ -87,7 +87,7 @@ pub(super) fn open(
     let query = numbers(request.query.as_deref(), &["after"])?;
     let after =
         match request.last_event_id.as_deref() {
-            Some(id) => Some(number(id).ok_or_else(|| {
+            Some(id) => Some(Told::parse_id(id).ok_or_else(|| {
                 refused("last_event_id", "Last-Event-ID must be a revision number")
             })?),
             None => query.get("after").copied(),
@@ -184,12 +184,6 @@ fn numbers<'k>(
 fn digits(text: &str) -> Option<u64> {
     let shaped = (1..=64).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_digit());
     shaped.then(|| text.parse().unwrap_or(u64::MAX))
-}
-
-/// `text` as a number: 1 to 20 ASCII digits that fit a `u64`.
-fn number(text: &str) -> Option<u64> {
-    let digits = (1..=20).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_digit());
-    digits.then(|| text.parse().ok()).flatten()
 }
 
 fn refused(code: &str, why: &str) -> ServiceReply {

@@ -13,7 +13,7 @@ use serde_json::Value;
 use super::board_service::client::{BoardServiceClient, ClientError};
 use super::board_service::events::{EventReader, Opened, StreamEvent};
 use crate::application::project_board::ports::feed::{
-    BoardRevision, BoardWatch, FeedEvent, WatchFlow,
+    BoardRevision, BoardWatch, FeedEvent, Told, WatchFlow,
 };
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 
@@ -31,7 +31,9 @@ pub const BUSY_FOR: Duration = Duration::from_secs(75);
 /// The longest pause between tries of a busy server.
 pub const MAX_BACKOFF: Duration = Duration::from_secs(8);
 /// The most tries of a busy server, however short its pauses.
-pub const MAX_BUSY_TRIES: u32 = 0;
+pub const MAX_BUSY_TRIES: u32 = 32;
+/// The shortest pause between tries of a busy server.
+pub const MIN_BACKOFF: Duration = Duration::from_millis(100);
 
 /// A watch's times: how long a read may wait, the pause before a stream is
 /// opened again (until a stream's `retry:` says otherwise), and how long a
@@ -131,7 +133,8 @@ impl BoardWatch for RemoteBoardWatch {
     /// Opens the stream again whenever it ends: after the stream's `retry:`
     /// (else the pause). Opens that fail, or end with no event,
     /// [`ATTEMPTS`] in a row end the watch; a busy server is tried again
-    /// with a doubling backoff, apart, for its `busy_for`.
+    /// with a doubling backoff ([`MIN_BACKOFF`] to [`MAX_BACKOFF`]), apart,
+    /// for its `busy_for` and at most [`MAX_BUSY_TRIES`] tries.
     fn watch(
         &self,
         after: Option<u64>,
@@ -144,22 +147,29 @@ impl BoardWatch for RemoteBoardWatch {
             epoch: None,
         };
         let (mut failed, mut pause) = (0, timing.pause);
-        // While busy: the pauses slept so far, and the next one. Counted, so
-        // the client reads no clock.
-        let mut busy: Option<(Duration, Duration)> = None;
+        // While busy: the tries made, the pauses slept so far (counted, so the
+        // client reads no clock), and the next pause.
+        let mut busy: Option<(u32, Duration, Duration)> = None;
         loop {
             let failure = match self.client.open_events(&path, standing.cursor, timing.idle) {
                 // Busy (a token's 2 streams, or the server's 32): a place
                 // frees within a connection's lifetime.
                 Ok(Opened::Refused(reply)) if reply.status == 503 => {
-                    let (waited, backoff) = *busy.get_or_insert((Duration::ZERO, pause));
-                    if waited >= timing.busy_for {
-                        let why = refusal(reply.status, &reply.body);
-                        let waited = waited.as_secs_f64();
-                        return Err(format!("{why} (still busy after {waited:.1} s)"));
+                    // Never under MIN_BACKOFF, so no pause (a `retry: 0`)
+                    // makes it spin.
+                    let floor = pause.clamp(MIN_BACKOFF, MAX_BACKOFF);
+                    let (tries, waited, backoff) = *busy.get_or_insert((0, Duration::ZERO, floor));
+                    match (waited < timing.busy_for, tries < MAX_BUSY_TRIES) {
+                        (true, true) => {}
+                        (_, _) => {
+                            let why = refusal(reply.status, &reply.body);
+                            let waited = waited.as_secs_f64();
+                            return Err(format!("{why} (still busy after {waited:.1} s)"));
+                        }
                     }
                     std::thread::sleep(backoff);
-                    busy = Some((waited + backoff, (backoff * 2).min(MAX_BACKOFF)));
+                    let next = (backoff * 2).clamp(MIN_BACKOFF, MAX_BACKOFF);
+                    busy = Some((tries + 1, waited + backoff, next));
                     continue;
                 }
                 Ok(Opened::Refused(reply)) => return Err(refusal(reply.status, &reply.body)),
@@ -200,7 +210,7 @@ impl BoardWatch for RemoteBoardWatch {
 /// `None` for anything else (another kind, another key, an id that is not
 /// the event's cursor).
 pub fn decoded(event: &StreamEvent) -> Option<(u64, FeedEvent)> {
-    let id = event.id.as_deref().and_then(number)?;
+    let id = event.id.as_deref().and_then(Told::parse_id)?;
     let data: Value = serde_json::from_str(&event.data).ok()?;
     let fields = data.as_object()?;
     let keys: BTreeSet<&str> = fields.keys().map(String::as_str).collect();
@@ -227,11 +237,6 @@ pub fn decoded(event: &StreamEvent) -> Option<(u64, FeedEvent)> {
         }
         (_, _) => None,
     }
-}
-
-fn number(text: &str) -> Option<u64> {
-    let digits = (1..=20).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_digit());
-    digits.then(|| text.parse().ok()).flatten()
 }
 
 /// A refused open, by the server's status and code.

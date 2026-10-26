@@ -369,7 +369,7 @@ Pocket relay's tests. The server, its token and the board's id are found
 as for `quecto board --url`.
 - It starts from `--after` (else now). When the stream ends or is cut, it
   opens it again from the last id it printed, after the stream's `retry:`
-  (else 1 s), so each revision is printed once; after a `reset` it reads on
+  (100 ms to 60 s; else 1 s), so each revision is printed once; after a `reset` it reads on
   from the reset's `after`.
 - It prints each revision, each reset, and each change of epoch. An epoch
   the watch already printed, told again as a stream reopens, is not
@@ -379,9 +379,12 @@ as for `quecto board --url`.
   1 when it cannot start, when the server refuses it, when a stream is
   malformed (its error said), or when 5 opens in a row fail or end with no
   event.
-- A 503 `busy` is tried again, with a backoff doubling to 8 s, for up to
-  75 s (past a connection's 60 s lifetime, by which a held stream gives
-  its place back). Busy answers are counted apart from failed opens.
+- A 503 `busy` is tried again, with a backoff doubling from 100 ms (or the
+  stream's `retry:`, never less) to 8 s, for up to 75 s (past a
+  connection's 60 s lifetime, by which a held stream gives its place back)
+  and at most 32 tries. Busy answers are counted apart from failed opens.
+- A connection closed mid-stream (even cleanly, at a chunk boundary, with
+  no last chunk) is a cut: the stream is opened again.
 - A read waits at most 45 s (three missed 15 s pings) before the stream
   is opened again.
 
