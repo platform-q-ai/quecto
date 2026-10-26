@@ -136,7 +136,6 @@ fn a_follower_over_tcp_catches_up_refuses_writes_and_copies_a_revoke() {
     let follow = FollowPrimary {
         url: format!("http://{}", primary.tcp),
         token_file: Some(token),
-        replace_tokens: false,
     };
     let mut following = environment(&dir, &work, "origin");
     following.state = Some(dir.path().join("follower"));
@@ -215,7 +214,6 @@ fn a_token_file_another_user_may_read_is_refused_unquoted() {
     following.follow = Some(FollowPrimary {
         url: "http://127.0.0.1:9".into(),
         token_file: Some(token_file(dir.path(), secret, 0o644)),
-        replace_tokens: false,
     });
     let Err(refused) = build_board_server_with(&following, Arc::new(Synced)) else {
         panic!("a readable token file is refused");
@@ -224,30 +222,59 @@ fn a_token_file_another_user_may_read_is_refused_unquoted() {
     assert!(!refused.contains(secret), "{refused}");
 }
 
-/// B11 review: a server whose state holds tokens of its own is not made a
-/// follower unless `--replace-tokens` says so; then its own are kept beside.
+/// B11 review 2: a server whose state holds tokens of its own is not made a
+/// follower: they would stay live beside its primary's.
 #[test]
-fn a_follower_replaces_its_own_tokens_only_when_asked() {
+fn a_state_with_tokens_of_its_own_is_refused() {
     let (dir, work) = seeded();
     let mut own = environment(&dir, &work, "origin");
     own.state = Some(dir.path().join("eccup"));
     let handles = build_board_server_with(&own, Arc::new(Synced)).unwrap();
-    handles.access.add("laptop").unwrap();
+    let laptop = handles.access.add("laptop").unwrap();
     drop(handles);
-    let follow = |replace_tokens| FollowPrimary {
+    let mut following = own.clone();
+    following.follow = Some(FollowPrimary {
         url: format!("unix://{}", dir.path().join("p.sock").display()),
         token_file: None,
-        replace_tokens,
-    };
-    let mut following = own.clone();
-    following.follow = Some(follow(false));
+    });
     let Err(refused) = build_board_server_with(&following, Arc::new(Synced)) else {
         panic!("a state with tokens of its own is refused");
     };
-    assert!(refused.contains("--replace-tokens"), "{refused}");
-    following.follow = Some(follow(true));
+    assert!(refused.contains("1 token(s) of its own"), "{refused}");
+    let handles = build_board_server_with(&own, Arc::new(Synced)).unwrap();
+    assert!(handles.access.authenticate(Some(&laptop.secret)).is_ok());
+}
+
+/// B11 review 2: a follower's operations write nothing, whatever the op.
+#[test]
+fn a_followers_operations_write_nothing() {
+    let (dir, work) = seeded();
+    let mut following = environment(&dir, &work, "origin");
+    following.state = Some(dir.path().join("eccup"));
+    following.follow = Some(FollowPrimary {
+        url: format!("unix://{}", dir.path().join("p.sock").display()),
+        token_file: None,
+    });
     let handles = build_board_server_with(&following, Arc::new(Synced)).unwrap();
-    assert!(handles.follower.is_some());
-    let kept = dir.path().join("eccup").join("tokens.json.pre-follow");
-    assert!(std::fs::read_to_string(kept).unwrap().contains("laptop"));
+    // Asked without the 409 gate (a mis-read op), the store still refuses.
+    let routes = BoardRoutes::new(handles.serve, handles.access, handles.operations);
+    let op = format!("/v1/boards/{}/op", handles_board(&following));
+    let bootstrap = json!({"request": {"op": "bootstrap"}, "front_end": "cli",
+        "write_id": uuid::Uuid::new_v4().to_string(),
+        "committer": {"name": "Ada", "email": "ada@example.com"}});
+    let (status, body) = answered(&routes, ServiceMethod::Post, &op, bootstrap);
+    assert_eq!(status, 503, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("standby"),
+        "{body}"
+    );
+}
+
+/// The board id a server for `environment` serves.
+fn handles_board(environment: &BoardServerEnvironment) -> String {
+    let mut plain = environment.clone();
+    plain.follow = None;
+    plain.state = Some(environment.state.clone().unwrap().with_file_name("plain"));
+    let handles = build_board_server_with(&plain, Arc::new(Synced)).unwrap();
+    handles.serve.board().as_str().to_string()
 }

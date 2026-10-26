@@ -210,7 +210,7 @@ fn epochs(c: &Connection) -> Result<Vec<ReplicaEpoch>, BoardStoreError> {
     .collect()
 }
 
-fn meta(c: &Connection) -> Result<Option<ReplicaMeta>, BoardStoreError> {
+pub(super) fn meta(c: &Connection) -> Result<Option<ReplicaMeta>, BoardStoreError> {
     type Row = (
         Option<String>,
         String,

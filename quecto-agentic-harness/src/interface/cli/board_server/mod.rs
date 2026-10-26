@@ -45,9 +45,6 @@ pub struct BoardServerEnvironment {
 pub struct FollowPrimary {
     pub url: String,
     pub token_file: Option<PathBuf>,
-    /// Whether this server's own tokens may be replaced by its primary's
-    /// (`--replace-tokens`; they are kept beside them).
-    pub replace_tokens: bool,
 }
 
 /// The board server's graph, and the TCP addresses its config names.

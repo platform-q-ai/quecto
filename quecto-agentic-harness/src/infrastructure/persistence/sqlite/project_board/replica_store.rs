@@ -7,6 +7,7 @@
 use super::replica_log::number;
 use super::*;
 use crate::application::project_board::ports::replication::*;
+use crate::infrastructure::persistence::file::token_file::{read_private, write_private};
 
 /// A follower's place, read on `c`.
 fn position_on(c: &Connection) -> Result<ReplicaPosition, BoardStoreError> {
@@ -27,14 +28,15 @@ fn position_on(c: &Connection) -> Result<ReplicaPosition, BoardStoreError> {
 }
 
 /// The most bytes a diverged mark holds.
-const MARK_BYTES: u64 = 4096;
-
 /// The diverged mark beside the board file at `path`.
 fn mark_of(path: &Path) -> std::path::PathBuf {
     let mut mark = path.as_os_str().to_owned();
     mark.push(".diverged");
     std::path::PathBuf::from(mark)
 }
+
+/// What the diverged mark is called in its errors.
+const MARK: &str = "the diverged mark";
 
 fn store_failed(error: BoardStoreError) -> ReplicaError {
     ReplicaError::Unavailable(format!("{error:?}"))
@@ -53,40 +55,15 @@ impl ReplicaStore for SqliteBoardOps {
     }
 
     fn diverged(&self) -> Result<Option<String>, ReplicaError> {
-        use std::io::Read;
-        let mark = mark_of(&self.path);
-        let failed = |error: std::io::Error| {
-            ReplicaError::Unavailable(format!("the diverged mark {}: {error}", mark.display()))
-        };
-        let file = match std::fs::File::open(&mark) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(failed(error)),
-        };
-        let mut why = String::new();
-        let read = file.take(MARK_BYTES).read_to_string(&mut why);
-        read.map_err(failed)?;
-        Ok(Some(why.trim_end().to_string()))
+        let held = read_private(&mark_of(&self.path), MARK);
+        let held = held.map_err(ReplicaError::Unavailable)?;
+        Ok(held.map(|why| why.trim_end().to_string()))
     }
 
     fn mark_diverged(&self, why: &str) -> Result<(), ReplicaError> {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mark = mark_of(&self.path);
-        let failed = |error: std::io::Error| {
-            ReplicaError::Unavailable(format!("the diverged mark {}: {error}", mark.display()))
-        };
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&mark)
-            .map_err(failed)?;
-        let why: String = why.chars().take(MARK_BYTES as usize / 4).collect();
-        file.write_all(format!("{why}\n").as_bytes())
-            .and_then(|()| file.sync_all())
-            .map_err(failed)
+        let why: String = why.chars().take(1024).collect();
+        write_private(&mark_of(&self.path), MARK, &format!("{why}\n"))
+            .map_err(ReplicaError::Unavailable)
     }
 
     fn apply(&self, batch: &ReplicaBatch) -> Result<ReplicaPosition, ReplicaError> {
@@ -96,12 +73,15 @@ impl ReplicaStore for SqliteBoardOps {
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|error| store_failed(unavailable(error)))?;
             let at = position_on(&tx).map_err(store_failed)?;
-            if (at.revision, &at.chain) != (batch.after, &batch.chain_after) {
-                return Err(ReplicaError::Diverged(format!(
-                    "the batch follows revision {}, but this board is at revision {} \
-                     (or its chain differs)",
-                    batch.after, at.revision
-                )));
+            match (at.revision == batch.after, at.chain == batch.chain_after) {
+                (true, true) => {}
+                (_, _) => {
+                    return Err(ReplicaError::Diverged(format!(
+                        "the batch follows revision {}, but this board is at revision {} \
+                         (or its chain differs)",
+                        batch.after, at.revision
+                    )));
+                }
             }
             let mut writer = storage::ObjectWriter::new(&tx);
             let mut next = at.objects;
@@ -116,7 +96,7 @@ impl ReplicaStore for SqliteBoardOps {
             }
             put_epochs(&tx, &mut writer, &batch.epochs)?;
             if let Some(meta) = &batch.meta {
-                put_meta(&mut writer, meta, self.bound())?;
+                put_meta(&tx, &mut writer, meta, self.bound())?;
             }
             if let Some(head) = batch.revisions.last().map(|revision| &revision.head) {
                 writer
@@ -150,15 +130,18 @@ fn put_object(
         )));
     }
     let place = i64::try_from(place).map_err(|error| invalid(error.to_string()))?;
-    if !as_its_id_says(object) {
-        let kind = match object.content {
-            ReplicaContent::Blob(_) => "blob",
-            ReplicaContent::Tree { .. } => "tree",
-        };
-        return Err(invalid(format!(
-            "{kind} {} is not as its id says",
-            object.oid
-        )));
+    let kind = match object.content {
+        ReplicaContent::Blob(_) => "blob",
+        ReplicaContent::Tree { .. } => "tree",
+    };
+    match as_its_id_says(object) {
+        true => {}
+        false => {
+            return Err(invalid(format!(
+                "{kind} {} is not as its id says",
+                object.oid
+            )));
+        }
     }
     match &object.content {
         ReplicaContent::Blob(bytes) => {
@@ -373,6 +356,7 @@ fn put_epochs(
 /// server's board, or it names a board and this server is bound to none.
 /// A binding is never overwritten, and never with none.
 fn put_meta(
+    c: &Connection,
     writer: &mut storage::ObjectWriter<'_>,
     meta: &ReplicaMeta,
     bound: Option<&str>,
@@ -388,6 +372,28 @@ fn put_meta(
         (None, _) => {
             return Err(ReplicaError::Invalid(
                 "the primary's board names no board id: it is not copied".into(),
+            ));
+        }
+    }
+    // The provenance held, an allowlist: none yet; the primary's, field
+    // for field; or the primary's but for a board id this unbound board
+    // has none of. Any other is another board's history.
+    let held = super::replica_log::meta(c).map_err(store_failed)?;
+    let unbound = |held: &ReplicaMeta| {
+        let bound = ReplicaMeta {
+            board_id: meta.board_id.clone(),
+            ..held.clone()
+        };
+        held.board_id.is_none() && bound == *meta
+    };
+    match held {
+        None => {}
+        Some(held) if held == *meta => return Ok(()),
+        Some(held) if unbound(&held) => {}
+        Some(_) => {
+            return Err(ReplicaError::Diverged(
+                "the primary's provenance (its algorithm or import source) is not this board's"
+                    .into(),
             ));
         }
     }

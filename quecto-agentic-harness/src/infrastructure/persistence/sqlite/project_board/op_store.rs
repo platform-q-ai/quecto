@@ -146,6 +146,38 @@ impl SqliteBoardOps {
     }
 }
 
+/// A follower's operations store (B11): it reads its board, and refuses
+/// every write outright, so no op (even one mis-read as a read) can fork
+/// its copy: only its primary's batches change it.
+pub struct StandbyOps(Arc<SqliteBoardOps>);
+
+impl SqliteBoardOps {
+    /// This store as a follower's operations store.
+    pub fn standby(self: &Arc<Self>) -> StandbyOps {
+        StandbyOps(Arc::clone(self))
+    }
+}
+
+impl BoardOpStore for StandbyOps {
+    fn reads(&self) -> Arc<dyn ProjectBoardStore> {
+        self.0.reads()
+    }
+
+    fn kept(&self, write: &OpWrite) -> Result<Option<Transacted>, BoardStoreError> {
+        self.0.kept(write)
+    }
+
+    fn transact(
+        &self,
+        _: &OpWrite,
+        _: &mut dyn FnMut(Arc<dyn ProjectBoardStore>) -> Result<String, BoardStoreError>,
+    ) -> Result<Transacted, BoardStoreError> {
+        Err(BoardStoreError::Unavailable(
+            "this server is a standby: it writes nothing but its primary's copy".into(),
+        ))
+    }
+}
+
 impl BoardOpStore for SqliteBoardOps {
     fn reads(&self) -> Arc<dyn ProjectBoardStore> {
         Arc::clone(&self.reads) as _

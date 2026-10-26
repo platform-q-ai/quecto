@@ -2,7 +2,7 @@
 
 `quecto board-server serve --socket <path> --repo <clone> [--remote origin]
 [--listen <ip:port>]... [--state <dir>] [--follow <url> [--token-file
-<path>] [--replace-tokens]]` serves a repository's project board over HTTP/1.1 on a Unix
+<path>]]` serves a repository's project board over HTTP/1.1 on a Unix
 socket, and on each allowlisted TCP address, until SIGINT or SIGTERM (epic
 #2705 B4, B5, B7). With `--follow` it is a read-only follower of the
 primary at `<url>` (B11, below).
@@ -491,7 +491,7 @@ server's own user. The kept write answers (`op_results`) are not in it.
 ## Follower (B11)
 
 `quecto board-server serve --socket <path> --repo <clone> --follow <url>
-[--token-file <path>] [--replace-tokens]` serves a read-only copy of the
+[--token-file <path>]` serves a read-only copy of the
 primary at `<url>`: `unix:///<socket path>` (the primary's own user, no
 token), or `http://<ip>:<port>` on loopback or a Tailscale address with a
 replica token the primary issued (`quecto board-server token add <name>
@@ -507,19 +507,23 @@ of the same remote, so it serves the same board id. Start it on an empty
 state directory, or on a copy of the primary's board file (a backup).
 
 **Its own tokens.** A follower holds its primary's tokens in its
-`tokens.json`, in place of its own. The first time a state directory is
-followed from, its `tokens.json` is kept as `tokens.json.pre-follow` (which
-also marks the directory a follower's from then on). A state directory
-holding tokens of its own is refused unless `--replace-tokens` is given
-("... holds N token(s) of this server's own: a follower holds its primary's
-instead. Give --replace-tokens to replace them (they are kept as
-tokens.json.pre-follow), or give the follower its own --state <dir>").
+`tokens.json`, in place of its own. Each set it takes from its primary is
+noted beside them by its digest (`tokens.json.followed`), so a restart
+follows on. Tokens of a server's own (any set it did not take from a
+primary: before it first follows, or any issued after it is promoted) make
+a follow refused, so none stays live beside its primary's ("this server
+holds N token(s) of its own: a follower holds its primary's instead. Revoke
+them first, or give the follower its own --state <dir>"). The check runs
+only once the token file and URL are judged sound. A follower's own
+operations write nothing: its store refuses every write, whatever the op.
 
 **What it copies.** Every revision with its objects, principal and chain,
 the epochs, the board's provenance row, and the admin rows: the primary's
 tokens, of either kind. So a token the primary revokes is refused by the
-follower from its next batch, and a device uses its one token on either
-server. Each copied row is checked as it is taken, an allowlist: a native
+follower from the batch after the revoke (with the next revision, or within
+about a minute, at the next reopen of the feed), and a device uses its one
+token on either server. A follower that cannot take batches (stalled or
+diverged) keeps the tokens it last took until it can. Each copied row is checked as it is taken, an allowlist: a native
 object's id is made again from its content, an imported original's git id
 from its raw bytes (SHA-1 or SHA-256, by its width) and a tree's entries
 from its raw tree; the provenance row must name the follower's board (an

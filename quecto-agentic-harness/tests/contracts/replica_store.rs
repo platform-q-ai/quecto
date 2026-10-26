@@ -53,6 +53,61 @@ fn a_binding_is_never_overwritten_nor_with_none() {
     assert_eq!(board_id(&follower.file).as_deref(), Some(BOARD));
 }
 
+/// B11 review 2: the provenance held is the primary's, field for field: a
+/// board of another algorithm or import source is another history.
+#[test]
+fn a_provenance_held_otherwise_is_a_fork() {
+    let primary = server();
+    wrote(&primary.ops, 1, true, 1);
+    let batch = primary.ops.replica_batch(0, 0, BatchLimit::MOST).unwrap();
+    let follower = server();
+    follower.ops.apply(&batch).unwrap();
+    let mut next = primary
+        .ops
+        .replica_batch(2, u64::MAX, BatchLimit::MOST)
+        .unwrap();
+    next.meta.as_mut().unwrap().algorithm = "sha1".into();
+    assert!(matches!(
+        follower.ops.apply(&next),
+        Err(ReplicaError::Diverged(_))
+    ));
+    let mut next = primary
+        .ops
+        .replica_batch(2, u64::MAX, BatchLimit::MOST)
+        .unwrap();
+    next.meta.as_mut().unwrap().source_remote = Some("elsewhere".into());
+    assert!(matches!(
+        follower.ops.apply(&next),
+        Err(ReplicaError::Diverged(_))
+    ));
+    let same = primary
+        .ops
+        .replica_batch(2, u64::MAX, BatchLimit::MOST)
+        .unwrap();
+    follower.ops.apply(&same).unwrap();
+}
+
+/// B11 review 2: a follower's operations store refuses every write.
+#[test]
+fn a_standby_store_refuses_every_write() {
+    use quecto::application::project_board::ports::{BoardOpStore, OpWrite, WriteId};
+    let follower = std::sync::Arc::new(server_of(None).ops);
+    let standby = follower.standby();
+    let write = OpWrite {
+        write_id: WriteId::parse("00000000-0000-4000-8000-000000000001").unwrap(),
+        request: "cli\nbootstrap".into(),
+        committer: super::board_feed::identity(),
+        principal: "local".into(),
+    };
+    let mut ran = false;
+    let refused = standby.transact(&write, &mut |_| {
+        ran = true;
+        Ok(String::new())
+    });
+    assert!(refused.is_err());
+    assert!(!ran, "the op never runs");
+}
+
 #[test]
 fn an_epoch_held_is_never_changed_and_none_is_taken_past_a_gap() {
     let primary = server();

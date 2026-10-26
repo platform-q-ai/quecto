@@ -203,6 +203,24 @@ pub trait ReplicaStore: Send + Sync {
     fn mark_diverged(&self, why: &str) -> Result<(), ReplicaError>;
 }
 
+/// A server's tokens as it starts to follow (B11): how many it holds, and
+/// whether they are the set it last took from a primary, not tokens of its
+/// own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FollowedTokens {
+    pub held: usize,
+    pub copied: bool,
+}
+
+/// Port: a follower's tokens, as following keeps them (B11).
+pub trait FollowTokens: Send + Sync {
+    /// The tokens held now.
+    ///
+    /// # Errors
+    /// The store failed.
+    fn followed(&self) -> Result<FollowedTokens, TokenError>;
+}
+
 /// Port: the server's admin rows (its device tokens' digests): a primary
 /// gives them, a follower takes them in whole.
 pub trait AdminRows: Send + Sync {

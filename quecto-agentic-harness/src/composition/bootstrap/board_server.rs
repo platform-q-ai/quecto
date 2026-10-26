@@ -16,7 +16,7 @@ use crate::application::project_board::operations::StoreListings;
 use crate::application::project_board::ports::ListenAddress;
 use crate::application::project_board::ports::feed::BoardFeed;
 use crate::application::project_board::ports::replication::{
-    AdminRows, ReplicaStore, ReplicationLog, ReplicationSource,
+    AdminRows, FollowTokens, ReplicaStore, ReplicationLog, ReplicationSource,
 };
 use crate::application::project_board::ports::{
     BoardClock, BoardOpStore, BoardOperations, BoardOperationsOver, BoardTokens, OperationsOver,
@@ -26,8 +26,8 @@ use crate::application::project_board::ports::{
 use crate::application::project_board::run_facts::StatedRemoteRevisions;
 use crate::application::project_board::synced_clock::{HeldSync, SyncedBoardClock};
 use crate::application::project_board::use_cases::{
-    BoardAccess, FollowBoard, QueryBoard, READ_BUDGET, ReplicaTiming, ReplicateBoard,
-    RunBoardOperation, ServeBoard, ServeBoardOperation, ServeReplication,
+    BoardAccess, FollowBoard, QueryBoard, READ_BUDGET, ReadyFollowerTokens, ReplicaTiming,
+    ReplicateBoard, RunBoardOperation, ServeBoard, ServeBoardOperation, ServeReplication,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::Plan;
@@ -140,12 +140,12 @@ pub fn build_board_server_with(
     );
     let follower = match &environment.follow {
         Some(follow) => {
-            // A follower holds its primary's tokens: its own are kept, and
-            // replaced only when asked (B11).
-            tokens
-                .prepare_follow(follow.replace_tokens)
-                .map_err(|why| refused(&why))?;
             let source = replication_source(follow, &board).map_err(|why| refused(&why))?;
+            // A follower holds its primary's tokens: a server with its own is
+            // refused, once the rest of the start is judged sound.
+            ReadyFollowerTokens::new(Arc::clone(&tokens) as Arc<dyn FollowTokens>)
+                .ready()
+                .map_err(|why| refused(&why))?;
             let primary = source.primary();
             let replicate = ReplicateBoard::new(
                 Arc::new(source),
@@ -158,7 +158,11 @@ pub fn build_board_server_with(
         }
         None => None,
     };
-    let ops: Arc<dyn BoardOpStore> = ops;
+    // A follower's operations write nothing: only its primary's batches do.
+    let ops: Arc<dyn BoardOpStore> = match &follower {
+        Some(_) => Arc::new(ops.standby()),
+        None => ops,
+    };
     let host: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());
     let time = SyncedBoardClock::new(Arc::clone(&host), Arc::clone(&sync));
     let served = ServedOperations {

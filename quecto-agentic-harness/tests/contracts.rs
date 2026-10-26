@@ -192,6 +192,8 @@ mod external_credential_source;
 mod fleet_settlement;
 #[path = "contracts/fold_back_recorder.rs"]
 mod fold_back_recorder;
+#[path = "contracts/follow_tokens.rs"]
+mod follow_tokens;
 #[path = "contracts/fresh_session_identity_generator.rs"]
 mod fresh_session_identity_generator;
 #[path = "contracts/historical_roster_source.rs"]

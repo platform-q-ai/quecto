@@ -49,6 +49,30 @@ fn a_fifo_is_refused_at_once_never_waited_on() {
     assert!(refused.contains("regular file"), "{refused}");
 }
 
+/// B11 review 2: the diverged mark is kept the same way: written private,
+/// read back; a link or FIFO in its place is never followed.
+#[test]
+fn a_private_mark_is_written_and_read_and_never_through_a_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let mark = dir.path().join("board.sqlite3.diverged");
+    assert_eq!(read_private(&mark, "the mark"), Ok(None));
+    write_private(&mark, "the mark", "forked\n").unwrap();
+    assert_eq!(read_private(&mark, "the mark"), Ok(Some("forked\n".into())));
+    let mode = std::fs::metadata(&mark).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::write(&elsewhere, "x").unwrap();
+    let link = dir.path().join("linked.diverged");
+    std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+    assert!(write_private(&link, "the mark", "forked").is_err());
+    assert_eq!(
+        std::fs::read_to_string(&elsewhere).unwrap(),
+        "x",
+        "never followed"
+    );
+    assert!(read_private(&link, "the mark").is_err());
+}
+
 #[test]
 fn a_link_to_a_private_file_is_refused() {
     let dir = tempfile::tempdir().unwrap();

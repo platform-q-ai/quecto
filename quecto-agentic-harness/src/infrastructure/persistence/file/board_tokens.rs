@@ -15,7 +15,9 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::application::project_board::ports::replication::{AdminRows, AdminToken};
+use crate::application::project_board::ports::replication::{
+    AdminRows, AdminToken, FollowTokens, FollowedTokens,
+};
 use crate::application::project_board::ports::{
     BoardTokens, IssuedToken, MAX_TOKENS, TokenError, TokenKind, TokenRecord,
 };
@@ -30,9 +32,10 @@ use crate::infrastructure::persistence::file::state_dir::{
 pub const TOKENS_FILE: &str = "tokens.json";
 const TOKENS_NAME: &CStr = c"tokens.json";
 
-/// A follower's own tokens, kept as it first follows (B11).
-pub const PRE_FOLLOW_FILE: &str = "tokens.json.pre-follow";
-const PRE_FOLLOW_NAME: &CStr = c"tokens.json.pre-follow";
+/// The digest of the token set a follower last took from its primary,
+/// beside the tokens (B11).
+pub const FOLLOWED_FILE: &str = "tokens.json.followed";
+const FOLLOWED_NAME: &CStr = c"tokens.json.followed";
 
 /// A file's (inode, mtime, mtime ns, size), to tell a hand edit.
 type Stamp = (u64, i64, i64, u64);
@@ -198,47 +201,25 @@ impl FileBoardTokens {
         }
     }
 
-    /// Readies this state directory to hold its primary's tokens (B11).
-    /// The first time, its own tokens are kept as `tokens.json.pre-follow`,
-    /// which also marks the directory a follower's; holding tokens of its
-    /// own, it is refused unless `replace` says to replace them. A
-    /// directory already a follower's is left as it is.
-    ///
-    /// # Errors
-    /// Its own tokens and no `replace`, or the files could not be read or
-    /// written.
-    pub fn prepare_follow(&self, replace: bool) -> Result<(), String> {
-        let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
-        self.still_locked().map_err(|error| error.to_string())?;
-        match self.open_at(PRE_FOLLOW_NAME, libc::O_RDONLY) {
-            Ok(_) => return Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(self.unavailable(error).to_string()),
-        }
-        let own = self.held().len();
-        match (own == 0, replace) {
-            (true, _) | (false, true) => {}
-            (false, false) => {
-                return Err(format!(
-                    "the state directory {} holds {own} token(s) of this server's own: a \
-                     follower holds its primary's instead. Give --replace-tokens to replace \
-                     them (they are kept as {PRE_FOLLOW_FILE}), or give the follower its own \
-                     --state <dir>",
-                    self.state.display()
-                ));
-            }
-        }
-        let mut kept = Vec::new();
-        if let Some((file, _)) = self.opened().map_err(|error| error.to_string())? {
-            (file.take(MAX_FILE_BYTES).read_to_end(&mut kept))
-                .map_err(|error| self.unavailable(error).to_string())?;
-        }
-        let kept = match kept.is_empty() {
-            true => b"[]\n".to_vec(),
-            false => kept,
+    /// The digest kept of the set last taken from a primary, if any.
+    fn copied(&self) -> Result<Option<String>, TokenError> {
+        let file = match self.open_at(FOLLOWED_NAME, libc::O_RDONLY | libc::O_NONBLOCK) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(self.unavailable(error)),
         };
-        self.write_through(PRE_FOLLOW_NAME, &kept)
-            .map_err(|error| error.to_string())
+        let mut text = String::new();
+        (file.take(128).read_to_string(&mut text)).map_err(|error| self.unavailable(error))?;
+        Ok(Some(text.trim_end().to_string()))
+    }
+
+    /// Keeps `rows` as the set last taken from a primary.
+    fn keep_copied(&self, rows: &[AdminToken]) -> Result<(), TokenError> {
+        let digest = set_digest(rows);
+        match self.copied()? {
+            Some(kept) if kept == digest => Ok(()),
+            Some(_) | None => self.write_through(FOLLOWED_NAME, format!("{digest}\n").as_bytes()),
+        }
     }
 
     /// Whether the directory at the state path is still the one locked
@@ -396,13 +377,40 @@ impl AdminRows for FileBoardTokens {
         wanted.sort_by(|a, b| a.name.cmp(&b.name));
         now.sort_by(|a, b| a.name.cmp(&b.name));
         match now == wanted {
-            true => Ok(()),
+            true => {}
             false => self.changing(|held| {
                 *held = next;
                 Ok(())
-            }),
+            })?,
         }
+        self.keep_copied(&wanted)
     }
+}
+
+/// A follower's tokens (B11): the set held is its primary's when its digest
+/// is the one kept as the last set taken from it.
+impl FollowTokens for FileBoardTokens {
+    fn followed(&self) -> Result<FollowedTokens, TokenError> {
+        let rows = self.export()?;
+        let copied = self.copied()?;
+        Ok(FollowedTokens {
+            held: rows.len(),
+            copied: copied.as_deref() == Some(set_digest(&rows).as_str()),
+        })
+    }
+}
+
+/// The digest of a token set, as rows sorted by name.
+fn set_digest(rows: &[AdminToken]) -> String {
+    let mut lines: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            let (name, created) = (row.name.as_str(), row.created.as_str());
+            format!("{name}\t{created}\t{}\t{}\n", row.kind.as_str(), row.digest)
+        })
+        .collect();
+    lines.sort();
+    sha256(&lines.concat())
 }
 
 /// A held token as an admin row.

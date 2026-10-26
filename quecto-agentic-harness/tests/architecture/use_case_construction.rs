@@ -180,6 +180,7 @@ const USE_CASES: &[&str] = &[
     "FollowBoard",
     "Follower",
     "ReplicateBoard",
+    "ReadyFollowerTokens",
     "ReplicaTiming",
     "CaughtUp",
     "ServeReplication",

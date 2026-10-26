@@ -132,13 +132,16 @@ impl ReplicateBoard {
                 .batch(at.revision, at.objects, BatchLimit::MOST)
                 .map_err(|refused| ReplicaError::Unavailable(refused_why(refused)))?;
             batches += 1;
-            if batch.after != at.revision || batch.chain_after != at.chain {
-                let why = format!(
-                    "this follower's revision {} is not the primary's (its chain differs): \
-                     it holds a history the primary does not, and will not rewrite it",
-                    at.revision
-                );
-                return Err(self.diverged(why));
+            match (batch.after == at.revision, batch.chain_after == at.chain) {
+                (true, true) => {}
+                (_, _) => {
+                    let why = format!(
+                        "this follower's revision {} is not the primary's (its chain differs): \
+                         it holds a history the primary does not, and will not rewrite it",
+                        at.revision
+                    );
+                    return Err(self.diverged(why));
+                }
             }
             let now = match self.store.apply(&batch) {
                 Ok(now) => now,

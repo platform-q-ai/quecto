@@ -276,14 +276,8 @@ fn serve_follows_a_primary_with_its_token_read_from_a_file() {
         Some(FollowPrimary {
             url: "http://100.64.0.1:7979".into(),
             token_file: Some("/etc/t".into()),
-            replace_tokens: false,
         })
     );
-    let replacing = parse(&args(
-        "serve --socket /s --repo /r --follow unix:///p --replace-tokens",
-    ))
-    .unwrap();
-    assert!(replacing.follow.unwrap().replace_tokens);
     let socket = parse(&args(
         "serve --socket /s --repo /r --follow unix:///run/p.sock",
     ))
@@ -301,14 +295,6 @@ fn serve_follows_a_primary_with_its_token_read_from_a_file() {
         (
             "serve --socket /s --repo /r --token-file /t",
             "needs --follow",
-        ),
-        (
-            "serve --socket /s --repo /r --replace-tokens",
-            "needs --follow",
-        ),
-        (
-            "serve --socket /s --repo /r --follow unix:///p --replace-tokens --replace-tokens",
-            "given twice",
         ),
         (
             "serve --socket /s --repo /r --follow unix:///p --token-file /t",
