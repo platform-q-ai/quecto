@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::project_board::ports::replication::FollowTokens;
 use std::os::unix::fs::PermissionsExt;
 
 fn name(text: &str) -> Slug {
@@ -305,4 +306,54 @@ fn digests_spell_as_lowercase_hex() {
     assert!(held(entry(&sha256("x"))).is_some());
     assert!(held(entry(&"A".repeat(64))).is_none());
     assert!(held(entry("00")).is_none());
+}
+
+/// B11 review 4: a crash while a follower swaps in its primary's next set
+/// (after the digests are noted, before or after tokens.json is replaced)
+/// leaves a set a restart knows as its primary's, never as its own.
+#[test]
+fn a_crash_while_a_set_is_swapped_in_leaves_a_primarys_set() {
+    let (dir, primary) = opened();
+    let first = primary.add(&name("phone"), &at()).unwrap();
+    let state = dir.path().join("follower");
+    let follower = FileBoardTokens::open(&state).unwrap();
+    follower.replace(&primary.export().unwrap()).unwrap();
+    let older = follower.export().unwrap();
+    primary.add(&name("laptop"), &at()).unwrap();
+    let mut newer = primary.export().unwrap();
+    newer.sort_by(|a, b| a.name.cmp(&b.name));
+    // The swap's first write: both sets noted.
+    let noted = vec![set_digest(&newer), set_digest(&older)];
+    follower.keep_copied(&noted).unwrap();
+    for swapped in [false, true] {
+        if swapped {
+            // The swap's second write: tokens.json holds the newer set.
+            let rows: Vec<Held> = newer
+                .iter()
+                .map(|row| Held {
+                    record: TokenRecord {
+                        name: row.name.clone(),
+                        created: row.created.clone(),
+                        kind: row.kind,
+                    },
+                    digest: row.digest.clone(),
+                })
+                .collect();
+            follower
+                .changing(|held| {
+                    *held = rows;
+                    Ok(())
+                })
+                .unwrap();
+        }
+        let held = follower.followed().unwrap();
+        assert!(
+            held.copied,
+            "a primary's set (swapped: {swapped}): {held:?}"
+        );
+    }
+    drop(follower);
+    let reopened = FileBoardTokens::open(&state).unwrap();
+    assert!(reopened.followed().unwrap().copied);
+    assert_eq!(reopened.verify(&first.secret), Ok(Some(name("phone"))));
 }
