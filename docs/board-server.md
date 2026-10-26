@@ -384,7 +384,8 @@ as for `quecto board --url`.
   any other way (`board watch: output failed: <error>`), or when 5 opens
   in a row fail or end with no event. With no `--count`, output that is
   not written as it goes (a run whose output is returned whole) stops at
-  1 MiB, exit 1; with `--count`, the count bounds it.
+  1 MiB, exit 1; with `--count`, at 16 MiB if the count is not reached
+  first (a count is no memory bound by itself).
 - A board server restart: the stream is cut, and the watch opens it again
   each second (the stream's `retry:`). A server back within those 5 opens,
   about 5 s, is resumed from the last id with no gap. One that is down for

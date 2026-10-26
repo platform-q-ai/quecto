@@ -42,9 +42,9 @@ impl BoardStream for Counting {
     }
 }
 
-/// Streams of [`Counting`]: 99 revisions, or 60,000 (about 3 MiB of lines,
-/// past the held bound; never endless, so a missing bound fails, never
-/// fills the machine).
+/// Streams of [`Counting`]: 99 revisions, 60,000 (about 3 MiB of lines,
+/// past the held bound) or 400,000 (past the counted bound); never
+/// endless, so a missing bound fails, never fills the machine.
 struct Streams(Option<u64>);
 
 impl BoardStreams for Streams {
@@ -76,6 +76,8 @@ fn counting(environment: &ProjectBoardEnvironment) -> Result<BoardWatchHandles, 
     match environment.known.url.as_deref() {
         Some("unix:///tmp/board.sock") => Ok(watch_of(Streams(Some(99)))),
         Some("unix:///tmp/endless.sock") => Ok(watch_of(Streams(Some(60_000)))),
+        // About 20 MiB of lines: past the counted bound, still finite.
+        Some("unix:///tmp/huge.sock") => Ok(watch_of(Streams(Some(400_000)))),
         _ => Err(BuildError::Unavailable("watch needs a board server".into())),
     }
 }
@@ -276,4 +278,27 @@ fn only_live_output_asks_for_a_reader() {
         &mut stderr,
     );
     assert_eq!((code, held.lines().count()), (0, 3), "{stderr}");
+}
+
+/// Review (#2757 round 4, low): a count is no memory bound (any u64 parses),
+/// so held output stops at MAX_HELD_COUNTED_BYTES whatever --count says.
+#[test]
+fn held_output_with_a_huge_count_is_still_bounded() {
+    let (code, stdout, stderr) = watched(&[
+        "--url",
+        "unix:///tmp/huge.sock",
+        "--count",
+        "18446744073709551615",
+    ]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(stdout.len() <= MAX_HELD_COUNTED_BYTES, "{}", stdout.len());
+    assert!(
+        stdout.len() > MAX_HELD_COUNTED_BYTES - 1024,
+        "{}",
+        stdout.len()
+    );
+    assert_eq!(
+        stderr,
+        "board watch: stopped at 16384 KiB of output held before --count was reached\n"
+    );
 }

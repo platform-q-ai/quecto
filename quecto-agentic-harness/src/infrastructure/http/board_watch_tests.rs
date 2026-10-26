@@ -93,8 +93,8 @@ fn a_hung_up_terminal_has_no_reader() {
             &mut master,
             &mut slave,
             std::ptr::null_mut(),
-            std::ptr::null(),
-            std::ptr::null(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
         )
     };
     assert_eq!(made, 0, "a pty: {}", std::io::Error::last_os_error());

@@ -5,8 +5,9 @@
 //! until `--count` lines are printed, its output is closed, or the watch
 //! cannot go on (exit 1). A cut stream is opened again from the last
 //! event, so each revision is printed once, with no gap. Once its output
-//! has no reader left it is not opened again. Without `--count`, output
-//! not written to the terminal as it goes is held to [`MAX_HELD_BYTES`].
+//! has no reader left it is not opened again. Output not written to the
+//! terminal as it goes is held to [`MAX_HELD_BYTES`] without `--count`, and
+//! to [`MAX_HELD_COUNTED_BYTES`] with one.
 use std::path::PathBuf;
 
 use crate::application::project_board::ports::feed::WatchFlow;
@@ -24,6 +25,10 @@ pub const USAGE: &str = "usage: quecto board watch [--url <board server>] [--boa
 /// The most output held, not written as it goes (a run whose output is
 /// returned whole), before the watch stops: 1 MiB.
 pub const MAX_HELD_BYTES: usize = 1024 * 1024;
+
+/// The most output held with a `--count` (which parses up to `u64::MAX`, so
+/// is no memory bound by itself) before the watch stops: 16 MiB.
+pub const MAX_HELD_COUNTED_BYTES: usize = 16 * 1024 * 1024;
 
 /// A watch, and whether its output still has a reader.
 pub struct BoardWatchHandles {
@@ -158,6 +163,15 @@ pub fn run(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut 
     }
 }
 
+/// The most held output: [`MAX_HELD_BYTES`] with no `--count`,
+/// [`MAX_HELD_COUNTED_BYTES`] with one.
+fn held_bound(count: Option<u64>) -> usize {
+    match count {
+        None => MAX_HELD_BYTES,
+        Some(_) => MAX_HELD_COUNTED_BYTES,
+    }
+}
+
 /// Where a watch's lines go: written as they come (to standard output), or
 /// held to be returned whole.
 pub(super) enum Output<'o> {
@@ -205,13 +219,14 @@ pub(super) fn watch_into(
                 Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Wrote::ReaderGone,
                 Err(error) => Wrote::Failed(error),
             },
-            // Bounded only with no --count: a count bounds it already.
-            Output::Held(held) => match (count, held.len() + line.len() <= MAX_HELD_BYTES) {
-                (Some(_), _) | (None, true) => {
+            // Bounded always: tightly with no --count, loosely with one
+            // (a count parses up to u64::MAX, so is no memory bound).
+            Output::Held(held) => match held.len() + line.len() <= held_bound(count) {
+                true => {
                     held.push_str(&line);
                     Wrote::Yes
                 }
-                (None, false) => Wrote::HeldFull,
+                false => Wrote::HeldFull,
             },
         };
         printed += 1;
@@ -227,10 +242,15 @@ pub(super) fn watch_into(
     match (watched, ended) {
         (Ok(()), Wrote::Yes | Wrote::ReaderGone) => 0,
         (Ok(()), Wrote::HeldFull) => {
-            let most = MAX_HELD_BYTES / 1024;
-            stderr.push_str(&format!(
-                "board watch: stopped at {most} KiB of output held; give --count to bound it\n"
-            ));
+            let most = held_bound(count) / 1024;
+            stderr.push_str(&match count {
+                None => format!(
+                    "board watch: stopped at {most} KiB of output held; give --count to bound it\n"
+                ),
+                Some(_) => format!(
+                    "board watch: stopped at {most} KiB of output held before --count was reached\n"
+                ),
+            });
             1
         }
         (Ok(()), Wrote::Failed(error)) => {
