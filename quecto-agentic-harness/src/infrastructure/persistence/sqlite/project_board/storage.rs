@@ -1,66 +1,7 @@
 //! Immutable structural objects; no artifact or folder interpretation.
+pub(super) use super::schema::{TABLES, chain_of, recognize, recognize_on};
 use super::*;
 use crate::infrastructure::persistence::project_board::board_tree::{Entry, raw_entry_bytes};
-
-const VERSION: i64 = 5;
-const APPLICATION: i64 = 0x51424f32;
-/// Schema 4's revisions table: a writable open upgrades it, adding each
-/// revision's chain (B11), and so to schema 5.
-const REVISIONS_4: &str = "CREATE TABLE revisions (head TEXT PRIMARY KEY NOT NULL, root TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL, revision INTEGER NOT NULL UNIQUE, parent INTEGER, message TEXT NOT NULL, at INTEGER NOT NULL, git_commit TEXT, git_meta BLOB)";
-const ADD_CHAIN: &str = "ALTER TABLE revisions ADD COLUMN chain TEXT";
-/// Every table a board holds: import requires each empty (#2741).
-pub(super) const TABLES: [(&str, &str); 9] = [
-    (
-        "objects",
-        "CREATE TABLE objects (oid TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('blob','tree')), bytes BLOB, tree_size INTEGER, CHECK((kind='blob' AND typeof(bytes)='blob' AND tree_size IS NULL) OR (kind='tree' AND bytes IS NULL AND typeof(tree_size)='integer' AND tree_size>=0)))",
-    ),
-    (
-        "tree_entries",
-        "CREATE TABLE tree_entries (tree TEXT NOT NULL, ordinal INTEGER NOT NULL CHECK(ordinal>=0), mode TEXT NOT NULL, raw_name BLOB NOT NULL CHECK(typeof(raw_name)='blob'), oid TEXT NOT NULL, PRIMARY KEY(tree,ordinal))",
-    ),
-    (
-        "revisions",
-        "CREATE TABLE revisions (head TEXT PRIMARY KEY NOT NULL, root TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL, revision INTEGER NOT NULL UNIQUE, parent INTEGER, message TEXT NOT NULL, at INTEGER NOT NULL, git_commit TEXT, git_meta BLOB, chain TEXT)",
-    ),
-    (
-        "state",
-        "CREATE TABLE state (id INTEGER PRIMARY KEY CHECK(id=1), head TEXT NOT NULL)",
-    ),
-    (
-        "git_objects",
-        "CREATE TABLE git_objects (oid TEXT PRIMARY KEY NOT NULL, raw_tree BLOB)",
-    ),
-    (
-        "history_meta",
-        "CREATE TABLE history_meta (id INTEGER PRIMARY KEY CHECK(id=1), board_id TEXT, algorithm TEXT NOT NULL, source_remote TEXT, source_ref TEXT, source_head TEXT, imported_count INTEGER NOT NULL)",
-    ),
-    (
-        "epochs",
-        "CREATE TABLE epochs (epoch INTEGER PRIMARY KEY, from_revision INTEGER NOT NULL, reason TEXT NOT NULL, at INTEGER NOT NULL)",
-    ),
-    // B7: who a board server let in for each revision it wrote.
-    (
-        "revision_principals",
-        "CREATE TABLE revision_principals (head TEXT PRIMARY KEY NOT NULL, principal TEXT NOT NULL)",
-    ),
-    // B7: each served write's answer, by principal and write id, for retries.
-    (
-        "op_results",
-        "CREATE TABLE op_results (principal TEXT NOT NULL, write_id TEXT NOT NULL, request TEXT NOT NULL, answer TEXT NOT NULL, PRIMARY KEY(principal, write_id))",
-    ),
-];
-const INDEXES: [(&str, &str); 7] = [
-    ("sqlite_autoindex_revisions_2", "revisions"),
-    ("sqlite_autoindex_git_objects_1", "git_objects"),
-    ("sqlite_autoindex_objects_1", "objects"),
-    ("sqlite_autoindex_tree_entries_1", "tree_entries"),
-    ("sqlite_autoindex_revisions_1", "revisions"),
-    (
-        "sqlite_autoindex_revision_principals_1",
-        "revision_principals",
-    ),
-    ("sqlite_autoindex_op_results_1", "op_results"),
-];
 
 /// The served writes' answers kept for their retries (B7), newest first.
 const KEPT_ANSWERS: i64 = 1024;
@@ -159,7 +100,7 @@ pub(super) fn open(path: &Path) -> Result<Connection, BoardStoreError> {
     let mut c = Connection::open(path).map_err(unavailable)?;
     c.busy_timeout(Duration::from_secs(5))
         .map_err(unavailable)?;
-    recognize(&mut c, true)?;
+    recognize(&mut c, path)?;
     // SQLite may successfully execute the request but retain another journal
     // mode (notably for transient databases). Expose only durable WAL stores.
     let journal: String = c
@@ -178,176 +119,6 @@ pub(super) fn open(path: &Path) -> Result<Connection, BoardStoreError> {
         2 => Ok(c),
         _ => Err(unavailable("SQLite board requires FULL synchronous mode")),
     }
-}
-
-pub(super) fn recognize(c: &mut Connection, initialize: bool) -> Result<(), BoardStoreError> {
-    let tx = c.transaction().map_err(unavailable)?;
-    recognize_on(&tx, initialize)?;
-    tx.commit().map_err(unavailable)
-}
-pub(super) fn recognize_on(tx: &Connection, initialize: bool) -> Result<(), BoardStoreError> {
-    // Recognition is entirely read-only, including before journal-mode changes.
-
-    let version: i64 = tx
-        .query_row("PRAGMA user_version", [], |r| r.get(0))
-        .map_err(unavailable)?;
-    let app: i64 = tx
-        .query_row("PRAGMA application_id", [], |r| r.get(0))
-        .map_err(unavailable)?;
-    let (count,bytes):(i64,i64)=tx.query_row("SELECT count(*),coalesce(sum(length(CAST(name AS BLOB))+length(CAST(type AS BLOB))+length(CAST(tbl_name AS BLOB))+coalesce(length(CAST(sql AS BLOB)),0)),0) FROM sqlite_schema",[],|r|Ok((r.get(0)?,r.get(1)?))).map_err(unavailable)?;
-    let unsupported = || {
-        BoardStoreError::Clash(format!(
-            "not a board this build reads (schema version {version}, this build writes \
-             {VERSION}): move the file aside to start a new board"
-        ))
-    };
-    if (count == 0 || count == (TABLES.len() + INDEXES.len()) as i64) && bytes <= 65536 {
-    } else {
-        return Err(unsupported());
-    }
-    let schema: Vec<(String, String, String, Option<String>)> = tx
-        .prepare("SELECT name,type,tbl_name,sql FROM sqlite_schema ORDER BY name")
-        .map_err(unavailable)?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
-        .map_err(unavailable)?
-        .collect::<Result<_, _>>()
-        .map_err(unavailable)?;
-    let empty = version == 0 && app == 0 && schema.is_empty();
-    let sql_of = |name: &str| TABLES.iter().find(|(n, _)| *n == name).map(|(_, s)| *s);
-    let current = sql_of("revisions").expect("the schema has a revisions table");
-    // Whether this is the schema of `wanted`, whose revisions table is `revisions`.
-    let of = |wanted: i64, revisions: &str| {
-        let sql_of = |name: &str| match name {
-            "revisions" => Some(revisions),
-            other => sql_of(other),
-        };
-        version == wanted
-            && app == APPLICATION
-            && schema.len() == TABLES.len() + INDEXES.len()
-            && schema
-                .iter()
-                .all(|(name, kind, table, sql)| match kind.as_str() {
-                    "table" => table == name && sql.is_some() && sql.as_deref() == sql_of(name),
-                    "index" => {
-                        sql.is_none() && INDEXES.iter().any(|(n, t)| name == n && table == t)
-                    }
-                    _ => false,
-                })
-    };
-    match (empty, version, of(VERSION, current)) {
-        (true, _, false) if initialize => {
-            for (_, sql) in TABLES {
-                tx.execute_batch(sql).map_err(unavailable)?;
-            }
-            tx.pragma_update(None, "user_version", VERSION)
-                .map_err(unavailable)?;
-            tx.pragma_update(None, "application_id", APPLICATION)
-                .map_err(unavailable)?;
-        }
-        (false, VERSION, true) => {}
-        (false, 4, false) if initialize && of(4, REVISIONS_4) => upgrade(tx)?,
-        _ => return Err(unsupported()),
-    }
-    Ok(())
-}
-
-/// Schema 4 to 5 (B11): each revision's chain, made in revision order from
-/// what the board holds, so the same history gives the same chains on
-/// every machine.
-fn upgrade(tx: &Connection) -> Result<(), BoardStoreError> {
-    tx.execute_batch(ADD_CHAIN).map_err(unavailable)?;
-    let last: Option<i64> = tx
-        .query_row("SELECT max(revision) FROM revisions", [], |r| r.get(0))
-        .map_err(unavailable)?;
-    for revision in 1..=last.unwrap_or(0) {
-        let chain = chain_of(tx, revision)?;
-        tx.execute(
-            "UPDATE revisions SET chain=?1 WHERE revision=?2",
-            params![chain, revision],
-        )
-        .map_err(unavailable)?;
-    }
-    tx.pragma_update(None, "user_version", VERSION)
-        .map_err(unavailable)
-}
-
-/// Revision `revision`'s chain (B11): a SHA-256 over the chain before it
-/// and every column of the revision and its principal, so two boards hold
-/// one chain at a revision only when they hold one history to it. The
-/// chain before it must be made.
-pub(super) fn chain_of(c: &Connection, revision: i64) -> Result<String, BoardStoreError> {
-    type Row = (
-        String,
-        String,
-        String,
-        String,
-        Option<i64>,
-        String,
-        i64,
-        Option<String>,
-        Option<Vec<u8>>,
-        Option<String>,
-    );
-    let row: Row = c
-        .query_row(
-            "SELECT r.head,r.root,r.name,r.email,r.parent,r.message,r.at,r.git_commit,r.git_meta,\
-             p.principal FROM revisions r LEFT JOIN revision_principals p ON p.head=r.head \
-             WHERE r.revision=?1",
-            [revision],
-            |r| {
-                Ok((
-                    r.get(0)?,
-                    r.get(1)?,
-                    r.get(2)?,
-                    r.get(3)?,
-                    r.get(4)?,
-                    r.get(5)?,
-                    r.get(6)?,
-                    r.get(7)?,
-                    r.get(8)?,
-                    r.get(9)?,
-                ))
-            },
-        )
-        .map_err(unavailable)?;
-    let (head, root, name, email, parent, message, at, git_commit, git_meta, principal) = row;
-    let before: Option<String> = match revision {
-        1 => None,
-        _ => {
-            let held: Option<Option<String>> = c
-                .query_row(
-                    "SELECT chain FROM revisions WHERE revision=?1",
-                    [revision - 1],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(unavailable)?;
-            let missing = || unavailable(format!("revision {} has no chain", revision - 1));
-            Some(held.flatten().ok_or_else(missing)?)
-        }
-    };
-    // An absent value and an empty one differ.
-    let maybe = |value: Option<&[u8]>| match value {
-        None => vec![0u8],
-        Some(bytes) => [&[1u8][..], bytes].concat(),
-    };
-    let parent = parent.map(i64::to_be_bytes);
-    let fields = [
-        maybe(before.as_deref().map(str::as_bytes)),
-        head.into_bytes(),
-        root.into_bytes(),
-        name.into_bytes(),
-        email.into_bytes(),
-        revision.to_be_bytes().to_vec(),
-        maybe(parent.as_ref().map(|bytes| &bytes[..])),
-        message.into_bytes(),
-        at.to_be_bytes().to_vec(),
-        maybe(git_commit.as_deref().map(str::as_bytes)),
-        maybe(git_meta.as_deref()),
-        maybe(principal.as_deref().map(str::as_bytes)),
-    ];
-    let fields: Vec<&[u8]> = fields.iter().map(Vec::as_slice).collect();
-    Ok(digest(b"chain", &fields))
 }
 
 pub(super) fn current(c: &Connection) -> Result<(BoardHead, String), BoardStoreError> {
@@ -385,7 +156,7 @@ fn frame(hash: &mut Sha256, bytes: &[u8]) {
     hash.update((bytes.len() as u64).to_be_bytes());
     hash.update(bytes);
 }
-fn digest(kind: &[u8], fields: &[&[u8]]) -> String {
+pub(super) fn digest(kind: &[u8], fields: &[&[u8]]) -> String {
     let mut hash = Sha256::new();
     frame(&mut hash, b"quecto-board-object-v2");
     frame(&mut hash, kind);

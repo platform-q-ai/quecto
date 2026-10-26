@@ -2,9 +2,7 @@
 //! primary serves: a batch is the objects after a follower's, then the
 //! revisions after its revision (within the limit, once every object is
 //! sent), with the primary's chain at the revision it follows (none past
-//! its tip: a follower ahead of it is a fork). Each revision's chain is
-//! made as it is written, and a schema-4 board is given its chains as it
-//! opens, the same every time.
+//! its tip: a follower ahead of it is a fork).
 use std::path::Path;
 use std::sync::Arc;
 
@@ -17,7 +15,7 @@ use quecto::domain::project_board::value_objects::timestamp::Timestamp;
 use quecto::infrastructure::persistence::file::board_tokens::FileBoardTokens;
 use quecto::infrastructure::persistence::sqlite::project_board::SqliteBoardOps;
 
-use super::board_feed::{board, identity, wrote};
+use super::board_feed::{board, wrote};
 
 /// A server's state: its board and its tokens.
 pub(super) struct Server {
@@ -130,26 +128,4 @@ fn a_batch_is_a_read_and_its_admin_rows_are_the_tokens_alone() {
     let shown = format!("{batch:?}");
     assert!(!shown.contains(&phone.secret), "never a token");
     assert!(dump(&primary.file) == before, "a batch writes nothing");
-}
-
-#[test]
-fn a_schema_4_board_is_given_its_chain_as_it_opens_the_same_every_time() {
-    let primary = server();
-    wrote(&primary.ops, 1, true, 3);
-    let made = chains(&primary.file);
-    drop(primary.ops);
-    {
-        let c = rusqlite::Connection::open(&primary.file).unwrap();
-        c.execute_batch("ALTER TABLE revisions DROP COLUMN chain; PRAGMA user_version=4;")
-            .unwrap();
-    }
-    let reopened = SqliteBoardOps::open(&primary.file, identity()).expect("schema 4 upgraded");
-    assert_eq!(chains(&primary.file), made);
-    assert!(made.iter().all(Option::is_some));
-    let version: i64 = rusqlite::Connection::open(&primary.file)
-        .unwrap()
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(version, 5);
-    drop(reopened);
 }

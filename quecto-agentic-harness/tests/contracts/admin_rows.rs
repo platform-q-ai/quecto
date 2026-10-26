@@ -5,8 +5,8 @@
 //! rows again write nothing.
 use std::os::unix::fs::MetadataExt;
 
-use quecto::application::project_board::ports::BoardTokens;
 use quecto::application::project_board::ports::replication::{AdminRows, AdminToken};
+use quecto::application::project_board::ports::{BoardTokens, TokenKind};
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::timestamp::Timestamp;
 use quecto::infrastructure::persistence::file::board_tokens::FileBoardTokens;
@@ -23,16 +23,34 @@ fn rows_are_given_and_taken_whole() {
     let at = Timestamp::parse("2026-10-26T09:00:00Z").unwrap();
     let phone = primary.add(&name("phone"), &at).unwrap();
     let laptop = primary.add(&name("laptop"), &at).unwrap();
+    let eccup = primary.add_replica(&name("eccup"), &at).unwrap();
     let rows = primary.export().unwrap();
+    let eccup_row = rows
+        .iter()
+        .find(|row| row.name == name("eccup"))
+        .unwrap()
+        .clone();
+    assert_eq!(eccup_row.kind, TokenKind::Replica);
+    let rows: Vec<AdminToken> = rows
+        .into_iter()
+        .filter(|row| row.name != name("eccup"))
+        .collect();
     let names: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
     assert_eq!(names, ["laptop", "phone"], "by name");
     for row in &rows {
         assert_eq!(row.digest.len(), 64);
         assert!(!row.digest.contains(&phone.secret) && !row.digest.contains(&laptop.secret));
     }
-    follower.replace(&rows).unwrap();
+    let mut all = rows.clone();
+    all.insert(0, eccup_row);
+    follower.replace(&all).unwrap();
     assert_eq!(follower.verify(&phone.secret), Ok(Some(name("phone"))));
-    assert_eq!(follower.export().unwrap(), rows);
+    assert_eq!(
+        follower.kind_of(&name("eccup")),
+        Ok(Some(TokenKind::Replica))
+    );
+    assert_eq!(follower.verify(&eccup.secret), Ok(Some(name("eccup"))));
+    assert_eq!(follower.export().unwrap(), all);
     let kept: Vec<AdminToken> = rows
         .iter()
         .filter(|row| row.name == name("phone"))

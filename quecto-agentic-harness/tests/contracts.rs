@@ -232,6 +232,8 @@ mod project_board_kinds;
 mod project_board_op_log;
 #[path = "contracts/project_board_remote_revisions.rs"]
 mod project_board_remote_revisions;
+#[path = "contracts/project_board_schema_upgrade.rs"]
+mod project_board_schema_upgrade;
 #[path = "contracts/project_board_sqlite.rs"]
 mod project_board_sqlite;
 #[path = "contracts/project_board_store.rs"]

@@ -300,6 +300,7 @@ fn digests_spell_as_lowercase_hex() {
         name: "laptop".into(),
         sha256: sha256.into(),
         created: "2026-10-24T12:00:00Z".into(),
+        replica: false,
     };
     assert!(held(entry(&sha256("x"))).is_some());
     assert!(held(entry(&"A".repeat(64))).is_none());

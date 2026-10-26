@@ -4,7 +4,7 @@
 //! epochs and the admin rows (the device tokens' digests). A follower
 //! never writes the board otherwise, and never rewrites what it holds.
 use super::feed::BatchLimit;
-use super::{BoardStoreError, TokenError};
+use super::{BoardStoreError, TokenError, TokenKind};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 
@@ -80,11 +80,12 @@ pub struct ReplicaMeta {
     pub imported_count: u64,
 }
 
-/// An admin row: a device token's name, date and SHA-256 (never a token).
+/// An admin row: a token's name, date, kind and SHA-256 (never a token).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdminToken {
     pub name: Slug,
     pub created: Timestamp,
+    pub kind: TokenKind,
     pub digest: String,
 }
 

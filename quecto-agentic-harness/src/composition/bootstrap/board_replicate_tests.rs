@@ -37,7 +37,9 @@ fn the_replicate_route_gives_a_batch_with_its_chains_and_admin_rows() {
     let handles =
         build_board_server_with(&environment(&dir, &work, "origin"), Arc::new(Synced)).unwrap();
     let board = handles.serve.board().clone();
-    handles.access.add("eccup").unwrap();
+    let kind = crate::application::project_board::ports::TokenKind::Replica;
+    handles.access.add_kind("eccup", kind).unwrap();
+    handles.access.add("phone").unwrap();
     let routes = BoardRoutes::new(handles.serve, handles.access, handles.operations)
         .with_replication(handles.replication);
     let op = format!("/v1/boards/{}/op", board.as_str());
@@ -65,7 +67,17 @@ fn the_replicate_route_gives_a_batch_with_its_chains_and_admin_rows() {
         .iter()
         .map(|token| token.name.as_str())
         .collect();
-    assert_eq!(names, ["eccup"]);
+    assert_eq!(names, ["eccup", "phone"]);
+    let kinds: Vec<&str> = batch
+        .tokens
+        .iter()
+        .map(|token| token.kind.as_str())
+        .collect();
+    assert_eq!(
+        kinds,
+        ["replica", "device"],
+        "a follower keeps each token's kind"
+    );
     for (query, code) in [
         (Some("after=0"), "query"),
         (Some("objects=0"), "query"),
@@ -81,6 +93,25 @@ fn the_replicate_route_gives_a_batch_with_its_chains_and_admin_rows() {
             "{query:?}"
         );
     }
+    // B11 review: over TCP, a device token is refused the batches; a
+    // replica token has them.
+    let tcp = |principal: &str| {
+        let reply = routes.answer(&ServiceRequest {
+            method: ServiceMethod::Get,
+            path: path.clone(),
+            body: vec![],
+            transport: Transport::Tcp,
+            principal: Some(principal.into()),
+            query: Some("after=0&objects=0".into()),
+            last_event_id: None,
+        });
+        let code = serde_json::from_slice::<Value>(&reply.body)
+            .ok()
+            .and_then(|body| body["code"].as_str().map(String::from));
+        (reply.status, code)
+    };
+    assert_eq!(tcp("phone"), (403, Some("replica_only".into())));
+    assert_eq!(tcp("replica:eccup").0, 200);
     let elsewhere = "/v1/boards/0000000000000000/replicate";
     let (status, _) = asked(
         &routes,

@@ -63,6 +63,7 @@ fn batch() -> ReplicaBatch {
         tokens: vec![AdminToken {
             name: Slug::parse("phone").unwrap(),
             created: Timestamp::parse("2026-10-26T09:00:00Z").unwrap(),
+            kind: TokenKind::Replica,
             digest: "ab".repeat(32),
         }],
         tip: 9,
@@ -90,4 +91,8 @@ fn a_batch_is_read_strictly() {
     let mut token: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     token["tokens"][0]["name"] = serde_json::json!("Not A Slug");
     assert!(decode_batch(token.to_string().as_bytes()).is_err());
+    let mut kind: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    kind["tokens"][0]["kind"] = serde_json::json!("admin");
+    let refused = decode_batch(kind.to_string().as_bytes()).unwrap_err();
+    assert!(refused.contains("kind"), "{refused}");
 }

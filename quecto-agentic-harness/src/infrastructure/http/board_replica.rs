@@ -6,6 +6,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 
+use crate::application::project_board::ports::TokenKind;
 use crate::application::project_board::ports::replication::{
     AdminToken, ReplicaBatch, ReplicaContent, ReplicaEntry, ReplicaEpoch, ReplicaMeta,
     ReplicaObject, ReplicaRevision,
@@ -91,6 +92,8 @@ struct Meta {
 struct Token {
     name: String,
     created: String,
+    /// `device` or `replica`, an allowlist.
+    kind: String,
     sha256: String,
 }
 
@@ -164,6 +167,7 @@ pub fn encode_batch(batch: &ReplicaBatch) -> Result<Vec<u8>, String> {
     let tokens = batch.tokens.iter().map(|token| Token {
         name: token.name.as_str().to_string(),
         created: token.created.as_str().to_string(),
+        kind: token.kind.as_str().to_string(),
         sha256: token.digest.clone(),
     });
     let wire = Batch {
@@ -238,9 +242,19 @@ pub fn decode_batch(bytes: &[u8]) -> Result<ReplicaBatch, String> {
     });
     let tokens = wire.tokens.into_iter().map(|token| {
         let unshaped = |_| format!("a token row is not as a token is kept: {}", token.name);
+        let kind = match token.kind.as_str() {
+            "device" => TokenKind::Device,
+            "replica" => TokenKind::Replica,
+            other => {
+                return Err(format!(
+                    "a token row's kind is not one this build reads: {other}"
+                ));
+            }
+        };
         Ok(AdminToken {
             name: Slug::parse(&token.name).map_err(unshaped)?,
             created: Timestamp::parse(&token.created).map_err(unshaped)?,
+            kind,
             digest: token.sha256,
         })
     });

@@ -190,6 +190,36 @@ fn an_import_makes_each_chain_the_same_on_every_machine() {
     );
 }
 
+/// B11 review: an imported board (its revisions holding their original
+/// commits) at schema 4 is upgraded to the chains its import makes now.
+#[test]
+fn an_imported_schema_4_board_is_upgraded_to_its_imports_chains() {
+    for algorithm in [HistoryAlgorithm::Sha1, HistoryAlgorithm::Sha256] {
+        let temp = tempfile::tempdir().unwrap();
+        let store = fixture(temp.path().join("board.db"), algorithm);
+        let read = |c: &Connection| -> (Option<String>, Option<String>, Option<Vec<u8>>) {
+            c.query_row(
+                "SELECT chain,git_commit,git_meta FROM revisions WHERE revision=1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap()
+        };
+        let imported = read(&storage::open(&store.path).unwrap());
+        assert!(imported.1.is_some() && imported.2.is_some(), "an original");
+        Connection::open(&store.path)
+            .unwrap()
+            .execute_batch("ALTER TABLE revisions DROP COLUMN chain; PRAGMA user_version=4;")
+            .unwrap();
+        let upgraded = read(&storage::open(&store.path).unwrap());
+        assert_eq!(upgraded, imported, "{algorithm:?}");
+        assert!(
+            store.snapshot().is_ok(),
+            "export reads it after the upgrade"
+        );
+    }
+}
+
 #[test]
 fn imported_h0_id_type_and_width_refuse_before_rust_decode() {
     use rusqlite::types::Value;

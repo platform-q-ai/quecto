@@ -1,6 +1,7 @@
 //! `quecto board-server token add|revoke|list` (epic #2705 B5), over the
 //! running server's Unix socket: `add` prints the token once, alone on
-//! stdout; `list` gives names and dates, never a token.
+//! stdout (`--replica`: a follower's token, B11); `list` gives names,
+//! dates and kinds, never a token.
 use std::path::PathBuf;
 
 use serde_json::Value;
@@ -12,6 +13,8 @@ use crate::infrastructure::http::board_service::listener::ServiceMethod;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenAction {
     Add(String),
+    /// A follower's token (B11): it reads and replicates, and writes nothing.
+    AddReplica(String),
     Revoke(String),
     List,
 }
@@ -28,6 +31,11 @@ pub struct TokenOptions {
 pub fn parse(args: &[String]) -> Result<TokenOptions, String> {
     let refused = |why: &str| Err(format!("board-server: {why}"));
     let (action, rest) = match args {
+        [action, name, flag, rest @ ..]
+            if action == "add" && name_shaped(name) && flag == "--replica" =>
+        {
+            (TokenAction::AddReplica(name.clone()), rest)
+        }
         [action, name, rest @ ..] if action == "add" && name_shaped(name) => {
             (TokenAction::Add(name.clone()), rest)
         }
@@ -37,7 +45,7 @@ pub fn parse(args: &[String]) -> Result<TokenOptions, String> {
         [action, rest @ ..] if action == "list" => (TokenAction::List, rest),
         _ => {
             return refused(
-                "token takes add <name>, revoke <name> or list \
+                "token takes add <name> [--replica], revoke <name> or list \
                  (a name is 1 to 64 of a-z, 0-9 and '-', starting with a letter or digit)",
             );
         }
@@ -65,6 +73,10 @@ pub fn run(options: &TokenOptions, stdout: &mut String, stderr: &mut String) -> 
     let named = |name: &str| serde_json::json!({ "name": name }).to_string();
     let (method, path, body) = match &options.action {
         TokenAction::Add(name) => (ServiceMethod::Post, "/v1/admin/tokens", named(name)),
+        TokenAction::AddReplica(name) => {
+            let body = serde_json::json!({ "name": name, "replica": true }).to_string();
+            (ServiceMethod::Post, "/v1/admin/tokens", body)
+        }
         TokenAction::Revoke(name) => (ServiceMethod::Post, "/v1/admin/tokens/revoke", named(name)),
         TokenAction::List => (ServiceMethod::Get, "/v1/admin/tokens", String::new()),
     };
@@ -81,9 +93,13 @@ pub fn run(options: &TokenOptions, stdout: &mut String, stderr: &mut String) -> 
     let reply: Value = serde_json::from_slice(&reply).unwrap_or(Value::Null);
     let text = |key: &str| reply[key].as_str().unwrap_or_default().to_string();
     match (&options.action, status) {
-        (TokenAction::Add(_), 201) => {
+        (TokenAction::Add(_) | TokenAction::AddReplica(_), 201) => {
             stdout.push_str(&format!("{}\n", text("token")));
-            let added = format!("board-server: token '{}' added", text("name"));
+            let added = format!(
+                "board-server: {} token '{}' added",
+                text("kind"),
+                text("name")
+            );
             stderr.push_str(&format!("{added}; it is shown only this once\n"));
             0
         }
@@ -95,7 +111,8 @@ pub fn run(options: &TokenOptions, stdout: &mut String, stderr: &mut String) -> 
             let tokens = reply["tokens"].as_array().cloned().unwrap_or_default();
             for token in &tokens {
                 let field = |key: &str| token[key].as_str().unwrap_or_default().to_string();
-                stdout.push_str(&format!("{}\t{}\n", field("name"), field("created")));
+                let (name, created, kind) = (field("name"), field("created"), field("kind"));
+                stdout.push_str(&format!("{name}\t{created}\t{kind}\n"));
             }
             if tokens.is_empty() {
                 stderr.push_str("board-server: no tokens\n");

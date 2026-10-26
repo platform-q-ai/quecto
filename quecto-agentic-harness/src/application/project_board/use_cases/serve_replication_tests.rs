@@ -12,6 +12,7 @@ fn token(name: &str) -> AdminToken {
     AdminToken {
         name: Slug::parse(name).unwrap(),
         created: Timestamp::parse("2026-10-26T00:00:00Z").unwrap(),
+        kind: crate::application::project_board::ports::TokenKind::Device,
         digest: "0".repeat(64),
     }
 }

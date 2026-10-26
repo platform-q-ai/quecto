@@ -79,8 +79,7 @@ impl BoardHistoryRead for SqliteBoardHistoryStore {
             tip: 0,
             algorithm: None,
         };
-        storage::recognize_on(&view.c, false)
-            .map_err(|e| HistoryError::Unsupported(format!("{e:?}")))?;
+        storage::recognize_on(&view.c).map_err(|e| HistoryError::Unsupported(format!("{e:?}")))?;
         view.algorithm = validate_meta(&view.c, &self.board)?;
         let (frontier, root) = storage::current(&view.c).map_err(error)?;
         let (_, tip) = parse_head(&frontier.0).map_err(error)?;
