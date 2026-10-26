@@ -1,34 +1,81 @@
 //! `quecto board watch` (epic #2705 B10): one JSON line per event.
 use super::*;
-use crate::application::project_board::ports::feed::{BoardRevision, FeedEvent};
+use crate::application::project_board::ports::feed::{
+    BoardRevision, BoardStream, BoardStreams, FeedEvent, OpenRefused, StreamRead, WatchPauses,
+};
 
-/// Tells an epoch then revisions 1, 2, 3... until stopped, from `after`.
-struct Counting;
+/// One stream: an epoch, then revisions from `after` on, `left` of them,
+/// then a malformed read (or, with none left to count, revisions for ever).
+struct Counting {
+    next: u64,
+    left: Option<u64>,
+    told_epoch: bool,
+}
 
-impl BoardWatch for Counting {
-    fn watch(
-        &self,
-        after: Option<u64>,
-        each: &mut dyn FnMut(FeedEvent) -> WatchFlow,
-    ) -> Result<(), String> {
-        let start = after.unwrap_or(0);
-        if each(FeedEvent::Epoch { epoch: 1 }) == WatchFlow::Stop {
-            return Ok(());
+impl BoardStream for Counting {
+    fn read(&mut self) -> StreamRead {
+        if !self.told_epoch {
+            self.told_epoch = true;
+            return StreamRead::Event {
+                id: self.next,
+                event: FeedEvent::Epoch { epoch: 1 },
+            };
         }
-        for revision in start + 1..start + 100 {
-            let event = FeedEvent::Revision(BoardRevision { epoch: 1, revision });
-            if each(event) == WatchFlow::Stop {
-                return Ok(());
-            }
+        match &mut self.left {
+            Some(0) => return StreamRead::Malformed("the server went away".into()),
+            Some(left) => *left -= 1,
+            None => {}
         }
-        Err("the server went away".into())
+        self.next += 1;
+        let revision = BoardRevision {
+            epoch: 1,
+            revision: self.next,
+        };
+        StreamRead::Event {
+            id: self.next,
+            event: FeedEvent::Revision(revision),
+        }
+    }
+
+    fn retry(&self) -> Option<std::time::Duration> {
+        None
     }
 }
 
-fn counting(environment: &ProjectBoardEnvironment) -> Result<Box<dyn BoardWatch>, BuildError> {
+/// Streams of [`Counting`]: 99 revisions, or 60,000 (about 3 MiB of lines,
+/// past the held bound; never endless, so a missing bound fails, never
+/// fills the machine).
+struct Streams(Option<u64>);
+
+impl BoardStreams for Streams {
+    fn open(&self, after: Option<u64>) -> Result<Box<dyn BoardStream>, OpenRefused> {
+        Ok(Box::new(Counting {
+            next: after.unwrap_or(0),
+            left: self.0,
+            told_epoch: false,
+        }))
+    }
+}
+
+struct NoPauses;
+
+impl WatchPauses for NoPauses {
+    fn pause(&self, _: std::time::Duration) {}
+}
+
+fn watch_of(streams: Streams) -> BoardWatchHandles {
+    let timing = crate::application::project_board::use_cases::WatchTiming::PRODUCTION;
+    BoardWatchHandles {
+        watch: WatchBoard::new(Box::new(streams), std::sync::Arc::new(NoPauses), timing),
+        output_open: || true,
+    }
+}
+
+fn counting(environment: &ProjectBoardEnvironment) -> Result<BoardWatchHandles, BuildError> {
     assert_eq!(environment.access, Access::Read, "a watch writes nothing");
     match environment.known.url.as_deref() {
-        Some("unix:///tmp/board.sock") => Ok(Box::new(Counting)),
+        Some("unix:///tmp/board.sock") => Ok(watch_of(Streams(Some(99)))),
+        Some("unix:///tmp/endless.sock") => Ok(watch_of(Streams(Some(60_000)))),
         _ => Err(BuildError::Unavailable("watch needs a board server".into())),
     }
 }
@@ -124,5 +171,20 @@ fn quecto_board_watch_is_dispatched_before_any_op() {
         (code, stdout.as_str()),
         (0, "{\"kind\":\"epoch\",\"epoch\":1}\n"),
         "{stderr}"
+    );
+}
+
+/// Review (#2757 round 3, nit): with no --count, output held to be returned
+/// whole is bounded: the watch stops at MAX_HELD_BYTES, saying so.
+#[test]
+fn held_output_without_a_count_is_bounded() {
+    let (code, stdout, stderr) = watched(&["--url", "unix:///tmp/endless.sock"]);
+    assert_eq!(code, 1);
+    assert!(stdout.len() <= MAX_HELD_BYTES, "{}", stdout.len());
+    assert!(stdout.len() > MAX_HELD_BYTES - 1024, "{}", stdout.len());
+    assert!(stdout.ends_with('\n'), "whole lines only");
+    assert_eq!(
+        stderr,
+        "board watch: stopped at 1024 KiB of output held; give --count to bound it\n"
     );
 }

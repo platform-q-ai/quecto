@@ -69,3 +69,14 @@ fn anything_off_the_schema_is_refused() {
     };
     assert_eq!(decoded(&no_id), None);
 }
+
+/// Review (#2757 round 3, L1): a pipe's write end has a reader while its
+/// read end is open, and none once it is closed.
+#[test]
+fn a_pipe_has_a_reader_until_its_read_end_closes() {
+    use std::os::fd::AsRawFd;
+    let (reader, writer) = std::io::pipe().expect("a pipe");
+    assert!(has_reader(writer.as_raw_fd()), "its reader is open");
+    drop(reader);
+    assert!(!has_reader(writer.as_raw_fd()), "its reader is gone");
+}

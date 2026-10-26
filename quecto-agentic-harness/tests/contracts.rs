@@ -90,6 +90,10 @@ mod board_requests;
 mod board_run_summary_ports;
 #[path = "contracts/board_runs.rs"]
 mod board_runs;
+#[path = "contracts/board_stream.rs"]
+mod board_stream;
+#[path = "contracts/board_streams.rs"]
+mod board_streams;
 #[path = "contracts/board_tasks.rs"]
 mod board_tasks;
 #[path = "contracts/board_text_cells.rs"]
@@ -102,8 +106,6 @@ mod board_transaction;
 mod board_usage;
 #[path = "contracts/board_wakes.rs"]
 mod board_wakes;
-#[path = "contracts/board_watch.rs"]
-mod board_watch;
 #[path = "contracts/browser_authorization.rs"]
 mod browser_authorization;
 #[path = "common/catalogue_conformance.rs"]
@@ -385,6 +387,8 @@ mod tui_clipboard_reader;
 mod turn_cancellation;
 #[path = "contracts/uds_direct_child_routing.rs"]
 mod uds_direct_child_routing;
+#[path = "contracts/watch_pauses.rs"]
+mod watch_pauses;
 #[path = "contracts/workflow_run_source.rs"]
 mod workflow_run_source;
 

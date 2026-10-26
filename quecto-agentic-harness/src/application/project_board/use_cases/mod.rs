@@ -26,6 +26,7 @@ mod serve_board_operation;
 mod start_board_task;
 mod task_pointers;
 mod update_draft_task;
+mod watch_board;
 
 pub use accept_plan::AcceptPlan;
 pub use board_access::{BoardAccess, Principal, Refused, Scope};
@@ -50,6 +51,7 @@ pub use serve_board::ServeBoard;
 pub use serve_board_operation::{Present, ServeBoardOperation};
 pub use start_board_task::{BeginBoardRun, StartBoardTask};
 pub use update_draft_task::UpdateDraftTask;
+pub use watch_board::{WatchBoard, WatchTiming};
 
 #[cfg(test)]
 #[path = "fixtures_tests.rs"]

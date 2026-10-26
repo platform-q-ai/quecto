@@ -11,14 +11,17 @@ use super::project_board::{
     BoardLocation, board_committer, kept_reports, store_reason, write_refusal,
 };
 use super::project_board_remote_runs::{RemoteRuns, RunSwarms};
-use crate::application::project_board::ports::feed::BoardWatch;
 use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness, StartedRuns};
 use crate::application::project_board::use_cases::LaunchBegunRun;
+use crate::application::project_board::use_cases::{WatchBoard, WatchTiming};
 use crate::infrastructure::http::board_remote::{RemoteBoardOperations, endpoint_of};
 use crate::infrastructure::http::board_remote_runs::RemoteBoardRuns;
-use crate::infrastructure::http::board_watch::RemoteBoardWatch;
+use crate::infrastructure::http::board_watch::{
+    RemoteBoardStreams, ThreadPauses, stdout_has_reader,
+};
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
 use crate::infrastructure::persistence::project_board::store::{GitBoardStore, StoreOpenError};
+use crate::interface::cli::controllers::board::watch::BoardWatchHandles;
 use crate::interface::cli::controllers::board::{
     Access, BuildError, ProjectBoardEnvironment, ProjectBoardHandles,
 };
@@ -90,13 +93,14 @@ pub fn remote_handles(
 }
 
 /// A watch of the change feed of the server `environment` names (B10):
-/// its URL and token as for its operations; no committer.
+/// its URL and token as for its operations; no committer. Its output is
+/// open while standard output has a reader.
 ///
 /// # Errors
 /// No board server named, a URL or token refused, or no board id.
 pub fn build_board_watch(
     environment: &ProjectBoardEnvironment,
-) -> Result<Box<dyn BoardWatch>, BuildError> {
+) -> Result<BoardWatchHandles, BuildError> {
     let unavailable = BuildError::Unavailable;
     let url = server_url(environment).ok_or_else(|| {
         unavailable(format!(
@@ -114,7 +118,12 @@ pub fn build_board_watch(
             GitEnvironment::allowlisted(environment.vars.iter().cloned()),
         )?,
     };
-    Ok(Box::new(RemoteBoardWatch::new(client, board)))
+    let streams = Box::new(RemoteBoardStreams::new(client, board));
+    let watch = WatchBoard::new(streams, Arc::new(ThreadPauses), WatchTiming::PRODUCTION);
+    Ok(BoardWatchHandles {
+        watch,
+        output_open: stdout_has_reader,
+    })
 }
 
 /// The board's id as git makes it from the clone's remote.

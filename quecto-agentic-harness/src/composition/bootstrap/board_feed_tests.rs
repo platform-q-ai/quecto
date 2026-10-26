@@ -10,14 +10,15 @@ use serde_json::{Value, json};
 
 use super::tests::{Synced, environment, seeded};
 use super::*;
-use crate::application::project_board::ports::feed::{BoardWatch, FeedEvent, WatchFlow};
+use crate::application::project_board::ports::feed::{FeedEvent, WatchFlow};
+use crate::application::project_board::use_cases::{WatchBoard, WatchTiming};
 use crate::infrastructure::http::board_service::client::{BoardServiceClient, READ_REPLY};
 use crate::infrastructure::http::board_service::events::Opened;
 use crate::infrastructure::http::board_service::limits::Method;
 use crate::infrastructure::http::board_service::listener::{
     ConnectionLimits, Listener, ServiceParts, bind, serve,
 };
-use crate::infrastructure::http::board_watch::{RemoteBoardWatch, WatchTiming, decoded};
+use crate::infrastructure::http::board_watch::{RemoteBoardStreams, ThreadPauses, decoded};
 use crate::interface::cli::board_server::routes::BoardRoutes;
 
 /// A server serving `handles` on a temp socket until the sender is used.
@@ -127,14 +128,19 @@ type Watcher = std::thread::JoinHandle<Result<(), String>>;
 /// it came, until `stop` is set (checked at each event).
 fn watching(served: &Served, after: Option<u64>, stop: Arc<AtomicBool>) -> (Revisions, Watcher) {
     let timing = WatchTiming {
-        idle: Duration::from_secs(20),
         pause: Duration::from_millis(50),
         busy_for: Duration::from_secs(5),
+        ..WatchTiming::PRODUCTION
     };
-    let watch = RemoteBoardWatch::timed(served.client.clone(), served.board.clone(), timing);
+    let streams = RemoteBoardStreams::idling(
+        served.client.clone(),
+        served.board.clone(),
+        Duration::from_secs(20),
+    );
+    let watch = WatchBoard::new(Box::new(streams), Arc::new(ThreadPauses), timing);
     let (seen, revisions) = mpsc::channel();
     let thread = std::thread::spawn(move || {
-        watch.watch(after, &mut |event| {
+        watch.watch(after, &mut || true, &mut |event| {
             if let FeedEvent::Revision(revision) = event {
                 let _ = seen.send((revision.revision, Instant::now()));
             }

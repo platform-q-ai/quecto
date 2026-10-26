@@ -14,19 +14,10 @@ use crate::application::project_board::use_cases::{FollowBoard, FollowStep, Foll
 use crate::infrastructure::http::board_service::listener::{
     ServiceReply, ServiceRequest, ServiceStream, StreamStep, StreamWake,
 };
+use crate::interface::tools::project_board::feed_events::event_json;
 
 /// What an idle stream sends: an SSE comment, which no reader dispatches.
 const PING: &[u8] = b": ping\n\n";
-
-/// An event's data: its kind and numbers, and nothing else.
-pub fn event_json(event: &FeedEvent) -> Value {
-    match event {
-        FeedEvent::Epoch { epoch } => json!({"kind": "epoch", "epoch": epoch}),
-        FeedEvent::Revision(revision) => json!({"kind": "revision",
-            "epoch": revision.epoch, "revision": revision.revision}),
-        FeedEvent::Reset { after } => json!({"kind": "reset", "after": after}),
-    }
-}
 
 /// `told` as one SSE event: its id (the cursor to resume from), its kind
 /// as the event's name, its data on one line.

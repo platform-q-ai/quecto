@@ -1,11 +1,12 @@
-//! The [`BoardWatch`] port over a board server (epic #2705 B10): its
-//! `events` stream read, each event decoded by the feed's allowlisted
-//! schema, and the stream opened again from the last id it sent whenever
-//! it ends or is cut, so a watcher sees each revision once, with no gap.
-//! A malformed stream ends the watch; a busy server is tried again for a
-//! connection's lifetime and more; an epoch already handed on is not
-//! handed on again.
+//! The feed's streams over a board server (epic #2705 B10): its `events`
+//! stream opened from a cursor ([`BoardStreams`]), each event decoded by
+//! the feed's allowlisted schema ([`BoardStream`]). Which refusal is busy
+//! is an allowlist: a 503 whose code is `busy` alone; every other refusal
+//! ends the watch. A stream cut in transport ends quietly, to be opened
+//! again; a malformed one is said. The watch's policy is the application's
+//! (`WatchBoard`); this adapter only opens and reads.
 use std::collections::BTreeSet;
+use std::os::fd::RawFd;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -13,197 +14,125 @@ use serde_json::Value;
 use super::board_service::client::{BoardServiceClient, ClientError};
 use super::board_service::events::{EventReader, Opened, StreamEvent};
 use crate::application::project_board::ports::feed::{
-    BoardRevision, BoardWatch, FeedEvent, Told, WatchFlow,
+    BoardRevision, BoardStream, BoardStreams, FeedEvent, OpenRefused, StreamRead, Told, WatchPauses,
 };
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 
 /// How long a read may wait: three of the server's 15 s keep-alives missed.
 pub const IDLE: Duration = Duration::from_secs(45);
-/// The pause before a stream is opened again, until a stream's `retry:`
-/// (the server sends 1 s) says otherwise.
-pub const PAUSE: Duration = Duration::from_secs(1);
-/// Opens in a row that may fail, or end with no event, before the watch
-/// gives up.
-pub const ATTEMPTS: u32 = 5;
-/// How long a busy server is tried again: past a connection's 60 s
-/// lifetime, by which every stream holding a place has given it back.
-pub const BUSY_FOR: Duration = Duration::from_secs(75);
-/// The longest pause between tries of a busy server.
-pub const MAX_BACKOFF: Duration = Duration::from_secs(8);
-/// The most tries of a busy server, however short its pauses.
-pub const MAX_BUSY_TRIES: u32 = 32;
-/// The shortest pause between tries of a busy server.
-pub const MIN_BACKOFF: Duration = Duration::from_millis(100);
 
-/// A watch's times: how long a read may wait, the pause before a stream is
-/// opened again (until a stream's `retry:` says otherwise), and how long a
-/// busy server is tried again.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WatchTiming {
-    pub idle: Duration,
-    pub pause: Duration,
-    pub busy_for: Duration,
-}
-
-impl WatchTiming {
-    pub const PRODUCTION: Self = Self {
-        idle: IDLE,
-        pause: PAUSE,
-        busy_for: BUSY_FOR,
-    };
-}
-
-pub struct RemoteBoardWatch {
+/// The feed of the board `board` on the server `client` reaches.
+pub struct RemoteBoardStreams {
     client: BoardServiceClient,
     board: BoardId,
-    timing: WatchTiming,
+    idle: Duration,
 }
 
-/// Where a watch stands across its streams: the cursor it reopens from,
-/// and the epoch it last handed on.
-struct Standing {
-    cursor: Option<u64>,
-    epoch: Option<u64>,
-}
-
-/// How one stream ended: whether `each` stopped it, whether it gave any
-/// event, and the reconnection delay it set.
-struct Ended {
-    flow: WatchFlow,
-    heard: bool,
-    retry: Option<Duration>,
-}
-
-impl RemoteBoardWatch {
+impl RemoteBoardStreams {
     pub fn new(client: BoardServiceClient, board: BoardId) -> Self {
-        Self::timed(client, board, WatchTiming::PRODUCTION)
+        Self::idling(client, board, IDLE)
     }
 
-    /// A watch held to `timing`.
-    pub fn timed(client: BoardServiceClient, board: BoardId, timing: WatchTiming) -> Self {
+    /// Streams whose reads wait at most `idle`.
+    pub fn idling(client: BoardServiceClient, board: BoardId, idle: Duration) -> Self {
         Self {
             client,
             board,
-            timing,
-        }
-    }
-
-    /// Reads one stream to its end. An epoch the watch last handed on is
-    /// not handed on again. A stream cut in transport ends quietly, to be
-    /// opened again; one malformed, or an event off the schema, ends the
-    /// watch.
-    fn read(
-        &self,
-        mut reader: EventReader,
-        standing: &mut Standing,
-        each: &mut dyn FnMut(FeedEvent) -> WatchFlow,
-    ) -> Result<Ended, String> {
-        let mut heard = false;
-        loop {
-            let ended = |flow, heard, reader: &EventReader| Ended {
-                flow,
-                heard,
-                retry: reader.retry(),
-            };
-            let event = match reader.next_event() {
-                Ok(Some(event)) => event,
-                Ok(None) => return Ok(ended(WatchFlow::Continue, heard, &reader)),
-                Err(error) if error.transport() || matches!(error, ClientError::NoReply) => {
-                    return Ok(ended(WatchFlow::Continue, heard, &reader));
-                }
-                Err(error) => return Err(format!("{}: {error}", self.client.endpoint())),
-            };
-            let (id, event) = decoded(&event).ok_or_else(|| {
-                "the board server sent an event this client does not read".to_string()
-            })?;
-            (standing.cursor, heard) = (Some(id), true);
-            match event {
-                FeedEvent::Epoch { epoch } if standing.epoch == Some(epoch) => continue,
-                FeedEvent::Epoch { epoch } => standing.epoch = Some(epoch),
-                FeedEvent::Revision(_) | FeedEvent::Reset { .. } => {}
-            }
-            if each(event) == WatchFlow::Stop {
-                return Ok(ended(WatchFlow::Stop, heard, &reader));
-            }
+            idle,
         }
     }
 }
 
-impl BoardWatch for RemoteBoardWatch {
-    /// Opens the stream again whenever it ends: after the stream's `retry:`
-    /// (else the pause). Opens that fail, or end with no event,
-    /// [`ATTEMPTS`] in a row end the watch; a busy server is tried again
-    /// with a doubling backoff ([`MIN_BACKOFF`] to [`MAX_BACKOFF`]), apart,
-    /// for its `busy_for` and at most [`MAX_BUSY_TRIES`] tries.
-    fn watch(
-        &self,
-        after: Option<u64>,
-        each: &mut dyn FnMut(FeedEvent) -> WatchFlow,
-    ) -> Result<(), String> {
+impl BoardStreams for RemoteBoardStreams {
+    fn open(&self, after: Option<u64>) -> Result<Box<dyn BoardStream>, OpenRefused> {
         let path = format!("/v1/boards/{}/events", self.board.as_str());
-        let timing = self.timing;
-        let mut standing = Standing {
-            cursor: after,
-            epoch: None,
-        };
-        let (mut failed, mut pause) = (0, timing.pause);
-        // While busy: the tries made, the pauses slept so far (counted, so the
-        // client reads no clock), and the next pause.
-        let mut busy: Option<(u32, Duration, Duration)> = None;
-        loop {
-            let failure = match self.client.open_events(&path, standing.cursor, timing.idle) {
-                // Busy (a token's 2 streams, or the server's 32): a place
-                // frees within a connection's lifetime.
-                Ok(Opened::Refused(reply)) if reply.status == 503 => {
-                    // Never under MIN_BACKOFF, so no pause (a `retry: 0`)
-                    // makes it spin.
-                    let floor = pause.clamp(MIN_BACKOFF, MAX_BACKOFF);
-                    let (tries, waited, backoff) = *busy.get_or_insert((0, Duration::ZERO, floor));
-                    match (waited < timing.busy_for, tries < MAX_BUSY_TRIES) {
-                        (true, true) => {}
-                        (_, _) => {
-                            let why = refusal(reply.status, &reply.body);
-                            let waited = waited.as_secs_f64();
-                            return Err(format!("{why} (still busy after {waited:.1} s)"));
-                        }
-                    }
-                    std::thread::sleep(backoff);
-                    let next = (backoff * 2).clamp(MIN_BACKOFF, MAX_BACKOFF);
-                    busy = Some((tries + 1, waited + backoff, next));
-                    continue;
-                }
-                Ok(Opened::Refused(reply)) => return Err(refusal(reply.status, &reply.body)),
-                Ok(Opened::Stream(reader)) => {
-                    let ended = self.read(reader, &mut standing, each)?;
-                    if ended.flow == WatchFlow::Stop {
-                        return Ok(());
-                    }
-                    pause = ended.retry.unwrap_or(pause);
-                    match ended.heard {
-                        true => {
-                            (failed, busy) = (0, None);
-                            None
-                        }
-                        false => Some(format!(
-                            "{}: the board server's stream ended with no event",
-                            self.client.endpoint()
-                        )),
-                    }
-                }
-                Err(error) if error.transport() || matches!(error, ClientError::NoReply) => {
-                    Some(format!("{}: {error}", self.client.endpoint()))
-                }
-                Err(error) => return Err(format!("{}: {error}", self.client.endpoint())),
-            };
-            if let Some(why) = failure {
-                failed += 1;
-                if failed >= ATTEMPTS {
-                    return Err(format!("{why} ({failed} times in a row)"));
-                }
+        let endpoint = self.client.endpoint().to_string();
+        match self.client.open_events(&path, after, self.idle) {
+            Ok(Opened::Stream(reader)) => Ok(Box::new(RemoteStream { reader, endpoint })),
+            // Busy (a token's 2 streams, or the server's 32): a place frees
+            // within a connection's lifetime. Only that 503 is tried again.
+            Ok(Opened::Refused(reply))
+                if reply.status == 503 && !code_of(&reply.body).is_empty() =>
+            {
+                Err(OpenRefused::Busy(refusal(reply.status, &reply.body)))
             }
-            std::thread::sleep(pause);
+            Ok(Opened::Refused(reply)) => {
+                Err(OpenRefused::Refused(refusal(reply.status, &reply.body)))
+            }
+            Err(error) if error.transport() || matches!(error, ClientError::NoReply) => {
+                Err(OpenRefused::Unreachable(format!("{endpoint}: {error}")))
+            }
+            Err(error) => Err(OpenRefused::Refused(format!("{endpoint}: {error}"))),
         }
     }
+}
+
+/// One open stream.
+struct RemoteStream {
+    reader: EventReader,
+    endpoint: String,
+}
+
+impl BoardStream for RemoteStream {
+    fn read(&mut self) -> StreamRead {
+        match self.reader.next_event() {
+            Ok(Some(event)) => match decoded(&event) {
+                Some((id, event)) => StreamRead::Event { id, event },
+                None => StreamRead::Malformed(
+                    "the board server sent an event this client does not read".into(),
+                ),
+            },
+            Ok(None) => StreamRead::Ended,
+            Err(error) if error.transport() || matches!(error, ClientError::NoReply) => {
+                StreamRead::Ended
+            }
+            Err(error) => StreamRead::Malformed(format!("{}: {error}", self.endpoint)),
+        }
+    }
+
+    fn retry(&self) -> Option<Duration> {
+        self.reader.retry()
+    }
+}
+
+/// A watch's pauses: the thread sleeps.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ThreadPauses;
+
+impl WatchPauses for ThreadPauses {
+    fn pause(&self, how_long: Duration) {
+        std::thread::sleep(how_long);
+    }
+}
+
+/// Whether standard output still has a reader: [`has_reader`] of fd 1.
+pub fn stdout_has_reader() -> bool {
+    has_reader(1)
+}
+
+/// Whether the descriptor `fd` still has a reader: a pipe whose reader has
+/// gone polls `POLLERR`, a hung-up terminal `POLLHUP`; any other answer,
+/// a failed poll among them, counts as a reader (a write then says).
+pub fn has_reader(fd: RawFd) -> bool {
+    let mut polled = libc::pollfd {
+        fd,
+        events: 0,
+        revents: 0,
+    };
+    // A zero timeout: `poll` returns at once, writing only `revents`.
+    // SAFETY: one valid `pollfd`, its count 1, borrowed for the call.
+    let ready = unsafe { libc::poll(&mut polled, 1, 0) };
+    let gone = libc::POLLERR | libc::POLLHUP | libc::POLLNVAL;
+    match ready {
+        1 => polled.revents & gone == 0 || gone != 0,
+        _ => true,
+    }
+}
+
+/// A refusal's typed `code`, or `""`.
+fn code_of(body: &[u8]) -> String {
+    let reply: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
+    reply["code"].as_str().unwrap_or_default().to_string()
 }
 
 /// An event by the feed's schema, an allowlist: its id and what it tells;

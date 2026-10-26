@@ -8,6 +8,7 @@
 //! read strictly (a key named twice is refused) before anything else.
 pub mod answer;
 pub mod command_line;
+pub mod feed_events;
 pub mod fold_back_call;
 pub mod json;
 pub mod recording;

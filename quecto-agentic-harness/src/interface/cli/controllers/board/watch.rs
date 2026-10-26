@@ -4,13 +4,16 @@
 //! printed again as a stream reopens), which `--count` counts. It runs
 //! until `--count` lines are printed, its output is closed, or the watch
 //! cannot go on (exit 1). A cut stream is opened again from the last
-//! event, so each revision is printed once, with no gap.
+//! event, so each revision is printed once, with no gap. Once its output
+//! has no reader left it is not opened again. Without `--count`, output
+//! not written to the terminal as it goes is held to [`MAX_HELD_BYTES`].
 use std::path::PathBuf;
 
-use crate::application::project_board::ports::feed::{BoardWatch, WatchFlow};
+use crate::application::project_board::ports::feed::WatchFlow;
+use crate::application::project_board::use_cases::WatchBoard;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::interface::cli::CliContext;
-use crate::interface::cli::board_server::feed::event_json;
+use crate::interface::tools::project_board::feed_events::event_json;
 use crate::interface::tools::project_board::site::{
     Access, BuildError, KnownLocation, ProjectBoardEnvironment,
 };
@@ -18,9 +21,18 @@ use crate::interface::tools::project_board::site::{
 pub const USAGE: &str = "usage: quecto board watch [--url <board server>] [--board-id <hex>] \
                          [--repo <path>] [--remote <name>] [--after <revision>] [--count <n>]\n";
 
+/// The most output held, not written as it goes (a run whose output is
+/// returned whole), before the watch stops: 1 MiB.
+pub const MAX_HELD_BYTES: usize = 1024 * 1024;
+
+/// A watch, and whether its output still has a reader.
+pub struct BoardWatchHandles {
+    pub watch: WatchBoard,
+    pub output_open: fn() -> bool,
+}
+
 /// Composition's builder of a watch of the server the environment names.
-pub type BoardWatchBuilder =
-    fn(&ProjectBoardEnvironment) -> Result<Box<dyn BoardWatch>, BuildError>;
+pub type BoardWatchBuilder = fn(&ProjectBoardEnvironment) -> Result<BoardWatchHandles, BuildError>;
 
 /// The command line, read.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -119,8 +131,8 @@ pub fn run(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut 
         launcher: None,
         swarm_session: None,
     };
-    let watch = match build(&environment) {
-        Ok(watch) => watch,
+    let handles = match build(&environment) {
+        Ok(handles) => handles,
         Err(
             BuildError::Unavailable(why)
             | BuildError::NoSuchRemote(why)
@@ -130,8 +142,15 @@ pub fn run(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut 
             return 1;
         }
     };
-    let (live, mut printed) = (ctx.live_output, 0u64);
-    let watched = watch.watch(options.after, &mut |event| {
+    let (live, mut printed, mut held_full) = (ctx.live_output, 0u64, false);
+    // Written as it goes, the output has a reader while standard output
+    // does; held (a run whose output is returned whole), always.
+    let output_open = handles.output_open;
+    let mut open = || match live {
+        true => output_open(),
+        false => true,
+    };
+    let watched = handles.watch.watch(options.after, &mut open, &mut |event| {
         let line = format!("{}\n", event_json(&event));
         // A watch prints as it goes: a closed output ends it.
         let written = match live {
@@ -142,9 +161,13 @@ pub fn run(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut 
                     .and_then(|()| out.flush())
                     .is_ok()
             }
-            false => {
+            false if stdout.len() + line.len() <= usize::MAX => {
                 stdout.push_str(&line);
                 true
+            }
+            false => {
+                held_full = true;
+                false
             }
         };
         printed += 1;
@@ -154,9 +177,16 @@ pub fn run(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut 
             (false, _) => WatchFlow::Stop,
         }
     });
-    match watched {
-        Ok(()) => 0,
-        Err(why) => {
+    match (watched, held_full) {
+        (Ok(()), false) => 0,
+        (Ok(()), true) => {
+            let most = MAX_HELD_BYTES / 1024;
+            stderr.push_str(&format!(
+                "board watch: stopped at {most} KiB of output held; give --count to bound it\n"
+            ));
+            1
+        }
+        (Err(why), _) => {
             stderr.push_str(&format!("board watch: {why}\n"));
             1
         }

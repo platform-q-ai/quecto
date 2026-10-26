@@ -3,6 +3,7 @@
 //! artifact's text, a message, an identity or a principal: a reader that
 //! wants the change reads the board.
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::BoardStoreError;
 
@@ -120,17 +121,45 @@ pub enum WatchFlow {
     Stop,
 }
 
-/// Port: a client's watch of a board server's feed (`quecto board watch`).
-pub trait BoardWatch {
-    /// Hands `each` every event from revision `after` (none: from now),
-    /// reconnecting from the last revision seen when the stream ends,
-    /// until `each` says stop.
+/// What one read of an open stream gave: an event and its id (the cursor
+/// to reopen from), the stream's end (or a cut in transport: reopen), or a
+/// stream this client does not read (malformed: the watch ends, saying why).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamRead {
+    Event { id: u64, event: FeedEvent },
+    Ended,
+    Malformed(String),
+}
+
+/// Port: one open stream of a board server's feed.
+pub trait BoardStream: Send {
+    /// The next read; it waits at most the adapter's idle time.
+    fn read(&mut self) -> StreamRead;
+    /// The reconnection delay the stream set (its `retry:`), if any.
+    fn retry(&self) -> Option<Duration>;
+}
+
+/// Why a stream did not open: the server is busy (a place frees soon: try
+/// again), refused it (the watch ends), or could not be reached (try
+/// again, a bounded number of times). Each says why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpenRefused {
+    Busy(String),
+    Refused(String),
+    Unreachable(String),
+}
+
+/// Port: a board server's feed, opened as a stream from a cursor.
+pub trait BoardStreams: Send + Sync {
+    /// The stream of the events after `after` (none: from now).
     ///
     /// # Errors
-    /// The server could not be reached or refused the watch.
-    fn watch(
-        &self,
-        after: Option<u64>,
-        each: &mut dyn FnMut(FeedEvent) -> WatchFlow,
-    ) -> Result<(), String>;
+    /// Why it did not open.
+    fn open(&self, after: Option<u64>) -> Result<Box<dyn BoardStream>, OpenRefused>;
+}
+
+/// Port: how a watch waits between tries (a thread's sleep; a recorder in
+/// tests).
+pub trait WatchPauses: Send + Sync {
+    fn pause(&self, how_long: Duration);
 }
