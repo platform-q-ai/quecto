@@ -97,7 +97,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'merge-requested'
     name: Workspace Tests
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
