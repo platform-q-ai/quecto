@@ -8,7 +8,7 @@ use super::*;
 use crate::application::project_board::ports::TokenError;
 use crate::application::project_board::ports::feed::{BoardRevision, StreamRead};
 use crate::application::project_board::ports::replication::{
-    AdminToken, ReplicaBatch, ReplicaPosition, ReplicaRevision, ReplicaStatus,
+    AdminToken, ReplicaBatch, ReplicaClock, ReplicaPosition, ReplicaRevision,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -229,6 +229,7 @@ fn following(primary: Arc<Primary>, replica: Replica) -> Follower {
         Arc::clone(&admin) as _,
         Arc::clone(&pauses) as _,
         FAST,
+        Arc::new(FakeClock::default()) as _,
     );
     Follower {
         primary,
@@ -340,6 +341,7 @@ fn a_batch_that_says_more_but_makes_no_progress_is_refused() {
         Arc::new(Admin::default()),
         Arc::new(Recorded::default()),
         FAST,
+        Arc::new(FakeClock::default()) as _,
     );
     assert!(matches!(follower.catch_up(), Err(ReplicaError::Invalid(_))));
 }
@@ -368,39 +370,114 @@ fn an_unreachable_primary_stalls_the_follower_which_pauses_before_each_try() {
     assert_eq!(paused[..4], [ms(7), ms(14), ms(28), ms(28)], "{paused:?}");
 }
 
-/// B11 review 2: a follower stalled again and again counts how long, by
-/// its pauses, and past [`STALE_AFTER`] serves no device; caught up, it
-/// counts again from nothing.
+/// A clock the test sets.
+#[derive(Default)]
+struct FakeClock(Mutex<Duration>);
+
+impl FakeClock {
+    fn set(&self, at: Duration) {
+        *self.0.lock().unwrap() = at;
+    }
+}
+
+impl ReplicaClock for FakeClock {
+    fn now(&self) -> Duration {
+        *self.0.lock().unwrap()
+    }
+}
+
+/// A primary that is up or down as the test says, with no revision.
+struct Flaky(std::sync::atomic::AtomicBool);
+
+impl ReplicationSource for Flaky {
+    fn batch(&self, after: u64, _: u64, _: BatchLimit) -> Result<ReplicaBatch, OpenRefused> {
+        match self.0.load(Ordering::SeqCst) {
+            true => Ok(ReplicaBatch {
+                after,
+                chain_after: None,
+                objects: vec![],
+                revisions: vec![],
+                epochs: vec![],
+                meta: None,
+                tokens: vec![],
+                tip: 0,
+                more: false,
+            }),
+            false => Err(OpenRefused::Unreachable("no primary".into())),
+        }
+    }
+
+    fn open(&self, _: Option<u64>) -> Result<Box<dyn BoardStream>, OpenRefused> {
+        Err(OpenRefused::Unreachable("no primary".into()))
+    }
+
+    fn primary(&self) -> String {
+        "unix:///p".into()
+    }
+}
+
+/// B11 review 4: with production timing, a follower serves devices from
+/// its first catch-up since start; once stalled, for [`STALE_AFTER`] by
+/// the clock (not by its pauses), then no longer; caught up again, it is
+/// timed afresh, and a brief stall after it still serves.
 #[test]
-fn a_follower_stalled_past_its_bound_serves_no_device() {
-    use crate::application::project_board::ports::replication::STALE_AFTER;
-    let slow = ReplicaTiming {
-        restart: STALE_AFTER / 2,
-        max_restart: STALE_AFTER,
-        ..FAST
-    };
-    let primary = Arc::new(Primary {
-        unreachable: true,
-        ..Primary::plain(1)
-    });
-    let pauses = Arc::new(Recorded::default());
+fn a_stalled_follower_serves_devices_for_ten_minutes_by_the_clock() {
+    let (clock, primary) = (
+        Arc::new(FakeClock::default()),
+        Arc::new(Flaky(std::sync::atomic::AtomicBool::new(true))),
+    );
     let follower = ReplicateBoard::new(
-        primary,
+        Arc::clone(&primary) as _,
         Arc::new(Replica::default()),
         Arc::new(Admin::default()),
-        Arc::clone(&pauses) as _,
-        slow,
+        Arc::new(Recorded::default()),
+        ReplicaTiming::PRODUCTION,
+        Arc::clone(&clock) as _,
     );
-    let rounds = AtomicUsize::new(0);
-    follower.run(&|| rounds.fetch_add(1, Ordering::SeqCst) < 4);
-    let status = follower.status();
-    assert!(status.stalled_for >= STALE_AFTER, "{status:?}");
-    assert!(!status.serves_devices());
-    let short = ReplicaStatus {
-        stalled_for: STALE_AFTER / 2,
-        ..status.clone()
+    let serves = follower.devices_reader();
+    assert!(!serves(), "not before its first catch-up");
+    follower.catch_up().unwrap();
+    assert!(serves());
+    let stall = || {
+        primary.0.store(false, Ordering::SeqCst);
+        let rounds = AtomicUsize::new(0);
+        follower.run(&|| rounds.fetch_add(1, Ordering::SeqCst) < 1);
+        assert_eq!(follower.status().state.as_str(), "stalled");
     };
-    assert!(short.serves_devices(), "stalled briefly, it serves");
+    clock.set(Duration::from_secs(100));
+    stall();
+    clock.set(Duration::from_secs(100) + STALE_AFTER - Duration::from_secs(1));
+    assert!(serves(), "stalled 9 min 59 s");
+    clock.set(Duration::from_secs(100) + STALE_AFTER);
+    assert!(!serves(), "stalled 10 min");
+    // The primary returns: caught up, timed afresh; a brief stall serves.
+    primary.0.store(true, Ordering::SeqCst);
+    follower.catch_up().unwrap();
+    assert!(serves());
+    stall();
+    clock.set(Duration::from_secs(100) + STALE_AFTER + Duration::from_secs(30));
+    assert!(serves(), "stalled 30 s since it last caught up");
+}
+
+/// B11 review 4: a restart clears no stall into serving: a follower
+/// started again serves no device until it has caught up.
+#[test]
+fn a_restarted_follower_serves_no_device_until_it_catches_up() {
+    let primary = Arc::new(Flaky(std::sync::atomic::AtomicBool::new(false)));
+    let follower = ReplicateBoard::new(
+        Arc::clone(&primary) as _,
+        Arc::new(Replica::default()),
+        Arc::new(Admin::default()),
+        Arc::new(Recorded::default()),
+        ReplicaTiming::PRODUCTION,
+        Arc::new(FakeClock::default()),
+    );
+    let serves = follower.devices_reader();
+    assert!(follower.catch_up().is_err());
+    assert!(!serves(), "catching up with an old token set");
+    primary.0.store(true, Ordering::SeqCst);
+    follower.catch_up().unwrap();
+    assert!(serves());
 }
 
 /// B11 review: a diverged follower is kept so across a restart: it asks
@@ -425,6 +502,7 @@ fn a_diverged_follower_stays_diverged_across_a_restart() {
         Arc::clone(&f.admin) as _,
         Arc::clone(&f.pauses) as _,
         FAST,
+        Arc::new(FakeClock::default()) as _,
     );
     assert_eq!(restarted.status().state.as_str(), "diverged");
     let asked = f.primary.batches.load(Ordering::SeqCst);
@@ -463,6 +541,7 @@ fn a_follower_that_dies_is_shown_stalled() {
         Arc::new(Admin::default()),
         Arc::new(Recorded::default()),
         FAST,
+        Arc::new(FakeClock::default()) as _,
     );
     let died = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| follower.run(&|| true)));
     assert!(died.is_err());

@@ -162,12 +162,14 @@ impl BoardRoutes {
     fn stale(&self, transport: Transport) -> Option<ServiceReply> {
         match (transport, self.serve.serves_devices()) {
             (Transport::Local, _) | (Transport::Tcp, true) => None,
-            (Transport::Tcp, false) => Some(coded(
-                503,
-                "standby_stale",
-                "this standby's copy is not kept current (it is stalled or diverged): \
-                 read its primary",
-            )),
+            (Transport::Tcp, false) => {
+                let primary = self.standby.as_deref().unwrap_or_default();
+                let primary = redact_secrets(&redact_url_userinfo(primary));
+                let why = "this standby's copy is not kept current (it is stalled, diverged, or \
+                           not yet caught up): read its primary";
+                let body = json!({"error": why, "code": "standby_stale", "primary": primary});
+                Some(ServiceReply::json(503, &body))
+            }
         }
     }
 

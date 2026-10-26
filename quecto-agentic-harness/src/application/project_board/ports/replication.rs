@@ -283,23 +283,10 @@ pub struct ReplicaStatus {
     pub applied: u64,
     pub primary_head: Option<u64>,
     pub state: ReplicaState,
-    /// How long it has been stalled, as its pauses count it (zero while
-    /// it is not).
-    pub stalled_for: std::time::Duration,
 }
 
-/// How long a follower may be stalled and still serve reads over TCP: past
-/// it, a token its primary revoked could still read a copy no longer kept.
-pub const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(600);
-
-impl ReplicaStatus {
-    /// Whether it serves reads to devices, an allowlist: catching up,
-    /// following, or stalled for less than [`STALE_AFTER`]; never diverged.
-    pub fn serves_devices(&self) -> bool {
-        match self.state {
-            ReplicaState::CatchingUp | ReplicaState::Following => true,
-            ReplicaState::Stalled(_) => self.stalled_for < STALE_AFTER,
-            ReplicaState::Diverged(_) => false,
-        }
-    }
+/// Port: a monotonic clock a follower times how long it has been stalled
+/// by (B11c): the time since some fixed moment, never going back.
+pub trait ReplicaClock: Send + Sync {
+    fn now(&self) -> std::time::Duration;
 }

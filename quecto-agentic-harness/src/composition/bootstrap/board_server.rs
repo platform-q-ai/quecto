@@ -49,6 +49,7 @@ use crate::infrastructure::persistence::project_board::store::{GitBoardStore, St
 use crate::infrastructure::persistence::sqlite::project_board::{BoardBinding, SqliteBoardOps};
 use crate::infrastructure::time::board_clock::SystemBoardClock;
 use crate::infrastructure::time::kernel_time_sync::KernelTimeSync;
+use crate::infrastructure::time::replica_clock::MonotonicReplicaClock;
 pub use crate::interface::cli::board_server::{
     BoardServerEnvironment, BoardServerHandles, FollowPrimary,
 };
@@ -153,6 +154,7 @@ pub fn build_board_server_with(
                 Arc::clone(&tokens) as Arc<dyn AdminRows>,
                 Arc::new(ThreadPauses),
                 ReplicaTiming::PRODUCTION,
+                Arc::new(MonotonicReplicaClock::default()),
             );
             Some((Arc::new(replicate), primary))
         }
@@ -175,7 +177,9 @@ pub fn build_board_server_with(
     };
     let serve = ServeBoard::new(ops.reads(), Arc::new(time), board);
     let serve = match &follower {
-        Some((replicate, _)) => serve.following(replicate.status_reader()),
+        Some((replicate, _)) => serve
+            .following(replicate.status_reader())
+            .serving_devices(replicate.devices_reader()),
         None => serve,
     };
     Ok(BoardServerHandles {

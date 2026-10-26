@@ -19,7 +19,8 @@ use crate::application::project_board::ports::feed::{
     BatchLimit, BoardStream, BoardStreams, FeedEvent, OpenRefused, WatchFlow, WatchPauses,
 };
 use crate::application::project_board::ports::replication::{
-    AdminRows, ReplicaError, ReplicaState, ReplicaStatus, ReplicaStore, ReplicationSource,
+    AdminRows, ReplicaClock, ReplicaError, ReplicaState, ReplicaStatus, ReplicaStore,
+    ReplicationSource,
 };
 
 /// A follower's times: the feed's watch, and the pause before it starts
@@ -52,6 +53,18 @@ pub struct CaughtUp {
 /// batch of 500 at most, objects 8 MiB a batch) many times over.
 const MAX_BATCHES: u32 = 100_000;
 
+/// How long a follower may be stalled and still serve devices' reads: past
+/// it, a token its primary revoked meanwhile could still read its copy.
+pub const STALE_AFTER: Duration = Duration::from_secs(600);
+
+/// Whether a follower's copy is kept current since its server started: it
+/// has caught up once, and since when it has been stalled, if it is.
+#[derive(Debug, Clone, Copy, Default)]
+struct Kept {
+    caught_up: bool,
+    stalled_since: Option<Duration>,
+}
+
 /// A follower of its primary.
 pub struct ReplicateBoard {
     source: Arc<dyn ReplicationSource>,
@@ -60,6 +73,8 @@ pub struct ReplicateBoard {
     pauses: Arc<dyn WatchPauses>,
     timing: ReplicaTiming,
     status: Arc<Mutex<ReplicaStatus>>,
+    clock: Arc<dyn ReplicaClock>,
+    kept: Arc<Mutex<Kept>>,
 }
 
 impl ReplicateBoard {
@@ -69,6 +84,7 @@ impl ReplicateBoard {
         admin: Arc<dyn AdminRows>,
         pauses: Arc<dyn WatchPauses>,
         timing: ReplicaTiming,
+        clock: Arc<dyn ReplicaClock>,
     ) -> Self {
         assert!(
             timing.restart > Duration::ZERO && timing.restart <= timing.max_restart,
@@ -85,7 +101,6 @@ impl ReplicateBoard {
             applied: store.position().map_or(0, |at| at.revision),
             primary_head: None,
             state,
-            stalled_for: Duration::ZERO,
         };
         Self {
             source,
@@ -94,7 +109,31 @@ impl ReplicateBoard {
             pauses,
             timing,
             status: Arc::new(Mutex::new(status)),
+            clock,
+            kept: Arc::default(),
         }
+    }
+
+    /// A reader of whether the follower serves devices' reads (TCP), an
+    /// allowlist: once it has caught up since its server started, while it
+    /// is not diverged, and while it has been stalled (by the clock) for
+    /// less than [`STALE_AFTER`].
+    pub fn devices_reader(&self) -> Arc<dyn Fn() -> bool + Send + Sync> {
+        let (status, kept) = (Arc::clone(&self.status), Arc::clone(&self.kept));
+        let clock = Arc::clone(&self.clock);
+        Arc::new(move || {
+            let state = status
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .state
+                .clone();
+            let kept = *kept.lock().unwrap_or_else(PoisonError::into_inner);
+            let fresh = |since: Duration| clock.now().saturating_sub(since) < STALE_AFTER;
+            match (state, kept.caught_up) {
+                (ReplicaState::Diverged(_), _) | (_, false) => false,
+                (_, true) => kept.stalled_since.is_none_or(fresh),
+            }
+        })
     }
 
     /// The follower's status now.
@@ -155,6 +194,11 @@ impl ReplicateBoard {
             self.record(now.revision, batch.tip);
             match (batch.more, now != at, batches < MAX_BATCHES) {
                 (false, _, _) => {
+                    // Caught up: kept current, stalled no longer.
+                    *self.kept.lock().unwrap_or_else(PoisonError::into_inner) = Kept {
+                        caught_up: true,
+                        stalled_since: None,
+                    };
                     return Ok(CaughtUp {
                         batches,
                         applied: now.revision,
@@ -197,14 +241,11 @@ impl ReplicateBoard {
                 Ok(caught) => (self.follow(caught.applied, running), true),
                 Err(error) => (Some(error), false),
             };
-            let stalled = match halted {
+            match halted {
                 Some(ReplicaError::Diverged(_)) => return,
-                Some(error) => {
-                    self.record_state(ReplicaState::Stalled(error.to_string()));
-                    true
-                }
-                None => false,
-            };
+                Some(error) => self.record_state(ReplicaState::Stalled(error.to_string())),
+                None => {}
+            }
             // Stalled again and again (a primary down, a batch too large),
             // it backs off, doubling to its ceiling; caught up, it starts over.
             restart = match caught {
@@ -213,9 +254,6 @@ impl ReplicateBoard {
             };
             if running() {
                 self.pauses.pause(restart);
-                if stalled {
-                    self.stalled_more(restart);
-                }
                 restart = restart.saturating_mul(2).min(self.timing.max_restart);
             }
         }
@@ -296,22 +334,18 @@ impl ReplicateBoard {
 
     fn record_state(&self, state: ReplicaState) {
         let mut status = self.status.lock().unwrap_or_else(PoisonError::into_inner);
-        // A diverged follower stays so; one that follows again is stalled
-        // no longer.
+        // A diverged follower stays so. One stalled is timed from when it
+        // first stalled, until it catches up.
         match (&status.state, &state) {
             (ReplicaState::Diverged(_), _) => return,
-            (_, ReplicaState::Stalled(_)) => {}
+            (_, ReplicaState::Stalled(_)) => {
+                let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+                kept.stalled_since = kept.stalled_since.or(Some(self.clock.now()));
+            }
             (_, ReplicaState::CatchingUp | ReplicaState::Following | ReplicaState::Diverged(_)) => {
-                status.stalled_for = Duration::ZERO;
             }
         }
         status.state = state;
-    }
-
-    /// Counts `paused` more toward how long the follower has been stalled.
-    fn stalled_more(&self, paused: Duration) {
-        let mut status = self.status.lock().unwrap_or_else(PoisonError::into_inner);
-        status.stalled_for = status.stalled_for.saturating_add(paused);
     }
 
     fn record(&self, applied: u64, primary_head: u64) {

@@ -32,9 +32,9 @@ use crate::infrastructure::persistence::file::state_dir::{
 pub const TOKENS_FILE: &str = "tokens.json";
 const TOKENS_NAME: &CStr = c"tokens.json";
 
-/// A follower's own tokens, kept as they are set aside (B11).
+/// A follower's own tokens, kept as they are set aside (B11): never over
+/// an earlier set, which is kept as `-1` .. `-99` after it.
 pub const PRE_FOLLOW_FILE: &str = "tokens.json.pre-follow";
-const PRE_FOLLOW_NAME: &CStr = c"tokens.json.pre-follow";
 
 /// The digest of the token set a follower last took from its primary (or
 /// set aside its own for), beside the tokens (B11).
@@ -433,12 +433,21 @@ impl FollowTokens for FileBoardTokens {
             true => b"[]\n".to_vec(),
             false => kept,
         };
-        self.write_through(PRE_FOLLOW_NAME, &kept)?;
+        let names = (0..100).map(|n| match n {
+            0 => PRE_FOLLOW_FILE.to_owned(),
+            n => format!("{PRE_FOLLOW_FILE}-{n}"),
+        });
+        let mut free = names.filter(|name| !self.state.join(name).exists());
+        let name = free.next().ok_or_else(|| {
+            self.unavailable(format!("100 {PRE_FOLLOW_FILE} files are kept: move them"))
+        })?;
+        let name = CString::new(name).map_err(|error| self.unavailable(error))?;
+        self.write_through(&name, &kept)?;
         self.changing(|held| {
             held.clear();
             Ok(())
         })?;
-        self.keep_copied(&[])
+        self.keep_copied(&[set_digest(&[])])
     }
 }
 

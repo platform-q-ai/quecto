@@ -17,20 +17,21 @@ use crate::infrastructure::time::board_clock::SystemBoardClock;
 const PRIMARY: &str = "http://100.64.0.1:7979";
 
 fn follower() -> BoardRoutes {
-    follower_in(ReplicaState::Following, std::time::Duration::ZERO)
+    follower_in(ReplicaState::Following, true)
 }
 
-/// A follower whose replication is in `state`, stalled for `stalled_for`.
-fn follower_in(state: ReplicaState, stalled_for: std::time::Duration) -> BoardRoutes {
+/// A follower whose replication is in `state`, serving devices or not.
+fn follower_in(state: ReplicaState, devices: bool) -> BoardRoutes {
     let (store, _) = written();
     let status = ReplicaStatus {
         primary: PRIMARY.into(),
         applied: 2,
         primary_head: Some(5),
         state,
-        stalled_for,
     };
-    let serve = serving(&store).following(Arc::new(move || status.clone()));
+    let serve = serving(&store)
+        .following(Arc::new(move || status.clone()))
+        .serving_devices(Arc::new(move || devices));
     let tokens = Arc::new(MemoryBoardTokens::default());
     let access = BoardAccess::new(tokens, Arc::new(SystemBoardClock::default()));
     BoardRoutes::new(serve, access, operating(&store)).standby(PRIMARY.into())
@@ -54,17 +55,22 @@ fn sent(routes: &BoardRoutes, method: ServiceMethod, path: &str, body: Value) ->
 
 /// A device's read of the status over TCP: its status and code.
 fn device_reads(routes: &BoardRoutes) -> (u16, Value) {
-    let reply = routes.answer(&ServiceRequest {
-        method: ServiceMethod::Get,
-        path: "/v1/status".into(),
-        body: vec![],
+    let reply = routes.answer(&device(ServiceMethod::Get, "/v1/status", vec![]));
+    let body: Value = serde_json::from_slice(&reply.body).unwrap();
+    (reply.status, body["code"].clone())
+}
+
+/// A device's request over TCP.
+fn device(method: ServiceMethod, path: &str, body: Vec<u8>) -> ServiceRequest {
+    ServiceRequest {
+        method,
+        path: path.into(),
+        body,
         transport: Transport::Tcp,
         principal: Some("phone".into()),
         query: None,
         last_event_id: None,
-    });
-    let body: Value = serde_json::from_slice(&reply.body).unwrap();
-    (reply.status, body["code"].clone())
+    }
 }
 
 /// B11 review 2: a follower whose copy is not kept current (stalled past
@@ -72,22 +78,49 @@ fn device_reads(routes: &BoardRoutes) -> (u16, Value) {
 /// revoked meanwhile reads nothing; the Unix socket is served still.
 #[test]
 fn a_stale_follower_refuses_devices_reads_and_serves_the_socket() {
-    use crate::application::project_board::ports::replication::STALE_AFTER;
     let stalled = || ReplicaState::Stalled("no primary".into());
-    let short = follower_in(stalled(), STALE_AFTER / 2);
+    let short = follower_in(stalled(), true);
     assert_eq!(device_reads(&short).0, 200, "stalled briefly, it serves");
     let refusal = (503, json!("standby_stale"));
     for stale in [
-        follower_in(stalled(), STALE_AFTER),
-        follower_in(
-            ReplicaState::Diverged("forked".into()),
-            std::time::Duration::ZERO,
-        ),
+        follower_in(stalled(), false),
+        follower_in(ReplicaState::Diverged("forked".into()), false),
     ] {
         assert_eq!(device_reads(&stale), refusal);
         let (status, _) = sent(&stale, ServiceMethod::Get, "/v1/status", Value::Null);
         assert_eq!(status, 200, "the socket is served");
     }
+}
+
+/// B11 review 4: the change feed is refused to devices too, and a
+/// device's write to a stale follower is told its primary.
+#[test]
+fn a_stale_followers_feed_and_writes_are_refused_naming_its_primary() {
+    use crate::infrastructure::http::board_service::listener::ServiceHandler;
+    let stale = follower_in(ReplicaState::Stalled("no primary".into()), false);
+    let events = format!("/v1/boards/{BOARD}/events");
+    let wake: StreamWake = Arc::new(|| {});
+    let refused = stale.stream(&device(ServiceMethod::Get, &events, vec![]), wake);
+    let Err(reply) = refused else {
+        panic!("the feed is refused to a device");
+    };
+    let body: Value = serde_json::from_slice(&reply.body).unwrap();
+    assert_eq!(
+        (reply.status, &body["code"]),
+        (503, &json!("standby_stale"))
+    );
+    assert_eq!(body["primary"], PRIMARY);
+    let create = json!({"request": {"op": "create", "task": "b", "title": "B", "status": "ready"},
+        "front_end": "cli", "write_id": "6f1c0a52-7d0e-4c55-9a51-2b8f3a3e8c10",
+        "committer": {"name": "Ada", "email": "ada@example.com"}});
+    let op = format!("/v1/boards/{BOARD}/op");
+    let reply = stale.answer(&device(
+        ServiceMethod::Post,
+        &op,
+        create.to_string().into_bytes(),
+    ));
+    let body: Value = serde_json::from_slice(&reply.body).unwrap();
+    assert_eq!(body["primary"], PRIMARY, "{body}");
 }
 
 fn op(routes: &BoardRoutes, request: Value) -> (u16, Value) {

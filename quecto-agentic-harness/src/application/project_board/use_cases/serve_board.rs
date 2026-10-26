@@ -21,6 +21,8 @@ pub struct ServeBoard {
     board: BoardId,
     /// A follower's status (B11); none on a primary.
     following: Option<ReplicaReader>,
+    /// Whether a follower serves devices (B11c); none on a primary.
+    devices: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 impl ServeBoard {
@@ -34,6 +36,7 @@ impl ServeBoard {
             clock,
             board,
             following: None,
+            devices: None,
         }
     }
 
@@ -76,12 +79,19 @@ impl ServeBoard {
         self.following.is_some()
     }
 
+    /// These reads, of a follower serving devices only while `serves`
+    /// says its copy is kept current (B11c).
+    pub fn serving_devices(self, serves: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
+        Self {
+            devices: Some(serves),
+            ..self
+        }
+    }
+
     /// Whether it serves devices (TCP) reads: a primary always; a follower
-    /// while its copy is kept current ([`ReplicaStatus::serves_devices`]).
+    /// while its copy is kept current.
     pub fn serves_devices(&self) -> bool {
-        self.following
-            .as_ref()
-            .is_none_or(|status| status().serves_devices())
+        self.devices.as_ref().is_none_or(|serves| serves())
     }
 
     /// What time it is, by the server's clock: the clock authority.

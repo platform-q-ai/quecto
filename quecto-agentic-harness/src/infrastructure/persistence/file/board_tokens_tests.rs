@@ -414,3 +414,18 @@ fn a_followers_tokens_are_its_primarys_set_until_its_own_are_issued() {
     let own = reopened.followed().unwrap();
     assert_eq!((own.held, own.copied), (2, false), "its own again");
 }
+
+/// B11 review 4: a set set aside never replaces one kept before it.
+#[test]
+fn a_set_aside_set_never_overwrites_one_kept_before() {
+    let (_dir, tokens) = opened();
+    tokens.add(&name("laptop"), &at()).unwrap();
+    tokens.set_aside().unwrap();
+    let first = std::fs::read(tokens.state.join(PRE_FOLLOW_FILE)).unwrap();
+    tokens.add(&name("tablet"), &at()).unwrap();
+    let second = std::fs::read(tokens_path(&tokens)).unwrap();
+    tokens.set_aside().unwrap();
+    let kept = |name: &str| std::fs::read(tokens.state.join(name)).unwrap();
+    assert_eq!(kept(PRE_FOLLOW_FILE), first, "the first is kept");
+    assert_eq!(kept(&format!("{PRE_FOLLOW_FILE}-1")), second);
+}
