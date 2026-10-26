@@ -1954,8 +1954,10 @@ Sent when a client falls behind on the broadcast channel (buffer overflow). The 
 ## Turn outcomes (trusted root parents)
 
 A top-level parent harness (not spawned, not a coordinator, no parent id or
-parent control, not in a swarm) guards its turns (#2708). Every other harness
-is unchanged and advertises nothing.
+parent control, not in a swarm) guards its turns (#2708), while its startup
+tool policy offers `declare_turn_outcome` (`--disable-tool
+declare_turn_outcome` or a `tools.policy` entry withholding it leaves the
+root unguarded). Every other harness is unchanged and advertises nothing.
 
 - **Declaring.** The model is given `declare_turn_outcome` (`outcome`:
   `waiting`, `blocked`, `asking` or `done`; a one-line `reason` of at most 512
