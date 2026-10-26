@@ -49,6 +49,15 @@ pub const CONNECTION_LIFETIME: Duration = Duration::from_secs(60);
 pub const MAX_REQUESTS: usize = 1_000;
 /// How long a connection past its life may take to finish what it answers.
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(15);
+/// Streamed replies (B10): at most 32 open at once on a server, socket and
+/// TCP together, and 2 for one token (each holds one of its token's 8
+/// connections for its life); an idle one sends a keep-alive each 15 s;
+/// at most 8 chunks wait for a slow reader. A stream ends with its
+/// connection's lifetime, and its reader resumes.
+pub const MAX_STREAMS: usize = 32;
+pub const MAX_STREAMS_PER_TOKEN: usize = 2;
+pub const STREAM_PING: Duration = Duration::from_secs(15);
+pub const STREAM_CHUNKS: usize = 8;
 
 /// The methods the service takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,12 +128,13 @@ pub fn admit(
     }
 }
 
-/// An HTTP/1.1 connection builder with the head limits and timeout set.
-pub fn http1_builder() -> http1::Builder {
+/// An HTTP/1.1 connection builder with the head limits set, and `head`
+/// for a head to arrive ([`READ_TIMEOUT`] in production).
+pub fn http1_builder(head: Duration) -> http1::Builder {
     let mut builder = http1::Builder::new();
     builder
         .timer(TokioTimer::new())
-        .header_read_timeout(READ_TIMEOUT)
+        .header_read_timeout(head)
         .max_headers(MAX_HEADERS)
         .max_buf_size(MAX_HEAD_BYTES)
         .keep_alive(true);

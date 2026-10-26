@@ -47,7 +47,7 @@ fn vars(home: &Path) -> Vec<(OsString, OsString)> {
 }
 
 /// A clone of a bare remote whose board holds a task and its plan.
-fn seeded() -> (tempfile::TempDir, std::path::PathBuf) {
+pub(super) fn seeded() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     sh(
         dir.path(),
@@ -81,7 +81,11 @@ fn seeded() -> (tempfile::TempDir, std::path::PathBuf) {
 }
 
 /// The server's environment for `work`: base dir and config under `dir`.
-fn environment(dir: &tempfile::TempDir, work: &Path, remote: &str) -> BoardServerEnvironment {
+pub(super) fn environment(
+    dir: &tempfile::TempDir,
+    work: &Path,
+    remote: &str,
+) -> BoardServerEnvironment {
     BoardServerEnvironment {
         repo: work.to_path_buf(),
         remote: remote.into(),
@@ -99,13 +103,15 @@ fn get(routes: &BoardRoutes, path: &str) -> (u16, Value) {
         body: vec![],
         transport: Transport::Local,
         principal: None,
+        query: None,
+        last_event_id: None,
     });
     (reply.status, serde_json::from_slice(&reply.body).unwrap())
 }
 
 /// A host whose clock is synchronised: a test that reads the server's
 /// time never depends on the machine running it (#2705).
-struct Synced;
+pub(super) struct Synced;
 
 impl crate::application::project_board::ports::TimeSync for Synced {
     fn sync(&self) -> crate::application::project_board::ports::ClockSync {

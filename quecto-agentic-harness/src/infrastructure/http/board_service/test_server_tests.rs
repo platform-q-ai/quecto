@@ -2,7 +2,7 @@
 //! a handler that counts its calls and peers read by an injected uid.
 use super::listener::{
     ConnectionLimits, Listener, PeerCredentials, ServiceHandler, ServiceParts, ServiceReply,
-    ServiceRequest, Transport, bind, bind_tcp, serve,
+    ServiceRequest, ServiceStream, StreamStep, StreamWake, Transport, bind, bind_tcp, serve,
 };
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream as StdStream;
@@ -19,6 +19,52 @@ pub const SERVER_UID: u32 = 4242;
 pub struct Counting {
     pub calls: AtomicUsize,
     pub pad: usize,
+    /// B10: the streams of `/v1/stream` alive now (made, not yet dropped).
+    pub streams: Arc<AtomicUsize>,
+}
+
+/// `/v1/stream`'s source: `hello` first, then idle; `?flood` gives 64 KiB
+/// each time it is asked, asking again at once.
+struct Ticking {
+    flood: bool,
+    alive: Arc<AtomicUsize>,
+    started: bool,
+}
+
+impl ServiceStream for Ticking {
+    fn next(&mut self) -> StreamStep {
+        match (self.started, self.flood) {
+            (false, _) => {
+                self.started = true;
+                StreamStep::Send {
+                    bytes: b"hello\n".to_vec(),
+                    more: self.flood,
+                }
+            }
+            (true, true) => StreamStep::Send {
+                bytes: vec![b'x'; 64 * 1024],
+                more: true,
+            },
+            (true, false) => StreamStep::Send {
+                bytes: vec![],
+                more: false,
+            },
+        }
+    }
+
+    fn content_type(&self) -> &'static str {
+        "text/event-stream"
+    }
+
+    fn keepalive(&self) -> &'static [u8] {
+        b": ping\n\n"
+    }
+}
+
+impl Drop for Ticking {
+    fn drop(&mut self) {
+        self.alive.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl ServiceHandler for Counting {
@@ -48,9 +94,31 @@ impl ServiceHandler for Counting {
         )
     }
 
-    /// `/v1/thing` takes GET and POST; no other path is a route.
+    /// `/v1/thing` takes GET and POST, `/v1/stream` GET; no other path is
+    /// a route.
     fn allowed(&self, path: &str) -> Option<&'static str> {
-        (path == "/v1/thing").then_some("GET, POST")
+        match path {
+            "/v1/thing" => Some("GET, POST"),
+            "/v1/stream" => Some("GET"),
+            _ => None,
+        }
+    }
+
+    fn streams(&self, path: &str) -> bool {
+        path == "/v1/stream"
+    }
+
+    fn stream(
+        &self,
+        request: &ServiceRequest,
+        _wake: StreamWake,
+    ) -> Result<Box<dyn ServiceStream>, ServiceReply> {
+        self.streams.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(Ticking {
+            flood: request.query.as_deref() == Some("flood"),
+            alive: Arc::clone(&self.streams),
+            started: false,
+        }))
     }
 }
 
@@ -114,6 +182,7 @@ fn started(peer_uid: u32, pad: usize, limits: ConnectionLimits, tcp: bool) -> Ru
     });
     let handler = Arc::new(Counting {
         calls: AtomicUsize::new(0),
+        streams: Arc::default(),
         pad,
     });
     let parts = ServiceParts {

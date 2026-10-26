@@ -141,11 +141,10 @@ where
         }
     }
     let parts = ServiceParts {
-        handler: Arc::new(BoardRoutes::new(
-            handles.serve,
-            handles.access,
-            handles.operations,
-        )),
+        handler: Arc::new(
+            BoardRoutes::new(handles.serve, handles.access, handles.operations)
+                .with_feed(handles.feed),
+        ),
         peers: handles.peers,
         uid: handles.uid,
         limits: ConnectionLimits::PRODUCTION,

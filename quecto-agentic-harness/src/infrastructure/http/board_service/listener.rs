@@ -6,6 +6,12 @@
 //! on a blocking thread. [`bind`] makes the socket mode 0600 in a 0700
 //! directory; [`bind_tcp`] binds the address it is given.
 //!
+//! A `GET` of a route the handler streams (B10) is answered by a
+//! [`ServiceStream`] instead: the connection's last reply, chunked, asked
+//! on a blocking thread only when woken, a keep-alive while idle, ended
+//! with the connection's lifetime; it holds one of [`limits::MAX_STREAMS`]
+//! places, and over TCP one of its token's [`limits::MAX_STREAMS_PER_TOKEN`].
+//!
 //! Every reply this module or its handler makes is JSON with a typed
 //! `code`. The HTTP layer's own refusals, made by hyper's parser before
 //! any of it runs, have no body: clients map them by status, 400 as
@@ -17,19 +23,20 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
-use http_body_util::{BodyExt, Full, Limited};
-use hyper::body::{Bytes, Incoming};
+use http_body_util::{BodyExt, Limited};
+use hyper::body::Incoming;
 use hyper::{Request, Response, header};
 use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, watch};
 
 use super::limits::{self, Refusal, WriteDeadline};
-use super::replies::response;
-use super::sources::{Answers, Shares, Sources, Unproven, source_of};
+use super::replies::{Driven, ReplyBody, Streamed, response, streaming};
+use super::sources::{Answers, Shares, Sources, Streams, Unproven, source_of};
 
 pub use super::limits::Method as ServiceMethod;
+pub use super::replies::{ServiceStream, StreamStep, StreamWake};
 pub use super::socket::{BindError, Listener, bind, bind_tcp, this_uid};
 
 /// A request as the handler gets it: admitted, its body read whole.
@@ -42,6 +49,10 @@ pub struct ServiceRequest {
     pub transport: Transport,
     /// Over TCP, who the handler's gate found the caller to be.
     pub principal: Option<String>,
+    /// The request target's query, without its `?`.
+    pub query: Option<String>,
+    /// The one `Last-Event-ID` (empty for several, or one not text).
+    pub last_event_id: Option<String>,
 }
 
 /// A request's transport: the Unix socket (the server's own user), or TCP.
@@ -86,6 +97,21 @@ pub trait ServiceHandler: Send + Sync {
     fn answer(&self, request: &ServiceRequest) -> ServiceReply;
     /// The methods `path` takes (an `Allow` value), or `None` for no route.
     fn allowed(&self, path: &str) -> Option<&'static str>;
+    /// Whether a `GET` of `path` is answered by [`Self::stream`] (B10).
+    fn streams(&self, _path: &str) -> bool {
+        false
+    }
+    /// The stream answering `request`, woken by `wake`, or the reply
+    /// refusing it.
+    /// # Errors
+    /// The refusal to answer with.
+    fn stream(
+        &self,
+        _request: &ServiceRequest,
+        _wake: StreamWake,
+    ) -> Result<Box<dyn ServiceStream>, ServiceReply> {
+        Err(error(404, "route", "no such route"))
+    }
 }
 
 /// Reads who is at the other end of an accepted connection.
@@ -128,6 +154,11 @@ pub struct ConnectionLimits {
     pub per_source: usize,
     /// The TCP connections one token may hold at once.
     pub per_token: usize,
+    /// How often an idle stream sends its keep-alive.
+    pub ping: Duration,
+    /// How long a request's head may take to arrive, which also ends an
+    /// idle keep-alive.
+    pub head: Duration,
 }
 
 impl ConnectionLimits {
@@ -139,6 +170,8 @@ impl ConnectionLimits {
         first_request_remote: limits::FIRST_REQUEST_REMOTE_TIMEOUT,
         per_source: limits::MAX_UNPROVEN_PER_SOURCE,
         per_token: limits::MAX_CONNECTIONS_PER_TOKEN,
+        ping: limits::STREAM_PING,
+        head: limits::READ_TIMEOUT,
     };
 }
 
@@ -157,10 +190,12 @@ pub async fn serve(
         .collect::<io::Result<Vec<_>>>()?;
     let answers = Answers::new(limits::MAX_TCP_ANSWERS, limits::MAX_ANSWERS_PER_PRINCIPAL);
     let connections = Shares::new(parts.limits.per_token);
+    let streams = Streams::new(limits::MAX_STREAMS, limits::MAX_STREAMS_PER_TOKEN);
     let parts = Arc::new(Shared {
         parts,
         answers: Arc::new(answers),
         connections: Arc::new(connections),
+        streams: Arc::new(streams),
     });
     let (stopping, stopped) = watch::channel(());
     let mut loops = tokio::task::JoinSet::new();
@@ -182,6 +217,7 @@ struct Shared {
     parts: ServiceParts,
     answers: Arc<Answers>,
     connections: Arc<Shares>,
+    streams: Arc<Streams>,
 }
 
 /// A listener on the runtime.
@@ -206,6 +242,10 @@ struct Conn {
     answers: Arc<Answers>,
     connections: Arc<Shares>,
     held: std::sync::Mutex<Option<(String, OwnedSemaphorePermit)>>,
+    streams: Arc<Streams>,
+    /// When the connection's lifetime ends: a stream on it ends then too.
+    ends: tokio::time::Instant,
+    ping: Duration,
 }
 
 impl Accepting {
@@ -284,6 +324,9 @@ async fn admit(stream: Accepted, shared: &Shared) {
         answers: Arc::clone(&shared.answers),
         connections: Arc::clone(&shared.connections),
         held: std::sync::Mutex::new(None),
+        streams: Arc::clone(&shared.streams),
+        ends: tokio::time::Instant::now() + parts.limits.lifetime,
+        ping: parts.limits.ping,
     };
     match stream {
         Accepted::Unix(stream) => match parts.peers.uid(&stream) {
@@ -330,7 +373,7 @@ where
         answer(Arc::clone(&shared), request, last)
     });
     let io = TokioIo::new(WriteDeadline::new(stream, bounds.write_timeout, heard));
-    let builder = limits::http1_builder();
+    let builder = limits::http1_builder(bounds.head);
     let connection = builder.serve_connection(io, service);
     let unproven_end = async move {
         tokio::select! {
@@ -390,10 +433,22 @@ async fn answer(
     conn: Arc<Conn>,
     request: Request<Incoming>,
     last: bool,
-) -> Result<Response<Full<Bytes>>, Infallible> {
-    let reply = admitted(&conn, request).await;
-    let close = last || reply.close;
-    let mut reply = response(reply);
+) -> Result<Response<ReplyBody>, Infallible> {
+    let (mut reply, close) = match admitted(&conn, request).await {
+        Answered::Whole(reply) => {
+            let close = last || reply.close;
+            (response(reply), close)
+        }
+        // A stream is its connection's last reply.
+        Answered::Streamed(streamed) => {
+            let driven = Driven {
+                answers: Arc::clone(&conn.answers),
+                ends: conn.ends,
+                ping: conn.ping,
+            };
+            (streaming(streamed, driven), true)
+        }
+    };
     if close {
         let close = header::HeaderValue::from_static("close");
         reply.headers_mut().insert(header::CONNECTION, close);
@@ -401,15 +456,75 @@ async fn answer(
     Ok(reply)
 }
 
+/// What a request is answered with: whole, or by a stream (B10).
+enum Answered {
+    Whole(ServiceReply),
+    Streamed(Streamed),
+}
+
 /// A request admitted by its head, its body read under its bound, then
 /// answered by the handler on a blocking thread (a TCP caller holding no
-/// more than its share of them).
-async fn admitted(conn: &Conn, request: Request<Incoming>) -> ServiceReply {
+/// more than its share of them); a `GET` of a streamed route, by a stream,
+/// in one of the places streams have.
+async fn admitted(conn: &Conn, request: Request<Incoming>) -> Answered {
+    let (request, held) = match read_admitted(conn, request).await {
+        Ok(admitted) => admitted,
+        Err(reply) => return Answered::Whole(reply),
+    };
+    let handler = Arc::clone(&conn.handler);
+    let streamed = request.method == ServiceMethod::Get && conn.handler.streams(&request.path);
+    let place = match streamed {
+        true => match conn.streams.take(request.principal.as_deref()) {
+            Some(place) => Some(place),
+            None => {
+                let why = "too many change feeds open: close one, or try again shortly";
+                return Answered::Whole(error(503, "busy", why));
+            }
+        },
+        false => None,
+    };
+    let woken = Arc::new(Notify::new());
+    let wake: StreamWake = {
+        let woken = Arc::clone(&woken);
+        Arc::new(move || woken.notify_one())
+    };
+    let answered = tokio::task::spawn_blocking(move || {
+        let answered = match place {
+            Some(place) => match handler.stream(&request, wake) {
+                Ok(source) => Answered::Streamed(Streamed {
+                    source,
+                    woken,
+                    principal: request.principal.clone(),
+                    place,
+                }),
+                Err(reply) => Answered::Whole(reply),
+            },
+            None => Answered::Whole(handler.answer(&request)),
+        };
+        drop(held);
+        answered
+    });
+    answered
+        .await
+        .unwrap_or_else(|_| Answered::Whole(error(500, "handler", "the request's handler failed")))
+}
+
+/// The blocking answers a TCP request holds while it is answered.
+type Held = Option<[OwnedSemaphorePermit; 2]>;
+
+/// A request admitted by its head and read, with the answers it holds; or
+/// the reply refusing it.
+async fn read_admitted(
+    conn: &Conn,
+    request: Request<Incoming>,
+) -> Result<(ServiceRequest, Held), ServiceReply> {
     let path = request.uri().path().to_string();
+    let query = request.uri().query().map(str::to_string);
+    let last_event_id = one_header(request.headers(), "last-event-id");
     let (principal, room) = match conn.transport {
         Transport::Tcp => match gate(conn, request.headers()) {
             Ok((principal, room)) => (Some(principal), room),
-            Err(refusal) => return refusal,
+            Err(refusal) => return Err(refusal),
         },
         Transport::Local => (None, Room::Placed),
     };
@@ -431,28 +546,27 @@ async fn admitted(conn: &Conn, request: Request<Incoming>) -> ServiceReply {
         Ok(admitted) => admitted,
         // A method outside the allowlist: 405 naming what its path takes.
         Err(Refusal::Method) => {
-            return closing(match handler.allowed(&path) {
+            return Err(closing(match handler.allowed(&path) {
                 Some(allow) => ServiceReply {
                     allow: Some(allow),
                     ..error(405, "method", Refusal::Method.verdict().2)
                 },
                 None => error(404, "route", "no such route"),
-            });
+            }));
         }
         Err(refusal) => {
             let (status, code, why) = refusal.verdict();
-            return closing(error(status, code, why));
+            return Err(closing(error(status, code, why)));
         }
     };
-    let body = match read_body(request.into_body(), admitted.body_bytes).await {
-        Ok(body) => body,
-        Err(reply) => return closing(reply),
-    };
+    let body = read_body(request.into_body(), admitted.body_bytes)
+        .await
+        .map_err(closing)?;
     // Its body read (bounded), a request on a full token is answered whole,
     // never reset by a close racing a late body.
     match room {
         Room::Placed => {}
-        Room::Full => return closing(busy_connections()),
+        Room::Full => return Err(closing(busy_connections())),
     }
     let held = match principal
         .as_deref()
@@ -460,25 +574,27 @@ async fn admitted(conn: &Conn, request: Request<Incoming>) -> ServiceReply {
     {
         None => None,
         Some(Some(permits)) => Some(permits),
-        Some(None) => {
-            return error(
-                503,
-                "busy",
-                "too many requests in flight: try again shortly",
-            );
-        }
+        Some(None) => return Err(busy_answers()),
     };
-    let (handler, transport) = (Arc::clone(handler), conn.transport);
     let request = ServiceRequest {
         method: admitted.method,
         path,
         body,
-        transport,
+        transport: conn.transport,
         principal,
+        query,
+        last_event_id,
     };
-    tokio::task::spawn_blocking(move || (handler.answer(&request), held).0)
-        .await
-        .unwrap_or_else(|_| error(500, "handler", "the request's handler failed"))
+    Ok((request, held))
+}
+
+/// The refusal of a TCP request past its caller's blocking answers.
+fn busy_answers() -> ServiceReply {
+    error(
+        503,
+        "busy",
+        "too many requests in flight: try again shortly",
+    )
 }
 
 /// The body, of `declared` bytes, read whole within the read timeout.
@@ -573,7 +689,12 @@ fn hold(conn: &Conn, principal: &str) -> bool {
 /// The one `Authorization`; an empty one (which no handler takes) for
 /// several, or one not text.
 fn authorization(headers: &header::HeaderMap) -> Option<String> {
-    let mut values = headers.get_all(header::AUTHORIZATION).iter();
+    one_header(headers, header::AUTHORIZATION.as_str())
+}
+
+/// The one header `name`; an empty one for several, or one not text.
+fn one_header(headers: &header::HeaderMap, name: &str) -> Option<String> {
+    let mut values = headers.get_all(name).iter();
     match (values.next(), values.next()) {
         (None, _) => None,
         (Some(value), None) => Some(value.to_str().unwrap_or_default().to_string()),
@@ -588,3 +709,7 @@ fn error(status: u16, code: &str, why: &str) -> ServiceReply {
 #[cfg(test)]
 #[path = "listener_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "listener_stream_tests.rs"]
+mod stream_tests;

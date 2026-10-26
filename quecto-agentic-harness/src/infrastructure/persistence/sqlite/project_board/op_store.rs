@@ -5,8 +5,11 @@ use super::*;
 
 pub struct SqliteBoardOps {
     writes: SqliteProjectBoardStore,
-    reads: Arc<SqliteProjectBoardStore>,
-    lock: Mutex<()>,
+    pub(super) reads: Arc<SqliteProjectBoardStore>,
+    /// The write lock; it holds the last revision published to the feed.
+    lock: Mutex<u64>,
+    /// The change feed's notifier (B10).
+    pub(super) feed: feed::FeedHub,
     /// The board this file is bound to, once [`Self::bind`] binds it.
     board: std::sync::OnceLock<String>,
 }
@@ -28,10 +31,16 @@ impl SqliteBoardOps {
     /// # Errors
     /// As [`SqliteProjectBoardStore::open`], for either connection.
     pub fn open(path: &Path, reader: Identity) -> Result<Self, BoardStoreError> {
+        let reads = SqliteProjectBoardStore::open(path, reader.clone())?;
+        let published = {
+            let c = reads.connection.lock().map_err(unavailable)?;
+            feed::tip(&c)?.revision
+        };
         Ok(Self {
-            writes: SqliteProjectBoardStore::open(path, reader.clone())?,
-            reads: Arc::new(SqliteProjectBoardStore::open(path, reader)?),
-            lock: Mutex::new(()),
+            writes: SqliteProjectBoardStore::open(path, reader)?,
+            reads: Arc::new(reads),
+            lock: Mutex::new(published),
+            feed: feed::FeedHub::default(),
             board: std::sync::OnceLock::new(),
         })
     }
@@ -90,6 +99,27 @@ impl SqliteBoardOps {
         Ok(Transacted::Answered(answer))
     }
 
+    /// Publishes the revisions committed after `published` (read on the
+    /// write connection, `c`, under the write lock), which becomes the
+    /// last one. One that cannot be read resets every subscriber, which
+    /// then resumes from the store: never a silent gap.
+    fn publish(&self, c: &Connection, published: &mut u64) {
+        match feed::after(c, *published, MAX_REVISION_BATCH) {
+            Ok(revisions) => {
+                if let Some(last) = revisions.last() {
+                    *published = last.revision;
+                    self.feed.publish(&revisions);
+                }
+            }
+            Err(_) => {
+                if let Ok(tip) = feed::tip(c) {
+                    *published = tip.revision;
+                }
+                self.feed.reset_all();
+            }
+        }
+    }
+
     fn locked(&self) -> Result<std::sync::MutexGuard<'_, Connection>, BoardStoreError> {
         self.writes.connection.lock().map_err(unavailable)
     }
@@ -113,7 +143,7 @@ impl BoardOpStore for SqliteBoardOps {
         write: &OpWrite,
         op: &mut dyn FnMut(Arc<dyn ProjectBoardStore>) -> Result<String, BoardStoreError>,
     ) -> Result<Transacted, BoardStoreError> {
-        let _held = self.lock.lock().map_err(unavailable)?;
+        let mut published = self.lock.lock().map_err(unavailable)?;
         self.locked()?
             .execute_batch("BEGIN IMMEDIATE")
             .map_err(unavailable)?;
@@ -130,7 +160,13 @@ impl BoardOpStore for SqliteBoardOps {
             false => drop(c.execute_batch("ROLLBACK")),
         }
         let transacted = ran?;
-        ended.map(|()| transacted).map_err(unavailable)
+        ended.map_err(unavailable)?;
+        // Committed: its new revisions go to the feed, still under the
+        // lock, so the feed tells them in the order they were made.
+        if let Transacted::Answered(_) = transacted {
+            self.publish(&c, &mut published);
+        }
+        Ok(transacted)
     }
 }
 
