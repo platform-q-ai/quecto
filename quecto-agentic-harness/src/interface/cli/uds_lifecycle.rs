@@ -131,7 +131,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         crate::domain::workflow::lock_engine(ws).restore_run(persisted);
     }
     if let Some(std_stream) = socket_override {
-        // Single-client path: backward-compatible with existing tests.
+        // Single-client path (tests only; never given a guard runtime).
+        assert!(parent_outcome.is_none(), "single-client is unguarded");
         uds_single_client::single_client_loop(
             uds_single_client::SingleClientArgs {
                 agent,

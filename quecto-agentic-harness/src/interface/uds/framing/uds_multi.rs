@@ -333,6 +333,7 @@ pub(in crate::interface) async fn multi_client_loop(
         teardown: connections,
         extensions: extensions.clone(),
         swarm_boards,
+        guarded: agent_session.parent_outcome().is_some(), // #2708: busy get_state
     });
 
     // Drop our clone so cmd_rx closes when all client senders (accept loop)

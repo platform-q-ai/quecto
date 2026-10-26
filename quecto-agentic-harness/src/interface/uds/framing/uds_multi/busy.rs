@@ -8,19 +8,21 @@ use std::sync::atomic::Ordering;
 /// bytes are written and clients that don't ask see no protocol change.
 pub(crate) type BusyFlag = std::sync::Arc<std::sync::atomic::AtomicBool>;
 
-/// RAII guard: marks the agent busy for the duration of a turn and clears the
-/// flag on drop (normal completion, early return, or panic) (#828).
-pub(crate) struct BusyGuard(BusyFlag);
+/// RAII guard: marks the agent busy for the duration of a turn and, on drop
+/// (normal completion, early return, or panic), restores what the flag was
+/// (#828): a turn inside a guarded span between turns (#2708) leaves the
+/// span busy.
+pub(crate) struct BusyGuard(BusyFlag, bool);
 
 impl BusyGuard {
     pub(crate) fn new(flag: &BusyFlag) -> Self {
-        flag.store(true, Ordering::SeqCst);
-        Self(flag.clone())
+        let was = flag.swap(true, Ordering::SeqCst);
+        Self(flag.clone(), was)
     }
 }
 
 impl Drop for BusyGuard {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+        self.0.store(self.1, Ordering::SeqCst);
     }
 }

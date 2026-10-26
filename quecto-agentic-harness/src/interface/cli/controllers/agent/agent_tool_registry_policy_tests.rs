@@ -327,6 +327,64 @@ fn issue_2708_cli_parent_only_a_switched_on_root_is_guarded() {
     }
 }
 
+/// Review #2762 round 2 (MEDIUM): a root whose startup policy withholds the
+/// declaration is not guarded even with the switch on: it could never
+/// declare, so every turn would end stalled.
+#[test]
+fn review_2762_a_root_that_withholds_the_declaration_is_unguarded() {
+    let config = Config::default();
+    let mut root = cli_flags();
+    root.uds_mode = true;
+    root.disabled_tools = vec!["declare_turn_outcome".into()];
+    let (built, _) = build(&root, &config);
+    assert!(built.parent_outcome.is_none());
+    assert!(
+        !built
+            .extension_prompt_snippets
+            .contains("declare_turn_outcome"),
+        "no guidance naming a withheld tool"
+    );
+}
+
+/// Review #2762 round 2 (LOW 3): the swarm-container fact the launch reads
+/// from `swarm_context()` (a process-wide board a lib test cannot set
+/// without leaking into every other test) excludes a root on its own.
+#[test]
+fn review_2762_a_root_in_a_swarm_container_is_not_trusted() {
+    let mut flags = cli_flags();
+    flags.uds_mode = true;
+    assert!(super::trusted_root(&flags, false));
+    assert!(!super::trusted_root(&flags, true));
+}
+
+/// Review #2762 round 2 (LOW 3): with the switch off the system prompt's
+/// notes are exactly what they were; with it on they gain the one line.
+#[test]
+fn review_2762_the_prompt_notes_are_unchanged_without_the_switch() {
+    use crate::domain::agents::value_objects::turn_outcome::DECLARE_GUIDANCE;
+    let config = Config::default();
+    let mut legacy = cli_flags();
+    legacy.uds_mode = true;
+    legacy.parent_outcome = None;
+    let (legacy, _) = build(&legacy, &config);
+    let mut off = cli_flags();
+    off.uds_mode = true;
+    off.parent_outcome = Some(switched_off);
+    let (off, _) = build(&off, &config);
+    assert_eq!(
+        off.extension_prompt_snippets,
+        legacy.extension_prompt_snippets
+    );
+    let mut on = cli_flags();
+    on.uds_mode = true;
+    let (on, _) = build(&on, &config);
+    let expected = match legacy.extension_prompt_snippets.as_str() {
+        "" => DECLARE_GUIDANCE.to_owned(),
+        notes => format!("{notes}\n\n{DECLARE_GUIDANCE}"),
+    };
+    assert_eq!(on.extension_prompt_snippets, expected);
+}
+
 /// Review #2762 (9): each launch fact alone excludes a root from the guard
 /// even with the switch on, on both entrypoints.
 #[test]

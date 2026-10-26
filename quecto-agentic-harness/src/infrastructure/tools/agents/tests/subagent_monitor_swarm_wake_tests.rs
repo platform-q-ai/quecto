@@ -58,6 +58,54 @@ fn first_boundary(
     assert!(matches!(notes[0], SubagentNotification::Completed { .. }));
 }
 
+/// Review #2762 round 2 (A): a launched coordinator holds its parent's
+/// work while its last state is a hold, and not once it reports its run
+/// finished, idle or paused, or a turn of it failed.
+#[tokio::test]
+async fn issue_2708_liveness_only_a_holding_coordinator_is_owned_work() {
+    use crate::domain::agents::value_objects::turn_outcome::WorkLiveness;
+    use crate::infrastructure::tools::agents::owned_work::registry_liveness;
+    let failed = serde_json::json!({"type": "response", "command": "agent_error", "error": "x"});
+    for (events, live) in [
+        (
+            vec![agent_end(), swarm_state("hold", "running")],
+            WorkLiveness::Live,
+        ),
+        (
+            vec![agent_end(), swarm_state("finished", "succeeded")],
+            WorkLiveness::Empty,
+        ),
+        (
+            vec![agent_end(), swarm_state("idle", "running")],
+            WorkLiveness::Empty,
+        ),
+        (
+            vec![agent_end(), swarm_state("paused", "paused")],
+            WorkLiveness::Empty,
+        ),
+        (
+            vec![swarm_state("hold", "running"), failed.clone()],
+            WorkLiveness::Empty,
+        ),
+        (
+            vec![
+                swarm_state("finished", "succeeded"),
+                agent_start(),
+                agent_end(),
+                swarm_state("hold", "running"),
+            ],
+            WorkLiveness::Live,
+        ),
+    ] {
+        let registry = registry_with("coord");
+        let (tx, _rx) = new_notification_channel();
+        for event in &events {
+            apply_and_notify(&registry, Some(&tx), "coord", event);
+        }
+        assert_eq!(registry_liveness(Some(&registry)), live, "{events:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_child_that_never_reports_swarm_state_keeps_its_turn_end_note() {
     let registry = registry_with("worker");

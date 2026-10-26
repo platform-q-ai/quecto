@@ -5,8 +5,9 @@
 use super::subagent_registry::SubagentRegistry;
 use crate::domain::agents::value_objects::turn_outcome::WorkLiveness;
 
-/// The registry's read: `Live` while any entry starts or runs, or a
-/// coordinator it launched is up (its swarm run is open, idle or not), `Empty`
+/// The registry's read: `Live` while any entry starts or runs, or an idle
+/// coordinator it launched still holds its run's work (not yet reporting,
+/// or last reporting a hold), `Empty`
 /// when none does (or the harness has no spawn tool to own one), and
 /// `Unknown` when the registry cannot be read: never assumed empty.
 pub fn registry_liveness(registry: Option<&SubagentRegistry>) -> WorkLiveness {
@@ -18,11 +19,11 @@ pub fn registry_liveness(registry: Option<&SubagentRegistry>) -> WorkLiveness {
 }
 
 fn live(entry: &super::subagent_registry::SubagentEntry) -> bool {
-    use super::subagent_registry::SubagentStatus::{Error, Idle, Running, Starting};
-    let launched = entry.coordinator_wake.launched;
+    use super::subagent_registry::SubagentStatus::{Idle, Running, Starting};
+    let holds = entry.coordinator_wake.holds_work();
     matches!(
-        (launched, &entry.status),
-        (_, Starting | Running) | (true, Idle | Error)
+        (&entry.status, holds),
+        (Starting | Running, _) | (Idle, true)
     )
 }
 

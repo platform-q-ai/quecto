@@ -33,6 +33,8 @@ pub struct CoordinatorWake {
     pub launched: bool,
     /// It has sent a `swarm_state`: its turn ends wait for the next one.
     reporting: bool,
+    /// Its last `swarm_state` was a hold: its run still has work (#2708).
+    holding: bool,
     /// The held turn end's sequence, until a state settles it.
     deferred: Option<u64>,
     /// A turn failed since the last state: the next one reports it once.
@@ -73,6 +75,21 @@ impl CoordinatorWake {
         self.deferred = None;
         self.cancel_timer();
         self.worker.turn_failed();
+    }
+
+    /// Whether its swarm run still holds its parent's work (#2708): launched,
+    /// and either not reporting yet or last reporting a hold, with no turn
+    /// failed since. A finished, idle or paused run is no work.
+    pub fn holds_work(&self) -> bool {
+        let state = (self.launched, self.reporting, self.holding, self.failed);
+        matches!(state, (true, false, _, false) | (true, true, true, false))
+    }
+
+    /// Record a report of `kind`, as the monitor does on a `swarm_state`.
+    #[cfg(test)]
+    pub(crate) fn report_for_test(&mut self, kind: WakeKind) {
+        self.reporting = true;
+        self.holding = kind == WakeKind::Hold;
     }
 
     fn cancel_timer(&mut self) {
@@ -140,6 +157,7 @@ pub(super) fn classify_swarm_state(
             false => return,
         }
         wake.reporting = true;
+        wake.holding = kind == WakeKind::Hold;
         let errored = std::mem::take(&mut wake.failed);
         wake.cancel_timer();
         if kind == WakeKind::Hold {

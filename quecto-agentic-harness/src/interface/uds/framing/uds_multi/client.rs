@@ -52,6 +52,9 @@ pub(crate) struct ClientHandlerArgs {
     /// this reader.
     pub(crate) swarm_boards:
         Option<crate::interface::uds::controllers::uds_swarm_board::SwarmBoards>,
+    /// A guarded harness's busy `get_state` source (#2708); `None` leaves
+    /// every `get_state` to the dispatch loop.
+    pub(crate) busy_state: Option<crate::interface::uds::presenters::uds_busy_state::BusyState>,
     /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
     pub(crate) _guard: ClientGuard,
 }
@@ -70,6 +73,7 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
         subagent_registry,
         teardown,
         swarm_boards,
+        busy_state,
         _guard,
     } = args;
     use tokio::io::BufReader;
@@ -187,6 +191,12 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
                 in_flight: &board_requests,
             },
         ) {
+            continue;
+        }
+        let presenter = crate::interface::uds::presenters::uds_busy_state::intercept;
+        let queued_ahead = cmd_tx.capacity() < cmd_tx.max_capacity();
+        let source = (busy_state.as_ref(), queued_ahead);
+        if presenter(&line, source, &client_tool_registry, client_id).await {
             continue;
         }
         if !crate::interface::uds::controllers::uds_reader_dispatch::dispatch(
@@ -308,5 +318,7 @@ async fn write_line(
 }
 
 // #2433: driven through the whole loop, which this connection serves.
+#[cfg(test)]
+mod busy_state_2708_tests;
 #[cfg(test)]
 mod followup_2433_tests;

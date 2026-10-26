@@ -10,6 +10,7 @@ pub(in crate::interface) mod uds_admission_projection;
 #[cfg(test)]
 mod uds_admission_projection_tests;
 pub(in crate::interface) mod uds_admission_warnings;
+pub(in crate::interface) mod uds_busy_state;
 pub mod uds_execution_state;
 #[cfg(test)]
 mod uds_execution_state_tests;
