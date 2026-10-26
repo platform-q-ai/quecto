@@ -4,7 +4,7 @@ use crate::{
     domain::project_board::value_objects::{telemetry::BoardId, timestamp::Timestamp},
     interface::cli::CliContext,
 };
-use std::path::PathBuf;
+use std::path::{PathBuf, absolute};
 pub struct BackupCliEnvironment {
     pub base_dir: PathBuf,
     pub state: Option<PathBuf>,
@@ -18,6 +18,7 @@ struct Options {
     board: Option<String>,
     state: Option<PathBuf>,
 }
+const UNNAMED: &str = "backup: --to could not be named absolutely";
 fn parse(args: &[String]) -> Result<Options, &'static str> {
     let mut to = None;
     let mut board = None;
@@ -38,7 +39,7 @@ fn parse(args: &[String]) -> Result<Options, &'static str> {
             board.is_none(),
             state.is_none(),
         ) {
-            ("--to", true, _, _) => to = Some(PathBuf::from(value)),
+            ("--to", true, _, _) => to = Some(absolute(value).or(Err(UNNAMED))?),
             ("--board-id", _, true, _) => {
                 BoardId::of_hex(value).ok_or("backup: invalid board id")?;
                 board = Some(value.clone());

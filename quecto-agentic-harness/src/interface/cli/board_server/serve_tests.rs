@@ -74,6 +74,7 @@ fn handles(serve: crate::application::project_board::use_cases::ServeBoard) -> B
         serve,
         operations: operating(&MemoryBoardStore::default()),
         feed: None,
+        replication: None,
         access: BoardAccess::new(tokens, Arc::new(SystemBoardClock::default())),
         peers: Arc::new(SocketPeerCredentials) as Arc<dyn PeerCredentials>,
         uid: this_uid(),
@@ -531,7 +532,7 @@ fn stalled_answers_never_wedge_authentication_or_the_socket() {
     let (code, out, err) = token(&socket, "list");
     assert_eq!(
         (code, out.as_str()),
-        (0, "laptop\t2026-10-24T12:00:00Z\n"),
+        (0, "laptop\t2026-10-24T12:00:00Z\tdevice\n"),
         "{err}"
     );
     assert_eq!(token(&socket, "revoke laptop").0, 0);

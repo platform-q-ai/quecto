@@ -14,5 +14,7 @@ mod fixture;
 mod guards;
 #[path = "project_board_backup/retention.rs"]
 mod retention;
+#[path = "project_board_backup/schema4.rs"]
+mod schema4;
 #[path = "project_board_backup/sqlite_faults.rs"]
 mod sqlite_faults;

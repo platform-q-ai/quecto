@@ -1,12 +1,14 @@
 //! Who may ask a board server what (epic #2705 B5), each rule an allowlist:
 //! a Unix-socket caller is local; a TCP caller is a device only with a held
 //! token. Reads and writes are for both; the admin routes and the board's
-//! admin operations (`bootstrap`, `clear_set_aside`) for local only.
+//! admin operations (`bootstrap`, `clear_set_aside`) for local only. A
+//! follower's replica token (B11) reads and takes replication batches,
+//! which no device token may.
 use std::sync::Arc;
 
 use crate::application::project_board::dto::{BoardRequest, ProjectBoardError};
 use crate::application::project_board::ports::{
-    BoardClock, BoardTokens, IssuedToken, TokenError, TokenRecord,
+    BoardClock, BoardTokens, IssuedToken, TokenError, TokenKind, TokenRecord,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 
@@ -15,14 +17,32 @@ use crate::domain::project_board::value_objects::slug::Slug;
 pub enum Principal {
     Local,
     Device(Slug),
+    /// A follower's token (B11).
+    Replica(Slug),
 }
 
+/// How the TCP gate names a replica token's principal (a name never
+/// holds a `:`).
+const REPLICA: &str = "replica:";
+
 impl Principal {
-    /// Who a revision records was let in (B7): `local` or `token:<name>`.
+    /// Who a revision records was let in (B7): `local` or `token:<name>`
+    /// (`replica:<name>` for a replica token, which writes nothing).
     pub fn recorded(&self) -> String {
         match self {
             Self::Local => "local".into(),
             Self::Device(name) => format!("token:{}", name.as_str()),
+            Self::Replica(name) => format!("{REPLICA}{}", name.as_str()),
+        }
+    }
+
+    /// How the TCP gate hands this principal on: a device by its token's
+    /// name, a replica token as `replica:<name>`.
+    pub fn gated(&self) -> String {
+        match self {
+            Self::Local => "local".into(),
+            Self::Device(name) => name.as_str().to_string(),
+            Self::Replica(name) => format!("{REPLICA}{}", name.as_str()),
         }
     }
 }
@@ -33,6 +53,8 @@ pub enum Scope {
     Read,
     Write,
     Admin,
+    /// A follower's replication batches (B11).
+    Replicate,
 }
 
 impl Scope {
@@ -51,6 +73,10 @@ impl Scope {
 pub enum Refused {
     Token,
     LocalOnly,
+    /// A device asking replication batches, kept to replica tokens (B11).
+    ReplicaOnly,
+    /// A replica token asking to write (B11).
+    ReadOnly,
     Unavailable(TokenError),
 }
 
@@ -76,13 +102,30 @@ impl BoardAccess {
         }
     }
 
-    /// The device the TCP gate named `name`.
+    /// The principal a TCP caller presenting `token` is: a device, or a
+    /// follower's replica token (B11).
+    /// # Errors
+    /// No held token, or tokens that cannot be read.
+    pub fn authenticate_principal(&self, token: Option<&str>) -> Result<Principal, Refused> {
+        let name = self.authenticate(token)?;
+        match self.tokens.kind_of(&name) {
+            Ok(Some(TokenKind::Device)) => Ok(Principal::Device(name)),
+            Ok(Some(TokenKind::Replica)) => Ok(Principal::Replica(name)),
+            // Revoked between the two reads: no held token.
+            Ok(None) => Err(Refused::Token),
+            Err(error) => Err(Refused::Unavailable(error)),
+        }
+    }
+
+    /// The principal the TCP gate named `name` ([`Principal::gated`]).
     /// # Errors
     /// A name no token could have.
     pub fn device(name: &str) -> Result<Principal, Refused> {
-        Slug::parse(name)
-            .map(Principal::Device)
-            .map_err(|_| Refused::Token)
+        let (principal, slug): (fn(Slug) -> Principal, &str) = match name.strip_prefix(REPLICA) {
+            Some(replica) => (Principal::Replica, replica),
+            None => (Principal::Device, name),
+        };
+        Slug::parse(slug).map(principal).map_err(|_| Refused::Token)
     }
 
     /// Whether `principal` may make a request of `scope`.
@@ -90,9 +133,12 @@ impl BoardAccess {
     /// A device asking an admin route or operation.
     pub fn authorize(principal: &Principal, scope: Scope) -> Result<(), Refused> {
         match (principal, scope) {
-            (Principal::Local, Scope::Read | Scope::Write | Scope::Admin)
-            | (Principal::Device(_), Scope::Read | Scope::Write) => Ok(()),
-            (Principal::Device(_), Scope::Admin) => Err(Refused::LocalOnly),
+            (Principal::Local, Scope::Read | Scope::Write | Scope::Admin | Scope::Replicate)
+            | (Principal::Device(_), Scope::Read | Scope::Write)
+            | (Principal::Replica(_), Scope::Read | Scope::Replicate) => Ok(()),
+            (Principal::Device(_) | Principal::Replica(_), Scope::Admin) => Err(Refused::LocalOnly),
+            (Principal::Device(_), Scope::Replicate) => Err(Refused::ReplicaOnly),
+            (Principal::Replica(_), Scope::Write) => Err(Refused::ReadOnly),
         }
     }
 
@@ -100,10 +146,21 @@ impl BoardAccess {
     /// # Errors
     /// A bad or taken name, a full store, or the clock or store failed.
     pub fn add(&self, name: &str) -> Result<IssuedToken, TokenError> {
+        self.add_kind(name, TokenKind::Device)
+    }
+
+    /// Makes a token of `kind` named `name`, made now (B11: a follower's
+    /// is a replica token).
+    /// # Errors
+    /// As [`Self::add`].
+    pub fn add_kind(&self, name: &str, kind: TokenKind) -> Result<IssuedToken, TokenError> {
         let name = named(name)?;
         let now = self.clock.now();
         let now = now.map_err(|e| TokenError::Unavailable(ProjectBoardError::Clock(e).to_string()));
-        self.tokens.add(&name, &now?)
+        match kind {
+            TokenKind::Device => self.tokens.add(&name, &now?),
+            TokenKind::Replica => self.tokens.add_replica(&name, &now?),
+        }
     }
 
     /// Revokes the token named `name`, giving the name.

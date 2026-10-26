@@ -50,6 +50,61 @@ fn admin_is_for_a_local_caller_only() {
     );
 }
 
+/// B11 review: replication batches are a replica token's alone (and a
+/// local caller's); a replica token reads, and never writes or administers.
+#[test]
+fn replication_is_for_a_replica_token_alone() {
+    let device = Principal::Device(Slug::parse("laptop").unwrap());
+    let replica = Principal::Replica(Slug::parse("eccup").unwrap());
+    let allowed = [
+        (&Principal::Local, Scope::Replicate),
+        (&replica, Scope::Replicate),
+        (&replica, Scope::Read),
+        (&device, Scope::Write),
+    ];
+    for (principal, scope) in allowed {
+        assert_eq!(
+            BoardAccess::authorize(principal, scope),
+            Ok(()),
+            "{principal:?} {scope:?}"
+        );
+    }
+    let refused = [
+        (&device, Scope::Replicate, Refused::ReplicaOnly),
+        (&replica, Scope::Write, Refused::ReadOnly),
+        (&replica, Scope::Admin, Refused::LocalOnly),
+    ];
+    for (principal, scope, why) in refused {
+        assert_eq!(
+            BoardAccess::authorize(principal, scope),
+            Err(why),
+            "{principal:?} {scope:?}"
+        );
+    }
+}
+
+/// B11 review: the TCP gate names a replica token apart, and the routes
+/// read it back as one; a device's name is read back as a device.
+#[test]
+fn a_replica_token_is_authenticated_as_one() {
+    let (_, access) = access();
+    let replica = access.add_kind("eccup", TokenKind::Replica).unwrap();
+    let device = access.add("laptop").unwrap();
+    let principal = access
+        .authenticate_principal(Some(&replica.secret))
+        .unwrap();
+    assert_eq!(principal, Principal::Replica(Slug::parse("eccup").unwrap()));
+    assert_eq!(BoardAccess::device(&principal.gated()), Ok(principal));
+    let principal = access.authenticate_principal(Some(&device.secret)).unwrap();
+    assert_eq!(principal, Principal::Device(Slug::parse("laptop").unwrap()));
+    assert_eq!(BoardAccess::device(&principal.gated()), Ok(principal));
+    assert_eq!(
+        BoardAccess::device("replica:Not A Slug"),
+        Err(Refused::Token)
+    );
+    assert_eq!(access.authenticate_principal(None), Err(Refused::Token));
+}
+
 #[test]
 fn tokens_that_cannot_be_read_refuse_as_unavailable() {
     let (tokens, access) = access();

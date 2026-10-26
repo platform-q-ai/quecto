@@ -10,7 +10,10 @@ use serde_json::{Value, json};
 use crate::application::project_board::ports::feed::{
     BatchLimit, FeedEvent, FeedWake, RevisionBatch, Told,
 };
-use crate::application::project_board::use_cases::{FollowBoard, FollowStep, Follower};
+use crate::application::project_board::use_cases::{
+    FollowBoard, FollowStep, Follower, ServeReplication,
+};
+use crate::infrastructure::http::board_replica::encode_batch;
 use crate::infrastructure::http::board_service::listener::{
     ServiceReply, ServiceRequest, ServiceStream, StreamStep, StreamWake,
 };
@@ -128,6 +131,40 @@ pub(super) fn revisions(feed: &FollowBoard, request: &ServiceRequest) -> Service
     };
     match feed.revisions(after, limit) {
         Ok(batch) => ServiceReply::json(200, &batch_json(&batch)),
+        Err(error) => super::routes::failed(&error),
+    }
+}
+
+/// `GET /replicate?after=<n>&objects=<n>[&limit=<1..500>]` (B11): the
+/// primary's batch after a follower's revision and object, as the wire's
+/// JSON.
+pub(super) fn replicate(replication: &ServeReplication, request: &ServiceRequest) -> ServiceReply {
+    let keys = ["after", "objects", "limit"];
+    let asked = numbers(request.query.as_deref(), &keys).and_then(|query| {
+        let required = |key| {
+            let why = "after=<revision> and objects=<object> are required";
+            query.get(key).copied().ok_or_else(|| refused("query", why))
+        };
+        let limit = match query.get("limit") {
+            None => BatchLimit::MOST,
+            Some(limit) => usize::try_from(*limit)
+                .ok()
+                .and_then(BatchLimit::of)
+                .ok_or_else(|| refused("limit", "limit must be 1 to 500"))?,
+        };
+        Ok((required("after")?, required("objects")?, limit))
+    });
+    let (after, objects, limit) = match asked {
+        Ok(asked) => asked,
+        Err(reply) => return reply,
+    };
+    let batch = replication.batch(after, objects, limit);
+    match batch.map(|batch| encode_batch(&batch)) {
+        Ok(Ok(body)) => ServiceReply {
+            body,
+            ..ServiceReply::json(200, &Value::Null)
+        },
+        Ok(Err(why)) => ServiceReply::json(500, &json!({"error": why, "code": "handler"})),
         Err(error) => super::routes::failed(&error),
     }
 }

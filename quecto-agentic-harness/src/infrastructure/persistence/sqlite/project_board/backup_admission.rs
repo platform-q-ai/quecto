@@ -4,7 +4,7 @@ use crate::application::project_board::ports::backup::BackupError;
 use rusqlite::{Connection, OptionalExtension};
 
 pub(super) fn admit(c: &Connection, board: &str) -> Result<(), BackupError> {
-    storage::recognize_on(c, false).map_err(|_| BackupError::UnsupportedSchema)?;
+    storage::recognize_on(c).map_err(|_| BackupError::UnsupportedSchema)?;
     storage::current(c).map_err(|error| match error {
         crate::application::project_board::ports::BoardStoreError::NoBoard => BackupError::NoBoard,
         _ => BackupError::IdentityMismatch,

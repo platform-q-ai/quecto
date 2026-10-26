@@ -15,8 +15,9 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::application::project_board::ports::replication::{AdminRows, AdminToken};
 use crate::application::project_board::ports::{
-    BoardTokens, IssuedToken, MAX_TOKENS, TokenError, TokenRecord,
+    BoardTokens, IssuedToken, MAX_TOKENS, TokenError, TokenKind, TokenRecord,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -49,6 +50,9 @@ struct StoredToken {
     name: String,
     sha256: String,
     created: String,
+    /// A replica token's (B11); absent for a device's, as in files before it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    replica: bool,
 }
 
 /// A held token: its record and SHA-256, as 64 lowercase hex digits.
@@ -156,6 +160,7 @@ impl FileBoardTokens {
             name: held.record.name.as_str().to_string(),
             sha256: held.digest.clone(),
             created: held.record.created.as_str().to_string(),
+            replica: held.record.kind == TokenKind::Replica,
         });
         let text = serde_json::to_vec_pretty(&tokens.collect::<Vec<_>>());
         let text = text.map_err(|e| self.unavailable(e))?;
@@ -222,8 +227,14 @@ impl FileBoardTokens {
     }
 }
 
-impl BoardTokens for FileBoardTokens {
-    fn add(&self, name: &Slug, created: &Timestamp) -> Result<IssuedToken, TokenError> {
+impl FileBoardTokens {
+    /// Makes a token of `kind`, keeping its digest.
+    fn added(
+        &self,
+        name: &Slug,
+        created: &Timestamp,
+        kind: TokenKind,
+    ) -> Result<IssuedToken, TokenError> {
         self.changing(|held| {
             match (
                 held.iter().any(|held| &held.record.name == name),
@@ -241,6 +252,7 @@ impl BoardTokens for FileBoardTokens {
             let record = TokenRecord {
                 name: name.clone(),
                 created: created.clone(),
+                kind,
             };
             held.push(Held {
                 record: record.clone(),
@@ -248,6 +260,22 @@ impl BoardTokens for FileBoardTokens {
             });
             Ok(IssuedToken { record, secret })
         })
+    }
+}
+
+impl BoardTokens for FileBoardTokens {
+    fn add(&self, name: &Slug, created: &Timestamp) -> Result<IssuedToken, TokenError> {
+        self.added(name, created, TokenKind::Device)
+    }
+
+    fn add_replica(&self, name: &Slug, created: &Timestamp) -> Result<IssuedToken, TokenError> {
+        self.added(name, created, TokenKind::Replica)
+    }
+
+    fn kind_of(&self, name: &Slug) -> Result<Option<TokenKind>, TokenError> {
+        let held = self.held();
+        let found = held.iter().find(|held| &held.record.name == name);
+        Ok(found.map(|held| held.record.kind))
     }
 
     fn revoke(&self, name: &Slug) -> Result<(), TokenError> {
@@ -281,6 +309,59 @@ impl BoardTokens for FileBoardTokens {
     }
 }
 
+/// The tokens as admin rows (B11): a primary gives them to its followers,
+/// a follower holds its primary's alone, written through only when they
+/// change.
+impl AdminRows for FileBoardTokens {
+    fn export(&self) -> Result<Vec<AdminToken>, TokenError> {
+        let mut rows: Vec<AdminToken> = self.held().iter().map(row).collect();
+        rows.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(rows)
+    }
+
+    fn replace(&self, rows: &[AdminToken]) -> Result<(), TokenError> {
+        let names: std::collections::BTreeSet<_> = rows.iter().map(|row| &row.name).collect();
+        let shaped = |row: &AdminToken| {
+            held(StoredToken {
+                name: row.name.as_str().to_string(),
+                sha256: row.digest.clone(),
+                created: row.created.as_str().to_string(),
+                replica: row.kind == TokenKind::Replica,
+            })
+        };
+        let next: Option<Vec<Held>> = rows.iter().map(shaped).collect();
+        let next = match (next, names.len() == rows.len(), rows.len() <= MAX_TOKENS) {
+            (Some(next), true, true) => next,
+            (_, _, _) => {
+                return Err(TokenError::Unavailable(
+                    "the primary's tokens are not as a token is kept".into(),
+                ));
+            }
+        };
+        let mut now = self.export()?;
+        let mut wanted = rows.to_vec();
+        wanted.sort_by(|a, b| a.name.cmp(&b.name));
+        now.sort_by(|a, b| a.name.cmp(&b.name));
+        match now == wanted {
+            true => Ok(()),
+            false => self.changing(|held| {
+                *held = next;
+                Ok(())
+            }),
+        }
+    }
+}
+
+/// A held token as an admin row.
+fn row(held: &Held) -> AdminToken {
+    AdminToken {
+        name: held.record.name.clone(),
+        created: held.record.created.clone(),
+        kind: held.record.kind,
+        digest: held.digest.clone(),
+    }
+}
+
 /// A stored entry as a held token, when every field is as written.
 fn held(token: StoredToken) -> Option<Held> {
     let hex = |byte: &u8| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte);
@@ -288,8 +369,16 @@ fn held(token: StoredToken) -> Option<Held> {
         .then_some(token.sha256)?;
     let name = Slug::parse(&token.name).ok()?;
     let created = Timestamp::parse(&token.created).ok()?;
+    let kind = match token.replica {
+        true => TokenKind::Replica,
+        false => TokenKind::Device,
+    };
     Some(Held {
-        record: TokenRecord { name, created },
+        record: TokenRecord {
+            name,
+            created,
+            kind,
+        },
         digest,
     })
 }
