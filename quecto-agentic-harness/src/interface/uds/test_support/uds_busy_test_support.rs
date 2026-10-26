@@ -5,6 +5,12 @@
 
 use std::sync::Arc;
 
+/// Tests that run a whole multi-client loop hold this for reading; a test
+/// that delivers the process-wide simulated termination signal holds it for
+/// writing, so the signal never shuts down another test's loop (#2708).
+#[cfg(test)]
+pub(crate) static SIMULATED_SIGNAL: tokio::sync::RwLock<()> = tokio::sync::RwLock::const_new(());
+
 use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
 use crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry;
 

@@ -1,6 +1,6 @@
-//! #2708 live trial: when the reader answers a guarded harness's own
-//! `get_state`, and when it leaves it to the dispatch loop.
-use super::{BusyState, intercept};
+//! #2708: which `get_state` lines a guarded harness's connection answers
+//! itself, and what it answers.
+use super::{BusyState, asked};
 
 fn source(busy: bool) -> BusyState {
     let session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
@@ -15,52 +15,21 @@ fn source(busy: bool) -> BusyState {
     }
 }
 
-/// Whether `line` is answered here and, if so, the answer.
-async fn ask(
-    line: &str,
-    source: Option<&BusyState>,
-    queued_ahead: bool,
-) -> (bool, Option<serde_json::Value>) {
-    let clients = crate::interface::uds::controllers::uds_ext_protocol::new_client_tool_registry();
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
-    crate::interface::uds::controllers::uds_ext_protocol::register_client_writer(&clients, 1, tx);
-    let handled = intercept(line, (source, queued_ahead), &clients, 1).await;
-    let answer = rx
-        .try_recv()
-        .ok()
-        .map(|line| serde_json::from_str(&line).unwrap());
-    (handled, answer)
-}
+const GET_STATE: &str = r#"{"type":"get_state","id":"s","since":4}"#;
 
-const GET_STATE: &str = r#"{"type":"get_state","id":"s"}"#;
-
-#[tokio::test]
-async fn issue_2708_busy_state_answers_only_a_busy_or_queued_guarded_loop() {
+#[test]
+fn issue_2708_busy_state_answers_only_a_busy_guarded_loop() {
     let (idle, busy) = (source(false), source(true));
-    for (source, queued_ahead, answered) in [
-        (Some(&busy), false, true),
-        (Some(&idle), true, true),
-        (Some(&idle), false, false),
-        (None, true, false),
-    ] {
-        let (handled, answer) = ask(GET_STATE, source, queued_ahead).await;
-        assert_eq!(
-            handled,
-            answered,
-            "busy {:?} queued {queued_ahead}",
-            source.map(|s| s.busy.clone())
-        );
-        assert_eq!(answer.is_some(), answered);
-        if let Some(answer) = answer {
-            assert_eq!(answer["id"], "s");
-            assert_eq!(answer["command"], "get_state");
-            assert_eq!(answer["data"]["sessionKey"], "cli:busy");
-        }
-    }
+    assert_eq!(
+        asked(GET_STATE, Some(&busy)),
+        Some((Some("s".into()), Some(4)))
+    );
+    assert_eq!(asked(GET_STATE, Some(&idle)), None);
+    assert_eq!(asked(GET_STATE, None), None);
 }
 
-#[tokio::test]
-async fn issue_2708_busy_state_leaves_other_lines_and_child_reads_to_the_loop() {
+#[test]
+fn issue_2708_busy_state_leaves_other_lines_and_child_reads_to_the_loop() {
     let busy = source(true);
     for line in [
         r#"{"type":"get_state","id":"c","agent_id":"child"}"#,
@@ -68,6 +37,27 @@ async fn issue_2708_busy_state_leaves_other_lines_and_child_reads_to_the_loop() 
         r#"{"type":"prompt","id":"p","message":"get_state"}"#,
         "not json get_state",
     ] {
-        assert_eq!(ask(line, Some(&busy), true).await, (false, None), "{line}");
+        assert_eq!(asked(line, Some(&busy)), None, "{line}");
     }
+}
+
+async fn answer(source: &BusyState) -> serde_json::Value {
+    let line = source.answer((Some("s".into()), None)).await;
+    assert!(line.ends_with('\n'));
+    serde_json::from_str(&line).unwrap()
+}
+
+/// Review #2762 round 3: between a run's end (its phase already idle) and
+/// its `agent_end`, or between back-to-back turns, a busy answer reports a
+/// busy phase, never `idle`; once the loop is idle, `idle` it is.
+#[tokio::test]
+async fn issue_2708_busy_state_a_busy_answer_never_reports_idle() {
+    let busy = answer(&source(true)).await;
+    assert_eq!(
+        (&busy["id"], &busy["command"]),
+        (&serde_json::json!("s"), &serde_json::json!("get_state"))
+    );
+    assert_eq!(busy["data"]["sessionKey"], "cli:busy");
+    assert_eq!(busy["data"]["state"], "finalizing", "{busy}");
+    assert_eq!(answer(&source(false)).await["data"]["state"], "idle");
 }

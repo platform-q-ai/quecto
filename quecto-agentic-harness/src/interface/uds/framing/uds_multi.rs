@@ -426,6 +426,7 @@ async fn run_dispatch_loop(
     live_clients: &std::sync::atomic::AtomicU32,
 ) {
     let mut hold = clients::StartupHold::new(ctx, args.extensions.clone());
+    let mut busy = None; // #2708: a guarded loop's back-to-back instructions
     loop {
         let Some(msg) = hold.next(ctx, &mut args).await else {
             break;
@@ -443,6 +444,7 @@ async fn run_dispatch_loop(
                 break;
             }
             DispatchMsg::Client(client_msg) => {
+                controllers::uds::busy_for(ctx, &client_msg, &mut busy);
                 if handle_client_msg(ctx, client_msg, args.lifetime, live_clients).await {
                     // The last client of a lifetime that ends with it left:
                     // the same common shutdown runs to completion — fleet
@@ -507,6 +509,7 @@ async fn run_dispatch_loop(
         refresh_state_snapshot(ctx).await;
         refresh_session_stats_snapshot(ctx).await;
         refresh_tool_catalogue_snapshot(ctx).await;
+        busy.take_if(|_| args.cmd_rx.is_empty());
     }
 }
 

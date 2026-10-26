@@ -174,6 +174,8 @@ fn response_to(id: &'static str) -> impl Fn(&serde_json::Value) -> bool {
 }
 
 struct Harness {
+    /// Kept clear of the simulated termination signal another test sends.
+    _signal: tokio::sync::RwLockReadGuard<'static, ()>,
     provider: Arc<HeldTurn>,
     lines: Lines,
     writer: tokio::io::WriteHalf<tokio::net::UnixStream>,
@@ -183,6 +185,9 @@ struct Harness {
 /// Start a loop (guarded or not) whose `held` replies hold, connect, and
 /// hold a prompt's turn in flight.
 async fn holding(dir: &std::path::Path, guarded: bool, held: Vec<usize>) -> Harness {
+    let signal = crate::interface::uds::test_support::SIMULATED_SIGNAL
+        .read()
+        .await;
     let socket_path = dir.join("busy.sock");
     let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
     listener.set_nonblocking(true).unwrap();
@@ -222,6 +227,7 @@ async fn holding(dir: &std::path::Path, guarded: bool, held: Vec<usize>) -> Harn
         .await
         .expect("the turn is in flight");
     Harness {
+        _signal: signal,
         provider,
         lines,
         writer,
@@ -426,5 +432,64 @@ async fn issue_2708_busy_state_a_queued_follow_up_is_answered_with_the_settled_o
     })
     .await
     .expect("the drained turn settles");
+    harness.finish().await;
+}
+
+fn response_with(id: String) -> impl Fn(&serde_json::Value) -> bool {
+    move |event| event["type"] == "response" && event["id"] == id.as_str()
+}
+
+/// Review #2762 round 3 (3b): once idle, commands a client pipelines are
+/// answered by the loop in order, so a `get_state` behind `clear_history`
+/// reads its write.
+#[tokio::test]
+async fn issue_2708_busy_state_pipelined_commands_are_answered_in_order_when_idle() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = holding(dir.path(), true, vec![1]).await;
+    let mid = harness.state_now("mid").await;
+    harness.provider.release.notify_one();
+    until(&mut harness.lines, STEP, |event| {
+        event["type"] == "turn_outcome"
+    })
+    .await
+    .expect("the turn settles");
+    // The loop itself answers this one: it is idle after it.
+    let stats = serde_json::json!({"type": "get_session_stats", "id": "idle"});
+    send(&mut harness.writer, stats).await;
+    until(&mut harness.lines, STEP, response_to("idle"))
+        .await
+        .expect("the loop is idle");
+    let mut epoch = mid["outcomeEpoch"].clone();
+    for round in 0..8 {
+        let (clear, state) = (format!("c{round}"), format!("s{round}"));
+        let pipelined = format!(
+            "{}\n{}\n",
+            serde_json::json!({"type": "clear_history", "id": clear}),
+            serde_json::json!({"type": "get_state", "id": state}),
+        );
+        harness
+            .writer
+            .write_all(pipelined.as_bytes())
+            .await
+            .unwrap();
+        let read = until(&mut harness.lines, STEP, response_with(state))
+            .await
+            .expect("answered");
+        let cleared = read.iter().position(response_with(clear));
+        assert!(
+            cleared.is_some(),
+            "round {round}: get_state ahead of clear_history: {read:?}"
+        );
+        let answer = &read.last().unwrap()["data"];
+        assert!(
+            answer["latestTurnOutcome"].is_null(),
+            "round {round}: {answer}"
+        );
+        assert_ne!(
+            answer["outcomeEpoch"], epoch,
+            "round {round}: the cleared epoch"
+        );
+        epoch = answer["outcomeEpoch"].clone();
+    }
     harness.finish().await;
 }

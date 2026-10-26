@@ -6,8 +6,8 @@ use super::subagent_registry::SubagentRegistry;
 use crate::domain::agents::value_objects::turn_outcome::WorkLiveness;
 
 /// The registry's read: `Live` while any entry starts or runs, or an idle
-/// coordinator it launched still holds its run's work (not yet reporting,
-/// or last reporting a hold), `Empty`
+/// coordinator it launched still holds its run's work (its last report a
+/// hold), `Empty`
 /// when none does (or the harness has no spawn tool to own one), and
 /// `Unknown` when the registry cannot be read: never assumed empty.
 pub fn registry_liveness(registry: Option<&SubagentRegistry>) -> WorkLiveness {

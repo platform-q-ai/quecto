@@ -67,6 +67,8 @@ async fn issue_2708_liveness_only_a_holding_coordinator_is_owned_work() {
     use crate::infrastructure::tools::agents::owned_work::registry_liveness;
     let failed = serde_json::json!({"type": "response", "command": "agent_error", "error": "x"});
     for (events, live) in [
+        // Round 3 (1): a turn end with no report yet is no work.
+        (vec![agent_end()], WorkLiveness::Empty),
         (
             vec![agent_end(), swarm_state("hold", "running")],
             WorkLiveness::Live,

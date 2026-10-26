@@ -78,11 +78,13 @@ impl CoordinatorWake {
     }
 
     /// Whether its swarm run still holds its parent's work (#2708): launched,
-    /// and either not reporting yet or last reporting a hold, with no turn
-    /// failed since. A finished, idle or paused run is no work.
+    /// last reporting a hold, with no turn failed since. A finished, idle or
+    /// paused run is no work, nor is one that never reported (a coordinator
+    /// with no board sends no `swarm_state`; its first turn-end note is the
+    /// parent's queued work meanwhile).
     pub fn holds_work(&self) -> bool {
         let state = (self.launched, self.reporting, self.holding, self.failed);
-        matches!(state, (true, false, _, false) | (true, true, true, false))
+        matches!(state, (true, true, true, false))
     }
 
     /// Record a report of `kind`, as the monitor does on a `swarm_state`.
