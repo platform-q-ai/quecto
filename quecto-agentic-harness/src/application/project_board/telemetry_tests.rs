@@ -1,5 +1,6 @@
 //! Epic #2481 T1: a recording exists only while the event log is on; T3:
 //! a request's op reads or writes, and names its task and pull request.
+use crate::application::project_board::dto::ReadPin;
 use crate::domain::project_board::services::transitions::MoveReason;
 use std::sync::Mutex;
 
@@ -117,7 +118,7 @@ fn every_request() -> Vec<BoardRequest> {
             description: None,
             parent: None,
             depends_on: None,
-            expected_updated: None,
+            expected: None,
             entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
         }),
         change(BoardOp::Move(TaskStatus::Ready, MoveReason::Absent)),
@@ -147,28 +148,29 @@ fn every_request() -> Vec<BoardRequest> {
             approach: Some("A".into()),
             items: None,
             team: None,
-            expected_updated: None,
+            expected: None,
         }),
         BoardRequest::AcceptPlan(PlanAcceptance {
             task: a.clone(),
             version: 1,
-            expected_updated:
+            expected: ReadPin::Updated(
                 crate::domain::project_board::value_objects::timestamp::Timestamp::parse(
                     "2026-10-10T09:00:00Z",
                 )
                 .unwrap(),
+            ),
             expected_accepted: None,
         }),
         BoardRequest::DiscardPlan(PlanDiscard {
             task: a.clone(),
             version: 1,
-            expected_updated: None,
+            expected: None,
         }),
         BoardRequest::EndRun(crate::application::project_board::dto::RunEnd {
             task: a.clone(),
             run: 1,
             outcome: crate::application::project_board::dto::RunEndOutcome::Lost,
-            expected_updated: None,
+            expected: None,
             stop: None,
         }),
         BoardRequest::Start(super::super::dto::TaskStart {

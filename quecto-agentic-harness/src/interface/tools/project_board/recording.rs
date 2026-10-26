@@ -465,7 +465,6 @@ pub(super) fn refusal_parts(
         | E::InvalidWriter(_)
         | E::PrStateUnknown(_)
         | E::PullRequests(_)
-        | E::TaskAhead { .. }
         | E::ClockOutOfRange(_)
         | E::ClockAhead { .. }
         | E::Contended { .. }

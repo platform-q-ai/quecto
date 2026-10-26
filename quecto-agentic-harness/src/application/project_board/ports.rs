@@ -221,6 +221,48 @@ impl BoardSnapshot {
         self
     }
 
+    /// The artifact the board holds under `key`, as read.
+    pub fn artifact(&self, key: &ArtifactKey) -> Option<BoardArtifact> {
+        fn find<T: Clone>(
+            held: &[T],
+            key: &ArtifactKey,
+            key_of: impl Fn(&T) -> ArtifactKey,
+            wrap: impl Fn(T) -> BoardArtifact,
+        ) -> Option<BoardArtifact> {
+            held.iter()
+                .find(|one| key_of(one) == *key)
+                .cloned()
+                .map(wrap)
+        }
+        match key {
+            ArtifactKey::Task(_) => {
+                find(&self.tasks, key, ArtifactKey::of_task, BoardArtifact::Task)
+            }
+            ArtifactKey::Plan(..) => {
+                find(&self.plans, key, ArtifactKey::of_plan, BoardArtifact::Plan)
+            }
+            ArtifactKey::Run(..) => find(&self.runs, key, ArtifactKey::of_run, BoardArtifact::Run),
+            ArtifactKey::Change(..) => find(
+                &self.changes,
+                key,
+                ArtifactKey::of_change,
+                BoardArtifact::Change,
+            ),
+            ArtifactKey::Review(..) => find(
+                &self.reviews,
+                key,
+                ArtifactKey::of_review,
+                BoardArtifact::Review,
+            ),
+            ArtifactKey::Discussion(_) => find(
+                &self.discussions,
+                key,
+                ArtifactKey::of_discussion,
+                BoardArtifact::Discussion,
+            ),
+        }
+    }
+
     /// Whether every artifact read is held under its own key once.
     fn held_once(&self) -> bool {
         let keys: Vec<ArtifactKey> = self
@@ -311,6 +353,20 @@ pub trait ProjectBoardStore: Send + Sync {
     /// # Errors
     /// No board, or the store's failure.
     fn read(&self) -> Result<BoardSnapshot, BoardStoreError>;
+
+    /// The artifact `key` as the board held it at revision `rev`, a head
+    /// a read of this board answered (#2705 B9): what a change pinned to
+    /// `rev` checks the artifact against. `None` when the board held no
+    /// such artifact then, or `rev` is no revision of this board, so a pin
+    /// to it never holds.
+    ///
+    /// # Errors
+    /// The store's failure to read that revision.
+    fn artifact_at(
+        &self,
+        rev: &BoardHead,
+        key: &ArtifactKey,
+    ) -> Result<Option<BoardArtifact>, BoardStoreError>;
 
     /// Writes `artifacts` (each whole, replacing any of the same key) in
     /// one change, only if the board is still at `expected`. An artifact

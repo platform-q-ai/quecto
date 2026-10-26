@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use super::{
     BoardOp, DraftUpdate, EndedRun, NewBoardTask, PlanAcceptance, PlanDiscard, PlanEdit,
-    PlanProposal, ProjectBoardError, RunEnd, ShownTask, TaskStart,
+    PlanProposal, ProjectBoardError, ReadPin, RunEnd, ShownTask, TaskStart,
 };
 use crate::application::project_board::ports::{BoardHead, KeepCopy};
 use crate::application::project_board::start::{Begun, StartWrite, StartedTask};
@@ -118,6 +118,31 @@ impl BoardRequest {
             | Self::List(_)
             | Self::ListReady
             | Self::Show(..) => false,
+        }
+    }
+
+    /// The pin the request gives to what its caller read, when it gives
+    /// one (#2705 B9): an update of a draft, a plan's edit, acceptance or
+    /// discard, and a run's end take one.
+    pub fn pin(&self) -> Option<&ReadPin> {
+        match self {
+            Self::UpdateDraft(update) => update.expected.as_ref(),
+            Self::EditPlan(edit) => edit.expected.as_ref(),
+            Self::AcceptPlan(acceptance) => Some(&acceptance.expected),
+            Self::DiscardPlan(discard) => discard.expected.as_ref(),
+            Self::EndRun(end) => end.expected.as_ref(),
+            Self::Bootstrap
+            | Self::List(_)
+            | Self::ListReady
+            | Self::ListTakeable
+            | Self::Show(..)
+            | Self::Create(_)
+            | Self::Change(..)
+            | Self::Complete(_)
+            | Self::DoneWithoutRun { .. }
+            | Self::ProposePlan(_)
+            | Self::Start(_)
+            | Self::Clear { .. } => None,
         }
     }
 

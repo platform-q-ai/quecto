@@ -154,6 +154,7 @@ fn show_answers_the_accepted_plan_each_version_and_the_runs() {
         "ok": true,
         "op": "show",
         "head": "0".repeat(40),
+        "rev": "0".repeat(40),
         "task": task_json(&task()),
         "plan": {
             "task": "a",
@@ -400,7 +401,7 @@ fn a_page_answers_only_the_parts_it_names_from_where_it_names() {
     assert_eq!(
         both,
         json!({
-            "ok": true, "op": "show", "head": "0".repeat(40), "task": "a",
+            "ok": true, "op": "show", "head": "0".repeat(40), "rev": "0".repeat(40), "task": "a",
             "plan": {
                 "version": 2,
                 "updated": "2026-10-10T08:30:00Z",

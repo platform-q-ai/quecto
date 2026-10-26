@@ -188,7 +188,7 @@ mod a_task_gone_on_retry {
             description: None,
             parent: None,
             depends_on: None,
-            expected_updated: None,
+            expected: None,
             entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
         };
         let edit = UpdateDraftTask::new(

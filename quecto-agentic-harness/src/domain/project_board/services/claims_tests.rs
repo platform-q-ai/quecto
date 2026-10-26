@@ -104,7 +104,7 @@ fn a_renewal_by_another_name_keeps_the_holder_as_claimed() {
 #[test]
 fn renewing_or_taking_over_behind_the_task_stamps_the_task_s_own_time() {
     let ahead = last_written(task(InProgress), &far_future());
-    let next = far_future().plus_seconds(1).unwrap();
+    let next = far_future();
     let in_two_hours = next.plus_seconds(CLAIM_TTL_SECONDS).unwrap();
     for changed in [
         renew(&ahead, &person("Ada"), &at("10:30:00")).unwrap(),
@@ -118,24 +118,25 @@ fn renewing_or_taking_over_behind_the_task_stamps_the_task_s_own_time() {
     }
 }
 
-/// Two changes in one second, or one from a clock behind the task, never
-/// share a stamp: `updated` moves strictly forward on every change.
+/// #2705 B9: a stamp is for display. Two changes in one second share it,
+/// and one from a clock behind the task keeps the task's own: `updated`
+/// never runs backwards, and is never pushed past the clock.
 #[test]
-fn every_change_moves_updated_strictly_forward() {
+fn every_change_stamps_the_clock_or_the_tasks_own_time_never_backwards() {
     let renewed = renew(&task(InProgress), &person("Ada"), &at("10:00:00")).unwrap();
     let again = renew(&renewed, &person("Ada"), &at("10:00:00")).unwrap();
     assert_eq!(
         (&renewed.fields().updated, &again.fields().updated),
-        (&at("10:00:00"), &at("10:00:01"))
+        (&at("10:00:00"), &at("10:00:00"))
     );
     let behind = renew(&again, &person("Ada"), &at("09:30:00")).unwrap();
-    assert_eq!(behind.fields().updated, at("10:00:02"));
+    assert_eq!(behind.fields().updated, at("10:00:00"));
 }
 
-/// A task stamped at the last moment the board can spell takes no further
-/// change: its next stamp cannot be spelt.
+/// A task stamped at the last moment the board can spell still takes a
+/// change (#2705 B9: no stamp is pushed past it), stamped that moment.
 #[test]
-fn a_task_at_the_last_spellable_second_takes_no_further_stamp() {
+fn a_task_at_the_last_spellable_second_still_takes_a_change() {
     let last = Timestamp::parse("9999-12-31T23:59:59Z").unwrap();
     let mut fields = task(Draft).into_fields();
     fields.updated = last.clone();
@@ -148,10 +149,7 @@ fn a_task_at_the_last_spellable_second_takes_no_further_stamp() {
         &[],
         &last,
     );
-    assert!(
-        matches!(moved, Err(BoardRuleError::Invalid(_))),
-        "{moved:?}"
-    );
+    assert_eq!(moved.map(|task| task.fields().updated.clone()), Ok(last));
 }
 
 /// The bound is the latest time plus the slack; where adding the slack

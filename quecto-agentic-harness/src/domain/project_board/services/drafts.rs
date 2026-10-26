@@ -68,7 +68,7 @@ pub fn edit_draft(task: &Task, edit: &DraftEdit, now: &Timestamp) -> Result<Task
     }
     match next == *task.fields() {
         true => Err(BoardRuleError::NoEdit),
-        false => settle(next, &stamp(task, now)?),
+        false => settle(next, &stamp(task, now)),
     }
 }
 

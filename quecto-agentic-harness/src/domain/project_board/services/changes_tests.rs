@@ -299,11 +299,11 @@ fn a_change_is_unlinked_once_kept_after_its_last_change_and_never_after_it_merge
     };
     let gone = unlink(&of(InProgress), &own, 1, &open, &ada, &early).unwrap();
     assert!(!gone.is_linked());
-    assert_eq!(gone.fields().unlinked, Some((ada.clone(), at("09:00:01"))));
+    assert_eq!(gone.fields().unlinked, Some((ada.clone(), at("09:00:00"))));
     assert_eq!(
         gone.fields().updated,
-        at("09:00:01"),
-        "a clock behind stamps forward"
+        at("09:00:00"),
+        "a clock behind keeps the change's own stamp"
     );
     assert!(
         unlink(&of(InProgress), &own, 2, &open, &ada, &now()).is_ok(),
@@ -387,7 +387,7 @@ fn a_task_is_done_when_its_linked_changes_merge() {
 }
 
 /// A change stamped after the task's completion stamp records its merge
-/// a second past its own last change; one a clock ran ahead stamped is
+/// at its own last change (#2705 B9: never backwards); one a clock ran ahead stamped is
 /// refused once an outside time bounds the clock.
 #[test]
 fn a_change_stamped_later_keeps_its_order_unless_it_ran_ahead() {
@@ -395,7 +395,7 @@ fn a_change_stamped_later_keeps_its_order_unless_it_ran_ahead() {
     let read = host(&[(7, "feat/b1", merged('a'))]);
     let done = complete(&of(Review), &late, &read, &[], &now()).unwrap();
     assert_eq!(done.completed.task.fields().updated, at("10:00:00"));
-    assert_eq!(done.changes[0].fields().updated, at("10:30:01"));
+    assert_eq!(done.changes[0].fields().updated, at("10:30:00"));
     let bounded = Moment {
         now: at("10:00:00"),
         latest: Some(at("10:00:00")),

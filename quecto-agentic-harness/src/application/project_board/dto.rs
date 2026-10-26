@@ -44,10 +44,41 @@ pub struct NewBoardTask {
     pub entry: Entry,
 }
 
+/// How a caller pins a change to what it read (#2705 B9): the board's
+/// revision it read at, which `show` answers as `rev`, or, deprecated and
+/// taken for one more release, the artifact's `updated`. A rev pin holds
+/// while the artifact is as the board held it at that revision, whatever
+/// else the board took since.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadPin {
+    Rev(BoardHead),
+    /// Deprecated: a stamp is for display, and two changes in one second
+    /// share one.
+    Updated(Timestamp),
+}
+
+impl ReadPin {
+    /// The pin as the caller gave it.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Rev(rev) => &rev.0,
+            Self::Updated(updated) => updated.as_str(),
+        }
+    }
+
+    /// The deprecated `updated` pin's stamp, when it is one.
+    pub fn deprecated_updated(&self) -> Option<&Timestamp> {
+        match self {
+            Self::Updated(updated) => Some(updated),
+            Self::Rev(_) => None,
+        }
+    }
+}
+
 /// An edit of a draft in place: the fields it sets (`None` keeps one as
-/// it is; `parent: Some(None)` takes the parent away), and the `updated`
-/// the caller read, when it read one: a draft changed since is refused as
-/// stale, never edited over. Drafts are shared planning: anyone with
+/// it is; `parent: Some(None)` takes the parent away), and what the
+/// caller read, when it read the draft: a draft changed since is refused
+/// as stale, never edited over. Drafts are shared planning: anyone with
 /// access to the board edits any draft.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DraftUpdate {
@@ -57,7 +88,7 @@ pub struct DraftUpdate {
     pub description: Option<String>,
     pub parent: Option<Option<Slug>>,
     pub depends_on: Option<Vec<Slug>>,
-    pub expected_updated: Option<Timestamp>,
+    pub expected: Option<ReadPin>,
     /// How a new title or description enters (#2705 T2), as its front
     /// end's policy resolved it.
     pub entry: Entry,
@@ -621,12 +652,6 @@ pub enum ProjectBoardError {
     PrStateUnknown(u64),
     /// The host could not tell where the task's pull requests stand.
     PullRequests(PullRequestStatesError),
-    /// The task was stamped past the reference by a clock that ran ahead:
-    /// it is not built on until real time catches up.
-    TaskAhead {
-        id: Slug,
-        updated: Timestamp,
-    },
     /// The outside reference reads a time the board cannot spell.
     ClockOutOfRange(Timestamp),
     /// This machine's clock is more than [`CLOCK_AHEAD_SECONDS`] ahead of
@@ -650,11 +675,11 @@ pub enum ProjectBoardError {
     },
     /// The board's remote reports no pull requests, so none is completed.
     NoPullRequestHost(NoPullRequestHost),
-    /// Task `id` changed since the caller read it (`expected` its
-    /// `updated` then, `updated` now): read it again and decide again.
+    /// Task `id` changed since the caller read it (`expected` the pin it
+    /// gave, `updated` its stamp now): read it again and decide again.
     Stale {
         id: Slug,
-        expected: Timestamp,
+        expected: ReadPin,
         updated: Timestamp,
     },
     /// This session may not spawn, so it has no launcher: nothing is

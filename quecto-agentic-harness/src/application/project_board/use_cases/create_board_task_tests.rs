@@ -610,6 +610,17 @@ struct Racing {
 }
 
 impl ProjectBoardStore for Racing {
+    fn artifact_at(
+        &self,
+        rev: &crate::application::project_board::ports::BoardHead,
+        key: &crate::application::project_board::ports::ArtifactKey,
+    ) -> Result<
+        Option<crate::application::project_board::ports::BoardArtifact>,
+        crate::application::project_board::ports::BoardStoreError,
+    > {
+        self.store.client().artifact_at(rev, key)
+    }
+
     fn read(
         &self,
     ) -> Result<crate::application::project_board::ports::BoardSnapshot, BoardStoreError> {

@@ -15,7 +15,7 @@ use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
-use crate::domain::project_board::services::claims::{CLOCK_AHEAD_SECONDS, within_slack};
+use crate::domain::project_board::services::claims::CLOCK_AHEAD_SECONDS;
 use crate::domain::project_board::services::plans::Moment;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 
@@ -29,23 +29,6 @@ pub const MAX_WRITE_ATTEMPTS: usize = 3;
 pub(super) struct When {
     pub now: Timestamp,
     pub latest: Option<Timestamp>,
-}
-
-impl When {
-    /// Refuses to build on `task` when a clock ran ahead stamped it past
-    /// the latest time plus [`STAMP_SLACK_SECONDS`](crate::domain::project_board::services::claims::STAMP_SLACK_SECONDS) (the room the
-    /// strictly-forward stamp needs): its claims would hold everyone up.
-    /// The bound is inclusive, as the clock's own is.
-    pub fn may_build_on(&self, task: &Task) -> Result<(), ProjectBoardError> {
-        let updated = &task.fields().updated;
-        match within_slack(updated, self.latest.as_ref()) {
-            true => Ok(()),
-            false => Err(ProjectBoardError::TaskAhead {
-                id: task.fields().id.clone(),
-                updated: updated.clone(),
-            }),
-        }
-    }
 }
 
 /// This time as the domain's plan rules read it: the one place a

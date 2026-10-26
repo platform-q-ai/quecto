@@ -41,7 +41,7 @@ pub fn add_pr(
         true => Err(BoardRuleError::PrAlreadyLinked(pr)),
         false => {
             next.prs.push(pr);
-            settle(next, &stamp(task, now)?)
+            settle(next, &stamp(task, now))
         }
     }
 }
@@ -69,7 +69,7 @@ pub fn remove_pr(
     match next.prs.iter().position(|linked| *linked == pr) {
         Some(index) => {
             next.prs.remove(index);
-            settle(next, &stamp(task, now)?)
+            settle(next, &stamp(task, now))
         }
         None => Err(BoardRuleError::PrNotLinked(pr)),
     }

@@ -407,7 +407,10 @@ fn an_acceptance_waits_for_a_known_unchanged_draft_and_no_run_going() {
     let versions = [plan(1, PlanState::Accepted), plan(2, PlanState::Draft)];
     let accept_with = |version: u32, expected: Option<&Timestamp>, runs: &[Run]| {
         let accepted = held.fields().accepted_plan;
-        let expected = expected.map(|updated| AsRead { updated, accepted });
+        let expected = expected.map(|updated| AsRead {
+            updated: Some(updated),
+            accepted,
+        });
         accept(
             &TaskPlans {
                 task: &held,
@@ -466,7 +469,7 @@ fn an_acceptance_waits_for_a_known_unchanged_draft_and_no_run_going() {
 
 /// A plan proposed by a clock running ahead is accepted after its own
 /// last change: the task, both plans and the acceptance share one stamp,
-/// a second past the latest of them.
+/// the latest of them (#2705 B9: never backwards).
 #[test]
 fn a_plan_from_a_clock_running_ahead_is_accepted_after_it() {
     let mut ahead = plan(2, PlanState::Draft).into_fields();
@@ -484,7 +487,7 @@ fn a_plan_from_a_clock_running_ahead_is_accepted_after_it() {
         &when(&at("10:00:00")),
     )
     .unwrap();
-    let stamp = at("12:00:01");
+    let stamp = at("12:00:00");
     assert_eq!(accepted.task.fields().updated, stamp);
     assert_eq!(accepted.plan.fields().updated, stamp);
     assert_eq!(

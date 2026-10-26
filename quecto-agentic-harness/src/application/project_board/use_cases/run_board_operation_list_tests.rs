@@ -32,6 +32,17 @@ struct Counted {
 }
 
 impl ProjectBoardStore for Counted {
+    fn artifact_at(
+        &self,
+        rev: &crate::application::project_board::ports::BoardHead,
+        key: &crate::application::project_board::ports::ArtifactKey,
+    ) -> Result<
+        Option<crate::application::project_board::ports::BoardArtifact>,
+        crate::application::project_board::ports::BoardStoreError,
+    > {
+        self.inner.artifact_at(rev, key)
+    }
+
     fn read(&self) -> Result<BoardSnapshot, BoardStoreError> {
         self.reads.fetch_add(1, Ordering::SeqCst);
         match self.failing.load(Ordering::SeqCst) {

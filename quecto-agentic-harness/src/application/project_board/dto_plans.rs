@@ -1,9 +1,9 @@
 //! What a plan's use cases take (#2481 M4b, M4c): a new version
 //! proposed, an edit of a draft, and a draft accepted or discarded.
+use super::ReadPin;
 use crate::domain::project_board::entities::plan::{PlanEntry, PlanItem};
 use crate::domain::project_board::entities::team::Team;
 use crate::domain::project_board::value_objects::slug::Slug;
-use crate::domain::project_board::value_objects::timestamp::Timestamp;
 
 /// A new draft version of `task`'s plan, saying all of what it says: its
 /// approach, its task items and its team (`None`: the coordinator picks
@@ -26,7 +26,7 @@ pub struct PlanProposal {
 /// `None` keeps what the draft holds, byte for byte, and one given
 /// replaces it whole (`team: Some(None)` takes the team away). So an edit
 /// of the task items never resends the approach, which may be longer than
-/// one answer shows. `expected_updated` is the draft's `updated` as the
+/// one answer shows. `expected` pins the draft as the
 /// caller read it, when it read one: a draft changed since is refused,
 /// never edited over.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +40,7 @@ pub struct PlanEdit {
     pub handoff: Option<String>,
     pub items: Option<Vec<PlanItem>>,
     pub team: Option<Option<Team>>,
-    pub expected_updated: Option<Timestamp>,
+    pub expected: Option<ReadPin>,
     /// How a new approach enters, as its front end's policy resolved it.
     pub entry: PlanEntry,
 }
@@ -57,8 +57,8 @@ impl PlanEdit {
 }
 
 /// Draft `version` of `task`'s plan accepted as the task's plan (#2481
-/// M4c), as the caller read it: `expected_updated` is the draft's
-/// `updated` then, so the content accepted is the content reviewed, and
+/// M4c), as the caller read it: `expected` pins the draft as read
+/// then, so the content accepted is the content reviewed, and
 /// `expected_accepted` the version the task named as accepted then
 /// (`None`: none), so an acceptance never supersedes one its caller did
 /// not see. Both are required: an acceptance is never of a board unread.
@@ -66,15 +66,15 @@ impl PlanEdit {
 pub struct PlanAcceptance {
     pub task: Slug,
     pub version: u32,
-    pub expected_updated: Timestamp,
+    pub expected: ReadPin,
     pub expected_accepted: Option<u32>,
 }
 
 /// Draft `version` of `task`'s plan discarded (it is kept), pinned to the
-/// draft as the caller read it when `expected_updated` is given.
+/// draft as the caller read it when `expected` is given.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanDiscard {
     pub task: Slug,
     pub version: u32,
-    pub expected_updated: Option<Timestamp>,
+    pub expected: Option<ReadPin>,
 }

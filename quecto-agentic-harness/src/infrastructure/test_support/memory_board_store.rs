@@ -44,6 +44,9 @@ struct Board {
     /// Every path an artifact's file was set aside at, so a file set
     /// aside there again gets another object.
     set_aside_at: std::collections::BTreeSet<String>,
+    /// The artifacts the board held at each revision a read or a write
+    /// saw (#2705 B9): what a pin to that revision is judged against.
+    held_at: BTreeMap<u64, BTreeMap<ArtifactKey, BoardArtifact>>,
 }
 
 impl Board {
@@ -340,10 +343,26 @@ impl ProjectBoardStore for MemoryBoardStore {
                 }),
                 quarantined: board.quarantined.clone(),
             };
+            let held = board.artifacts.clone();
+            board.held_at.insert(revision, held);
             (snapshot, std::mem::take(&mut board.after_read))
         };
         after.into_iter().for_each(|change| change(self));
         Ok(snapshot.asserted())
+    }
+
+    /// As a revision a read or a write of this board saw held it: a rev
+    /// no read or write saw (or no `r<n>` at all) is none of this board's.
+    fn artifact_at(
+        &self,
+        rev: &BoardHead,
+        key: &ArtifactKey,
+    ) -> Result<Option<BoardArtifact>, BoardStoreError> {
+        self.always()?;
+        let revision = rev.0.strip_prefix('r').and_then(|n| n.parse::<u64>().ok());
+        let board = self.lock();
+        let held = revision.and_then(|revision| board.held_at.get(&revision));
+        Ok(held.and_then(|held| held.get(key)).cloned())
     }
 
     fn write(
@@ -397,6 +416,8 @@ impl ProjectBoardStore for MemoryBoardStore {
         board.writes += 1;
         board.committers.insert(revision + 1, self.writer.clone());
         board.messages.insert(revision + 1, message.to_string());
+        let held = board.artifacts.clone();
+        board.held_at.insert(revision + 1, held);
         Ok(BoardWrite::Written(head(revision + 1)))
     }
 

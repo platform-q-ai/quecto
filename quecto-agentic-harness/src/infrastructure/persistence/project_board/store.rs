@@ -36,8 +36,8 @@ use super::board_tree::{
 use super::git::{Git, GitError, SHORT_OUTPUT, failed, quoted};
 use super::push_report::{PushReport, RefStatus, Rejection, ref_status, remote_rejection};
 use crate::application::project_board::ports::{
-    BoardArtifact, BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite,
-    ProjectBoardStore, SetAsideClear,
+    ArtifactKey, BoardArtifact, BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError,
+    BoardWrite, ProjectBoardStore, SetAsideClear,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
@@ -641,6 +641,31 @@ impl ProjectBoardStore for GitBoardStore {
         let head = self.fetch()?;
         let board = self.board_at(&head)?;
         Ok(board.snapshot(BoardHead(head)).asserted())
+    }
+
+    /// As the board's commit `rev` held it, its head being the git
+    /// store's revision: a rev that names no commit this clone holds on
+    /// the board's history (as its last fetch left it) is none.
+    fn artifact_at(
+        &self,
+        rev: &BoardHead,
+        key: &ArtifactKey,
+    ) -> Result<Option<BoardArtifact>, BoardStoreError> {
+        let Ok(commit) = object_id(&rev.0) else {
+            return Ok(None);
+        };
+        let on_board = match self.local_tip()? {
+            Some(tip) => self.on_board(&commit, &tip)?,
+            None => false,
+        };
+        match on_board {
+            // Read past the cache, which keeps the head every write reads.
+            true => Ok(self
+                .read_fetching(&commit)?
+                .snapshot(rev.clone())
+                .artifact(key)),
+            false => Ok(None),
+        }
     }
 
     /// Writes `artifacts`, each as its kind's canonical markdown file, on

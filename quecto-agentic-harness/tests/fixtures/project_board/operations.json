@@ -114,13 +114,14 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": null,
         "why": null,
         "done_when": [],
         "links": [],
         "needs_goal": true
-      }
+      },
+      "deprecated": "expected_updated is deprecated and will be removed: pass expected_rev, the rev show gives"
     }
   },
   {
@@ -128,17 +129,17 @@
       "op": "update_draft",
       "task": "epic",
       "title": "Again",
-      "expected_updated": "2026-10-10T10:00:00Z"
+      "expected_rev": "r3"
     },
     "answer": {
       "ok": false,
       "op": "update_draft",
       "error": {
         "code": "stale",
-        "message": "task epic changed since it was read (updated 2026-10-10T10:00:01Z, not 2026-10-10T10:00:00Z); read it again",
+        "message": "task epic changed since it was read at rev r3; read it again",
         "task": "epic",
-        "expected": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z"
+        "expected": "r3",
+        "updated": "2026-10-10T10:00:00Z"
       }
     }
   },
@@ -165,12 +166,12 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
+          "since": "2026-10-10T10:00:00Z",
+          "expires": "2026-10-10T12:00:00Z"
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": "Why.",
         "why": null,
         "done_when": [
@@ -249,12 +250,12 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
+          "since": "2026-10-10T10:00:00Z",
+          "expires": "2026-10-10T12:00:00Z"
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": "Why.",
         "why": null,
         "done_when": [
@@ -266,7 +267,7 @@
         "links": [],
         "needs_goal": false
       },
-      "renew_after": "2026-10-10T11:00:01Z"
+      "renew_after": "2026-10-10T11:00:00Z"
     }
   },
   {
@@ -362,7 +363,7 @@
           7
         ],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T12:30:01Z",
+        "updated": "2026-10-10T12:30:00Z",
         "goal": "Why.",
         "why": null,
         "done_when": [
@@ -430,12 +431,12 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
+          "since": "2026-10-10T10:00:00Z",
+          "expires": "2026-10-10T12:00:00Z"
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -467,14 +468,14 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
+          "since": "2026-10-10T10:00:00Z",
+          "expires": "2026-10-10T12:00:00Z"
         },
         "prs": [
           8
         ],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:02Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -506,12 +507,12 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
+          "since": "2026-10-10T10:00:00Z",
+          "expires": "2026-10-10T12:00:00Z"
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:03Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -562,7 +563,7 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:04Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -592,7 +593,7 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:05Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -655,12 +656,12 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
+          "since": "2026-10-10T10:00:00Z",
+          "expires": "2026-10-10T12:00:00Z"
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -707,7 +708,7 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:02Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -772,7 +773,7 @@
             7
           ],
           "created": "2026-10-10T10:00:00Z",
-          "updated": "2026-10-10T12:30:01Z",
+          "updated": "2026-10-10T12:30:00Z",
           "goal": "Why.",
           "why": null,
           "done_when": [
@@ -797,6 +798,7 @@
       "ok": true,
       "op": "show",
       "head": "r16",
+      "rev": "r16",
       "task": {
         "id": "cli",
         "title": "Board CLI",
@@ -818,7 +820,7 @@
           7
         ],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T12:30:01Z",
+        "updated": "2026-10-10T12:30:00Z",
         "goal": "Why.",
         "why": null,
         "done_when": [
@@ -1181,12 +1183,12 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
+          "since": "2026-10-10T10:00:00Z",
+          "expires": "2026-10-10T12:00:00Z"
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -1452,8 +1454,8 @@
           "email": "ada@example.com"
         },
         "edited_by": null,
-        "created": "2026-10-10T10:00:01Z",
-        "updated": "2026-10-10T10:00:01Z"
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
       }
     }
   },
@@ -1472,7 +1474,7 @@
           ]
         }
       ],
-      "expected_updated": "2026-10-10T10:00:01Z"
+      "expected_rev": "r24"
     },
     "answer": {
       "ok": true,
@@ -1489,8 +1491,8 @@
           "name": "Bob",
           "email": "bob@example.com"
         },
-        "created": "2026-10-10T10:00:01Z",
-        "updated": "2026-10-10T10:00:02Z"
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
       }
     }
   },
@@ -1500,18 +1502,18 @@
       "task": "epic",
       "version": 1,
       "team": null,
-      "expected_updated": "2026-10-10T10:00:00Z"
+      "expected_rev": "r24"
     },
     "answer": {
       "ok": false,
       "op": "edit_plan",
       "error": {
         "code": "rule",
-        "message": "plan version 1 changed since it was read (updated 2026-10-10T10:00:02Z); read it again",
+        "message": "plan version 1 changed since it was read (updated 2026-10-10T10:00:00Z); read it again",
         "rule": {
           "code": "plan_changed",
           "version": 1,
-          "updated": "2026-10-10T10:00:02Z"
+          "updated": "2026-10-10T10:00:00Z"
         }
       }
     }
@@ -1608,6 +1610,7 @@
       "ok": true,
       "op": "show",
       "head": "r25",
+      "rev": "r25",
       "task": {
         "id": "epic",
         "title": "Project boards",
@@ -1620,7 +1623,7 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -1637,7 +1640,7 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "updated": "2026-10-10T10:00:02Z"
+          "updated": "2026-10-10T10:00:00Z"
         }
       ],
       "runs": [],
@@ -1651,7 +1654,7 @@
       "op": "accept_plan",
       "task": "epic",
       "version": 1,
-      "expected_updated": "2026-10-10T10:00:00Z",
+      "expected_rev": "r1",
       "expected_accepted": null
     },
     "answer": {
@@ -1659,11 +1662,11 @@
       "op": "accept_plan",
       "error": {
         "code": "rule",
-        "message": "plan version 1 changed since it was read (updated 2026-10-10T10:00:02Z); read it again",
+        "message": "plan version 1 changed since it was read (updated 2026-10-10T10:00:00Z); read it again",
         "rule": {
           "code": "plan_changed",
           "version": 1,
-          "updated": "2026-10-10T10:00:02Z"
+          "updated": "2026-10-10T10:00:00Z"
         }
       }
     }
@@ -1673,7 +1676,7 @@
       "op": "accept_plan",
       "task": "epic",
       "version": 1,
-      "expected_updated": "2026-10-10T10:00:02Z",
+      "expected_rev": "r25",
       "expected_accepted": null
     },
     "answer": {
@@ -1691,7 +1694,7 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:03Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -1710,8 +1713,8 @@
           "name": "Bob",
           "email": "bob@example.com"
         },
-        "created": "2026-10-10T10:00:01Z",
-        "updated": "2026-10-10T10:00:03Z"
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
       },
       "superseded": null
     }
@@ -1735,8 +1738,8 @@
           "email": "ada@example.com"
         },
         "edited_by": null,
-        "created": "2026-10-10T10:00:03Z",
-        "updated": "2026-10-10T10:00:03Z"
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
       }
     }
   },
@@ -1746,7 +1749,7 @@
       "op": "accept_plan",
       "task": "epic",
       "version": 2,
-      "expected_updated": "2026-10-10T10:00:03Z",
+      "expected_rev": "r27",
       "expected_accepted": 1
     },
     "answer": {
@@ -1764,7 +1767,7 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:04Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -1780,8 +1783,8 @@
           "email": "ada@example.com"
         },
         "edited_by": null,
-        "created": "2026-10-10T10:00:03Z",
-        "updated": "2026-10-10T10:00:04Z"
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
       },
       "superseded": 1
     }
@@ -1824,8 +1827,8 @@
           "email": "ada@example.com"
         },
         "edited_by": null,
-        "created": "2026-10-10T10:00:04Z",
-        "updated": "2026-10-10T10:00:04Z"
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
       }
     }
   },
@@ -1834,7 +1837,7 @@
       "op": "discard_plan",
       "task": "epic",
       "version": 3,
-      "expected_updated": "2026-10-10T10:00:04Z"
+      "expected_rev": "r29"
     },
     "answer": {
       "ok": true,
@@ -1848,8 +1851,8 @@
           "email": "ada@example.com"
         },
         "edited_by": null,
-        "created": "2026-10-10T10:00:04Z",
-        "updated": "2026-10-10T10:00:05Z"
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
       }
     }
   },
@@ -1865,8 +1868,8 @@
       "op": "accept_plan",
       "error": {
         "code": "invalid_request",
-        "message": "expected_updated: is required",
-        "field": "expected_updated",
+        "message": "expected_rev: is required",
+        "field": "expected_rev",
         "problem": "is required"
       }
     }
@@ -1880,6 +1883,7 @@
       "ok": true,
       "op": "show",
       "head": "r30",
+      "rev": "r30",
       "task": {
         "id": "epic",
         "title": "Project boards",
@@ -1892,7 +1896,7 @@
         "claim": null,
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:04Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": null,
         "why": null,
         "done_when": [],
@@ -1915,9 +1919,9 @@
           "name": "Bob",
           "email": "bob@example.com"
         },
-        "accepted_at": "2026-10-10T10:00:04Z",
-        "created": "2026-10-10T10:00:03Z",
-        "updated": "2026-10-10T10:00:04Z"
+        "accepted_at": "2026-10-10T10:00:00Z",
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
       },
       "item_states": [],
       "plans": [
@@ -1928,7 +1932,7 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "updated": "2026-10-10T10:00:04Z"
+          "updated": "2026-10-10T10:00:00Z"
         },
         {
           "version": 2,
@@ -1937,7 +1941,7 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "updated": "2026-10-10T10:00:04Z"
+          "updated": "2026-10-10T10:00:00Z"
         },
         {
           "version": 3,
@@ -1946,7 +1950,7 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "updated": "2026-10-10T10:00:05Z"
+          "updated": "2026-10-10T10:00:00Z"
         }
       ],
       "runs": [],
@@ -1974,8 +1978,8 @@
           "email": "ada@example.com"
         },
         "edited_by": null,
-        "created": "2026-10-10T10:00:05Z",
-        "updated": "2026-10-10T10:00:05Z"
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
       }
     }
   },
@@ -1984,7 +1988,7 @@
       "op": "accept_plan",
       "task": "epic",
       "version": 4,
-      "expected_updated": "2026-10-10T10:00:05Z",
+      "expected_rev": "r31",
       "expected_accepted": 1
     },
     "answer": {
@@ -2229,12 +2233,12 @@
             "name": "Ada",
             "email": "ada@example.com"
           },
-          "since": "2026-10-10T10:00:01Z",
-          "expires": "2026-10-10T12:00:01Z"
+          "since": "2026-10-10T10:00:00Z",
+          "expires": "2026-10-10T12:00:00Z"
         },
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z",
+        "updated": "2026-10-10T10:00:00Z",
         "goal": null,
         "why": null,
         "done_when": [],

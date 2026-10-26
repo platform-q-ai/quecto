@@ -83,13 +83,15 @@ pub struct DraftOf<'a> {
     pub plan: &'a Plan,
 }
 
-/// What an acceptance's caller read (#2481 M4c): the draft's `updated`,
-/// so the content accepted is the content reviewed, and the version the
-/// task named as accepted (`None`: none), so no acceptance the caller did
-/// not see is superseded.
+/// What an acceptance's caller read (#2481 M4c): the draft's `updated`
+/// when the caller pinned the draft by its stamp (deprecated, #2705 B9: a
+/// pin by revision is judged before these rules are asked), so the content
+/// accepted is the content reviewed; and the version the task named as
+/// accepted (`None`: none), so no acceptance the caller did not see is
+/// superseded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AsRead<'a> {
-    pub updated: &'a Timestamp,
+    pub updated: Option<&'a Timestamp>,
     pub accepted: Option<u32>,
 }
 
@@ -236,7 +238,7 @@ fn entered(content: &PlanContent, held: Option<&str>) -> Result<(), BoardRuleErr
 /// superseded. With `expected`, the draft must still be as the caller read
 /// it (its `updated`), so the content accepted is the content reviewed,
 /// and the task must still name the accepted version the caller saw.
-/// The task, both plans and the acceptance share one stamp, later than
+/// The task, both plans and the acceptance share one stamp, no earlier than
 /// each one's last change (a proposer's clock may have run ahead).
 ///
 /// # Errors
@@ -267,7 +269,7 @@ pub fn accept(
         .ok_or(BoardRuleError::UnknownPlanVersion(version))?;
     draft(chosen)?;
     if let Some(read) = expected {
-        as_read(chosen, Some(read.updated))?;
+        as_read(chosen, read.updated)?;
         as_accepted(task, read.accepted)?;
     }
     decides(task, actor, now)?;
@@ -282,11 +284,11 @@ pub fn accept(
     for plan in std::iter::once(chosen).chain(before) {
         when.may_build_on(plan)?;
     }
-    // One stamp, after the task's, the chosen plan's and the superseded
+    // One stamp, no earlier than the task's, the chosen plan's and the superseded
     // plan's last changes.
-    let mut at = stamp(task, now)?;
+    let mut at = stamp(task, now);
     for plan in std::iter::once(chosen).chain(before) {
-        at = after_last(&plan.fields().updated, &at)?;
+        at = after_last(&plan.fields().updated, &at);
     }
     // Never before any of the task's plans within the bound (#2662).
     at = not_before(task, stamps_of(versions, when), &at);
@@ -497,10 +499,10 @@ fn moved(plan: &Plan, state: PlanState, now: &Timestamp) -> Result<Plan, BoardRu
     restamped(next, plan, now)
 }
 
-/// `next`, updated at `now` or a second past `plan`'s own `updated`,
-/// whichever is later, so every change moves it strictly forward.
+/// `next`, updated at `now` or `plan`'s own `updated`, whichever is later,
+/// so no change moves it backwards (#2705 B9: for display alone).
 fn restamped(mut next: PlanFields, plan: &Plan, now: &Timestamp) -> Result<Plan, BoardRuleError> {
-    next.updated = after_last(&plan.fields().updated, now)?;
+    next.updated = after_last(&plan.fields().updated, now);
     Plan::new(next).map_err(BoardRuleError::InvalidPlan)
 }
 

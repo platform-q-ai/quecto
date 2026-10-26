@@ -3,7 +3,7 @@
 //! the fields the edit gives, so a field left out keeps what the board
 //! holds, byte for byte, even after a lost race, and an agent that saw
 //! only part of a long approach never writes back that part. A caller
-//! that read the draft passes the `updated` it read, and a draft changed
+//! that read the draft passes the `rev` it read at (#2705 B9), and a draft changed
 //! since is refused (`plan_changed`), never edited over. Drafts are
 //! anyone's, edited as the store's committer; a done or archived task's
 //! plans are settled. Given text is normalised as it enters
@@ -14,8 +14,9 @@
 use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, owned, task_on, written_plan};
+use super::read_pins::plan_as_read;
 use super::{board_view, plan_text};
-use crate::application::project_board::dto::{PlanEdit, ProjectBoardError};
+use crate::application::project_board::dto::{PlanEdit, ProjectBoardError, ReadPin};
 use crate::application::project_board::ports::{BoardArtifact, BoardClock, ProjectBoardStore};
 use crate::application::project_board::swarm_brief::coordinator_model_named;
 use crate::application::project_board::telemetry::OpFacts;
@@ -103,7 +104,7 @@ impl EditPlan {
                     .iter()
                     .find(|plan| plan.fields().version == edit.version)
                     .ok_or(BoardRuleError::UnknownPlanVersion(edit.version))?;
-                let expected = edit.expected_updated.as_ref();
+                plan_as_read(store, board, plan, edit.expected.as_ref())?;
                 let content = given.applied_to(plan.fields());
                 let edited = edit_draft(
                     DraftOf {
@@ -112,7 +113,7 @@ impl EditPlan {
                         plan,
                     },
                     content,
-                    expected,
+                    edit.expected.as_ref().and_then(ReadPin::deprecated_updated),
                     actor,
                     &Moment::from(when),
                 )?;

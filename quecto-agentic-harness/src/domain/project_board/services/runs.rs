@@ -152,7 +152,7 @@ pub fn end_lost(
     of_task(task, std::slice::from_ref(run))?;
     // A loss is judged by nothing it reports: no success is claimed.
     let Reported { items, cost, .. } = reported;
-    let lost = fold_back(run, plan, RunOutcome::Lost, cost, items, &stamp(task, now)?)?;
+    let lost = fold_back(run, plan, RunOutcome::Lost, cost, items, &stamp(task, now))?;
     debug_assert_eq!(lost.fields().outcome, Some(RunOutcome::Lost));
     Ok(lost)
 }
@@ -232,7 +232,7 @@ pub fn end_held(
     } = reported;
     // Folded first, so a run that has ended, or items the plan does not
     // have, answer as such before the items are judged.
-    let folded = fold_back(run, plan, end.outcome(), cost, items, &stamp(task, now)?)?;
+    let folded = fold_back(run, plan, end.outcome(), cost, items, &stamp(task, now))?;
     match end {
         HeldEnd::Succeeded => {
             let undone = undone_items(plan, &folded.fields().items);

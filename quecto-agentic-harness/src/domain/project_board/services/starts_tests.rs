@@ -87,7 +87,7 @@ fn a_start_claims_a_ready_task_or_works_under_the_starters_own_claim() {
 }
 
 /// The claim, the move and the run share one stamp, as one commit writes
-/// them: the caller's time, or a second past the task's last change. A
+/// them: the caller's time, or the task's last change if later. A
 /// held claim is renewed at that stamp too, so a run never begins with
 /// only seconds of its claim left.
 #[test]
@@ -95,7 +95,7 @@ fn a_start_stamps_its_claim_its_move_and_its_run_alike() {
     for (status, by) in [(Ready, "Bob"), (Claimed, "Ada"), (InProgress, "Ada")] {
         for (written, now, stamped) in [
             ("09:00:00", "10:59:59", "10:59:59"),
-            ("10:30:00", "10:00:00", "10:30:01"),
+            ("10:30:00", "10:00:00", "10:30:00"),
         ] {
             let before = last_written(task(status), &at(written));
             let started = start_at(&before, &[], by, now).unwrap();
@@ -117,10 +117,10 @@ fn a_start_stamps_its_claim_its_move_and_its_run_alike() {
 fn liveness_is_judged_at_the_stamp_on_the_renewed_claim() {
     let lapsing = last_written(task(Claimed), &at("11:00:05"));
     let started = start_at(&lapsing, &[], "Ada", "10:30:00").unwrap();
-    assert_eq!(started.run().fields().started, at("11:00:06"));
+    assert_eq!(started.run().fields().started, at("11:00:05"));
     assert_eq!(
         started.task().fields().claim.as_ref().unwrap().since,
-        at("11:00:06")
+        at("11:00:05")
     );
 }
 

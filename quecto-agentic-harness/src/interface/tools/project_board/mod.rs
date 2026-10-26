@@ -93,13 +93,31 @@ pub fn run_recorded_with(
         text,
         front_end: call.front_end(),
     };
-    match call.executed(operations, read, summaries) {
+    let answer = match call.executed(operations, read, summaries) {
         Ok(answered) => call.answer(&op, &answered.outcome, answered.clock_note),
         Err(error) => {
             let steps = answer::start_steps::refused(&request, &error);
             call.refuse_as_board(&op, &error, steps)
         }
+    };
+    noted_deprecation(&request, answer)
+}
+
+/// What an answer to a request pinned by the deprecated `expected_updated`
+/// says of it (#2705 B9), taken for one more release.
+pub const DEPRECATED_PIN: &str =
+    "expected_updated is deprecated and will be removed: pass expected_rev, the rev show gives";
+
+/// `answer`, saying so ([`DEPRECATED_PIN`], as `deprecated`) when
+/// `request` was pinned by the deprecated `expected_updated`.
+fn noted_deprecation(request: &BoardRequest, mut answer: Value) -> Value {
+    let deprecated = request
+        .pin()
+        .is_some_and(|pin| pin.deprecated_updated().is_some());
+    if let (true, Value::Object(fields)) = (deprecated, &mut answer) {
+        fields.insert("deprecated".into(), Value::String(DEPRECATED_PIN.into()));
     }
+    answer
 }
 
 /// Why `summaries` cannot be asked of `request`: only a listing

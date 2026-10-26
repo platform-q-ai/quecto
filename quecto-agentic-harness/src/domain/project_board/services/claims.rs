@@ -2,26 +2,24 @@
 //! over an expired claim on a task that may hold one.
 //!
 //! **Time.** Each rule is given the caller's clock, `now`. A change is
-//! stamped with [`stamp`], `max(now, task.updated + 1 s)`, a hybrid
-//! logical clock: `updated`, a new claim's `since` and `expires` and an
-//! ended run's `ended` always move forward, and a write from a clock that ran
-//! ahead never locks the task for clients whose clocks are right. Whether a
-//! claim has expired is judged by the caller's real `now`, so a client
-//! whose clock runs fast sees claims expire early, and a claim stamped by
-//! such a clock lasts until its stamped expiry. S1c's write path bounds
-//! both against an outside reading of the current time when one can be
-//! read: it refuses a `now`, or a task `updated`, more than
-//! [`CLOCK_AHEAD_SECONDS`] ahead of it.
+//! stamped with [`stamp`], `max(now, task.updated)`: the board orders its
+//! changes by revision (#2705 B9), so a stamp is for display alone. It is
+//! never pushed past the clock, and never runs backwards, so `updated`, a
+//! new claim's `since` and `expires` and an ended run's `ended` stay
+//! within what the schema holds. Whether a claim has expired is judged by
+//! the caller's real `now`, so a client whose clock runs fast sees claims
+//! expire early, and a claim stamped by such a clock lasts until its
+//! stamped expiry. S1c's write path bounds `now` against an outside
+//! reading of the current time when one can be read: it refuses a `now`
+//! more than [`CLOCK_AHEAD_SECONDS`] ahead of it.
 use super::super::entities::claim::{CLAIM_TTL_SECONDS, Claim, Identity};
 use super::super::entities::task::{Task, TaskFields};
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::telemetry::ClaimFacts;
 use super::super::value_objects::timestamp::Timestamp;
 
-/// The room the strictly-forward stamp needs past the latest time a
-/// write may build on: each change stamps a second past the task it read,
-/// so a run of quick changes from a clock near the bound edges past it,
-/// and the next honest writer must still build on the task.
+/// The room past the latest time a write may build on that a plan, change
+/// or review stamped by a clock near the bound may take.
 pub const STAMP_SLACK_SECONDS: u64 = 30;
 
 /// How far a clock may run ahead of an outside reading of the current
@@ -34,7 +32,7 @@ pub const CLOCK_AHEAD_SECONDS: u64 = 60;
 /// expired claim is renewed too, until someone takes it over.
 pub fn renew(task: &Task, holder: &Identity, now: &Timestamp) -> Result<Task, BoardRuleError> {
     let claim = held_or_lapsed_by(task, holder, now)?;
-    let at = stamp(task, now)?;
+    let at = stamp(task, now);
     let mut next = task.fields().clone();
     next.claim = Some(Claim {
         holder: claim.holder.clone(),
@@ -58,7 +56,7 @@ pub fn take_over(task: &Task, taker: &Identity, now: &Timestamp) -> Result<Task,
     if is_live(claim, now) {
         return Err(BoardRuleError::ClaimLive);
     }
-    let at = stamp(task, now)?;
+    let at = stamp(task, now);
     let mut next = fields.clone();
     next.claim = Some(new_claim(taker, &at)?);
     settle(next, &at)
@@ -170,10 +168,9 @@ pub fn claim_facts(task: &Task, writer: &Identity, now: &Timestamp) -> Option<Cl
 /// Whether something stamped `updated` may be built on, given the
 /// `latest` time an outside reference allows (`None`: no reference, and
 /// nothing is refused): no later than that time plus
-/// [`STAMP_SLACK_SECONDS`], the room the strictly-forward stamp needs.
-/// The bound is inclusive, as the clock's own is. A latest time so late
-/// that adding the slack overflows what the board can spell tightens the
-/// bound to the latest time itself.
+/// [`STAMP_SLACK_SECONDS`]. The bound is inclusive, as the clock's own
+/// is. A latest time so late that adding the slack overflows what the
+/// board can spell tightens the bound to the latest time itself.
 pub fn within_slack(updated: &Timestamp, latest: Option<&Timestamp>) -> bool {
     match latest {
         None => true,
@@ -186,15 +183,11 @@ pub fn within_slack(updated: &Timestamp, latest: Option<&Timestamp>) -> bool {
     }
 }
 
-/// When a change to `task` happens: the caller's `now`, or a second past
-/// the task's own `updated` if the caller's clock reads no later. Every
-/// change moves `updated` strictly forward, so two changes in one second,
-/// or one from a clock running behind, never share a stamp (a caller's
-/// `expected_updated` tells them apart).
-///
-/// # Errors
-/// A task stamped at the last moment the board can spell.
-pub(super) fn stamp(task: &Task, now: &Timestamp) -> Result<Timestamp, BoardRuleError> {
+/// When a change to `task` happens, for display: the caller's `now`, or
+/// the task's own `updated` if the caller's clock reads earlier. No stamp
+/// is pushed past the clock, so two changes in one second share one: the
+/// board's revision, never the stamp, orders them (#2705 B9).
+pub(super) fn stamp(task: &Task, now: &Timestamp) -> Timestamp {
     after_last(&task.fields().updated, now)
 }
 
@@ -220,24 +213,15 @@ pub(super) fn not_before<'a>(
     at
 }
 
-/// When a change to an artifact last changed at `updated` happens: `now`,
-/// or a second past `updated` if `now` reads no later. The one rule the
+/// When a change to an artifact last changed at `updated` happens, for
+/// display: `now`, or `updated` if `now` reads earlier. The one rule the
 /// board's stamps follow (tasks, plans, changes, reviews and
-/// discussions), so each
-/// change moves its `updated` strictly forward.
-///
-/// # Errors
-/// An artifact stamped at the last moment the board can spell.
-pub(super) fn after_last(
-    updated: &Timestamp,
-    now: &Timestamp,
-) -> Result<Timestamp, BoardRuleError> {
-    let next = updated
-        .plus_seconds(1)
-        .map_err(|error| BoardRuleError::Invalid(error.at("updated")))?;
-    let at = now.max(&next).clone();
-    assert!(at > *updated, "a change moves updated strictly forward");
-    Ok(at)
+/// discussions): a stamp never runs backwards and is never pushed past
+/// the clock (#2705 B9: the board's revision orders changes).
+pub(super) fn after_last(updated: &Timestamp, now: &Timestamp) -> Timestamp {
+    let at = now.max(updated).clone();
+    assert!(at >= *updated, "a stamp never runs backwards");
+    at
 }
 
 /// A claim for `holder` from `at` (a [`stamp`]) for two hours.

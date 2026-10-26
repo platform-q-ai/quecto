@@ -125,8 +125,6 @@ pub enum ErrorCode {
     PrStateUnknown,
     /// `reason`.
     PullRequestsUnavailable,
-    /// `task`, `updated`.
-    TaskAhead,
     /// `reference`.
     ClockOutOfRange,
     /// `now`, `reference`.
@@ -195,7 +193,6 @@ impl ErrorCode {
             Self::ClosesCycle => "closes_cycle",
             Self::PrStateUnknown => "pr_state_unknown",
             Self::PullRequestsUnavailable => "pull_requests_unavailable",
-            Self::TaskAhead => "task_ahead",
             Self::ClockOutOfRange => "clock_out_of_range",
             Self::ClockAhead => "clock_ahead",
             Self::Contended => "contended",
@@ -624,13 +621,6 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::PullRequests(PullRequestStatesError::Unavailable(why)) => (
             C::PullRequestsUnavailable,
             fields([("reason", shown_json(why))]),
-        ),
-        E::TaskAhead { id, updated } => (
-            C::TaskAhead,
-            fields([
-                ("task", slug_json(id)),
-                ("updated", json!(updated.as_str())),
-            ]),
         ),
         E::ClockOutOfRange(at) => (
             C::ClockOutOfRange,

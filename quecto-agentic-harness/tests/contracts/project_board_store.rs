@@ -4,8 +4,8 @@
 //! the same checks over two clones of one remote; here they run over the
 //! in-memory store.
 use quecto::application::project_board::ports::{
-    BoardBootstrap, BoardHead, BoardStoreError, BoardWrite, KeepCopy, ProjectBoardStore,
-    SetAsideClear,
+    ArtifactKey, BoardArtifact, BoardBootstrap, BoardHead, BoardStoreError, BoardWrite, KeepCopy,
+    ProjectBoardStore, SetAsideClear,
 };
 use quecto::domain::project_board::entities::claim::Identity;
 use quecto::domain::project_board::entities::task::{Task, TaskFields};
@@ -107,6 +107,30 @@ pub fn check_write_and_read((alice, bob): Clients) {
         tasks(&*alice),
         set(&[task("a", "Renamed"), task("a-b", "Second")])
     );
+}
+
+/// Every revision a read answered keeps its artifacts as they were then
+/// (#2705 B9): what a pin to it is judged against, from any client. A
+/// rev the board never held answers none.
+pub fn check_artifact_at((alice, bob): Clients) {
+    alice.bootstrap().unwrap();
+    let start = alice.read().unwrap().head;
+    let first = written(alice.write_tasks(&start, &[task("a", "First")], "board: add a"));
+    let renamed = written(bob.write_tasks(&first, &[task("a", "Renamed")], "board: rename a"));
+    let key = ArtifactKey::Task(Slug::parse("a").unwrap());
+    // As a pin is judged: after a read of the board as it stands.
+    alice.read().unwrap();
+    let at = |rev: &BoardHead| alice.artifact_at(rev, &key).unwrap();
+    assert_eq!(at(&start), None, "no task a at the bootstrap");
+    assert_eq!(at(&first), Some(BoardArtifact::Task(task("a", "First"))));
+    assert_eq!(
+        at(&renamed),
+        Some(BoardArtifact::Task(task("a", "Renamed")))
+    );
+    assert_eq!(bob.artifact_at(&first, &key).unwrap(), at(&first));
+    for unknown in ["", "0:0", "zz", &"f".repeat(40)] {
+        assert_eq!(at(&BoardHead(unknown.into())), None, "{unknown:?}");
+    }
 }
 
 /// A store's lock races (#2663) only ever grow, and two stores in clones
@@ -473,6 +497,11 @@ fn memory() -> (MemoryBoardStore, Clients) {
 #[test]
 fn the_memory_store_bootstraps_once() {
     check_bootstrap(memory().1);
+}
+
+#[test]
+fn the_memory_store_keeps_each_revisions_artifacts() {
+    check_artifact_at(memory().1);
 }
 
 #[test]

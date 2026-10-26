@@ -246,7 +246,7 @@ pub fn done_without_run(
     // children to be free of work.
     relations_allow(task, Claimed, work.tasks)?;
     relations_allow(task, Archived, work.tasks)?;
-    let at = stamp(task, now)?;
+    let at = stamp(task, now);
     let mut next = task.fields().clone();
     next.status = Done;
     next.resolution = Some(Resolution::DoneWithoutRun);
@@ -351,7 +351,7 @@ pub fn move_with_reason(
     }
     may_move_with(task, runs, to).map_err(|error| run_ends_it(from, to, error))?;
     relations_allow(task, to, tasks)?;
-    let at = stamp(task, now)?;
+    let at = stamp(task, now);
     let mut next = task.fields().clone();
     next.status = to;
     next.resolution = resolved(to, next.resolution, !next.superseded_by.is_empty());
@@ -602,7 +602,7 @@ pub(super) fn finish(
     now: &Timestamp,
 ) -> Result<(Completed, Timestamp), BoardRuleError> {
     let fields = task.fields();
-    let at = stamp(task, now)?;
+    let at = stamp(task, now);
     let open = open_of(task, runs)?;
     let run = open.map(|run| lost_at(run, &at)).transpose()?;
     assert_eq!(

@@ -125,8 +125,8 @@ fn a_batch_of_messages_is_added_to_an_open_discussion() {
     .unwrap();
     assert_eq!(
         late.fields().updated,
-        at("09:10:01"),
-        "a second past its last change"
+        at("09:10:00"),
+        "its last change's stamp: never backwards"
     );
     let ahead = append(
         &discussion,
@@ -222,7 +222,7 @@ fn a_discussion_is_linked_to_one_task_once() {
     let about = task(TaskStatus::Ready);
     let linked = link(&discussion, &about, &when("09:00:00")).unwrap();
     assert_eq!(linked.fields().task, Some(about.fields().id.clone()));
-    assert_eq!(linked.fields().updated, at("09:10:01"));
+    assert_eq!(linked.fields().updated, at("09:10:00"));
     assert_eq!(
         link(&linked, &about, &when("10:00:00")),
         Err(BoardRuleError::NoEdit)
@@ -248,7 +248,7 @@ fn a_discussion_is_linked_to_one_task_once() {
 fn a_closed_discussion_takes_no_message_and_is_closed_once() {
     let closed = close(&begun(), &when("09:00:00")).unwrap();
     assert_eq!(closed.fields().state, DiscussionState::Closed);
-    assert_eq!(closed.fields().updated, at("09:10:01"));
+    assert_eq!(closed.fields().updated, at("09:10:00"));
     let refused = Err(BoardRuleError::DiscussionClosed(id()));
     assert_eq!(
         append(

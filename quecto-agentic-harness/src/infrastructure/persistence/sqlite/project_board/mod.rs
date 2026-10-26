@@ -62,6 +62,27 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
         let (head, root) = storage::current(&tx)?;
         Ok(self.board(&tx, &root)?.snapshot(head))
     }
+    /// As the revision named `rev` held it: a rev no revision of this
+    /// board names (any other text, too) is none.
+    fn artifact_at(
+        &self,
+        rev: &BoardHead,
+        key: &ArtifactKey,
+    ) -> Result<Option<BoardArtifact>, BoardStoreError> {
+        let mut c = self.connection.lock().map_err(unavailable)?;
+        let tx = storage::Scope::begin(&mut c, false)?;
+        let root: Option<String> = tx
+            .query_row("SELECT root FROM revisions WHERE head=?1", [&rev.0], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(unavailable)?;
+        let Some(root) = root else {
+            return Ok(None);
+        };
+        let board = self.board(&tx, &object_id(&root)?)?;
+        Ok(board.snapshot(rev.clone()).artifact(key))
+    }
     fn bootstrap(&self) -> Result<BoardBootstrap, BoardStoreError> {
         use crate::infrastructure::persistence::project_board::{
             board_tree::{FORMAT, FORMAT_FILE},

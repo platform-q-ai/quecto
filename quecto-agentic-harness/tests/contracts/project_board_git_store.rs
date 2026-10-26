@@ -1,10 +1,11 @@
 //! The project board store's contract, run against the git store: two
 //! clones of one bare remote, each its own client.
 use super::project_board_store::{
-    Clients, check_bootstrap, check_bootstrap_race, check_carried_set_aside, check_clear_set_aside,
-    check_committed_as_writer, check_compare_and_swap, check_invalid_writes, check_lock_races,
-    check_quarantine, check_refused, check_unchanged_write, check_write_after_lost_and_refused,
-    check_write_and_read, check_write_before_bootstrap, check_writer,
+    Clients, check_artifact_at, check_bootstrap, check_bootstrap_race, check_carried_set_aside,
+    check_clear_set_aside, check_committed_as_writer, check_compare_and_swap, check_invalid_writes,
+    check_lock_races, check_quarantine, check_refused, check_unchanged_write,
+    check_write_after_lost_and_refused, check_write_and_read, check_write_before_bootstrap,
+    check_writer,
 };
 use quecto::domain::project_board::entities::claim::Identity;
 use quecto::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
@@ -241,6 +242,11 @@ fn the_git_store_counts_lock_races_only_when_it_meets_one() {
 }
 
 #[test]
+fn the_git_store_keeps_each_revisions_artifacts() {
+    check_artifact_at(Remote::new().clients());
+}
+
+#[test]
 fn the_git_store_writes_and_reads_back() {
     check_write_and_read(Remote::new().clients());
 }
@@ -401,7 +407,9 @@ fn the_git_store_takes_a_plan_proposed_then_patched() {
             approach: None,
             items: Some(vec![item("schema"), item("api")]),
             team: None,
-            expected_updated: Some(proposed.fields().updated.clone()),
+            expected: Some(quecto::application::project_board::dto::ReadPin::Updated(
+                proposed.fields().updated.clone(),
+            )),
         })
         .unwrap();
     assert_eq!(remote.object("tasks/board-store.md"), task_file);
@@ -476,7 +484,9 @@ fn the_git_store_takes_an_acceptance_of_three_files_in_one_commit() {
                       seen: Option<u32>| PlanAcceptance {
         task: id.clone(),
         version: plan.fields().version,
-        expected_updated: plan.fields().updated.clone(),
+        expected: quecto::application::project_board::dto::ReadPin::Updated(
+            plan.fields().updated.clone(),
+        ),
         expected_accepted: seen,
     };
     accept.execute(&acceptance(&first, None)).unwrap();

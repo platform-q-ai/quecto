@@ -93,7 +93,7 @@ pub fn task_after_end(
         fields.resolution.is_none() && fields.reason.is_none(),
         "a held task is unresolved and keeps no reason"
     );
-    let at = stamp(task, now)?;
+    let at = stamp(task, now);
     let mut next = fields.clone();
     next.status = to;
     next.claim = claim;
@@ -124,7 +124,7 @@ pub fn task_after_undo(
             }
             let mut next = task.fields().clone();
             next.status = from;
-            let restored = settle(next, &stamp(task, now)?)?;
+            let restored = settle(next, &stamp(task, now))?;
             debug_assert!(restored.fields().claim == task.fields().claim);
             Ok(Some(restored))
         }

@@ -229,6 +229,17 @@ fn a_complete_with_no_host_needs_one_only_for_pull_requests() {
 struct PlanTwice(MemoryBoardStore);
 
 impl crate::application::project_board::ports::ProjectBoardStore for PlanTwice {
+    fn artifact_at(
+        &self,
+        rev: &crate::application::project_board::ports::BoardHead,
+        key: &crate::application::project_board::ports::ArtifactKey,
+    ) -> Result<
+        Option<crate::application::project_board::ports::BoardArtifact>,
+        crate::application::project_board::ports::BoardStoreError,
+    > {
+        self.0.artifact_at(rev, key)
+    }
+
     fn read(
         &self,
     ) -> Result<
@@ -393,7 +404,7 @@ mod noted {
             description: Some("## Goal\nPlain.\n\n## Done when\n- [ ] Done".into()),
             parent: None,
             depends_on: None,
-            expected_updated: None,
+            expected: None,
             entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
         });
         let (edited, facts) = noted(&ops, &edit);
@@ -416,7 +427,7 @@ mod noted {
             description: None,
             parent: Some(None),
             depends_on: None,
-            expected_updated: None,
+            expected: None,
             entry: crate::domain::project_board::entities::task_parts::Entry::Sectioned,
         });
         let (_, facts) = noted(&ops, &untitled);
@@ -460,11 +471,11 @@ mod noted {
             ..facts
         };
         let (_, linked) = noted(&ops, &BoardRequest::Change(a.clone(), BoardOp::AddPr(8)));
-        // Claimed at 10:00:01 (a stamp a second past the create), read at
-        // 10:00:00 by this set clock: held for no time, never less (#2662).
+        // Claimed at 10:00:00 (the create's own second, #2705 B9), read at
+        // 10:00:00 by this set clock: held for no time, its whole lease left.
         let claim = ClaimFacts {
             held_s: 0,
-            left_s: 7201,
+            left_s: 7200,
             holder_is_writer: true,
         };
         let want = OpFacts {

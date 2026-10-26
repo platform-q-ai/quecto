@@ -163,16 +163,24 @@ another writer, or moved by one while it held it, is a race this clone lost, nev
 The write's own push is then judged as any other, and a race it lost is counted
 in `attempts` and `races_lost`; each fetch again is counted in its `lock_races`.
 
-Every change stamps what it writes with the writer's clock, or a second past the
-artifact's own `updated` if that clock reads no later, and never before its task's
-`updated`. A plan's change (an acceptance too) is stamped no earlier than any
+The board orders its changes by revision (#2705 B9): a stamp is for display.
+Every change stamps what it writes with the writer's clock, or the artifact's own
+`updated` if that clock reads earlier, and never before its task's `updated`; no
+stamp is pushed past the clock, so two changes in one second share one. A plan's change (an acceptance too) is stamped no earlier than any
 plan of its task, and a change's no earlier than any change of its task, each
 within the outside time's bound (one stamped past it, by a hand edit or a clock
 that ran ahead, is left out). So, kind by kind, a task's own stamps never run
 backwards, and neither do its plans' or its changes'; a write of the task itself
 (a move, a renewal) is stamped from the task alone, and may read earlier than a
-plan or change written just before it. A quick run of changes may stamp a second
-or so ahead of the wall clock.
+plan or change written just before it.
+
+A caller pins a change to what it read with `expected_rev`, the `rev` that `show`
+answers (the board's revision it read at: the git store's commit, a board
+server's `<epoch>:<revision>`). The pin holds while the artifact it pins is as the
+board held it at that revision, whatever else the board took since; a rev the
+board never held never holds. `expected_updated`, the artifact's stamp, is still
+taken for one release: its answer carries a `deprecated` note, and a request gives
+one pin or the other, never both.
 
 Board text (a title, a line of prose such as a description or a plan's approach,
 and a text cell such as a task item's title or criterion) holds every backslash as
@@ -445,15 +453,15 @@ coordinator.
   with `handoff_from` and `items_next` with `items_from` until no `_next` is
   given: text or a list of items the tool's 64 KiB cap cut must never be
   written back as if whole.
-- `edit_plan(task, version, approach, handoff, items, team, expected_updated)`
+- `edit_plan(task, version, approach, handoff, items, team, expected_rev)`
   edits a draft as a patch. A field left out keeps what the draft holds, byte
   for byte. A field given replaces the draft's whole: `items` is the whole list
   of task items, `team` the whole team (`null` takes it away), `approach` the
   whole approach, and `handoff` the whole handoff (`""` takes it away). So an
   agent changes the task items without sending the approach again, which may
   be longer than one `show` answer gives. An edit names at least one of
-  `approach`, `handoff`, `items` and `team`. With `expected_updated`, the
-  draft's `updated` as it was read, a draft changed since is refused
+  `approach`, `handoff`, `items` and `team`. With `expected_rev`, the
+  `rev` the draft was read at, a draft changed since is refused
   (`plan_changed`), never edited over. Without it, a write that loses a race to
   another writer applies the same patch to the draft as that writer left it.
 
@@ -571,14 +579,14 @@ it say "has a handoff (N characters)" without reading the text.
 
 ## Accepting or discarding a plan
 
-A draft becomes the task's plan by `accept_plan(task, version, expected_updated,
+A draft becomes the task's plan by `accept_plan(task, version, expected_rev,
 expected_accepted)` (#2481 M4c). One commit writes the task, naming the version
 (`accepted_plan`), the plan, `accepted` with who accepted it and when, and the
 version accepted before, now `superseded`; all three share one stamp. Accepting
 an older draft over a newer accepted version is a rollback: the newer one is
 superseded. A superseded plan is never accepted again: propose it anew.
 
-Both pins are required. `expected_updated` is the `updated` that `show(task,
+Both pins are required. `expected_rev` is the `rev` that `show(task,
 version)` gave, so what is accepted is what was read: a draft changed since is
 refused (`plan_changed`), also when an edit lands while the acceptance is being
 written. `expected_accepted` is the task's `accepted_plan` as it was read
@@ -588,8 +596,8 @@ did not see: a task that names another version now is refused
 rollback is a knowing choice. The answer gives the `task`, the `plan` and the
 version it `superseded` (`null` when none was accepted).
 
-`discard_plan(task, version, expected_updated)` discards a draft: it is kept, as
-`discarded`, and only it is written. `expected_updated` is optional, as for
+`discard_plan(task, version, expected_rev)` discards a draft: it is kept, as
+`discarded`, and only it is written. `expected_rev` is optional, as for
 `edit_plan`. The answer gives the `plan`.
 
 On a task someone holds, only the holder of a live claim accepts or discards
@@ -724,7 +732,7 @@ holder only once its runs have ended. Its claim holder ends it, in this order:
    `swarm_control` `close` on the coordinator. A cancelled run needs no close.
 3. Stop the coordinator with `agent_cmd kill`. Until it has stopped, `end_run`
    answers `run_live`, naming the coordinator's `agent` to kill.
-4. `end_run(task, run, outcome, expected_updated)` with `succeeded`, `stopped`
+4. `end_run(task, run, outcome, expected_rev)` with `succeeded`, `stopped`
    or `failed`. The end moves the task (see "Where a run's end leaves its
    task", below).
 5. Renew the claim before it lapses: it lasts 2 hours, and nothing renews it
@@ -869,7 +877,7 @@ task has no claim; whoever finds the claim expired takes the task over with
 is known of it, as a stop does (#2657): its task items, owners, evidence and
 cost from its swarm's kept board, or, with none kept, each task item as todo
 and its cost unknown. (A run ended as lost by the completion that makes its
-task done records none.) `expected_updated` is optional: when given, the task
+task done records none.) `expected_rev` is optional: when given, the task
 must still be as it was read (`stale`).
 
 ### A session that ends with its run open

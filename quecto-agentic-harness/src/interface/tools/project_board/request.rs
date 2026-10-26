@@ -5,10 +5,10 @@
 use serde_json::{Map, Value};
 
 use crate::application::project_board::dto::{
-    BoardOp, DraftUpdate, NewBoardTask, NewBoardTaskStatus,
+    BoardOp, DraftUpdate, NewBoardTask, NewBoardTaskStatus, ReadPin,
 };
 use crate::application::project_board::operations::{BoardRequest, ListFilter, PlanPage, PlanView};
-use crate::application::project_board::ports::KeepCopy;
+use crate::application::project_board::ports::{BoardHead, KeepCopy};
 use crate::domain::project_board::entities::task_parts::EntryPolicy;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{FaultKind, RequestFault, StaticKind};
@@ -118,6 +118,8 @@ pub enum Kind {
     Lines,
     /// A time as the board spells it (RFC 3339, UTC, to the second).
     Timestamp,
+    /// A board revision, as `show` answers it in `rev` (#2705 B9).
+    Rev,
     /// A task status.
     Status,
     /// `draft` or `ready`.
@@ -235,6 +237,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("links", Kind::Lines),
             optional("parent", Kind::OptionalSlug),
             optional("depends_on", Kind::Slugs),
+            optional("expected_rev", Kind::Rev),
             optional("expected_updated", Kind::Timestamp),
         ],
     ),
@@ -263,6 +266,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("approach", Kind::Text),
             optional("items", Kind::PlanItems),
             optional("team", Kind::Team),
+            optional("expected_rev", Kind::Rev),
             optional("expected_updated", Kind::Timestamp),
             optional("handoff", Kind::Text),
         ],
@@ -272,7 +276,8 @@ pub const OPS: &[(&str, &[Field])] = &[
         &[
             TASK,
             required("version", Kind::Version),
-            required("expected_updated", Kind::Timestamp),
+            optional("expected_rev", Kind::Rev),
+            optional("expected_updated", Kind::Timestamp),
             required("expected_accepted", Kind::AcceptedVersion),
         ],
     ),
@@ -281,6 +286,7 @@ pub const OPS: &[(&str, &[Field])] = &[
         &[
             TASK,
             required("version", Kind::Version),
+            optional("expected_rev", Kind::Rev),
             optional("expected_updated", Kind::Timestamp),
         ],
     ),
@@ -291,6 +297,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             TASK,
             required("run", Kind::Run),
             required("outcome", Kind::RunEnd),
+            optional("expected_rev", Kind::Rev),
             optional("expected_updated", Kind::Timestamp),
             optional("stop", Kind::RunStop),
         ],
@@ -435,6 +442,22 @@ impl Read<'_> {
             .transpose()
     }
 
+    /// The pin the request gives to what its caller read (#2705 B9):
+    /// `expected_rev`, or the deprecated `expected_updated`, never both.
+    fn pin(&self) -> Result<Option<ReadPin>, RequestError> {
+        let rev = self.value(EXPECTED_REV).map(rev).transpose()?;
+        match (rev, self.timestamp(EXPECTED_UPDATED)?) {
+            (Some(_), Some(_)) => Err(RequestError::of(
+                EXPECTED_UPDATED,
+                "is deprecated and not taken beside expected_rev: give expected_rev alone",
+                FaultKind::InvalidValue,
+            )),
+            (Some(rev), None) => Ok(Some(ReadPin::Rev(rev))),
+            (None, Some(updated)) => Ok(Some(ReadPin::Updated(updated))),
+            (None, None) => Ok(None),
+        }
+    }
+
     /// An offset, or none when it is absent or `null`.
     fn offset(&self, name: &str) -> Result<Option<usize>, RequestError> {
         let value = match self.value(name) {
@@ -465,6 +488,36 @@ impl Read<'_> {
 }
 
 /// A time as the board spells it.
+/// The field a pin by revision is given in (#2705 B9).
+const EXPECTED_REV: &str = "expected_rev";
+/// The deprecated field a pin by stamp is given in.
+const EXPECTED_UPDATED: &str = "expected_updated";
+/// The most bytes a rev takes: a git commit id (64 hex at most), or a
+/// board server's `<epoch>:<revision>`, fits well within it.
+const MAX_REV_BYTES: usize = 80;
+
+/// A board revision as `show` answers it, `rev` (an allowlist): lowercase
+/// letters, digits and `:`, at most [`MAX_REV_BYTES`].
+fn rev(value: &Value) -> Result<BoardHead, RequestError> {
+    let spelt = |text: &&str| {
+        (1..=MAX_REV_BYTES).contains(&text.len())
+            && text
+                .bytes()
+                .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase() || b == b':')
+    };
+    value
+        .as_str()
+        .filter(spelt)
+        .map(|text| BoardHead(text.to_string()))
+        .ok_or_else(|| {
+            RequestError::of(
+                EXPECTED_REV,
+                "must be the rev show gave you",
+                misfit(value.is_string()),
+            )
+        })
+}
+
 fn timestamp(name: &str, value: &Value) -> Result<Timestamp, RequestError> {
     value
         .as_str()
@@ -705,7 +758,7 @@ fn update_draft(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         Some(Value::Null) => Some(None),
         Some(value) => Some(Some(slug("parent", value)?)),
     };
-    let expected_updated = read.timestamp("expected_updated")?;
+    let expected = read.pin()?;
     let (described, entry) = description::description(read)?;
     let update = DraftUpdate {
         id: read.task()?,
@@ -713,7 +766,7 @@ fn update_draft(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         description: described,
         parent,
         depends_on: read.slugs("depends_on")?,
-        expected_updated,
+        expected,
         entry,
     };
     let sets_something = update.title.is_some()

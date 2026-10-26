@@ -113,11 +113,12 @@ fn a_named_version_is_paged() {
     );
 }
 
-/// Review round 2: a page names the version's `updated`, so a reader
-/// paging through a draft sees when another edit landed between its
-/// pages, and reads again rather than mixing two edits.
+/// Review round 2: a page names the board's `rev` (#2705 B9: two edits in
+/// one second share a stamp), so a reader paging through a draft sees when
+/// another edit landed between its pages, and reads again rather than
+/// mixing two edits.
 #[test]
-fn a_page_after_an_edit_names_the_new_updated() {
+fn a_page_after_an_edit_names_the_new_rev() {
     let (_store, ada, bob) = drafted();
     let first = ok(
         &bob,
@@ -131,7 +132,7 @@ fn a_page_after_an_edit_names_the_new_updated() {
         &bob,
         json!({"op": "show", "task": "a", "version": 2, "items_from": 0}),
     );
-    let (was, now) = (&first["plan"]["updated"], &next["plan"]["updated"]);
+    let (was, now) = (&first["rev"], &next["rev"]);
     assert!(was.is_string() && now.is_string(), "{first} {next}");
     assert_ne!(was, now, "the edit between the pages shows");
     assert_eq!(next["plan"]["items"], json!([item("other")]));

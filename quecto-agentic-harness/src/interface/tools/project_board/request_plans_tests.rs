@@ -1,5 +1,6 @@
 //! #2481 M4b: a plan's ops read their nested task items and team by
 //! allowlist, and a fault names its path, recorded as its schema field.
+use crate::application::project_board::dto::ReadPin;
 use serde_json::{Value, json};
 
 use super::super::RequestError;
@@ -124,7 +125,7 @@ fn an_edit_reads_only_the_fields_it_gives() {
         approach: None,
         items: None,
         team: None,
-        expected_updated: None,
+        expected: None,
     };
     assert_eq!(
         edit(json!({"items": [], "expected_updated": "2026-10-10T09:00:00Z"})),
@@ -132,7 +133,9 @@ fn an_edit_reads_only_the_fields_it_gives() {
             handoff: None,
             entry: PlanEntry::Capped,
             items: Some(vec![]),
-            expected_updated: Some(Timestamp::parse("2026-10-10T09:00:00Z").unwrap()),
+            expected: Some(ReadPin::Updated(
+                Timestamp::parse("2026-10-10T09:00:00Z").unwrap()
+            )),
             ..none.clone()
         }))
     );
@@ -340,7 +343,7 @@ fn an_acceptance_requires_the_updated_it_read_and_a_discard_may_give_one() {
         Ok(BoardRequest::AcceptPlan(PlanAcceptance {
             task: slug("a"),
             version: 2,
-            expected_updated: read.clone(),
+            expected: ReadPin::Updated(read.clone()),
             expected_accepted: Some(1),
         }))
     );
@@ -362,11 +365,7 @@ fn an_acceptance_requires_the_updated_it_read_and_a_discard_may_give_one() {
                                 "expected_accepted": null}));
     assert_eq!(
         fault(unread),
-        (
-            "expected_updated".to_string(),
-            "expected_updated",
-            "missing"
-        )
+        ("expected_rev".to_string(), "expected_rev", "missing")
     );
     let unseen = refused(json!({"op": "accept_plan", "task": "a", "version": 2,
                                 "expected_updated": "2026-10-10T09:00:00Z"}));
@@ -393,7 +392,7 @@ fn an_acceptance_requires_the_updated_it_read_and_a_discard_may_give_one() {
         Ok(BoardRequest::DiscardPlan(PlanDiscard {
             task: slug("a"),
             version: 1,
-            expected_updated: None,
+            expected: None,
         }))
     );
     let zero = refused(json!({"op": "discard_plan", "task": "a", "version": 0}));

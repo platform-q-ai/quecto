@@ -60,6 +60,7 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
             | Kind::OptionalSlug
             | Kind::Text
             | Kind::Timestamp
+            | Kind::Rev
             | Kind::Status
             | Kind::NewStatus
             | Kind::TaskKind

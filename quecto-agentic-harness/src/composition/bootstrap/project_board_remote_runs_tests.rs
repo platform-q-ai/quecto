@@ -364,7 +364,7 @@ fn a_remote_session_owes_the_runs_its_starts_left_running() {
         task: Slug::parse("a").unwrap(),
         run: 1,
         outcome: RunEndOutcome::Stopped,
-        expected_updated: None,
+        expected: None,
         stop: None,
     };
     assert_eq!(operations.left_runs(), Ok(vec![owed]));

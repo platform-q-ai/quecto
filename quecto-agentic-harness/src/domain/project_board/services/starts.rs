@@ -89,7 +89,7 @@ pub fn start(
     now: &Timestamp,
 ) -> Result<Started, BoardRuleError> {
     let from = task.fields().status;
-    let at = stamp(task, now)?;
+    let at = stamp(task, now);
     // The task's fields once held by `actor` at the stamp: a new claim on
     // a ready task (set with the move, as a ready task holds none), or
     // the holder's renewed one.
