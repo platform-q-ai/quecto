@@ -13,7 +13,7 @@ use quecto::application::project_board::ports::feed::{
 };
 use quecto::domain::project_board::value_objects::telemetry::BoardId;
 use quecto::infrastructure::http::board_service::client::BoardServiceClient;
-use quecto::infrastructure::http::board_watch::{RemoteBoardWatch, WatchTiming};
+use quecto::infrastructure::http::board_watch::{MAX_BUSY_TRIES, RemoteBoardWatch, WatchTiming};
 
 const BOARD: &str = "0123456789abcdef";
 
@@ -233,23 +233,70 @@ fn a_busy_server_is_tried_again() {
 #[test]
 fn a_server_busy_past_its_bound_ends_the_watch() {
     let replies = (0..200).map(|_| busy()).collect();
-    let (_dir, watch, heads) = canned(replies, Duration::from_millis(400));
+    let (_dir, watch, heads) = canned(replies, Duration::from_secs(2));
     let began = Instant::now();
     let watched = watch.watch(Some(0), &mut |_| WatchFlow::Continue);
     let why = watched.expect_err("bounded");
     assert!(why.contains("busy"), "{why}");
-    assert!(
-        began.elapsed() >= Duration::from_millis(400),
-        "{:?}",
-        began.elapsed()
-    );
-    assert!(
-        began.elapsed() < Duration::from_secs(3),
-        "{:?}",
-        began.elapsed()
-    );
+    let took = began.elapsed();
+    assert!(took >= Duration::from_secs(2), "{took:?}");
+    assert!(took < Duration::from_secs(6), "{took:?}");
     assert!(
         heads.try_iter().count() > 5,
         "busy answers are counted apart"
+    );
+}
+
+/// A stream of `body` cut at a chunk boundary: its connection closes with
+/// no last chunk.
+fn cut(body: &str) -> Vec<u8> {
+    let mut reply = sse(body);
+    reply.truncate(reply.len() - b"0\r\n\r\n".len());
+    reply
+}
+
+/// Review (#2757 round 2, M1): a connection closed cleanly at a chunk
+/// boundary, with no last chunk, is cut in transport: the watch opens the
+/// stream again, never ends.
+#[test]
+fn a_stream_cut_at_a_chunk_boundary_is_opened_again() {
+    let replies = vec![cut(&revision(1)), sse(&revision(2))];
+    let (_dir, watch, heads) = canned(replies, Duration::from_secs(1));
+    let (told, watched) = watched(&watch, Some(0), 2);
+    assert_eq!(watched, Ok(()));
+    assert_eq!(revisions(&told), vec![1, 2]);
+    let _ = heads.recv_timeout(Duration::from_secs(5)).expect("a head");
+    let second = heads.recv_timeout(Duration::from_secs(5)).expect("a head");
+    assert!(second.contains("last-event-id: 1\r\n"), "{second}");
+}
+
+/// Review (#2757 round 2, M2): a stream's `retry: 0` never makes a busy
+/// server spin: the backoff is at least 100 ms, so busy past its bound ends
+/// the watch after a few paused tries.
+#[test]
+fn a_zero_retry_never_spins_on_a_busy_server() {
+    let mut replies = vec![sse(&format!("retry: 0\n\n{}", revision(1)))];
+    replies.extend((0..200).map(|_| busy()));
+    let (_dir, watch, heads) = canned(replies, Duration::from_millis(500));
+    let began = Instant::now();
+    let watched = watch.watch(Some(0), &mut |_| WatchFlow::Continue);
+    let why = watched.expect_err("bounded");
+    assert!(why.contains("busy"), "{why}");
+    let took = began.elapsed();
+    let paused = took >= Duration::from_millis(400) && took < Duration::from_secs(3);
+    assert!(paused, "{took:?}");
+    let tries = heads.try_iter().count();
+    assert!(
+        (3..=10).contains(&tries),
+        "paused tries, not a spin: {tries}"
+    );
+}
+
+/// Review (#2757 round 2, M2): busy tries are capped in number too.
+#[test]
+fn busy_tries_are_capped() {
+    assert!(
+        MAX_BUSY_TRIES >= 10 && MAX_BUSY_TRIES <= 64,
+        "{MAX_BUSY_TRIES}"
     );
 }

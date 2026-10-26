@@ -30,6 +30,8 @@ pub const ATTEMPTS: u32 = 5;
 pub const BUSY_FOR: Duration = Duration::from_secs(75);
 /// The longest pause between tries of a busy server.
 pub const MAX_BACKOFF: Duration = Duration::from_secs(8);
+/// The most tries of a busy server, however short its pauses.
+pub const MAX_BUSY_TRIES: u32 = 0;
 
 /// A watch's times: how long a read may wait, the pause before a stream is
 /// opened again (until a stream's `retry:` says otherwise), and how long a

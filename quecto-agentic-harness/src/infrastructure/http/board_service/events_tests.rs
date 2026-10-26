@@ -191,13 +191,14 @@ fn an_event_with_no_data_is_not_dispatched() {
 }
 
 /// Review (#2757 L3): a stream's `retry:` is the reader's reconnection
-/// delay, up to a minute; one not a number is ignored.
+/// delay, 100 ms to a minute; one not a number is ignored.
 #[test]
 fn retry_sets_the_reconnection_delay() {
     for (body, retry) in [
         ("retry: 2500\n\n", Some(Duration::from_millis(2_500))),
         ("retry: soon\n\n", None),
         ("retry: 999999999\n\n", Some(MAX_RETRY)),
+        ("retry: 0\n\n", Some(MIN_RETRY)),
     ] {
         let Ok(Opened::Stream(mut reader)) = opened(chunked(body, 5)).0 else {
             panic!("a stream opens");

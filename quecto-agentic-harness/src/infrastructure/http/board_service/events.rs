@@ -17,6 +17,8 @@ use super::limits::MAX_HEAD_BYTES;
 pub const MAX_EVENT_BYTES: usize = 8 * 1024;
 /// The longest reconnection delay a stream's `retry:` is taken at.
 pub const MAX_RETRY: Duration = Duration::from_secs(60);
+/// The shortest, so no `retry:` makes a reader spin.
+pub const MIN_RETRY: Duration = Duration::from_millis(0);
 
 /// One event as the stream sent it: its id, its name, its data lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
