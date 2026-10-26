@@ -70,6 +70,7 @@ fn test_composition() -> CliComposition {
         board_history: crate::composition::bootstrap::project_board_history::build_history_cli,
         board_backup: crate::composition::bootstrap::board_backup::build_backup_cli,
         board_fence: crate::composition::bootstrap::board_fence::build_fence_cli,
+        board_watch: crate::composition::bootstrap::project_board_remote::build_board_watch,
         board_history_import:
             crate::composition::bootstrap::project_board_history::build_history_import_cli,
         claude_member: crate::composition::claude_member::build_claude_member_handles,

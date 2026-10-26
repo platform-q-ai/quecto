@@ -2,6 +2,7 @@
 //! socket and TCP, served by hyper behind allowlist limits. The listener knows no
 //! board: it hands each admitted request to the handler it was given.
 pub mod client;
+pub mod events;
 pub mod limits;
 pub mod listener;
 mod replies;

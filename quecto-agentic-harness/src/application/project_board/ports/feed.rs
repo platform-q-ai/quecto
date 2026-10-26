@@ -3,6 +3,7 @@
 //! artifact's text, a message, an identity or a principal: a reader that
 //! wants the change reads the board.
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::BoardStoreError;
 
@@ -102,4 +103,63 @@ pub enum FeedEvent {
 pub struct Told {
     pub id: u64,
     pub event: FeedEvent,
+}
+
+impl Told {
+    /// An id as a reader sends it back (`Last-Event-ID`) or a stream tells
+    /// it: 1 to 20 ASCII digits that fit a `u64`, nothing else.
+    pub fn parse_id(text: &str) -> Option<u64> {
+        let digits = (1..=20).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_digit());
+        digits.then(|| text.parse().ok()).flatten()
+    }
+}
+
+/// Whether a watcher goes on after an event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchFlow {
+    Continue,
+    Stop,
+}
+
+/// What one read of an open stream gave: an event and its id (the cursor
+/// to reopen from), the stream's end (or a cut in transport: reopen), or a
+/// stream this client does not read (malformed: the watch ends, saying why).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamRead {
+    Event { id: u64, event: FeedEvent },
+    Ended,
+    Malformed(String),
+}
+
+/// Port: one open stream of a board server's feed.
+pub trait BoardStream: Send {
+    /// The next read; it waits at most the adapter's idle time.
+    fn read(&mut self) -> StreamRead;
+    /// The reconnection delay the stream set (its `retry:`), if any.
+    fn retry(&self) -> Option<Duration>;
+}
+
+/// Why a stream did not open: the server is busy (a place frees soon: try
+/// again), refused it (the watch ends), or could not be reached (try
+/// again, a bounded number of times). Each says why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpenRefused {
+    Busy(String),
+    Refused(String),
+    Unreachable(String),
+}
+
+/// Port: a board server's feed, opened as a stream from a cursor.
+pub trait BoardStreams: Send + Sync {
+    /// The stream of the events after `after` (none: from now).
+    ///
+    /// # Errors
+    /// Why it did not open.
+    fn open(&self, after: Option<u64>) -> Result<Box<dyn BoardStream>, OpenRefused>;
+}
+
+/// Port: how a watch waits between tries (a thread's sleep; a recorder in
+/// tests).
+pub trait WatchPauses: Send + Sync {
+    fn pause(&self, how_long: Duration);
 }

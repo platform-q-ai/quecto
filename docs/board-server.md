@@ -362,6 +362,46 @@ Both routes are reads: over TCP any held token may ask them, on the Unix
 socket the server's own user. An id that is not this server's board is 404
 `board`.
 
+**`quecto board watch [--url <url>] [--board-id <hex>] [--repo <path>]
+[--remote <name>] [--after <revision>] [--count <n>]`** prints the feed,
+one JSON line per event (the event's data as above), for scripts and the
+Pocket relay's tests. The server, its token and the board's id are found
+as for `quecto board --url`.
+- It starts from `--after` (else now). When the stream ends or is cut, it
+  opens it again from the last id it printed, after the stream's `retry:`
+  (100 ms to 60 s; else 1 s), so each revision is printed once; after a `reset` it reads on
+  from the reset's `after`.
+- It prints each revision, each reset, and each change of epoch. An epoch
+  the watch already printed, told again as a stream reopens, is not
+  printed again, so an idle watch prints nothing as it reconnects.
+  `--count <n>` counts these lines.
+- It exits 0 after `--count` lines, or once its output is closed: a write
+  that fails with a broken pipe, or, before each reopen, standard output
+  with no reader left (so a watch whose reader has gone does not reconnect
+  for ever). It exits 1 when it cannot start, when the server refuses it
+  (any refusal but a 503 `busy`: a 503 `unavailable` or `clock_unsynced`
+  too), when a stream is malformed (its error said), when its output fails
+  any other way (`board watch: output failed: <error>`), or when 5 opens
+  in a row fail or end with no event. With no `--count`, output that is
+  not written as it goes (a run whose output is returned whole) stops at
+  1 MiB, exit 1; with `--count`, it stops at 16 MiB, also exit 1, if the
+  count is not reached first (a count is no memory bound by itself).
+- A board server restart: the stream is cut, and the watch opens it again
+  each second (the stream's `retry:`). A server back within those 5 opens,
+  about 5 s, is resumed from the last id with no gap. One that is down for
+  longer ends the watch, exit 1, saying why (`... (5 times in a row)`).
+  This is as designed: a script that should outlive a long restart runs
+  the watch again with `--after` its last revision.
+- A 503 `busy` (that code alone) is tried again, with a backoff doubling from 100 ms (or the
+  stream's `retry:`, never less) to 8 s, for up to 75 s (past a
+  connection's 60 s lifetime, by which a held stream gives its place back)
+  and at most 32 tries; the last pause is only what is left of the 75 s.
+  Busy answers are counted apart from failed opens.
+- A connection closed mid-stream (even cleanly, at a chunk boundary, with
+  no last chunk) is a cut: the stream is opened again.
+- A read waits at most 45 s (three missed 15 s pings) before the stream
+  is opened again.
+
 ## Error replies
 
 Every error reply the server makes is JSON, `{"error": "<why>", "code":

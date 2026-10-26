@@ -1,10 +1,7 @@
 //! The change feed end to end (epic #2705 B10): a real server on a temp
-//! socket over its SQLite board, written through its op route and its
-//! event stream read raw off the socket. Acceptance (feed p95 at most
-//! 100 ms) is measured here and held to a bound CI load cannot flake.
-use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+//! socket over its SQLite board, written through its op route and watched
+//! through the client's reader. Acceptance (feed p95 at most 100 ms) is
+//! measured here and held to a bound CI load cannot flake.
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -13,18 +10,24 @@ use serde_json::{Value, json};
 
 use super::tests::{Synced, environment, seeded};
 use super::*;
+use crate::application::project_board::ports::feed::{FeedEvent, WatchFlow};
+use crate::application::project_board::use_cases::{WatchBoard, WatchTiming};
 use crate::infrastructure::http::board_service::client::{BoardServiceClient, READ_REPLY};
+use crate::infrastructure::http::board_service::events::Opened;
 use crate::infrastructure::http::board_service::limits::Method;
-use crate::interface::cli::board_server::serve::{Started, serve};
+use crate::infrastructure::http::board_service::listener::{
+    ConnectionLimits, Listener, ServiceParts, bind, serve,
+};
+use crate::infrastructure::http::board_watch::{RemoteBoardStreams, ThreadPauses, decoded};
+use crate::interface::cli::board_server::routes::BoardRoutes;
 
 /// A server serving `handles` on a temp socket until the sender is used.
 struct Served {
     _dir: tempfile::TempDir,
-    socket: PathBuf,
     client: BoardServiceClient,
     board: BoardId,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
-    thread: Option<std::thread::JoinHandle<Result<(), String>>>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Drop for Served {
@@ -34,33 +37,50 @@ impl Drop for Served {
     }
 }
 
-fn served(handles: BoardServerHandles) -> Served {
+/// Serves `handles` on a temp socket, its connections held to `limits`.
+fn served(handles: BoardServerHandles, limits: ConnectionLimits) -> Served {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("board").join("board.sock");
+    let board = handles.serve.board().clone();
+    let listener = Listener::Unix(bind(&socket).unwrap());
+    let routes =
+        BoardRoutes::new(handles.serve, handles.access, handles.operations).with_feed(handles.feed);
+    let parts = ServiceParts {
+        handler: Arc::new(routes),
+        peers: handles.peers,
+        uid: handles.uid,
+        limits,
+    };
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-    let (ready, started) = mpsc::channel();
-    let at = socket.clone();
     let thread = std::thread::spawn(move || {
-        serve(
-            handles,
-            &at,
-            &[],
-            Instant::now(),
-            || async {
-                let _ = stopped.await;
-            },
-            |started: &Started| ready.send(started.board.clone()).unwrap(),
-        )
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let stop = async {
+            let _ = stopped.await;
+        };
+        runtime
+            .block_on(serve(vec![listener], parts, stop))
+            .unwrap();
+        runtime.shutdown_timeout(Duration::from_secs(1));
     });
-    let board = started.recv_timeout(Duration::from_secs(10)).unwrap();
     Served {
         _dir: dir,
         client: BoardServiceClient::unix(&socket),
-        socket,
         board,
         stop: Some(stop),
         thread: Some(thread),
     }
+}
+
+/// A server over a seeded clone's board, its connections held to `limits`.
+fn board_server(limits: ConnectionLimits) -> (tempfile::TempDir, Served) {
+    let (dir, work) = seeded();
+    let handles =
+        build_board_server_with(&environment(&dir, &work, "origin"), Arc::new(Synced)).unwrap();
+    (dir, served(handles, limits))
 }
 
 /// Runs `request` on the server as a write: its answer.
@@ -80,6 +100,14 @@ fn write(served: &Served, request: Value) -> Value {
     answer
 }
 
+/// A task created on the server.
+fn create(served: &Served, task: &str, title: &str) {
+    write(
+        served,
+        json!({"op": "create", "task": task, "title": title, "status": "ready"}),
+    );
+}
+
 /// The board's newest revision, from `/v1/status`.
 fn tip(served: &Served) -> u64 {
     let reply = served
@@ -91,72 +119,38 @@ fn tip(served: &Served) -> u64 {
     head.split_once(':').unwrap().1.parse().unwrap()
 }
 
-/// One SSE event read off the wire: its id, its name, its data line.
-#[derive(Debug, Clone)]
-struct Frame {
-    id: u64,
-    event: String,
-    data: String,
-}
-
-/// The whole frames in `text` from `from` on (`id`, `event`, `data`, a
-/// blank line), and where the next one starts. Chunk framing lies between
-/// frames, never inside one: each chunk is whole frames.
-fn frames(text: &str, mut from: usize) -> (Vec<Frame>, usize) {
-    let mut found = Vec::new();
-    while let Some(at) = text[from..].find("id: ").map(|at| at + from) {
-        let rest = &text[at..];
-        let Some(end) = rest.find("\n\n") else { break };
-        let lines: Vec<&str> = rest[..end].lines().collect();
-        if let [id, event, data] = lines.as_slice() {
-            found.push(Frame {
-                id: id.trim_start_matches("id: ").parse().unwrap(),
-                event: event.trim_start_matches("event: ").to_string(),
-                data: data.trim_start_matches("data: ").to_string(),
-            });
-        }
-        from = at + end + 2;
-    }
-    (found, from)
-}
-
-/// The revisions a stream told, each with when it came.
+/// The revisions a watch saw, each with when it came.
 type Revisions = mpsc::Receiver<(u64, Instant)>;
-/// A stream's reader thread: every frame it read.
-type Reader = std::thread::JoinHandle<Vec<Frame>>;
+/// A watch's thread, and how its watch ended.
+type Watcher = std::thread::JoinHandle<Result<(), String>>;
 
-/// A raw stream from `Last-Event-ID: after`, read on its own thread until
-/// `stop` is set or the server closes it.
-fn streaming(served: &Served, after: u64, stop: Arc<AtomicBool>) -> (Revisions, Reader) {
-    let path = format!("/v1/boards/{}/events", served.board.as_str());
-    let mut stream = UnixStream::connect(&served.socket).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_millis(50)))
-        .unwrap();
-    let head = format!("GET {path} HTTP/1.1\r\nHost: board\r\nLast-Event-ID: {after}\r\n\r\n");
-    stream.write_all(head.as_bytes()).unwrap();
+/// A watch on its own thread from `after`, sending each revision and when
+/// it came, until `stop` is set (checked at each event).
+fn watching(served: &Served, after: Option<u64>, stop: Arc<AtomicBool>) -> (Revisions, Watcher) {
+    let timing = WatchTiming {
+        pause: Duration::from_millis(50),
+        busy_for: Duration::from_secs(5),
+        ..WatchTiming::PRODUCTION
+    };
+    let streams = RemoteBoardStreams::idling(
+        served.client.clone(),
+        served.board.clone(),
+        Duration::from_secs(20),
+    );
+    let watch = WatchBoard::new(Box::new(streams), Arc::new(ThreadPauses), timing);
     let (seen, revisions) = mpsc::channel();
-    let reader = std::thread::spawn(move || {
-        let (mut text, mut from, mut all) = (String::new(), 0, Vec::new());
-        let mut buf = [0u8; 8192];
-        while !stop.load(Ordering::SeqCst) {
-            match stream.read(&mut buf) {
-                Ok(0) => break,
-                Ok(read) => text.push_str(&String::from_utf8_lossy(&buf[..read])),
-                Err(_) => continue,
+    let thread = std::thread::spawn(move || {
+        watch.watch(after, &mut || true, &mut |event| {
+            if let FeedEvent::Revision(revision) = event {
+                let _ = seen.send((revision.revision, Instant::now()));
             }
-            let (found, next) = frames(&text, from);
-            from = next;
-            for frame in found {
-                if frame.event == "revision" {
-                    let _ = seen.send((frame.id, Instant::now()));
-                }
-                all.push(frame);
+            match stop.load(Ordering::SeqCst) {
+                true => WatchFlow::Stop,
+                false => WatchFlow::Continue,
             }
-        }
-        all
+        })
     });
-    (revisions, reader)
+    (revisions, thread)
 }
 
 /// Waits for revision `want`: when it came; every revision before it is
@@ -173,49 +167,22 @@ fn until(revisions: &Revisions, want: u64, seen: &mut Vec<u64>) -> Instant {
     }
 }
 
-/// Whether `frame` is of the feed's allowlisted schema, its id the cursor.
-fn allowlisted(frame: &Frame) -> bool {
-    let data: Value = serde_json::from_str(&frame.data).unwrap_or(Value::Null);
-    let Some(fields) = data.as_object() else {
-        return false;
-    };
-    let mut keys: Vec<&str> = fields.keys().map(String::as_str).collect();
-    keys.sort_unstable();
-    let number = |key: &str| fields.get(key).and_then(Value::as_u64);
-    match (frame.event.as_str(), data["kind"].as_str(), keys.as_slice()) {
-        ("epoch", Some("epoch"), ["epoch", "kind"]) => number("epoch").is_some(),
-        ("revision", Some("revision"), ["epoch", "kind", "revision"]) => {
-            number("epoch").is_some() && number("revision") == Some(frame.id)
-        }
-        ("reset", Some("reset"), ["after", "kind"]) => number("after") == Some(frame.id),
-        (_, _, _) => false,
-    }
-}
-
-/// Red tests (plan B10), end to end: a stream resumed after a cut is
-/// gap-free with each revision once, no event carries the task's text, and
-/// the feed is fast: from a write's reply (its commit is before it) to its
-/// event, the median is at most 100 ms (the plan's target, as a p95, was
-/// measured at 36 to 40 ms) and the p95 at most 250 ms, a bound CI load
-/// cannot flake.
+/// Red tests (plan B10), end to end: a resumed watch is gap-free with
+/// each revision once, no event carries the task's text, and the feed is
+/// fast: from a write's reply (its commit is before it) to its event, the
+/// median is at most 100 ms (the plan's target, as a p95) and the p95 at
+/// most 250 ms, a bound CI load cannot flake.
 #[test]
 fn the_feed_is_gap_free_textless_and_fast_end_to_end() {
-    let (dir, work) = seeded();
-    let handles =
-        build_board_server_with(&environment(&dir, &work, "origin"), Arc::new(Synced)).unwrap();
-    let served = served(handles);
+    let (_dir, served) = board_server(ConnectionLimits::PRODUCTION);
     write(&served, json!({"op": "bootstrap"}));
     let stop = Arc::new(AtomicBool::new(false));
-    let (revisions, reader) = streaming(&served, 0, Arc::clone(&stop));
+    let (revisions, watcher) = watching(&served, Some(0), Arc::clone(&stop));
     let mut seen = Vec::new();
     until(&revisions, tip(&served), &mut seen);
     let mut latencies = Vec::new();
     for at in 0..40 {
-        write(
-            &served,
-            json!({"op": "create", "task": format!("t{at}"),
-            "title": format!("SECRET-TITLE-{at}"), "status": "ready"}),
-        );
+        create(&served, &format!("t{at}"), &format!("SECRET-TITLE-{at}"));
         let answered = Instant::now();
         let came = until(&revisions, tip(&served), &mut seen);
         latencies.push(came.saturating_duration_since(answered));
@@ -232,26 +199,72 @@ fn the_feed_is_gap_free_textless_and_fast_end_to_end() {
         p95 <= Duration::from_millis(250),
         "feed p95 {p95:?}: {latencies:?}"
     );
-    // The stream is cut; more lands while no one reads; it resumes.
+    // The watch is cut; more lands while no one watches; it resumes.
     stop.store(true, Ordering::SeqCst);
-    let first = reader.join().unwrap();
+    create(&served, "cut", "Cut");
+    watcher.join().unwrap().unwrap();
+    while let Ok((revision, _)) = revisions.try_recv() {
+        seen.push(revision);
+    }
     let last = *seen.last().unwrap();
     for at in 0..5 {
-        write(
-            &served,
-            json!({"op": "create", "task": format!("r{at}"), "title": "R",
-            "status": "ready"}),
-        );
+        create(&served, &format!("r{at}"), "R");
     }
-    let stop = Arc::new(AtomicBool::new(false));
-    let (resumed, reader) = streaming(&served, last, Arc::clone(&stop));
+    let (resumed, thread) = watching(&served, Some(last), Arc::new(AtomicBool::new(false)));
     until(&resumed, tip(&served), &mut seen);
-    stop.store(true, Ordering::SeqCst);
-    let second = reader.join().unwrap();
     let every: Vec<u64> = (1..=tip(&served)).collect();
     assert_eq!(seen, every, "every revision once, in order");
-    for frame in first.iter().chain(&second) {
-        assert!(!frame.data.contains("SECRET"), "{frame:?}");
-        assert!(allowlisted(frame), "off the schema: {frame:?}");
+    drop(resumed);
+    // The raw stream from the start: every event of the schema, no text.
+    let path = format!("/v1/boards/{}/events", served.board.as_str());
+    let opened = served
+        .client
+        .open_events(&path, Some(0), Duration::from_secs(5));
+    let Ok(Opened::Stream(mut reader)) = opened else {
+        panic!("the stream opens");
+    };
+    let mut told = 0;
+    while told < tip(&served) {
+        let event = reader.next_event().unwrap().unwrap();
+        assert!(!format!("{event:?}").contains("SECRET"), "{event:?}");
+        let (_, event) = decoded(&event).unwrap_or_else(|| panic!("off the schema: {event:?}"));
+        if let FeedEvent::Revision(_) = event {
+            told += 1;
+        }
     }
+    drop(reader);
+    drop(served);
+    // The resumed watch ends as its server goes.
+    let _ = thread.join();
+}
+
+/// Review (#2757 L4): against a real server whose connections live 600
+/// ms, each stream ends with its connection and the watch opens it again
+/// by itself, every revision handed on once across the reconnects.
+#[test]
+fn a_watch_reconnects_by_itself_as_each_stream_ends() {
+    let limits = ConnectionLimits {
+        lifetime: Duration::from_millis(600),
+        ..ConnectionLimits::PRODUCTION
+    };
+    let (_dir, served) = board_server(limits);
+    write(&served, json!({"op": "bootstrap"}));
+    let (revisions, watcher) = watching(&served, Some(0), Arc::new(AtomicBool::new(false)));
+    let mut seen = Vec::new();
+    until(&revisions, tip(&served), &mut seen);
+    let began = Instant::now();
+    for at in 0..4 {
+        std::thread::sleep(Duration::from_millis(500));
+        create(&served, &format!("w{at}"), "W");
+    }
+    until(&revisions, tip(&served), &mut seen);
+    assert!(
+        began.elapsed() > Duration::from_millis(1_800),
+        "several lifetimes passed"
+    );
+    let every: Vec<u64> = (1..=tip(&served)).collect();
+    assert_eq!(seen, every, "every revision once, across the reconnects");
+    drop(revisions);
+    drop(served);
+    let _ = watcher.join();
 }

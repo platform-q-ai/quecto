@@ -30,6 +30,9 @@
 //! with none, the board is the clone's, as before. The server writes as
 //! `QUECTO_BOARD_COMMITTER` when it is set, else as the clone's committer.
 //!
+//! `quecto board watch` (#2705 B10) prints a board server's change feed,
+//! one JSON line per event ([`watch`]).
+//!
 //! `--summary` (no value; `list`, `list_ready` and `list_takeable` only,
 //! with flags or `--input` alike) gives each listed task its `summary`:
 //! where its plan and latest run stand, read from one whole read of the
@@ -100,6 +103,8 @@ use crate::interface::tools::project_board::recording::{BoardCall, CLIENT_VARIAB
 use crate::interface::tools::project_board::request::{RequestError, fields_of};
 use crate::interface::tools::project_board::site::{self, BoardSite};
 use crate::interface::tools::project_board::{MAX_REQUEST_BYTES, command_line, json};
+
+pub mod watch;
 
 pub use crate::interface::tools::project_board::site::{
     Access, BuildError, KnownLocation, ProjectBoardEnvironment, ProjectBoardHandles,
@@ -179,7 +184,8 @@ fn client(named: Option<&OsStr>) -> Client {
 
 const USAGE: &str = "usage: quecto board <op> [--<field> <value>]... [--input <json>|-] \
                      [--repo <path>] [--remote <name>] [--board-id <hex>] \
-                     [--remote-url <url>] [--url <board server>] [--json] [--summary]\n";
+                     [--remote-url <url>] [--url <board server>] [--json] [--summary]\n       \
+                     quecto board watch --url <board server> [--after <revision>] [--count <n>]\n";
 
 /// The most bytes `--remote-url` takes.
 const MAX_REMOTE_URL_BYTES: usize = 4096;
@@ -417,6 +423,10 @@ pub(crate) fn cmd_board(
     ) {
         stderr.push_str(USAGE);
         return i32::from(args.is_empty());
+    }
+    // A watch is no op of the board's: it reads the server's change feed.
+    if let Some(("watch", rest)) = args.split_first().map(|(op, rest)| (op.as_str(), rest)) {
+        return watch::run(ctx, rest, stdout, stderr);
     }
     let recording = ctx
         .board_cli_recording

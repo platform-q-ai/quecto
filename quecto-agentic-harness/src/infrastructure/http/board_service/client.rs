@@ -113,6 +113,14 @@ impl BoardServiceClient {
         &self.endpoint
     }
 
+    /// The token's `Authorization` header line, or nothing on the socket.
+    pub(super) fn authorization(&self) -> String {
+        match &self.token {
+            Some(BearerToken(token)) => format!("authorization: Bearer {token}\r\n"),
+            None => String::new(),
+        }
+    }
+
     /// `method path` with the JSON `body`: the reply within `reply`.
     ///
     /// # Errors
@@ -130,10 +138,7 @@ impl BoardServiceClient {
                 "{path:?} is not a path of visible ASCII starting with /"
             )));
         }
-        let authorization = match &self.token {
-            Some(BearerToken(token)) => format!("authorization: Bearer {token}\r\n"),
-            None => String::new(),
-        };
+        let authorization = self.authorization();
         let head = format!(
             "{} {path} HTTP/1.1\r\nhost: board\r\nconnection: close\r\n\
              content-type: application/json\r\ncontent-length: {}\r\n{authorization}\r\n",
