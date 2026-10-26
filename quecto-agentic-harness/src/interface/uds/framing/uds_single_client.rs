@@ -14,8 +14,6 @@ use crate::interface::uds::controllers::{uds_cancel, uds_ext_protocol, uds_exten
 pub(in crate::interface) struct SingleClientArgs<'a> {
     pub(in crate::interface) agent: AgentLoopImpl,
     pub(in crate::interface) turn_session: crate::interface::cli::TurnSessionBuilder,
-    pub(in crate::interface) parent_outcome:
-        Option<crate::interface::cli::uds_session::ParentOutcome>,
     pub(in crate::interface) workspace: &'a std::path::Path,
     pub(in crate::interface) messages: Vec<Message>,
     pub(in crate::interface) model: String,
@@ -37,7 +35,6 @@ pub(in crate::interface) async fn single_client_loop(
     let SingleClientArgs {
         mut agent,
         turn_session,
-        parent_outcome,
         workspace,
         mut messages,
         model,
@@ -66,7 +63,6 @@ pub(in crate::interface) async fn single_client_loop(
     super::super::controllers::uds::inject_system_prompt(&mut messages, &system_prompt);
 
     let mut agent_session = turn_session(model);
-    agent_session.bind_parent_outcome(parent_outcome);
     agent_session.set_admission_warnings(&admission_slots);
     agent_session.set_startup_warnings(&catalogue.startup_warnings);
     agent_session.observe_runtime(catalogue.runtime_store.clone());

@@ -267,7 +267,6 @@ async fn single_client_socket_override_serves_get_state() {
             );
             single_client_loop(
                 SingleClientArgs {
-                    parent_outcome: None,
                     agent: make_agent(),
                     turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
                     workspace: dir.path(),
@@ -328,10 +327,11 @@ async fn single_client_socket_override_serves_get_state() {
     assert_eq!(code, 0);
 }
 
-/// Review #2762 (6): the single-client loop binds a trusted root's runtime,
-/// so a guarded harness there advertises what it offers.
+/// Review #2762 (6): the single-client loop is a test rig production never
+/// takes (`cmd_agent_uds` passes no `socket_override`), so no runtime is
+/// built for it and it stays legacy: it advertises no capability.
 #[tokio::test]
-async fn review_2762_single_client_binds_the_turn_outcome_runtime() {
+async fn review_2762_single_client_path_stays_legacy() {
     let dir = tempfile::tempdir().unwrap();
     let (client_std, server_std) = std::os::unix::net::UnixStream::pair().unwrap();
     let task = std::thread::spawn(move || {
@@ -350,9 +350,6 @@ async fn review_2762_single_client_binds_the_turn_outcome_runtime() {
                 SingleClientArgs {
                     agent: make_agent(),
                     turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
-                    parent_outcome: Some(
-                        crate::composition::bootstrap::agent_turn::build_parent_outcome(),
-                    ),
                     workspace: dir.path(),
                     messages: Vec::new(),
                     model: "stub".into(),
@@ -389,7 +386,7 @@ async fn review_2762_single_client_binds_the_turn_outcome_runtime() {
         state = serde_json::from_str(&line).unwrap();
     }
     assert_eq!(state["command"], "get_state");
-    assert_eq!(state["data"]["turnOutcomeVersion"], 1, "{state}");
+    assert!(state["data"].get("turnOutcomeVersion").is_none(), "{state}");
     drop(write_half);
     drop(lines);
     let code = tokio::time::timeout(std::time::Duration::from_secs(2), async move {
@@ -658,7 +655,6 @@ fn the_single_client_loop_waits_for_a_launch_rollback_at_exit() {
             );
             single_client_loop(
                 SingleClientArgs {
-                    parent_outcome: None,
                     agent: make_agent(),
                     turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
                     workspace: dir.path(),
