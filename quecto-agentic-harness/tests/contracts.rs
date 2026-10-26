@@ -257,6 +257,8 @@ mod refresh_redaction_port;
 mod refreshable_catalogue_source;
 #[path = "contracts/reload_runtime.rs"]
 mod reload_runtime;
+#[path = "contracts/replica_clock.rs"]
+mod replica_clock;
 #[path = "contracts/replica_store.rs"]
 mod replica_store;
 #[path = "contracts/replication_log.rs"]

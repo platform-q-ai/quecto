@@ -54,6 +54,15 @@ impl BoardFeed for Revisions {
     }
 }
 
+/// A change feed of `tip` revisions, for another module's routes.
+pub(in crate::interface::cli::board_server) fn feed_of(tip: u64) -> FollowBoard {
+    let feed = Revisions {
+        tip,
+        limits: Mutex::default(),
+    };
+    FollowBoard::new(Arc::new(feed) as Arc<dyn BoardFeed>)
+}
+
 fn routes(tip: u64) -> (BoardRoutes, Arc<Revisions>) {
     let feed = Arc::new(Revisions {
         tip,

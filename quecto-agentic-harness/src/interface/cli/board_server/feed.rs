@@ -220,4 +220,4 @@ fn refused(code: &str, why: &str) -> ServiceReply {
 
 #[cfg(test)]
 #[path = "feed_tests.rs"]
-mod tests;
+pub(super) mod tests;

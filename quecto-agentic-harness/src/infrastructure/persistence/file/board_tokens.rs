@@ -32,8 +32,12 @@ use crate::infrastructure::persistence::file::state_dir::{
 pub const TOKENS_FILE: &str = "tokens.json";
 const TOKENS_NAME: &CStr = c"tokens.json";
 
-/// The digest of the token set a follower last took from its primary,
-/// beside the tokens (B11).
+/// A follower's own tokens, kept as they are set aside (B11): never over
+/// an earlier set, which is kept as `-1` .. `-99` after it.
+pub const PRE_FOLLOW_FILE: &str = "tokens.json.pre-follow";
+
+/// The digest of the token set a follower last took from its primary (or
+/// set aside its own for), beside the tokens (B11).
 pub const FOLLOWED_FILE: &str = "tokens.json.followed";
 const FOLLOWED_NAME: &CStr = c"tokens.json.followed";
 
@@ -417,6 +421,72 @@ impl FollowTokens for FileBoardTokens {
             held: rows.len(),
             copied: copied.contains(&set_digest(&rows)),
         })
+    }
+
+    fn set_aside(&self) -> Result<(), TokenError> {
+        let mut kept = Vec::new();
+        if let Some((file, _)) = self.opened()? {
+            (file.take(MAX_FILE_BYTES).read_to_end(&mut kept))
+                .map_err(|error| self.unavailable(error))?;
+        }
+        let kept = match kept.is_empty() {
+            true => b"[]\n".to_vec(),
+            false => kept,
+        };
+        self.still_locked()?;
+        self.kept_aside(|file| file.write_all(&kept))?;
+        self.changing(|held| {
+            held.clear();
+            Ok(())
+        })?;
+        self.keep_copied(&[set_digest(&[])])
+    }
+}
+
+impl FileBoardTokens {
+    /// Keeps what `write` writes as the first free of `.pre-follow`, `-1`
+    /// .. `-99`: written whole to a temporary file, then linked in (never
+    /// over a name taken, a link included), so a failed write leaves none.
+    fn kept_aside(
+        &self,
+        write: impl FnOnce(&mut fs::File) -> io::Result<()>,
+    ) -> Result<(), TokenError> {
+        let temp = CString::new(format!(".{TOKENS_FILE}.{}.tmp", uuid::Uuid::new_v4()));
+        let temp = temp.map_err(|error| self.unavailable(error))?;
+        let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL;
+        let written = self.open_at(&temp, flags).and_then(|mut file| {
+            write(&mut file)?;
+            file.sync_all()
+        });
+        let linked = written.and_then(|()| self.linked_aside(&temp));
+        // The temporary file goes whether or not it was linked in.
+        // SAFETY: a name in the directory this adapter holds open.
+        let _ = unsafe { libc::unlinkat(self.lock.as_raw_fd(), temp.as_ptr(), 0) };
+        linked
+            .and_then(|()| self.lock.sync_all())
+            .map_err(|error| self.unavailable(error))
+    }
+
+    /// Links `temp` in as the first free name of the set aside.
+    fn linked_aside(&self, temp: &CStr) -> io::Result<()> {
+        let dir = self.lock.as_raw_fd();
+        for n in 0..100 {
+            let name = match n {
+                0 => PRE_FOLLOW_FILE.to_owned(),
+                n => format!("{PRE_FOLLOW_FILE}-{n}"),
+            };
+            let name = CString::new(name)?;
+            // SAFETY: names in the directory this adapter holds open.
+            match unsafe { libc::linkat(dir, temp.as_ptr(), dir, name.as_ptr(), 0) } {
+                0 => return Ok(()),
+                _ => match io::Error::last_os_error() {
+                    error if error.kind() == io::ErrorKind::AlreadyExists => {}
+                    error => return Err(error),
+                },
+            }
+        }
+        let full = format!("100 {PRE_FOLLOW_FILE} files are kept: move them");
+        Err(io::Error::other(full))
     }
 }
 

@@ -204,8 +204,8 @@ pub trait ReplicaStore: Send + Sync {
 }
 
 /// A server's tokens as it starts to follow (B11): how many it holds, and
-/// whether they are the set it last took from a primary, not tokens of its
-/// own.
+/// whether they are the set it last took from a primary (or the empty set
+/// it holds once its own were set aside), not tokens of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FollowedTokens {
     pub held: usize,
@@ -219,6 +219,14 @@ pub trait FollowTokens: Send + Sync {
     /// # Errors
     /// The store failed.
     fn followed(&self) -> Result<FollowedTokens, TokenError>;
+
+    /// Keeps the tokens held aside (beside them), then holds none, as a
+    /// follower's until its primary's are copied: the tokens set aside are
+    /// refused from now on.
+    ///
+    /// # Errors
+    /// The store failed; nothing is set aside.
+    fn set_aside(&self) -> Result<(), TokenError>;
 }
 
 /// Port: the server's admin rows (its device tokens' digests): a primary
@@ -275,4 +283,10 @@ pub struct ReplicaStatus {
     pub applied: u64,
     pub primary_head: Option<u64>,
     pub state: ReplicaState,
+}
+
+/// Port: a monotonic clock a follower times how long it has been stalled
+/// by (B11c): the time since some fixed moment, never going back.
+pub trait ReplicaClock: Send + Sync {
+    fn now(&self) -> std::time::Duration;
 }

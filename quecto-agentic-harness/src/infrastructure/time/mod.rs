@@ -9,6 +9,7 @@ pub mod auth_clock;
 pub mod board_clock;
 pub mod kernel_time_sync;
 pub mod remote_time;
+pub mod replica_clock;
 
 /// Return the current UTC time as seconds since the Unix epoch.
 pub fn unix_timestamp_secs() -> i64 {

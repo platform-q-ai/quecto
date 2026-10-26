@@ -156,6 +156,24 @@ impl BoardRoutes {
         }
     }
 
+    /// A follower's refusal of a device's request while its copy is not
+    /// kept current: 503 `standby_stale`. Its status (which says why) and
+    /// time, and the Unix socket, are served still; its batches are not, so
+    /// a follower chained to it stalls too.
+    fn stale(&self, route: Route, transport: Transport) -> Option<ServiceReply> {
+        match (route, transport, self.serve.serves_devices()) {
+            (Route::Status | Route::Time, _, _) | (_, Transport::Local, _) | (_, _, true) => None,
+            (_, Transport::Tcp, false) => {
+                let primary = self.standby.as_deref().unwrap_or_default();
+                let primary = redact_secrets(&redact_url_userinfo(primary));
+                let why = "this standby's copy is not kept current (it is stalled, diverged, or \
+                           not yet caught up): read its primary";
+                let body = json!({"error": why, "code": "standby_stale", "primary": primary});
+                Some(ServiceReply::json(503, &body))
+            }
+        }
+    }
+
     /// A follower's refusal of a write: 409 `standby`, naming its primary.
     fn refused_standby(primary: &str) -> ServiceReply {
         let primary = redact_secrets(&redact_url_userinfo(primary));
@@ -303,6 +321,9 @@ impl BoardRoutes {
         if let (Some(primary), false) = (&self.standby, read_only) {
             return Self::refused_standby(primary);
         }
+        if let Some(stale) = self.stale(route, request.transport) {
+            return stale;
+        }
         match (route, request.method) {
             (Route::Op, _) => self.op(request, principal),
             (Route::Replicate, _) => match (self.served(&request.path), &self.replication) {
@@ -320,20 +341,28 @@ impl BoardRoutes {
             // or a future front end, which is told to read the feed as a stream.
             (Route::Events, _) => coded(400, "stream", "the change feed is read as a stream"),
             (Route::Status, _) => read(self.serve.status().map(|status| {
-                let mut body = json!({
-                    "role": status.role.as_str(),
-                    "board": status.board.as_str(),
-                    "head": status.head.map(|head| head.0),
-                });
+                // Whole on the socket, or to a device while the copy is kept
+                // current; else the least: role, replication state, primary.
+                let whole = match (request.transport, self.serve.serves_devices()) {
+                    (Transport::Local, _) | (Transport::Tcp, true) => true,
+                    (Transport::Tcp, false) => false,
+                };
+                let mut body = json!({ "role": status.role.as_str() });
+                if whole {
+                    body["board"] = json!(status.board.as_str());
+                    body["head"] = json!(status.head.map(|head| head.0));
+                }
                 if let Some(replica) = status.replica {
                     let primary = redact_secrets(&redact_url_userinfo(&replica.primary));
-                    body["replication"] = json!({
-                        "primary": primary,
-                        "applied": replica.applied,
-                        "primary_head": replica.primary_head,
-                        "state": replica.state.as_str(),
-                        "reason": replica.state.reason().map(redact_secrets),
-                    });
+                    let state = replica.state.as_str();
+                    body["replication"] = json!({ "primary": primary, "state": state });
+                    if whole {
+                        let replication = &mut body["replication"];
+                        replication["applied"] = json!(replica.applied);
+                        replication["primary_head"] = json!(replica.primary_head);
+                        let reason = replica.state.reason().map(redact_secrets);
+                        replication["reason"] = json!(reason);
+                    }
                 }
                 body
             })),
@@ -428,7 +457,11 @@ impl ServiceHandler for BoardRoutes {
         request: &ServiceRequest,
         wake: StreamWake,
     ) -> Result<Box<dyn ServiceStream>, ServiceReply> {
-        match self.admitted(request)? {
+        let admitted = self.admitted(request)?;
+        if let Some(stale) = self.stale(admitted.0, request.transport) {
+            return Err(stale);
+        }
+        match admitted {
             (Route::Events, _) => super::feed::open(self.feed_of(&request.path)?, request, wake),
             (_, _) => Err(coded(404, "route", "no such route")),
         }
