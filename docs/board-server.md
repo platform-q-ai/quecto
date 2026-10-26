@@ -366,13 +366,24 @@ socket the server's own user. An id that is not this server's board is 404
 [--remote <name>] [--after <revision>] [--count <n>]`** prints the feed,
 one JSON line per event (the event's data as above), for scripts and the
 Pocket relay's tests. The server, its token and the board's id are found
-as for `quecto board --url`. It starts from `--after` (else now), and when
-the stream ends or is cut it opens it again from the last id it printed, so
-each revision is printed once; after a `reset` it reads on from the reset's
-`after`. It exits 0 after `--count` events or once its output is closed,
-and 1 when it cannot start, the server refuses it (a 503 `busy` is tried
-again), or 5 opens in a row fail. A read waits at most 45 s (three missed
-pings) before the stream is opened again.
+as for `quecto board --url`.
+- It starts from `--after` (else now). When the stream ends or is cut, it
+  opens it again from the last id it printed, after the stream's `retry:`
+  (else 1 s), so each revision is printed once; after a `reset` it reads on
+  from the reset's `after`.
+- It prints each revision, each reset, and each change of epoch. An epoch
+  the watch already printed, told again as a stream reopens, is not
+  printed again, so an idle watch prints nothing as it reconnects.
+  `--count <n>` counts these lines.
+- It exits 0 after `--count` lines or once its output is closed. It exits
+  1 when it cannot start, when the server refuses it, when a stream is
+  malformed (its error said), or when 5 opens in a row fail or end with no
+  event.
+- A 503 `busy` is tried again, with a backoff doubling to 8 s, for up to
+  75 s (past a connection's 60 s lifetime, by which a held stream gives
+  its place back). Busy answers are counted apart from failed opens.
+- A read waits at most 45 s (three missed 15 s pings) before the stream
+  is opened again.
 
 ## Error replies
 

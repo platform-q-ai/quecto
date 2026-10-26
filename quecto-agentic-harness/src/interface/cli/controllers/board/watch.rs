@@ -1,8 +1,10 @@
 //! `quecto board watch` (epic #2705 B10): a board server's change feed,
-//! one JSON line per event, for scripts and the Pocket relay's tests. It
-//! runs until `--count` events are printed, its output is closed, or the
-//! server cannot be reached (exit 1). A cut stream is opened again from
-//! the last event, so each revision is printed once, with no gap.
+//! one JSON line per event, for scripts and the Pocket relay's tests: each
+//! revision, reset and change of epoch (an epoch already printed is not
+//! printed again as a stream reopens), which `--count` counts. It runs
+//! until `--count` lines are printed, its output is closed, or the watch
+//! cannot go on (exit 1). A cut stream is opened again from the last
+//! event, so each revision is printed once, with no gap.
 use std::path::PathBuf;
 
 use crate::application::project_board::ports::feed::{BoardWatch, WatchFlow};

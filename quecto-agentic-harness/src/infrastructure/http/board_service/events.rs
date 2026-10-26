@@ -38,6 +38,9 @@ type Wire = BufReader<Box<dyn Read + Send>>;
 /// An open stream's events.
 pub struct EventReader {
     body: BufReader<Chunked>,
+    /// The last line ended in a CR: an LF next is its CRLF's.
+    after_cr: bool,
+    retry: Option<Duration>,
 }
 
 impl BoardServiceClient {
@@ -114,6 +117,8 @@ impl BoardServiceClient {
                             left: 0,
                             done: false,
                         }),
+                        after_cr: false,
+                        retry: None,
                     })),
                     (_, _) => Err(ClientError::Malformed(
                         "a 200 that is not a chunked text/event-stream".into(),
@@ -134,46 +139,38 @@ impl BoardServiceClient {
 impl EventReader {
     /// The reconnection delay the stream's `retry:` set, if it set one.
     pub fn retry(&self) -> Option<Duration> {
-        None
+        self.retry
     }
 
     /// The next event; `None` once the stream ends (an event cut short is
-    /// dropped, never handed on).
+    /// dropped, never handed on). As the SSE spec has it, a line ends in
+    /// LF, CRLF or a bare CR, and an event with no `data:` is not
+    /// dispatched; `retry:` sets [`Self::retry`].
     ///
     /// # Errors
     /// A read failed or waited past the idle time, or the stream is not
-    /// one this reader reads.
+    /// one this reader reads (malformed).
     pub fn next_event(&mut self) -> Result<Option<StreamEvent>, ClientError> {
         let malformed = |why: &str| ClientError::Malformed(why.to_string());
         let (mut id, mut event, mut data, mut size) = (None, None, None::<String>, 0);
         loop {
-            let mut line = Vec::new();
-            let bound = (MAX_EVENT_BYTES + 1) as u64;
-            let read = (&mut self.body).take(bound).read_until(b'\n', &mut line);
-            let read = read.map_err(late)?;
-            size += read;
-            match (read, size <= MAX_EVENT_BYTES, line.last() == Some(&b'\n')) {
-                (0, _, _) => return Ok(None),
-                (_, false, _) => return Err(malformed("an event past its bound")),
-                (_, true, true) => {}
-                // The stream ended mid-line.
-                (_, true, false) => return Ok(None),
-            }
-            line.pop();
-            if line.last() == Some(&b'\r') {
-                line.pop();
+            let Some(line) = self.line(MAX_EVENT_BYTES - size.min(MAX_EVENT_BYTES))? else {
+                return Ok(None);
+            };
+            size += line.len() + 1;
+            if size > MAX_EVENT_BYTES {
+                return Err(malformed("an event past its bound"));
             }
             let line = String::from_utf8(line).map_err(|_| malformed("a line not UTF-8"))?;
             if line.is_empty() {
-                match (event.take(), data.take()) {
-                    (None, None) => size = 0,
-                    (event, data) => {
-                        return Ok(Some(StreamEvent {
-                            id,
-                            event: event.unwrap_or_else(|| "message".into()),
-                            data: data.unwrap_or_default(),
-                        }));
+                match data.take() {
+                    Some(data) => {
+                        let event = event.take().unwrap_or_else(|| "message".into());
+                        return Ok(Some(StreamEvent { id, event, data }));
                     }
+                    // No data: nothing is dispatched, and the next event
+                    // starts afresh.
+                    None => (id, event, size) = (None, None, 0),
                 }
                 continue;
             }
@@ -191,8 +188,44 @@ impl EventReader {
                     }
                     None => data = Some(value.to_string()),
                 },
-                "retry" => {}
+                // Digits alone, as milliseconds; anything else is ignored.
+                "retry" => {
+                    let digits = !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit());
+                    if digits {
+                        let millis = value.parse::<u64>().unwrap_or(u64::MAX);
+                        self.retry = Some(Duration::from_millis(millis).min(MAX_RETRY));
+                    }
+                }
                 _ => return Err(malformed("a field this reader does not read")),
+            }
+        }
+    }
+
+    /// The next line, without its end (LF, CRLF or a bare CR), of at most
+    /// `room` bytes; `None` once the stream ends, a line cut short with it.
+    fn line(&mut self, room: usize) -> Result<Option<Vec<u8>>, ClientError> {
+        let mut line = Vec::new();
+        loop {
+            let buf = self.body.fill_buf().map_err(late)?;
+            if buf.is_empty() {
+                return Ok(None);
+            }
+            // A CR just ended a line: an LF after it ends no other.
+            if std::mem::take(&mut self.after_cr) && buf[0] == b'\n' {
+                self.body.consume(1);
+                continue;
+            }
+            let end = buf.iter().position(|b| matches!(b, b'\n' | b'\r'));
+            let taken = end.unwrap_or(buf.len());
+            line.extend_from_slice(&buf[..taken]);
+            let ended = end.map(|at| buf[at] == b'\r');
+            self.body.consume(taken + usize::from(end.is_some()));
+            if line.len() > room {
+                return Err(ClientError::Malformed("an event past its bound".into()));
+            }
+            if let Some(cr) = ended {
+                self.after_cr = cr;
+                return Ok(Some(line));
             }
         }
     }
@@ -294,9 +327,11 @@ fn parse_head(head: &[u8]) -> Result<(u16, Vec<(String, String)>), ClientError> 
     Ok((status, headers))
 }
 
-/// A read's failure; one past its time is no reply.
+/// A read's failure: one past its time is no reply; a body this reader
+/// cannot decode (a bad chunk) is malformed, never a transport failure.
 fn late(error: io::Error) -> ClientError {
     match error.kind() {
+        io::ErrorKind::InvalidData => ClientError::Malformed(error.to_string()),
         io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => ClientError::NoReply,
         _ => ClientError::Io(error),
     }
