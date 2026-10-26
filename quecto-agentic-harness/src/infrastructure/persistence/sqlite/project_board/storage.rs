@@ -98,7 +98,7 @@ fn asked(write: &OpWrite) -> String {
 
 pub(super) fn open(path: &Path) -> Result<Connection, BoardStoreError> {
     let mut c = Connection::open(path).map_err(unavailable)?;
-    c.busy_timeout(Duration::from_secs(5))
+    c.busy_timeout(super::schema::OPEN_WAIT)
         .map_err(unavailable)?;
     recognize(&mut c, path)?;
     // SQLite may successfully execute the request but retain another journal

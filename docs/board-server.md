@@ -15,15 +15,25 @@ and reads schema 4 or 5.
 
 **The schema-5 upgrade (B11).** A schema-4 board (the build before B11's) is
 upgraded in place when `serve` or `import` first opens it, under the board's
-write lock: first a whole copy of it is made beside it,
-`board.sqlite3.schema4-<UTC, as 20261026T090000Z>` (SQLite's online backup,
-checked whole, mode 0600, out of WAL so it is one file), then each revision
-is given its chain (below), in revision order, in one transaction. If the
-copy cannot be made and checked, the upgrade is refused and the board is
-left as it was (`serve` does not start, naming the copy's failure). Opens
-at once upgrade once. `export` and `backup` read schema 4 or 5 and never
-upgrade: a backup taken before the upgrade is still admitted and pruned,
-and a schema-4 board still served by the old binary is copied as it is.
+write lock: first a whole copy of it is kept beside it,
+`board.sqlite3.schema4-<UTC, as 20261026T105649Z>` (a new file of mode 0600,
+filled by SQLite's online backup, out of WAL so it is one file, and checked
+whole), then each revision is given its chain (below), in revision order, in
+one transaction. A whole copy already beside the board (from an attempt cut
+short) is used again; a new one is made only with room for it (twice the
+board and its WAL free). Any failure refuses the upgrade: the board is left
+as it was, a copy this attempt made is removed (so a unit restarted again
+and again never fills the disk), and `serve` does not start, saying "the
+schema-4 board <path> was not upgraded to schema 5 and is left as it was:
+<why>". Opens at once upgrade once: an open while another holds the lock
+waits for it up to 120 s. `export` and `backup` read schema 4 or 5 and
+never upgrade: a backup taken before the upgrade is still admitted and
+pruned, and a schema-4 board still served by the old binary is copied as it
+is.
+
+**The copy** is the way back (below). Delete it once you will not roll back:
+after the upgraded server has run, a schema-5 backup has been taken, and
+both hosts run this build.
 
 **Deploy order.** Upgrade the standby first, or both hosts together, and
 restart each board-server unit as soon as its binary is installed, before
@@ -37,7 +47,12 @@ board.sqlite3.schema4-<UTC> board.sqlite3`, dropping any `board.sqlite3-wal`
 and `-shm` first: revisions made since the upgrade are lost), or keep the
 revisions and take the file back to schema 4 in place: `sqlite3
 board.sqlite3 'ALTER TABLE revisions DROP COLUMN chain; PRAGMA
-user_version=4;'`. Either is read by the build before B11's.
+user_version=4;'`. Either is read by the build before B11's. **Replica
+tokens first:** the build before B11's refuses a `tokens.json` holding a
+replica token (its `"replica": true` is a field it does not read), so before
+going back revoke every replica token (`token revoke <name>` while this build
+runs), or, with the server stopped, delete the `"replica": true` line from
+each entry (which makes it a device token).
 
 Any other schema version is refused at start, naming the version found
 and the one this build writes: move the file aside and start the board

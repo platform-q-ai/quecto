@@ -66,6 +66,15 @@ fn a_schema_4_board_is_given_its_chain_behind_a_whole_copy() {
     let kept = copies(&file);
     assert_eq!(kept.len(), 1, "one copy: {kept:?}");
     let copy = &kept[0];
+    let name = copy.file_name().unwrap().to_str().unwrap();
+    let stamp = name.strip_prefix("board.sqlite3.schema4-").unwrap();
+    let shaped = stamp.len() == 16
+        && stamp.char_indices().all(|(at, c)| match at {
+            8 => c == 'T',
+            15 => c == 'Z',
+            _ => c.is_ascii_digit(),
+        });
+    assert!(shaped, "named as 20261026T105649Z: {name}");
     assert_eq!(version(copy), 4, "the copy is the board before the upgrade");
     let mode = std::fs::metadata(copy).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
@@ -104,9 +113,73 @@ fn a_copy_that_cannot_be_made_refuses_the_upgrade_and_leaves_the_board() {
     let Err(BoardStoreError::Unavailable(why)) = refused else {
         panic!("the upgrade is refused: {:?}", refused.err());
     };
-    assert!(why.contains("its copy failed"), "{why}");
+    assert!(why.contains("was not upgraded to schema 5"), "{why}");
+    assert!(why.contains("its copy could not be made"), "{why}");
     assert_eq!(version(&file), 4, "the board is left as it was");
     assert!(copies(&file).is_empty());
+}
+
+/// B11 review 2: an upgrade that fails after its copy leaves the board as
+/// it was and removes the copy, so a server restarted again and again never
+/// fills the disk; the refusal says what was refused and why.
+#[test]
+fn an_upgrade_that_fails_after_its_copy_removes_it_and_says_why() {
+    let (_dir, file, _) = schema_4_board();
+    // A board whose revisions have a gap cannot be given its chains.
+    let c = Connection::open(&file).unwrap();
+    c.execute_batch("DELETE FROM revisions WHERE revision=2")
+        .unwrap();
+    drop(c);
+    for _ in 0..3 {
+        let Err(BoardStoreError::Unavailable(why)) = SqliteBoardOps::open(&file, identity()) else {
+            panic!("the upgrade is refused");
+        };
+        assert!(why.contains("was not upgraded to schema 5"), "{why}");
+        assert!(why.contains("no gap"), "{why}");
+        assert_eq!(version(&file), 4, "left as it was");
+        assert!(
+            copies(&file).is_empty(),
+            "no copy is left: {:?}",
+            copies(&file)
+        );
+    }
+}
+
+/// B11 review 2: a whole copy already beside the board (from an attempt
+/// cut short) is used again, never a second one made.
+#[test]
+fn a_whole_copy_already_beside_the_board_is_used_again() {
+    let (_dir, file, made) = schema_4_board();
+    let c = Connection::open(&file).unwrap();
+    c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+    drop(c);
+    let earlier = file.with_file_name("board.sqlite3.schema4-20200101T000000Z");
+    std::fs::copy(&file, &earlier).unwrap();
+    let journal: String = Connection::open(&earlier)
+        .unwrap()
+        .query_row("PRAGMA journal_mode=DELETE", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(journal, "delete");
+    drop(SqliteBoardOps::open(&file, identity()).unwrap());
+    assert_eq!(chains(&file), made);
+    assert_eq!(copies(&file), vec![earlier], "no second copy");
+}
+
+/// B11 review 2: an open while another holds the board's lock (as an
+/// upgrade does) waits for it, past the usual 5 s, and never fails.
+#[test]
+fn an_open_waits_for_an_upgrade_holding_the_lock() {
+    let (_dir, file, made) = schema_4_board();
+    let holder = Connection::open(&file).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(6));
+        holder.execute_batch("ROLLBACK").unwrap();
+    });
+    let opened = SqliteBoardOps::open(&file, identity());
+    release.join().unwrap();
+    assert!(opened.is_ok(), "{:?}", opened.err());
+    assert_eq!(chains(&file), made);
 }
 
 #[test]

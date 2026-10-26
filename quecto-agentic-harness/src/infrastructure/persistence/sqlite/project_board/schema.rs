@@ -4,7 +4,6 @@
 //! revision's chain.
 use super::storage::digest;
 use super::*;
-use std::path::PathBuf;
 const VERSION: i64 = 5;
 const APPLICATION: i64 = 0x51424f32;
 /// Schema 4's revisions table: a writable open upgrades it, adding each
@@ -88,6 +87,22 @@ pub(super) fn recognize(c: &mut Connection, path: &Path) -> Result<(), BoardStor
     if seen == Schema::Five {
         return Ok(());
     }
+    // Another open may hold the lock while it upgrades: wait for it.
+    c.busy_timeout(UPGRADE_WAIT).map_err(unavailable)?;
+    let recognized = recognize_locked(c, path);
+    c.busy_timeout(OPEN_WAIT).map_err(unavailable)?;
+    recognized
+}
+
+/// How long an open waits for the board's lock.
+pub(super) const OPEN_WAIT: Duration = Duration::from_secs(5);
+
+/// How long an open waits for the lock while another may be upgrading the
+/// board (a copy, then a chain for each of up to 4,096 revisions).
+const UPGRADE_WAIT: Duration = Duration::from_secs(120);
+
+/// [`recognize`], once the write lock is held.
+fn recognize_locked(c: &mut Connection, path: &Path) -> Result<(), BoardStoreError> {
     let tx = c
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(unavailable)?;
@@ -102,10 +117,7 @@ pub(super) fn recognize(c: &mut Connection, path: &Path) -> Result<(), BoardStor
             tx.pragma_update(None, "application_id", APPLICATION)
                 .map_err(unavailable)?;
         }
-        Schema::Four => {
-            keep_schema_4(path)?;
-            upgrade(&tx)?;
-        }
+        Schema::Four => return super::schema_upgrade::upgrade_in_place(tx, path),
     }
     tx.commit().map_err(unavailable)
 }
@@ -182,68 +194,25 @@ pub(super) fn schema_of(tx: &Connection) -> Result<Schema, BoardStoreError> {
     }
 }
 
-/// The most copies of one schema-4 board one second may name.
-const COPY_NAMES: usize = 100;
-
-/// Copies the schema-4 board at `path` beside it, as
-/// `<file>.schema4-<UTC>`, before it is upgraded: a new file, made by
-/// SQLite's online backup, checked whole, mode 0600. A copy that cannot be
-/// made and checked refuses the upgrade (the board is left as it was).
-fn keep_schema_4(path: &Path) -> Result<PathBuf, BoardStoreError> {
-    use std::os::unix::fs::PermissionsExt;
-    let failed = |why: String| {
-        unavailable(format!(
-            "the schema-4 board {} was not upgraded: its copy failed: {why}",
-            path.display()
-        ))
-    };
-    let at = humantime::format_rfc3339_seconds(std::time::SystemTime::now()).to_string();
-    let stem = format!("{}.schema4-{}", path.display(), at.replace(':', ""));
-    let copy = (0..COPY_NAMES)
-        .map(|n| match n {
-            0 => PathBuf::from(&stem),
-            n => PathBuf::from(format!("{stem}-{n}")),
-        })
-        .find(|candidate| std::fs::symlink_metadata(candidate).is_err())
-        .ok_or_else(|| failed(format!("{COPY_NAMES} copies are named {stem}")))?;
-    let read = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY;
-    let source = Connection::open_with_flags(path, read).map_err(|e| failed(e.to_string()))?;
-    (source.busy_timeout(Duration::from_secs(5))).map_err(|e| failed(e.to_string()))?;
-    (source.backup("main", &copy, None)).map_err(|e| failed(e.to_string()))?;
-    // The copy is one file of its own: out of WAL, so it carries no `-wal`.
-    let kept = Connection::open(&copy).map_err(|e| failed(e.to_string()))?;
-    let journal: String = kept
-        .query_row("PRAGMA journal_mode=DELETE", [], |r| r.get(0))
-        .map_err(|e| failed(e.to_string()))?;
-    let count = "SELECT (SELECT count(*) FROM revisions), (SELECT count(*) FROM objects)";
-    let counted = |c: &Connection| -> rusqlite::Result<(i64, i64)> {
-        c.query_row(count, [], |r| Ok((r.get(0)?, r.get(1)?)))
-    };
-    let integrity: String = kept
-        .query_row("PRAGMA integrity_check(1)", [], |r| r.get(0))
-        .map_err(|e| failed(e.to_string()))?;
-    let same = (counted(&kept).ok(), counted(&source).ok());
-    match (
-        integrity == "ok" && journal == "delete",
-        schema_of(&kept),
-        same,
-    ) {
-        (true, Ok(Schema::Four), (Some(kept), Some(held))) if kept == held => {}
-        _ => return Err(failed(format!("{} is not a whole copy", copy.display()))),
-    }
-    std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o600))
-        .map_err(|e| failed(e.to_string()))?;
-    Ok(copy)
-}
-
 /// Schema 4 to 5 (B11): each revision's chain, made in revision order from
 /// what the board holds, so the same history gives the same chains on
 /// every machine.
-fn upgrade(tx: &Connection) -> Result<(), BoardStoreError> {
-    tx.execute_batch(ADD_CHAIN).map_err(unavailable)?;
-    let last: Option<i64> = tx
-        .query_row("SELECT max(revision) FROM revisions", [], |r| r.get(0))
+pub(super) fn upgrade(tx: &Connection) -> Result<(), BoardStoreError> {
+    let (count, last): (i64, Option<i64>) = tx
+        .query_row("SELECT count(*), max(revision) FROM revisions", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
         .map_err(unavailable)?;
+    match count == last.unwrap_or(0) {
+        true => {}
+        false => {
+            return Err(unavailable(format!(
+                "its revisions are not numbered 1 to {} with no gap ({count} are held)",
+                last.unwrap_or(0)
+            )));
+        }
+    }
+    tx.execute_batch(ADD_CHAIN).map_err(unavailable)?;
     for revision in 1..=last.unwrap_or(0) {
         let chain = chain_of(tx, revision)?;
         tx.execute(
