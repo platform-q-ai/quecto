@@ -634,7 +634,7 @@ impl BoardHistoryStore for SqliteBoardHistoryStore {
             }
             writer
                 .insert(
-                    "INSERT INTO revisions VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                    "INSERT INTO revisions VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,NULL)",
                     params![
                         format!("1:{}", r.sequence),
                         r.root,
@@ -649,6 +649,8 @@ impl BoardHistoryStore for SqliteBoardHistoryStore {
                     ],
                 )
                 .map_err(error)?;
+            // Its chain, made at import from the history alone (B11).
+            writer.seal(r.sequence as i64).map_err(error)?;
             use crate::infrastructure::persistence::project_board::board_tree::{
                 LeftOnRemote, read_root,
             };

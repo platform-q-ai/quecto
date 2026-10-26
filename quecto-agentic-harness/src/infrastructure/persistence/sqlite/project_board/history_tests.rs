@@ -113,7 +113,7 @@ fn imported_native_unchanged_clear_can_carry_original_root_both_formats() {
         let c = storage::open(&store.path).unwrap();
         c.execute_batch("BEGIN IMMEDIATE").unwrap();
         let mut writer = storage::ObjectWriter::new(&c);
-        writer.insert("INSERT INTO revisions VALUES ('2:2',?1,'History','h@example.com',2,1,'Clear',2,NULL,NULL)",[&root]).unwrap();
+        writer.insert("INSERT INTO revisions VALUES ('2:2',?1,'History','h@example.com',2,1,'Clear',2,NULL,NULL,NULL)",[&root]).unwrap();
         writer
             .insert("INSERT INTO epochs VALUES (2,2,'clear',2)", [])
             .unwrap();
@@ -163,6 +163,31 @@ fn import_dto_projection_messages_are_charged_to_metadata_before_rows() {
         r.message = "x".repeat(65536);
     }
     assert!(matches!(admission(&h), Err(HistoryError::Bounds(_))));
+}
+
+/// B11: an import makes each revision's chain from the history alone, so
+/// the same history imported on two machines holds the same chains.
+#[test]
+fn an_import_makes_each_chain_the_same_on_every_machine() {
+    let chains = |algorithm| {
+        let temp = tempfile::tempdir().unwrap();
+        let store = fixture(temp.path().join("board.db"), algorithm);
+        let chain: Option<String> = storage::open(&store.path)
+            .unwrap()
+            .query_row("SELECT chain FROM revisions WHERE revision=1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        chain.expect("an imported revision has its chain")
+    };
+    for algorithm in [HistoryAlgorithm::Sha1, HistoryAlgorithm::Sha256] {
+        assert_eq!(chains(algorithm), chains(algorithm));
+    }
+    assert_ne!(
+        chains(HistoryAlgorithm::Sha1),
+        chains(HistoryAlgorithm::Sha256),
+        "another history, another chain"
+    );
 }
 
 #[test]

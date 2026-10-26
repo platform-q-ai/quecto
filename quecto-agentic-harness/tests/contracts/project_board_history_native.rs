@@ -235,8 +235,8 @@ fn native_schema4_has_exact_nine_tables_seven_indexes_and_positive_metadata() {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
     assert_eq!(
-        version, 4,
-        "native durable history requires schema4 (B3's history, B7's op answers)"
+        version, 5,
+        "native durable history requires schema 5 (B3's history, B7's op answers, B11's chain)"
     );
     let tables: Vec<String> = c
         .prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name")

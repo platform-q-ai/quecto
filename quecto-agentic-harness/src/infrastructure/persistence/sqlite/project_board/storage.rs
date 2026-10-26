@@ -2,8 +2,12 @@
 use super::*;
 use crate::infrastructure::persistence::project_board::board_tree::{Entry, raw_entry_bytes};
 
-const VERSION: i64 = 4;
+const VERSION: i64 = 5;
 const APPLICATION: i64 = 0x51424f32;
+/// Schema 4's revisions table: a writable open upgrades it, adding each
+/// revision's chain (B11), and so to schema 5.
+const REVISIONS_4: &str = "CREATE TABLE revisions (head TEXT PRIMARY KEY NOT NULL, root TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL, revision INTEGER NOT NULL UNIQUE, parent INTEGER, message TEXT NOT NULL, at INTEGER NOT NULL, git_commit TEXT, git_meta BLOB)";
+const ADD_CHAIN: &str = "ALTER TABLE revisions ADD COLUMN chain TEXT";
 /// Every table a board holds: import requires each empty (#2741).
 pub(super) const TABLES: [(&str, &str); 9] = [
     (
@@ -16,7 +20,7 @@ pub(super) const TABLES: [(&str, &str); 9] = [
     ),
     (
         "revisions",
-        "CREATE TABLE revisions (head TEXT PRIMARY KEY NOT NULL, root TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL, revision INTEGER NOT NULL UNIQUE, parent INTEGER, message TEXT NOT NULL, at INTEGER NOT NULL, git_commit TEXT, git_meta BLOB)",
+        "CREATE TABLE revisions (head TEXT PRIMARY KEY NOT NULL, root TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL, revision INTEGER NOT NULL UNIQUE, parent INTEGER, message TEXT NOT NULL, at INTEGER NOT NULL, git_commit TEXT, git_meta BLOB, chain TEXT)",
     ),
     (
         "state",
@@ -209,23 +213,29 @@ pub(super) fn recognize_on(tx: &Connection, initialize: bool) -> Result<(), Boar
         .collect::<Result<_, _>>()
         .map_err(unavailable)?;
     let empty = version == 0 && app == 0 && schema.is_empty();
-    let recognized = version == VERSION
-        && app == APPLICATION
-        && schema.len() == TABLES.len() + INDEXES.len()
-        && schema
-            .iter()
-            .all(|(name, kind, table, sql)| match kind.as_str() {
-                "table" => {
-                    table == name
-                        && TABLES
-                            .iter()
-                            .any(|(n, s)| name == n && sql.as_deref() == Some(*s))
-                }
-                "index" => sql.is_none() && INDEXES.iter().any(|(n, t)| name == n && table == t),
-                _ => false,
-            });
-    match (empty, recognized) {
-        (true, false) if initialize => {
+    let sql_of = |name: &str| TABLES.iter().find(|(n, _)| *n == name).map(|(_, s)| *s);
+    let current = sql_of("revisions").expect("the schema has a revisions table");
+    // Whether this is the schema of `wanted`, whose revisions table is `revisions`.
+    let of = |wanted: i64, revisions: &str| {
+        let sql_of = |name: &str| match name {
+            "revisions" => Some(revisions),
+            other => sql_of(other),
+        };
+        version == wanted
+            && app == APPLICATION
+            && schema.len() == TABLES.len() + INDEXES.len()
+            && schema
+                .iter()
+                .all(|(name, kind, table, sql)| match kind.as_str() {
+                    "table" => table == name && sql.is_some() && sql.as_deref() == sql_of(name),
+                    "index" => {
+                        sql.is_none() && INDEXES.iter().any(|(n, t)| name == n && table == t)
+                    }
+                    _ => false,
+                })
+    };
+    match (empty, version, of(VERSION, current)) {
+        (true, _, false) if initialize => {
             for (_, sql) in TABLES {
                 tx.execute_batch(sql).map_err(unavailable)?;
             }
@@ -234,10 +244,110 @@ pub(super) fn recognize_on(tx: &Connection, initialize: bool) -> Result<(), Boar
             tx.pragma_update(None, "application_id", APPLICATION)
                 .map_err(unavailable)?;
         }
-        (false, true) => {}
+        (false, VERSION, true) => {}
+        (false, 4, false) if initialize && of(4, REVISIONS_4) => upgrade(tx)?,
         _ => return Err(unsupported()),
     }
     Ok(())
+}
+
+/// Schema 4 to 5 (B11): each revision's chain, made in revision order from
+/// what the board holds, so the same history gives the same chains on
+/// every machine.
+fn upgrade(tx: &Connection) -> Result<(), BoardStoreError> {
+    tx.execute_batch(ADD_CHAIN).map_err(unavailable)?;
+    let last: Option<i64> = tx
+        .query_row("SELECT max(revision) FROM revisions", [], |r| r.get(0))
+        .map_err(unavailable)?;
+    for revision in 1..=last.unwrap_or(0) {
+        let chain = chain_of(tx, revision)?;
+        tx.execute(
+            "UPDATE revisions SET chain=?1 WHERE revision=?2",
+            params![chain, revision],
+        )
+        .map_err(unavailable)?;
+    }
+    tx.pragma_update(None, "user_version", VERSION)
+        .map_err(unavailable)
+}
+
+/// Revision `revision`'s chain (B11): a SHA-256 over the chain before it
+/// and every column of the revision and its principal, so two boards hold
+/// one chain at a revision only when they hold one history to it. The
+/// chain before it must be made.
+pub(super) fn chain_of(c: &Connection, revision: i64) -> Result<String, BoardStoreError> {
+    type Row = (
+        String,
+        String,
+        String,
+        String,
+        Option<i64>,
+        String,
+        i64,
+        Option<String>,
+        Option<Vec<u8>>,
+        Option<String>,
+    );
+    let row: Row = c
+        .query_row(
+            "SELECT r.head,r.root,r.name,r.email,r.parent,r.message,r.at,r.git_commit,r.git_meta,\
+             p.principal FROM revisions r LEFT JOIN revision_principals p ON p.head=r.head \
+             WHERE r.revision=?1",
+            [revision],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                    r.get(8)?,
+                    r.get(9)?,
+                ))
+            },
+        )
+        .map_err(unavailable)?;
+    let (head, root, name, email, parent, message, at, git_commit, git_meta, principal) = row;
+    let before: Option<String> = match revision {
+        1 => None,
+        _ => {
+            let held: Option<Option<String>> = c
+                .query_row(
+                    "SELECT chain FROM revisions WHERE revision=?1",
+                    [revision - 1],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(unavailable)?;
+            let missing = || unavailable(format!("revision {} has no chain", revision - 1));
+            Some(held.flatten().ok_or_else(missing)?)
+        }
+    };
+    // An absent value and an empty one differ.
+    let maybe = |value: Option<&[u8]>| match value {
+        None => vec![0u8],
+        Some(bytes) => [&[1u8][..], bytes].concat(),
+    };
+    let parent = parent.map(i64::to_be_bytes);
+    let fields = [
+        maybe(before.as_deref().map(str::as_bytes)),
+        head.into_bytes(),
+        root.into_bytes(),
+        name.into_bytes(),
+        email.into_bytes(),
+        revision.to_be_bytes().to_vec(),
+        maybe(parent.as_ref().map(|bytes| &bytes[..])),
+        message.into_bytes(),
+        at.to_be_bytes().to_vec(),
+        maybe(git_commit.as_deref().map(str::as_bytes)),
+        maybe(git_meta.as_deref()),
+        maybe(principal.as_deref().map(str::as_bytes)),
+    ];
+    let fields: Vec<&[u8]> = fields.iter().map(Vec::as_slice).collect();
+    Ok(digest(b"chain", &fields))
 }
 
 pub(super) fn current(c: &Connection) -> Result<(BoardHead, String), BoardStoreError> {
@@ -385,7 +495,7 @@ impl<'a> ObjectWriter<'a> {
             .map_err(unavailable)?;
         let head = BoardHead(format!("{epoch}:{revision}"));
         self.insert(
-            "INSERT INTO revisions VALUES (?1,?2,?3,?4,?5,?6,?7,?8,NULL,NULL)",
+            "INSERT INTO revisions VALUES (?1,?2,?3,?4,?5,?6,?7,?8,NULL,NULL,NULL)",
             params![
                 head.0,
                 root,
@@ -403,11 +513,22 @@ impl<'a> ObjectWriter<'a> {
                 params![head.0, principal],
             )?;
         }
+        self.seal(revision)?;
         self.insert(
             "INSERT INTO state VALUES (1,?1) ON CONFLICT(id) DO UPDATE SET head=excluded.head",
             [&head.0],
         )?;
         Ok(head)
+    }
+    /// Makes revision `revision`'s chain (B11), its row and principal
+    /// written: the chain.
+    pub(super) fn seal(&mut self, revision: i64) -> Result<String, BoardStoreError> {
+        let chain = chain_of(self.connection, revision)?;
+        self.insert(
+            "UPDATE revisions SET chain=?1 WHERE revision=?2",
+            params![chain, revision],
+        )?;
+        Ok(chain)
     }
     pub(super) fn blob(&mut self, bytes: &[u8]) -> Result<String, BoardStoreError> {
         let oid = blob_id(bytes);
