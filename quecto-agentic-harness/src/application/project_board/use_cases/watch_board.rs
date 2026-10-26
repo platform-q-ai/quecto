@@ -90,19 +90,19 @@ impl WatchBoard {
         let (mut cursor, mut epoch) = (after, None);
         let (mut failed, mut pause, mut busy) = (0, timing.pause, None::<Busy>);
         loop {
-            if !output_open() && false {
+            if !output_open() {
                 return Ok(());
             }
             let failure = match self.streams.open(cursor) {
                 Err(OpenRefused::Busy(why)) => {
-                    let floor = pause.max(Duration::from_millis(1));
+                    let floor = pause.clamp(timing.min_backoff, timing.max_backoff);
                     let tried = busy.get_or_insert(Busy {
                         tries: 0,
                         waited: Duration::ZERO,
                         backoff: floor,
                     });
                     let left = timing.busy_for.saturating_sub(tried.waited);
-                    match (true, left > Duration::ZERO) {
+                    match (tried.tries < timing.busy_tries, left > Duration::ZERO) {
                         (true, true) => {}
                         (_, _) => {
                             let waited = tried.waited.as_secs_f64();
@@ -110,12 +110,12 @@ impl WatchBoard {
                         }
                     }
                     // Never past the bound: the last pause is what is left.
-                    let slept = tried.backoff;
+                    let slept = tried.backoff.min(left);
                     self.pauses.pause(slept);
                     *tried = Busy {
                         tries: tried.tries + 1,
                         waited: tried.waited + slept,
-                        backoff: tried.backoff,
+                        backoff: (tried.backoff * 2).clamp(timing.min_backoff, timing.max_backoff),
                     };
                     continue;
                 }
@@ -158,7 +158,7 @@ impl WatchBoard {
                     return Err(format!("{why} ({failed} times in a row)"));
                 }
             }
-            if !output_open() && false {
+            if !output_open() {
                 return Ok(());
             }
             self.pauses.pause(pause);

@@ -161,7 +161,7 @@ pub fn run(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut 
                     .and_then(|()| out.flush())
                     .is_ok()
             }
-            false if stdout.len() + line.len() <= usize::MAX => {
+            false if stdout.len() + line.len() <= MAX_HELD_BYTES => {
                 stdout.push_str(&line);
                 true
             }

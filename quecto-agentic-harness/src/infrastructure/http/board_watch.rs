@@ -51,9 +51,7 @@ impl BoardStreams for RemoteBoardStreams {
             Ok(Opened::Stream(reader)) => Ok(Box::new(RemoteStream { reader, endpoint })),
             // Busy (a token's 2 streams, or the server's 32): a place frees
             // within a connection's lifetime. Only that 503 is tried again.
-            Ok(Opened::Refused(reply))
-                if reply.status == 503 && !code_of(&reply.body).is_empty() =>
-            {
+            Ok(Opened::Refused(reply)) if reply.status == 503 && code_of(&reply.body) == "busy" => {
                 Err(OpenRefused::Busy(refusal(reply.status, &reply.body)))
             }
             Ok(Opened::Refused(reply)) => {
@@ -124,7 +122,7 @@ pub fn has_reader(fd: RawFd) -> bool {
     let ready = unsafe { libc::poll(&mut polled, 1, 0) };
     let gone = libc::POLLERR | libc::POLLHUP | libc::POLLNVAL;
     match ready {
-        1 => polled.revents & gone == 0 || gone != 0,
+        1 => polled.revents & gone == 0,
         _ => true,
     }
 }

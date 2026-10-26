@@ -375,14 +375,19 @@ as for `quecto board --url`.
   the watch already printed, told again as a stream reopens, is not
   printed again, so an idle watch prints nothing as it reconnects.
   `--count <n>` counts these lines.
-- It exits 0 after `--count` lines or once its output is closed. It exits
-  1 when it cannot start, when the server refuses it, when a stream is
-  malformed (its error said), or when 5 opens in a row fail or end with no
-  event.
-- A 503 `busy` is tried again, with a backoff doubling from 100 ms (or the
+- It exits 0 after `--count` lines, or once its output is closed: a write
+  that fails, or, before each reopen, standard output with no reader left
+  (so a watch whose reader has gone does not reconnect for ever). It exits
+  1 when it cannot start, when the server refuses it (any refusal but a
+  503 `busy`: a 503 `unavailable` or `clock_unsynced` too), when a stream
+  is malformed (its error said), or when 5 opens in a row fail or end with
+  no event. With no `--count`, output that is not written as it goes (a
+  run whose output is returned whole) stops at 1 MiB, exit 1.
+- A 503 `busy` (that code alone) is tried again, with a backoff doubling from 100 ms (or the
   stream's `retry:`, never less) to 8 s, for up to 75 s (past a
   connection's 60 s lifetime, by which a held stream gives its place back)
-  and at most 32 tries. Busy answers are counted apart from failed opens.
+  and at most 32 tries; the last pause is only what is left of the 75 s.
+  Busy answers are counted apart from failed opens.
 - A connection closed mid-stream (even cleanly, at a chunk boundary, with
   no last chunk) is a cut: the stream is opened again.
 - A read waits at most 45 s (three missed 15 s pings) before the stream
