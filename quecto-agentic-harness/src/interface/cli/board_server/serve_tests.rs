@@ -532,7 +532,7 @@ fn stalled_answers_never_wedge_authentication_or_the_socket() {
     let (code, out, err) = token(&socket, "list");
     assert_eq!(
         (code, out.as_str()),
-        (0, "laptop\t2026-10-24T12:00:00Z\n"),
+        (0, "laptop\t2026-10-24T12:00:00Z\tdevice\n"),
         "{err}"
     );
     assert_eq!(token(&socket, "revoke laptop").0, 0);

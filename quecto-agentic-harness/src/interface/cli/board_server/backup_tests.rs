@@ -5,6 +5,7 @@ fn backup_options_admit_only_complete_known_pairs() {
         vec![],
         vec!["--to"],
         vec!["--to", "out", "--to", "other"],
+        vec!["--to", "", "--to", "out"],
         vec!["--to", "out", "--source", "somewhere"],
         vec!["--to", "--board-id"],
         vec!["--to", "out", "--board-id", "../escape"],

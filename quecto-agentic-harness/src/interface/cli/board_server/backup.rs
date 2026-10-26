@@ -18,6 +18,7 @@ struct Options {
     board: Option<String>,
     state: Option<PathBuf>,
 }
+const NO_TO: &str = "backup: --to is required";
 fn parse(args: &[String]) -> Result<Options, &'static str> {
     let mut to = None;
     let mut board = None;
@@ -38,8 +39,7 @@ fn parse(args: &[String]) -> Result<Options, &'static str> {
             board.is_none(),
             state.is_none(),
         ) {
-            // Named absolutely: SQLite reads a relative `file:..` as a URI.
-            ("--to", true, _, _) => to = std::path::absolute(value).ok(),
+            ("--to", true, _, _) => to = Some(std::path::absolute(value).or(Err(NO_TO))?),
             ("--board-id", _, true, _) => {
                 BoardId::of_hex(value).ok_or("backup: invalid board id")?;
                 board = Some(value.clone());
@@ -60,7 +60,7 @@ fn parse(args: &[String]) -> Result<Options, &'static str> {
         return Err("backup: --state requires --board-id");
     }
     Ok(Options {
-        to: to.ok_or("backup: --to is required")?,
+        to: to.ok_or(NO_TO)?,
         board,
         state,
     })
