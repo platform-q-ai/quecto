@@ -61,6 +61,7 @@ fn make_agent() -> AgentLoopImpl {
 
 fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> UdsLoopArgs<'a> {
     UdsLoopArgs {
+        parent_outcome: None,
         extensions: Default::default(),
         agent: make_agent(),
         retention: None,

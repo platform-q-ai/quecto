@@ -37,6 +37,8 @@ pub(crate) struct AgentBuildResult {
     pub event_log: bool,
     /// The configured extensions this agent launches (#2446).
     pub extensions: AgentExtensions,
+    /// The turn-outcome runtime of a trusted root parent (#2708).
+    pub parent_outcome: Option<super::ParentOutcome>,
 }
 
 /// The configured extensions an agent may launch (#2446): a top-level

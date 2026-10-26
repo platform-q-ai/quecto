@@ -15,6 +15,7 @@ pub(crate) mod inherited_tool_policy;
 mod inherited_tool_policy_unit_tests;
 pub mod kept_environments;
 pub mod launch_rollbacks;
+pub mod owned_work;
 pub mod owner_exit;
 pub(super) mod process_tree;
 pub mod retained_environment_teardown;

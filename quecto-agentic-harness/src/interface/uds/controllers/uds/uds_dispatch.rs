@@ -322,11 +322,8 @@ pub(super) async fn handle_steer(
     // Acceptance is independent of the provider outcome. Keep the idle
     // control receipt even if the ensuing turn fails before completion.
     if !ctx.session.is_streaming() {
-        let event = AgentEvent::ok(
-            id,
-            type_name,
-            Some(serde_json::json!({"status":"accepted"})),
-        );
+        let data = super::ack_data(ctx, serde_json::json!({"status":"accepted"}), id);
+        let event = AgentEvent::ok(id, type_name, Some(data));
         emit_event_to_broadcast_or_writer(ctx, &event).await;
     }
     let steer = Some(super::StreamingBehavior::Steer);

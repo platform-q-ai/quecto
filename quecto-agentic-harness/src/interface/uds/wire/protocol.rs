@@ -59,6 +59,12 @@ pub enum AgentEvent {
         )]
         content_length: Option<u64>,
     },
+    /// A trusted root parent admitted a turn (#2708): emitted once its
+    /// opener is committed, before that turn's `agent_start`.
+    TurnAdmitted(crate::domain::agents::value_objects::turn_outcome::TurnAdmissionRecord),
+    /// How a trusted root parent's turn settled (#2708): emitted after that
+    /// turn's `agent_end`, once it was saved.
+    TurnOutcome(crate::domain::agents::value_objects::turn_outcome::TurnOutcomeRecord),
     /// The post-turn drain made no further workflow continuation runnable.
     /// Emitted only after pending work and automatic workflow nudges settle.
     /// `reason` distinguishes intervention-worthy exhaustion from deliberate
@@ -478,6 +484,10 @@ pub struct SessionState {
         Option<crate::interface::uds::presenters::uds_execution_state::ExecutionSnapshot>,
     #[serde(default)]
     pub sync: u8,
+    /// A trusted root parent's turn-outcome view (#2708): projected into
+    /// every `get_state` shape, never serialized raw.
+    #[serde(skip)]
+    pub turn_outcome: Option<crate::application::agent_turn::dto::parent_outcome::OutcomeView>,
 }
 
 impl SessionState {

@@ -119,6 +119,7 @@ const USE_CASES: &[&str] = &[
     "NegotiateAuthority",
     "ObserveOwnedChildExit",
     "OwnerConclusionPorts",
+    "ParentOutcomeRuntime",
     "PatchConfiguration",
     "PauseRun",
     "PrepareHarnessShutdown",

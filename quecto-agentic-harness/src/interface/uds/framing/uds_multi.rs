@@ -89,7 +89,8 @@ pub(in crate::interface) struct MultiClientArgs<'a> {
     pub turn_session: cli::TurnSessionBuilder,
     /// The environment control slot (#2070): an owner exit ends retained boxes through it.
     pub environment_control: Option<EnvironmentControlSlot>,
-    pub extensions: controllers::uds_extensions::Extensions, // #2446: see `clients`
+    pub parent_outcome: Option<cli::uds_session::ParentOutcome>, // #2708
+    pub extensions: controllers::uds_extensions::Extensions,     // #2446: see `clients`
 }
 
 /// A command line from a client.
@@ -175,6 +176,7 @@ pub(in crate::interface) async fn multi_client_loop(
         teardown_graph,
         turn_session,
         environment_control,
+        parent_outcome,
         extensions,
     } = args;
 
@@ -193,6 +195,7 @@ pub(in crate::interface) async fn multi_client_loop(
         .publish(&messages);
 
     let mut agent_session = turn_session(model);
+    agent_session.bind_parent_outcome(parent_outcome);
     agent_session.set_admission_warnings(&admission_slots);
     agent_session.set_startup_warnings(&catalogue.startup_warnings);
     agent_session.observe_runtime(catalogue.runtime_store.clone());

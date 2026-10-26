@@ -11,6 +11,8 @@
 //! on. See `state_snapshot_reader.rs`.
 use serde::{Deserialize, Serialize};
 
+use crate::domain::agents::value_objects::turn_outcome::TurnOutcomeEvent;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlStatus {
@@ -207,13 +209,38 @@ pub struct StateSnapshot {
     )]
     pub agent_requests:
         Option<crate::domain::inference::events::request_completion::AgentRequestCounters>,
+    /// The turn-outcome contract a trusted root parent advertises (#2708):
+    /// absent from every other harness, so a peer without it is legacy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_outcome_version: Option<u8>,
+    /// The incarnation its outcomes belong to; a history replacement mints another.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_optional"
+    )]
+    pub outcome_epoch: Option<String>,
+    /// Its latest published outcome, the same event the turn emitted; an
+    /// explicit `null` before the first.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_optional"
+    )]
+    pub latest_turn_outcome: Option<Option<TurnOutcomeEvent>>,
 }
 
 /// The members of the projection that are live measurements rather than
 /// transitions: `generation` does not track them, so a `since` poll whose
 /// cursor is current still carries each one present (#2210 review). The
 /// one rule, used by the child that answers and the parent that relays.
-pub const SINCE_BYPASSING_MEMBERS: &[&str] = &["modelTurn"];
+pub const SINCE_BYPASSING_MEMBERS: &[&str] = &[
+    "modelTurn",
+    "sessionKey",
+    "turnOutcomeVersion",
+    "outcomeEpoch",
+    "latestTurnOutcome",
+];
 
 /// The answer to a `since` poll whose cursor is current: the unchanged
 /// marker, carrying the live measurements [`SINCE_BYPASSING_MEMBERS`] names
@@ -231,16 +258,44 @@ pub struct UnchangedSnapshot {
         deserialize_with = "present_optional"
     )]
     pub model_turn: Option<ModelTurnSnapshot>,
+    /// A turn-outcome producer's session and outcome members (#2708): an
+    /// unchanged conversation never hides the latest outcome.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_optional"
+    )]
+    pub session_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_outcome_version: Option<u8>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_optional"
+    )]
+    pub outcome_epoch: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_optional"
+    )]
+    pub latest_turn_outcome: Option<Option<TurnOutcomeEvent>>,
 }
 
 impl UnchangedSnapshot {
     /// The unchanged marker at `generation` for a projection `snapshot`,
-    /// with its live measurements.
+    /// with its live measurements and, from a turn-outcome producer, its
+    /// session and outcome members.
     pub fn at(generation: u64, snapshot: &StateSnapshot) -> Self {
+        let producer = snapshot.turn_outcome_version.is_some();
         Self {
             unchanged: true,
             generation,
             model_turn: snapshot.model_turn.clone(),
+            session_key: producer.then(|| snapshot.session_key.clone()),
+            turn_outcome_version: snapshot.turn_outcome_version,
+            outcome_epoch: snapshot.outcome_epoch.clone(),
+            latest_turn_outcome: snapshot.latest_turn_outcome.clone(),
         }
     }
 

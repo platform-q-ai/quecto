@@ -61,6 +61,7 @@ pub struct UdsLoopArgs<'a> {
     /// the teardown edge (unit rigs) and is refused for a launched child.
     pub teardown_graph: Option<super::TeardownHandlesBuilder>,
     pub turn_session: super::TurnSessionBuilder, // #1909, #1855: composition's builder
+    pub parent_outcome: Option<super::uds_session::ParentOutcome>, // #2708: a trusted root's guard
     pub extensions: crate::domain::agents::entities::configured_extensions::AgentExtensions, // #2446
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
@@ -103,6 +104,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         parent_control,
         teardown_graph,
         turn_session,
+        parent_outcome,
         extensions,
     } = args;
     let session_key = identity.runtime_key().to_string(); // presenters, owner uuid
@@ -186,6 +188,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 parent_control,
                 teardown_graph,
                 environment_control,
+                parent_outcome,
                 extensions: uds_extensions::launch(&extensions, &guard.0, base_dir),
             },
             listener,

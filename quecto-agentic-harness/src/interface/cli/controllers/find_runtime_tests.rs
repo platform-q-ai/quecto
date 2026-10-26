@@ -41,6 +41,7 @@ fn runtime(
     let client = reqwest::Client::new();
     let mut stderr = String::new();
     build_tool_runtime(ToolRuntimeBuildArgs {
+        parent_outcome: None,
         child_extensions: Vec::new(),
         swarm_context: None,
         swarm_participation:

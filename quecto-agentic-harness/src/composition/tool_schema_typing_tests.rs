@@ -51,6 +51,7 @@ const TOOL_TYPES: &[(&str, Option<&str>)] = &[
         Some(crate::infrastructure::tools::native::workflow_tool::WORKFLOW_TOOL_NAME),
     ),
     ("RecallTool", Some("recall")),
+    ("DeclareTurnOutcomeTool", Some("declare_turn_outcome")),
     (
         "BoardTool",
         Some(crate::interface::tools::project_board::tool::BOARD_TOOL_NAME),
@@ -210,6 +211,17 @@ fn built_in_definitions(workspace: &std::path::Path) -> Vec<ToolDefinition> {
         Arc::new(WebSearchTool::new(None)),
         Arc::new(WorkflowTool::new(workflow_engine)),
         Arc::new(RecallTool::new(recall, "session".to_string())),
+        // #2708: built unbound; its definition needs no admitted turn.
+        Arc::new(
+            crate::infrastructure::tools::native::declare_turn_outcome::DeclareTurnOutcomeTool::new(
+                Arc::new(
+                    crate::application::agent_turn::use_cases::parent_outcome::ParentOutcomeRuntime::new(
+                        String::new,
+                    ),
+                ),
+                crate::domain::turn_declaration::LaunchAuthority::TopLevelParent,
+            ),
+        ),
         Arc::new(PanicProbeTool),
         super::web_fetch::build(Default::default(), 64),
         Arc::new(

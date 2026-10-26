@@ -324,6 +324,7 @@ fn busy_get_state_changed_snapshot() -> serde_json::Value {
         workflow: None,
         execution: None,
         sync: 0,
+        turn_outcome: None,
     };
     serde_json::to_value(crate::interface::uds::wire::protocol::AgentEvent::ok(
         None,

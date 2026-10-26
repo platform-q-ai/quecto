@@ -194,6 +194,9 @@ async fn run_message(
     kind: MessageKind,
 ) -> bool {
     ctx.turn_control.client_instruction_taken();
+    let Ok(id) = super::episode_id(ctx, id, &type_name).await else {
+        return false; // #2708: refused before anything was committed
+    };
     match kind {
         MessageKind::Prompt(streaming_behavior) => {
             let cmd = PromptCommand::client(id, type_name, body, streaming_behavior);

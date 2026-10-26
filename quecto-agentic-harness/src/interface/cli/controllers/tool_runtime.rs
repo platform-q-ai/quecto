@@ -175,6 +175,10 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub project_board:
         Option<crate::interface::tools::project_board::site::ProjectBoardHandlesBuilder>,
     pub disabled_tools: &'a [String],
+    /// A trusted root's turn declaration binding (#2708): registers
+    /// `declare_turn_outcome` before any policy applies; `None` otherwise.
+    pub parent_outcome:
+        Option<Arc<dyn crate::application::agent_turn::ports::BoundTurnDeclaration>>,
     pub inherited_tool_policy: Option<inherited_tool_policy::InheritedToolPolicySnapshot>,
     pub workflow: ToolRuntimeWorkflowPolicy<'a>,
     pub stderr: &'a mut String,
@@ -231,7 +235,8 @@ pub(crate) fn build_tool_runtime(
         AgentControlToolDeps, OfficialToolDeps, SessionToolDeps,
         build_agent_control_tool_extensions, build_official_tool_extensions,
         build_project_board_tool_extension, build_session_tool_extensions,
-        register_bundled_native_tools, register_bundled_native_tools_with_scope,
+        build_turn_outcome_tool_extension, register_bundled_native_tools,
+        register_bundled_native_tools_with_scope,
     };
 
     let ToolRuntimeBuildArgs {
@@ -258,6 +263,7 @@ pub(crate) fn build_tool_runtime(
         kill_tool,
         project_board,
         disabled_tools,
+        parent_outcome,
         inherited_tool_policy,
         workflow,
         stderr,
@@ -341,6 +347,10 @@ pub(crate) fn build_tool_runtime(
             session_key: session_key.clone(),
         }),
     );
+    if let Some(binding) = parent_outcome {
+        let extension = build_turn_outcome_tool_extension(binding);
+        register_bundled_native_tools_with_scope(&mut registry, extension, None);
+    }
 
     // Agent-control tools are supplied through the same bundled-native provider
     // for every entrypoint. REPL's current public surface is preserved below by

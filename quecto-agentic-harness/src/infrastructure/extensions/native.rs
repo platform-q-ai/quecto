@@ -187,6 +187,22 @@ pub fn build_project_board_tool_extension(board: Arc<dyn Tool>) -> Vec<Arc<dyn E
     ))]
 }
 
+/// A trusted root parent's `declare_turn_outcome` tool (#2708), over the
+/// binding of its turn-outcome runtime.
+pub fn build_turn_outcome_tool_extension(
+    binding: Arc<dyn crate::application::agent_turn::ports::BoundTurnDeclaration>,
+) -> Vec<Arc<dyn Extension>> {
+    use crate::infrastructure::tools::native::declare_turn_outcome as declare;
+    vec![Arc::new(NativeExtension::new(
+        declare::DECLARE_TURN_OUTCOME_PROVIDER_ID,
+        "The top-level parent's turn outcome",
+        Arc::new(declare::DeclareTurnOutcomeTool::new(
+            binding,
+            crate::domain::turn_declaration::LaunchAuthority::TopLevelParent,
+        )),
+    ))]
+}
+
 pub struct SessionToolDeps {
     /// The recall use case the `recall` tool adapts (D9 #1978).
     pub recall: Arc<crate::application::sessions::use_cases::RecallContext>,

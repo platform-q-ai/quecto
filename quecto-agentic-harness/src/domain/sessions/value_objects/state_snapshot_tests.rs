@@ -228,7 +228,11 @@ fn the_unchanged_marker_is_read_with_its_model_turn() {
         Some(UnchangedSnapshot {
             unchanged: true,
             generation: 7,
-            model_turn: None
+            model_turn: None,
+            session_key: None,
+            turn_outcome_version: None,
+            outcome_epoch: None,
+            latest_turn_outcome: None,
         })
     );
     // A newer writer's added member is dropped, as in the projection.

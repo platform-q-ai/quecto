@@ -8,6 +8,7 @@ use crate::interface::uds::wire::protocol::SessionState;
 
 fn state_with_execution(activity_generation: u64, progress_state: &str) -> SessionState {
     SessionState {
+        turn_outcome: None,
         admission_warnings: Vec::new(),
         startup_warnings: Vec::new(),
         control_receipts: Vec::new(),

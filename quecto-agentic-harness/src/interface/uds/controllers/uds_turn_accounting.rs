@@ -29,6 +29,10 @@ impl TurnAccountingReset for LoopTurnAccounting<'_> {
             state.set_message_count(visible_message_count);
         }
         self.session.clear_usage();
+        // A replaced history is a new turn-outcome incarnation (#2708).
+        if let Some(runtime) = self.session.parent_outcome() {
+            runtime.history_replaced();
+        }
         // Queued prompts were admitted against the replaced history; a
         // queued control is cancelled with its receipt recorded.
         self.session.discard_pending();

@@ -310,6 +310,9 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         pending::queue_prompt(ctx, id.as_deref(), &type_name, message, work).await;
         return false;
     }
+    if !parent_turn::admits(ctx, work) {
+        return false; // #2708: a terminal outcome fences automatic turns.
+    }
     // #1909: the turn starts as the work it is (a prompt or steer re-arms
     // automatic turns); a failure in it is dated at the generation now (#1721).
     let steer = work.is_steer();
@@ -341,12 +344,14 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     // clean-delta appends and freezes load()/resume history (#1322).
     ctx.session
         .record_control(id.as_deref(), &type_name, protocol::ControlStatus::Started);
-    let outcome = run_prompt_dispatch(ctx, message, cancel_rx).await;
+    let admission = parent_turn::accept_prompt(ctx, work, (id.as_deref(), &type_name)).await;
+    let accepted = admission.is_some();
+    let outcome = run_prompt_dispatch(ctx, message, cancel_rx, admission).await;
     ctx.session
         .record_control(id.as_deref(), &type_name, control_status(&outcome));
     disarm_cancel(&ctx.cancel_handle);
     // #1072: the turn's own save (`TurnSave`) drains the durable-prefix dirty latch.
-    if matches!(outcome, PromptOutcome::Success) {
+    if matches!(outcome, PromptOutcome::Success) && !accepted {
         let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
@@ -433,7 +438,7 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
 
     let mut no_progress_turns = 0usize;
     for _ in 0..MAX_WORKFLOW_NUDGES {
-        if !ctx.session.automatic_turns_allowed() {
+        if !ctx.session.automatic_turns_allowed() || !parent_turn::admits(ctx, Work::Automatic) {
             break;
         }
         // #930: an abort that lands WHILE this auto-continue loop is mid-flight is
@@ -490,6 +495,7 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
                 ctx,
                 nudge.into_message(no_progress_turns > 0),
                 TurnAdmissionGuard::NoActiveWorkflowDescendant,
+                Some(TurnAdmission::Nudge),
             )
             .await;
         }
@@ -524,25 +530,17 @@ async fn run_prompt_dispatch(
     ctx: &mut DispatchCtx<'_>,
     message: Message,
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    admission: Option<TurnAdmission>,
 ) -> PromptOutcome {
     let _busy = uds_multi::BusyGuard::new(&ctx.busy); // #828: gates connect-time snapshot
-    let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
-    run_agent_message(PromptRun {
-        agent: ctx.agent,
-        messages: ctx.messages,
-        active_session: Some(ctx.sessions.active_session.clone()),
-        execution_state: Some(ctx.execution_state.clone()),
-        session: ctx.session,
-        sink: &mut sink,
-        message,
-        system_prompt: ctx.system_prompt,
-        cancel_rx,
-        notification_rx: &mut ctx.notification_rx,
-        subagent_registry: &ctx.subagent_registry,
-        turn_save: Some(TurnSave(ctx.save_session.clone())),
-    })
-    .await
+    let turn = parent_turn::admit(ctx, admission, &message).await;
+    let outcome = run_turn(ctx, message, cancel_rx, TurnAdmissionGuard::None, &turn).await;
+    parent_turn::settle(ctx, turn, outcome).await
 }
+mod parent_turn;
+use crate::application::agent_turn::use_cases::parent_outcome::{ActiveTurn, TurnAdmission};
+use crate::domain::inference::services::turn_suspension::Work;
+pub(super) use parent_turn::{ack_data, episode_id};
 mod pending;
 use pending::drain_and_run_pending;
 
@@ -558,14 +556,19 @@ enum TurnAdmissionGuard {
     NoActiveWorkflowDescendant,
 }
 
-async fn run_drained_message(ctx: &mut DispatchCtx<'_>, msg: Message) -> PromptOutcome {
-    run_drained_message_guarded(ctx, msg, TurnAdmissionGuard::None).await
+async fn run_drained_message(
+    ctx: &mut DispatchCtx<'_>,
+    msg: Message,
+    admission: Option<TurnAdmission>,
+) -> PromptOutcome {
+    run_drained_message_guarded(ctx, msg, TurnAdmissionGuard::None, admission).await
 }
 
 async fn run_drained_message_guarded(
     ctx: &mut DispatchCtx<'_>,
     mut msg: Message,
     guard: TurnAdmissionGuard,
+    admission: Option<TurnAdmission>,
 ) -> PromptOutcome {
     #[cfg(test)]
     run_before_guarded_turn_admission_test_hook();
@@ -582,6 +585,20 @@ async fn run_drained_message_guarded(
     {
         tracing::warn!("failed to persist drained prompt before turn: {err}");
     }
+    let turn = parent_turn::admit(ctx, admission, &msg).await;
+    let outcome = run_turn(ctx, msg, rx, guard, &turn).await;
+    parent_turn::settle(ctx, turn, outcome).await
+}
+
+/// Run one admitted message: polled once to commit its opener (announced
+/// then, when guarded), then to its end; disarm and refresh after.
+async fn run_turn(
+    ctx: &mut DispatchCtx<'_>,
+    msg: Message,
+    rx: tokio::sync::oneshot::Receiver<()>,
+    guard: TurnAdmissionGuard,
+    turn: &Option<ActiveTurn>,
+) -> PromptOutcome {
     let session_key = ctx.sessions.current_session_key().await;
     let outcome = {
         let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
@@ -627,7 +644,10 @@ async fn run_drained_message_guarded(
         };
         match admitted {
             Some(outcome) => outcome,
-            None => run.as_mut().await,
+            None => {
+                parent_turn::announce(&ctx.broadcast_tx, turn).await;
+                run.as_mut().await
+            }
         }
     };
     disarm_cancel(&ctx.cancel_handle);

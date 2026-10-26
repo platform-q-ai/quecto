@@ -111,6 +111,12 @@ pub type RetentionHandlesBuilder = fn(&std::path::Path) -> retention_handles::Re
 /// resume-after-a-provider-failure and inspect-session-usage.
 pub type TurnSessionBuilder = fn(String) -> uds_session::AgentSession;
 
+/// Composition's builder of a trusted root parent's turn-outcome runtime
+/// (#2708); the interface never constructs the use case.
+pub type ParentOutcomeBuilder = fn() -> std::sync::Arc<
+    crate::application::agent_turn::use_cases::parent_outcome::ParentOutcomeRuntime,
+>;
+
 /// Composition's builder of the fresh user-chat identity generator (D7
 /// #1976): the one source of a fresh key, for the startup identity of an
 /// unnamed chat run. The fresh-session transaction holds its own injected
@@ -204,6 +210,9 @@ pub struct CliContext {
     /// Composition's turn-session builder (#1909, #1855); a UDS loop
     /// refuses to start without it.
     pub turn_session: Option<TurnSessionBuilder>,
+    /// Composition's turn-outcome runtime builder (#2708); without it no
+    /// root is guarded.
+    pub parent_outcome: Option<ParentOutcomeBuilder>,
     /// Composition's retained-context handles builder (#1978). Supplied by
     /// the binary's `main` through [`run`]'s [`CliComposition`]; an agent
     /// run refuses to start without it, since the interface never
@@ -367,6 +376,7 @@ pub struct CliComposition {
     pub kill_tool: crate::interface::cli::KillToolBuilder,
     pub sessions: SessionHandlesBuilder,
     pub turn_session: TurnSessionBuilder,
+    pub parent_outcome: ParentOutcomeBuilder,
     pub retention: RetentionHandlesBuilder,
     pub fresh_session_identity: FreshSessionIdentityBuilder,
     pub configuration: ConfigurationHandlesBuilder,
@@ -465,6 +475,7 @@ fn composed_context(
         kill_tool: Some(composition.kill_tool),
         sessions: Some(composition.sessions),
         turn_session: Some(composition.turn_session),
+        parent_outcome: Some(composition.parent_outcome),
         retention: Some(composition.retention),
         fresh_session_identity: Some(composition.fresh_session_identity),
         configuration: Some(composition.configuration),

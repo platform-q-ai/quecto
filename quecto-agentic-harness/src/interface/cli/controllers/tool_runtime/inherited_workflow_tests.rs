@@ -36,6 +36,7 @@ pub(super) fn build(
     let mut stderr = String::new();
     let uds = launch.entrypoint == ToolEntrypoint::UdsAgent;
     build_tool_runtime(ToolRuntimeBuildArgs {
+        parent_outcome: None,
         child_extensions: Vec::new(),
         swarm_context: None,
         swarm_participation:
@@ -334,6 +335,7 @@ fn guards_or_a_bound_spec_also_request_workflow_mode() {
     let mut stderr = String::new();
     let config = Config::default();
     let error = build_tool_runtime(ToolRuntimeBuildArgs {
+        parent_outcome: None,
         child_extensions: Vec::new(),
         swarm_context: None,
         swarm_participation:

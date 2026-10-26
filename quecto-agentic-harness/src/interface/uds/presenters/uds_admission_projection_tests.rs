@@ -227,6 +227,7 @@ fn slim_get_state_carries_admission_and_since_sees_transitions() {
     let mut execution = ExecutionState::default();
     execution.set_admission_source(source.clone());
     let mut session = crate::interface::uds::wire::protocol::SessionState {
+        turn_outcome: None,
         admission_warnings: Vec::new(),
         startup_warnings: Vec::new(),
         model: "m".into(),
