@@ -4,11 +4,9 @@
 //! once, for every front end.
 use serde_json::{Map, Value};
 
-use crate::application::project_board::dto::{
-    BoardOp, DraftUpdate, NewBoardTask, NewBoardTaskStatus, ReadPin,
-};
+use crate::application::project_board::dto::{BoardOp, NewBoardTask, NewBoardTaskStatus};
 use crate::application::project_board::operations::{BoardRequest, ListFilter, PlanPage, PlanView};
-use crate::application::project_board::ports::{BoardHead, KeepCopy};
+use crate::application::project_board::ports::KeepCopy;
 use crate::domain::project_board::entities::task_parts::EntryPolicy;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{FaultKind, RequestFault, StaticKind};
@@ -442,22 +440,6 @@ impl Read<'_> {
             .transpose()
     }
 
-    /// The pin the request gives to what its caller read (#2705 B9):
-    /// `expected_rev`, or the deprecated `expected_updated`, never both.
-    fn pin(&self) -> Result<Option<ReadPin>, RequestError> {
-        let rev = self.value(EXPECTED_REV).map(rev).transpose()?;
-        match (rev, self.timestamp(EXPECTED_UPDATED)?) {
-            (Some(_), Some(_)) => Err(RequestError::of(
-                EXPECTED_UPDATED,
-                "is deprecated and not taken beside expected_rev: give expected_rev alone",
-                FaultKind::InvalidValue,
-            )),
-            (Some(rev), None) => Ok(Some(ReadPin::Rev(rev))),
-            (None, Some(updated)) => Ok(Some(ReadPin::Updated(updated))),
-            (None, None) => Ok(None),
-        }
-    }
-
     /// An offset, or none when it is absent or `null`.
     fn offset(&self, name: &str) -> Result<Option<usize>, RequestError> {
         let value = match self.value(name) {
@@ -488,36 +470,6 @@ impl Read<'_> {
 }
 
 /// A time as the board spells it.
-/// The field a pin by revision is given in (#2705 B9).
-const EXPECTED_REV: &str = "expected_rev";
-/// The deprecated field a pin by stamp is given in.
-const EXPECTED_UPDATED: &str = "expected_updated";
-/// The most bytes a rev takes: a git commit id (64 hex at most), or a
-/// board server's `<epoch>:<revision>`, fits well within it.
-const MAX_REV_BYTES: usize = 80;
-
-/// A board revision as `show` answers it, `rev` (an allowlist): lowercase
-/// letters, digits and `:`, at most [`MAX_REV_BYTES`].
-fn rev(value: &Value) -> Result<BoardHead, RequestError> {
-    let spelt = |text: &&str| {
-        (1..=MAX_REV_BYTES).contains(&text.len())
-            && text
-                .bytes()
-                .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase() || b == b':')
-    };
-    value
-        .as_str()
-        .filter(spelt)
-        .map(|text| BoardHead(text.to_string()))
-        .ok_or_else(|| {
-            RequestError::of(
-                EXPECTED_REV,
-                "must be the rev show gave you",
-                misfit(value.is_string()),
-            )
-        })
-}
-
 fn timestamp(name: &str, value: &Value) -> Result<Timestamp, RequestError> {
     value
         .as_str()
@@ -568,7 +520,7 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
             },
         )),
         "create" => create(read),
-        "update_draft" => update_draft(read),
+        "update_draft" => drafts::update_draft(read),
         "move" => change(moves::moved(read)?),
         "done_without_run" => moves::done_without_run(read),
         "renew" => change(BoardOp::Renew),
@@ -752,38 +704,6 @@ fn create(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     }))
 }
 
-fn update_draft(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
-    let parent = match read.value("parent") {
-        None => None,
-        Some(Value::Null) => Some(None),
-        Some(value) => Some(Some(slug("parent", value)?)),
-    };
-    let expected = read.pin()?;
-    let (described, entry) = description::description(read)?;
-    let update = DraftUpdate {
-        id: read.task()?,
-        title: read.text("title")?,
-        description: described,
-        parent,
-        depends_on: read.slugs("depends_on")?,
-        expected,
-        entry,
-    };
-    let sets_something = update.title.is_some()
-        || update.description.is_some()
-        || update.parent.is_some()
-        || update.depends_on.is_some();
-    match sets_something {
-        true => Ok(BoardRequest::UpdateDraft(update)),
-        // No field to change was given.
-        false => Err(RequestError::of(
-            "op",
-            "update_draft sets nothing: name a field to change",
-            FaultKind::Missing,
-        )),
-    }
-}
-
 #[path = "request_plans.rs"]
 mod plans;
 
@@ -792,6 +712,12 @@ mod description;
 
 #[path = "request_moves.rs"]
 mod moves;
+
+#[path = "request_pins.rs"]
+mod pins;
+
+#[path = "request_drafts.rs"]
+mod drafts;
 pub use description::entry_policy;
 
 #[cfg(test)]

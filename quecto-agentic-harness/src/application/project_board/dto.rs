@@ -44,37 +44,6 @@ pub struct NewBoardTask {
     pub entry: Entry,
 }
 
-/// How a caller pins a change to what it read (#2705 B9): the board's
-/// revision it read at, which `show` answers as `rev`, or, deprecated and
-/// taken for one more release, the artifact's `updated`. A rev pin holds
-/// while the artifact is as the board held it at that revision, whatever
-/// else the board took since.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReadPin {
-    Rev(BoardHead),
-    /// Deprecated: a stamp is for display, and two changes in one second
-    /// share one.
-    Updated(Timestamp),
-}
-
-impl ReadPin {
-    /// The pin as the caller gave it.
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Rev(rev) => &rev.0,
-            Self::Updated(updated) => updated.as_str(),
-        }
-    }
-
-    /// The deprecated `updated` pin's stamp, when it is one.
-    pub fn deprecated_updated(&self) -> Option<&Timestamp> {
-        match self {
-            Self::Updated(updated) => Some(updated),
-            Self::Rev(_) => None,
-        }
-    }
-}
-
 /// An edit of a draft in place: the fields it sets (`None` keeps one as
 /// it is; `parent: Some(None)` takes the parent away), and what the
 /// caller read, when it read the draft: a draft changed since is refused
@@ -745,6 +714,10 @@ impl From<BoardClockError> for ProjectBoardError {
 
 #[path = "dto_errors.rs"]
 mod errors;
+
+#[path = "dto_pins.rs"]
+mod pins;
+pub use pins::ReadPin;
 
 impl std::error::Error for ProjectBoardError {}
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::project_board::dto::{DraftUpdate, ReadPin};
 use crate::domain::project_board::entities::task_parts::Entry;
 use crate::domain::project_board::services::transitions::MoveReason;
 use serde_json::json;

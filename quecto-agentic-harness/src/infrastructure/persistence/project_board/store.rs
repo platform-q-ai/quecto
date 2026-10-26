@@ -425,28 +425,6 @@ impl GitBoardStore {
         Ok(base)
     }
 
-    /// Whether `commit` is a commit here and `tip` or one of its ancestors.
-    fn on_board(&self, commit: &str, tip: &str) -> Result<bool, BoardStoreError> {
-        Ok(self.is_commit(commit)? && self.is_ancestor(commit, tip)?)
-    }
-
-    /// The board's commit as this clone last fetched it, if it has.
-    fn local_tip(&self) -> Result<Option<String>, BoardStoreError> {
-        let commit = format!("{}^{{commit}}", self.tracking());
-        let args = ["rev-parse", "--verify", "--quiet", commit.as_str()];
-        let output = self
-            .git
-            .local(&args, None, SHORT_OUTPUT)
-            .map_err(unavailable)?;
-        match output.status.code() {
-            Some(0) => Ok(Some(object_id(
-                String::from_utf8_lossy(&output.stdout).trim_end(),
-            )?)),
-            Some(1) => Ok(None),
-            _ => Err(unavailable(failed(&args, &output))),
-        }
-    }
-
     fn is_commit(&self, oid: &str) -> Result<bool, BoardStoreError> {
         let args = ["cat-file", "-t", oid];
         let output = self
@@ -643,29 +621,12 @@ impl ProjectBoardStore for GitBoardStore {
         Ok(board.snapshot(BoardHead(head)).asserted())
     }
 
-    /// As the board's commit `rev` held it, its head being the git
-    /// store's revision: a rev that names no commit this clone holds on
-    /// the board's history (as its last fetch left it) is none.
     fn artifact_at(
         &self,
         rev: &BoardHead,
         key: &ArtifactKey,
     ) -> Result<Option<BoardArtifact>, BoardStoreError> {
-        let Ok(commit) = object_id(&rev.0) else {
-            return Ok(None);
-        };
-        let on_board = match self.local_tip()? {
-            Some(tip) => self.on_board(&commit, &tip)?,
-            None => false,
-        };
-        match on_board {
-            // Read past the cache, which keeps the head every write reads.
-            true => Ok(self
-                .read_fetching(&commit)?
-                .snapshot(rev.clone())
-                .artifact(key)),
-            false => Ok(None),
-        }
+        self.held_at(rev, key)
     }
 
     /// Writes `artifacts`, each as its kind's canonical markdown file, on
@@ -747,6 +708,8 @@ pub use fence::{Fence, GitBoardFence};
 mod fetch_state;
 #[path = "store_fetch.rs"]
 mod fetching;
+#[path = "store_revisions.rs"]
+mod revisions;
 #[path = "store_write.rs"]
 mod writing;
 
