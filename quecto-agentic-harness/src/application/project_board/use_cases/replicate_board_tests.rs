@@ -8,7 +8,7 @@ use super::*;
 use crate::application::project_board::ports::TokenError;
 use crate::application::project_board::ports::feed::{BoardRevision, StreamRead};
 use crate::application::project_board::ports::replication::{
-    AdminToken, ReplicaBatch, ReplicaPosition, ReplicaRevision,
+    AdminToken, ReplicaBatch, ReplicaPosition, ReplicaRevision, ReplicaStatus,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -366,6 +366,41 @@ fn an_unreachable_primary_stalls_the_follower_which_pauses_before_each_try() {
     // Stalled again and again, it backs off, doubling to its ceiling.
     let ms = |millis| Duration::from_millis(millis);
     assert_eq!(paused[..4], [ms(7), ms(14), ms(28), ms(28)], "{paused:?}");
+}
+
+/// B11 review 2: a follower stalled again and again counts how long, by
+/// its pauses, and past [`STALE_AFTER`] serves no device; caught up, it
+/// counts again from nothing.
+#[test]
+fn a_follower_stalled_past_its_bound_serves_no_device() {
+    use crate::application::project_board::ports::replication::STALE_AFTER;
+    let slow = ReplicaTiming {
+        restart: STALE_AFTER / 2,
+        max_restart: STALE_AFTER,
+        ..FAST
+    };
+    let primary = Arc::new(Primary {
+        unreachable: true,
+        ..Primary::plain(1)
+    });
+    let pauses = Arc::new(Recorded::default());
+    let follower = ReplicateBoard::new(
+        primary,
+        Arc::new(Replica::default()),
+        Arc::new(Admin::default()),
+        Arc::clone(&pauses) as _,
+        slow,
+    );
+    let rounds = AtomicUsize::new(0);
+    follower.run(&|| rounds.fetch_add(1, Ordering::SeqCst) < 4);
+    let status = follower.status();
+    assert!(status.stalled_for >= STALE_AFTER, "{status:?}");
+    assert!(!status.serves_devices());
+    let short = ReplicaStatus {
+        stalled_for: STALE_AFTER / 2,
+        ..status.clone()
+    };
+    assert!(short.serves_devices(), "stalled briefly, it serves");
 }
 
 /// B11 review: a diverged follower is kept so across a restart: it asks

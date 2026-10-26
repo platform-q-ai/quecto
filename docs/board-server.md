@@ -2,7 +2,7 @@
 
 `quecto board-server serve --socket <path> --repo <clone> [--remote origin]
 [--listen <ip:port>]... [--state <dir>] [--follow <url> [--token-file
-<path>]]` serves a repository's project board over HTTP/1.1 on a Unix
+<path>] [--replace-tokens]]` serves a repository's project board over HTTP/1.1 on a Unix
 socket, and on each allowlisted TCP address, until SIGINT or SIGTERM (epic
 #2705 B4, B5, B7). With `--follow` it is a read-only follower of the
 primary at `<url>` (B11, below).
@@ -491,7 +491,7 @@ server's own user. The kept write answers (`op_results`) are not in it.
 ## Follower (B11)
 
 `quecto board-server serve --socket <path> --repo <clone> --follow <url>
-[--token-file <path>]` serves a read-only copy of the
+[--token-file <path>] [--replace-tokens]` serves a read-only copy of the
 primary at `<url>`: `unix:///<socket path>` (the primary's own user, no
 token), or `http://<ip>:<port>` on loopback or a Tailscale address with a
 replica token the primary issued (`quecto board-server token add <name>
@@ -508,13 +508,16 @@ state directory, or on a copy of the primary's board file (a backup).
 
 **Its own tokens.** A follower holds its primary's tokens in its
 `tokens.json`, in place of its own. Each set it takes from its primary is
-noted beside them by its digest (`tokens.json.followed`), so a restart
-follows on. Tokens of a server's own (any set it did not take from a
-primary: before it first follows, or any issued after it is promoted) make
-a follow refused, so none stays live beside its primary's ("this server
-holds N token(s) of its own: a follower holds its primary's instead. Revoke
-them first, or give the follower its own --state <dir>"). The check runs
-only once the token file and URL are judged sound. A follower's own
+noted beside them by its digest (`tokens.json.followed`). Tokens of a
+server's own (any set it did not take from a primary: before it first
+follows, or any issued after it is promoted) make a follow refused unless
+`--replace-tokens` is given ("this server holds N token(s) of its own: a
+follower holds its primary's instead. Give --replace-tokens to replace them
+(they are kept as tokens.json.pre-follow and refused at once), or give the
+follower its own --state <dir>"). Given it, they are kept as
+`tokens.json.pre-follow` and the server holds none, so they are refused at
+once, before its primary's are copied. A start refused for any other reason
+(its token file, its primary's URL) sets nothing aside. A follower's own
 operations write nothing: its store refuses every write, whatever the op.
 
 **What it copies.** Every revision with its objects, principal and chain,
@@ -522,8 +525,11 @@ the epochs, the board's provenance row, and the admin rows: the primary's
 tokens, of either kind. So a token the primary revokes is refused by the
 follower from the batch after the revoke (with the next revision, or within
 about a minute, at the next reopen of the feed), and a device uses its one
-token on either server. A follower that cannot take batches (stalled or
-diverged) keeps the tokens it last took until it can. Each copied row is checked as it is taken, an allowlist: a native
+token on either server. A follower that cannot take batches cannot learn of
+a revoke: while it is diverged, or stalled for 10 min or more (by its
+pauses), it refuses every read over TCP, 503 `standby_stale` ("this
+standby's copy is not kept current (it is stalled or diverged): read its
+primary"); the Unix socket is served still. Each copied row is checked as it is taken, an allowlist: a native
 object's id is made again from its content, an imported original's git id
 from its raw bytes (SHA-1 or SHA-256, by its width) and a tree's entries
 from its raw tree; the provenance row must name the follower's board (an
@@ -598,6 +604,7 @@ Every error reply the server makes is JSON, `{"error": "<why>", "code":
 | 403 | `local_only` | an admin route asked over TCP, or the op `bootstrap` or `clear_set_aside` over TCP |
 | 403 | `replica_only` | `replicate` asked with a device token (B11) |
 | 403 | `replica_reads` | a write asked with a replica token (B11) |
+| 503 | `standby_stale` | over TCP, a read of a follower diverged or stalled for 10 min or more (B11) |
 | 404 | `board` | an op for a board id this server does not serve |
 | 409 | `write_id_reused` | a `write_id` this principal used for another write |
 | 409 | `standby` | a write to a follower (B11), with its `primary` |

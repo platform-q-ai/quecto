@@ -32,8 +32,12 @@ use crate::infrastructure::persistence::file::state_dir::{
 pub const TOKENS_FILE: &str = "tokens.json";
 const TOKENS_NAME: &CStr = c"tokens.json";
 
-/// The digest of the token set a follower last took from its primary,
-/// beside the tokens (B11).
+/// A follower's own tokens, kept as they are set aside (B11).
+pub const PRE_FOLLOW_FILE: &str = "tokens.json.pre-follow";
+const PRE_FOLLOW_NAME: &CStr = c"tokens.json.pre-follow";
+
+/// The digest of the token set a follower last took from its primary (or
+/// set aside its own for), beside the tokens (B11).
 pub const FOLLOWED_FILE: &str = "tokens.json.followed";
 const FOLLOWED_NAME: &CStr = c"tokens.json.followed";
 
@@ -417,6 +421,24 @@ impl FollowTokens for FileBoardTokens {
             held: rows.len(),
             copied: copied.contains(&set_digest(&rows)),
         })
+    }
+
+    fn set_aside(&self) -> Result<(), TokenError> {
+        let mut kept = Vec::new();
+        if let Some((file, _)) = self.opened()? {
+            (file.take(MAX_FILE_BYTES).read_to_end(&mut kept))
+                .map_err(|error| self.unavailable(error))?;
+        }
+        let kept = match kept.is_empty() {
+            true => b"[]\n".to_vec(),
+            false => kept,
+        };
+        self.write_through(PRE_FOLLOW_NAME, &kept)?;
+        self.changing(|held| {
+            held.clear();
+            Ok(())
+        })?;
+        self.keep_copied(&[])
     }
 }
 

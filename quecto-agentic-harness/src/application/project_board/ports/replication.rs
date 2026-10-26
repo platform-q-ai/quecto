@@ -204,8 +204,8 @@ pub trait ReplicaStore: Send + Sync {
 }
 
 /// A server's tokens as it starts to follow (B11): how many it holds, and
-/// whether they are the set it last took from a primary, not tokens of its
-/// own.
+/// whether they are the set it last took from a primary (or the empty set
+/// it holds once its own were set aside), not tokens of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FollowedTokens {
     pub held: usize,
@@ -219,6 +219,14 @@ pub trait FollowTokens: Send + Sync {
     /// # Errors
     /// The store failed.
     fn followed(&self) -> Result<FollowedTokens, TokenError>;
+
+    /// Keeps the tokens held aside (beside them), then holds none, as a
+    /// follower's until its primary's are copied: the tokens set aside are
+    /// refused from now on.
+    ///
+    /// # Errors
+    /// The store failed; nothing is set aside.
+    fn set_aside(&self) -> Result<(), TokenError>;
 }
 
 /// Port: the server's admin rows (its device tokens' digests): a primary
@@ -275,4 +283,23 @@ pub struct ReplicaStatus {
     pub applied: u64,
     pub primary_head: Option<u64>,
     pub state: ReplicaState,
+    /// How long it has been stalled, as its pauses count it (zero while
+    /// it is not).
+    pub stalled_for: std::time::Duration,
+}
+
+/// How long a follower may be stalled and still serve reads over TCP: past
+/// it, a token its primary revoked could still read a copy no longer kept.
+pub const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(600);
+
+impl ReplicaStatus {
+    /// Whether it serves reads to devices, an allowlist: catching up,
+    /// following, or stalled for less than [`STALE_AFTER`]; never diverged.
+    pub fn serves_devices(&self) -> bool {
+        match self.state {
+            ReplicaState::CatchingUp | ReplicaState::Following => true,
+            ReplicaState::Stalled(_) => self.stalled_for < STALE_AFTER,
+            ReplicaState::Diverged(_) => false,
+        }
+    }
 }

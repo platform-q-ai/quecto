@@ -17,12 +17,18 @@ use crate::infrastructure::time::board_clock::SystemBoardClock;
 const PRIMARY: &str = "http://100.64.0.1:7979";
 
 fn follower() -> BoardRoutes {
+    follower_in(ReplicaState::Following, std::time::Duration::ZERO)
+}
+
+/// A follower whose replication is in `state`, stalled for `stalled_for`.
+fn follower_in(state: ReplicaState, stalled_for: std::time::Duration) -> BoardRoutes {
     let (store, _) = written();
     let status = ReplicaStatus {
         primary: PRIMARY.into(),
         applied: 2,
         primary_head: Some(5),
-        state: ReplicaState::Following,
+        state,
+        stalled_for,
     };
     let serve = serving(&store).following(Arc::new(move || status.clone()));
     let tokens = Arc::new(MemoryBoardTokens::default());
@@ -44,6 +50,44 @@ fn sent(routes: &BoardRoutes, method: ServiceMethod, path: &str, body: Value) ->
         last_event_id: None,
     });
     (reply.status, serde_json::from_slice(&reply.body).unwrap())
+}
+
+/// A device's read of the status over TCP: its status and code.
+fn device_reads(routes: &BoardRoutes) -> (u16, Value) {
+    let reply = routes.answer(&ServiceRequest {
+        method: ServiceMethod::Get,
+        path: "/v1/status".into(),
+        body: vec![],
+        transport: Transport::Tcp,
+        principal: Some("phone".into()),
+        query: None,
+        last_event_id: None,
+    });
+    let body: Value = serde_json::from_slice(&reply.body).unwrap();
+    (reply.status, body["code"].clone())
+}
+
+/// B11 review 2: a follower whose copy is not kept current (stalled past
+/// its bound, or diverged) refuses devices' reads, so a token its primary
+/// revoked meanwhile reads nothing; the Unix socket is served still.
+#[test]
+fn a_stale_follower_refuses_devices_reads_and_serves_the_socket() {
+    use crate::application::project_board::ports::replication::STALE_AFTER;
+    let stalled = || ReplicaState::Stalled("no primary".into());
+    let short = follower_in(stalled(), STALE_AFTER / 2);
+    assert_eq!(device_reads(&short).0, 200, "stalled briefly, it serves");
+    let refusal = (503, json!("standby_stale"));
+    for stale in [
+        follower_in(stalled(), STALE_AFTER),
+        follower_in(
+            ReplicaState::Diverged("forked".into()),
+            std::time::Duration::ZERO,
+        ),
+    ] {
+        assert_eq!(device_reads(&stale), refusal);
+        let (status, _) = sent(&stale, ServiceMethod::Get, "/v1/status", Value::Null);
+        assert_eq!(status, 200, "the socket is served");
+    }
 }
 
 fn op(routes: &BoardRoutes, request: Value) -> (u16, Value) {

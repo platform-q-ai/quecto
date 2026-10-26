@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::project_board::ports::replication::FollowTokens;
+use crate::application::project_board::ports::replication::{FollowTokens, FollowedTokens};
 use std::os::unix::fs::PermissionsExt;
 
 fn name(text: &str) -> Slug {
@@ -371,4 +371,46 @@ fn a_swap_refused_after_the_note_leaves_a_servers_own_set_its_own() {
     let reopened = FileBoardTokens::open(&state).unwrap();
     let held = reopened.followed().unwrap();
     assert_eq!((held.held, held.copied), (1, false), "its own set");
+}
+
+/// B11 review 2: tokens of a server's own are not its primary's set; set
+/// aside, they are kept beside and refused at once; the primary's set,
+/// once taken, is known as such across restarts, and a token issued after
+/// it (as after a promotion) makes the set the server's own again.
+#[test]
+fn a_followers_tokens_are_its_primarys_set_until_its_own_are_issued() {
+    let (_dir, tokens) = opened();
+    let empty = FollowedTokens {
+        held: 0,
+        copied: false,
+    };
+    assert_eq!(tokens.followed(), Ok(empty), "a new directory");
+    let laptop = tokens.add(&name("laptop"), &at()).unwrap();
+    let own = std::fs::read(tokens_path(&tokens)).unwrap();
+    let held = tokens.followed().unwrap();
+    assert_eq!((held.held, held.copied), (1, false), "its own");
+    tokens.set_aside().unwrap();
+    assert_eq!(tokens.verify(&laptop.secret), Ok(None), "refused at once");
+    let kept = tokens.state.join(PRE_FOLLOW_FILE);
+    assert_eq!(std::fs::read(&kept).unwrap(), own, "kept beside");
+    let mode = std::fs::metadata(&kept).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    let none = FollowedTokens {
+        held: 0,
+        copied: true,
+    };
+    assert_eq!(tokens.followed(), Ok(none));
+    // Its primary's set is taken, and known as such when opened again.
+    let primary = FileBoardTokens::open(&tokens.state.with_file_name("primary")).unwrap();
+    primary.add(&name("phone"), &at()).unwrap();
+    tokens.replace(&primary.export().unwrap()).unwrap();
+    let state = tokens.state.clone();
+    drop(tokens);
+    let reopened = FileBoardTokens::open(&state).unwrap();
+    let copied = reopened.followed().unwrap();
+    assert_eq!((copied.held, copied.copied), (1, true), "the primary's set");
+    // A token issued here (after a promotion) makes the set its own again.
+    reopened.add(&name("tablet"), &at()).unwrap();
+    let own = reopened.followed().unwrap();
+    assert_eq!((own.held, own.copied), (2, false), "its own again");
 }

@@ -76,6 +76,14 @@ impl ServeBoard {
         self.following.is_some()
     }
 
+    /// Whether it serves devices (TCP) reads: a primary always; a follower
+    /// while its copy is kept current ([`ReplicaStatus::serves_devices`]).
+    pub fn serves_devices(&self) -> bool {
+        self.following
+            .as_ref()
+            .is_none_or(|status| status().serves_devices())
+    }
+
     /// What time it is, by the server's clock: the clock authority.
     /// # Errors
     /// The clock reads a time the board cannot spell.

@@ -141,10 +141,10 @@ pub fn build_board_server_with(
     let follower = match &environment.follow {
         Some(follow) => {
             let source = replication_source(follow, &board).map_err(|why| refused(&why))?;
-            // A follower holds its primary's tokens: a server with its own is
-            // refused, once the rest of the start is judged sound.
+            // A follower holds its primary's tokens: its own are set aside
+            // only when asked, and only once the rest of the start is sound.
             ReadyFollowerTokens::new(Arc::clone(&tokens) as Arc<dyn FollowTokens>)
-                .ready()
+                .ready(follow.replace_tokens)
                 .map_err(|why| refused(&why))?;
             let primary = source.primary();
             let replicate = ReplicateBoard::new(

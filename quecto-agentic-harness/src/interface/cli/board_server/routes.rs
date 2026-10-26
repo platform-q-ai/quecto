@@ -156,6 +156,21 @@ impl BoardRoutes {
         }
     }
 
+    /// A follower's refusal of a device's read while its copy is not kept
+    /// current (stalled past its bound, or diverged): 503 `standby_stale`.
+    /// The Unix socket is served still.
+    fn stale(&self, transport: Transport) -> Option<ServiceReply> {
+        match (transport, self.serve.serves_devices()) {
+            (Transport::Local, _) | (Transport::Tcp, true) => None,
+            (Transport::Tcp, false) => Some(coded(
+                503,
+                "standby_stale",
+                "this standby's copy is not kept current (it is stalled or diverged): \
+                 read its primary",
+            )),
+        }
+    }
+
     /// A follower's refusal of a write: 409 `standby`, naming its primary.
     fn refused_standby(primary: &str) -> ServiceReply {
         let primary = redact_secrets(&redact_url_userinfo(primary));
@@ -303,6 +318,9 @@ impl BoardRoutes {
         if let (Some(primary), false) = (&self.standby, read_only) {
             return Self::refused_standby(primary);
         }
+        if let Some(stale) = self.stale(request.transport) {
+            return stale;
+        }
         match (route, request.method) {
             (Route::Op, _) => self.op(request, principal),
             (Route::Replicate, _) => match (self.served(&request.path), &self.replication) {
@@ -428,7 +446,11 @@ impl ServiceHandler for BoardRoutes {
         request: &ServiceRequest,
         wake: StreamWake,
     ) -> Result<Box<dyn ServiceStream>, ServiceReply> {
-        match self.admitted(request)? {
+        let admitted = self.admitted(request)?;
+        if let Some(stale) = self.stale(request.transport) {
+            return Err(stale);
+        }
+        match admitted {
             (Route::Events, _) => super::feed::open(self.feed_of(&request.path)?, request, wake),
             (_, _) => Err(coded(404, "route", "no such route")),
         }

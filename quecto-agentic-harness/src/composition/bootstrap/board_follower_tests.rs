@@ -136,6 +136,7 @@ fn a_follower_over_tcp_catches_up_refuses_writes_and_copies_a_revoke() {
     let follow = FollowPrimary {
         url: format!("http://{}", primary.tcp),
         token_file: Some(token),
+        replace_tokens: false,
     };
     let mut following = environment(&dir, &work, "origin");
     following.state = Some(dir.path().join("follower"));
@@ -214,6 +215,7 @@ fn a_token_file_another_user_may_read_is_refused_unquoted() {
     following.follow = Some(FollowPrimary {
         url: "http://127.0.0.1:9".into(),
         token_file: Some(token_file(dir.path(), secret, 0o644)),
+        replace_tokens: false,
     });
     let Err(refused) = build_board_server_with(&following, Arc::new(Synced)) else {
         panic!("a readable token file is refused");
@@ -222,10 +224,44 @@ fn a_token_file_another_user_may_read_is_refused_unquoted() {
     assert!(!refused.contains(secret), "{refused}");
 }
 
-/// B11 review 2: a server whose state holds tokens of its own is not made a
-/// follower: they would stay live beside its primary's.
+/// B11 review: a server whose state holds tokens of its own is not made a
+/// follower unless `--replace-tokens` says so; then its own are kept beside.
 #[test]
-fn a_state_with_tokens_of_its_own_is_refused() {
+fn a_follower_replaces_its_own_tokens_only_when_asked() {
+    let (dir, work) = seeded();
+    let mut own = environment(&dir, &work, "origin");
+    own.state = Some(dir.path().join("eccup"));
+    let handles = build_board_server_with(&own, Arc::new(Synced)).unwrap();
+    let laptop = handles.access.add("laptop").unwrap();
+    drop(handles);
+    let follow = |replace_tokens| FollowPrimary {
+        url: format!("unix://{}", dir.path().join("p.sock").display()),
+        token_file: None,
+        replace_tokens,
+    };
+    let mut following = own.clone();
+    following.follow = Some(follow(false));
+    let Err(refused) = build_board_server_with(&following, Arc::new(Synced)) else {
+        panic!("a state with tokens of its own is refused");
+    };
+    assert!(refused.contains("--replace-tokens"), "{refused}");
+    following.follow = Some(follow(true));
+    let handles = build_board_server_with(&following, Arc::new(Synced)).unwrap();
+    assert!(handles.follower.is_some());
+    let kept = dir.path().join("eccup").join("tokens.json.pre-follow");
+    assert!(std::fs::read_to_string(kept).unwrap().contains("laptop"));
+    // Replaced, its own are refused at once, before any batch.
+    assert!(handles.access.authenticate(Some(&laptop.secret)).is_err());
+    drop(handles);
+    // Restarted, it follows unasked: its tokens are a follower's now.
+    following.follow = Some(follow(false));
+    assert!(build_board_server_with(&following, Arc::new(Synced)).is_ok());
+}
+
+/// B11 review 2: a start refused (here its token file) sets nothing aside
+/// and marks nothing: the server's own tokens are as they were.
+#[test]
+fn a_refused_start_sets_no_token_aside() {
     let (dir, work) = seeded();
     let mut own = environment(&dir, &work, "origin");
     own.state = Some(dir.path().join("eccup"));
@@ -234,13 +270,18 @@ fn a_state_with_tokens_of_its_own_is_refused() {
     drop(handles);
     let mut following = own.clone();
     following.follow = Some(FollowPrimary {
-        url: format!("unix://{}", dir.path().join("p.sock").display()),
-        token_file: None,
+        url: "http://127.0.0.1:9".into(),
+        token_file: Some(token_file(
+            dir.path(),
+            "A-SECRET-TOKEN-OF-SIXTEEN-OR-MORE",
+            0o644,
+        )),
+        replace_tokens: true,
     });
-    let Err(refused) = build_board_server_with(&following, Arc::new(Synced)) else {
-        panic!("a state with tokens of its own is refused");
-    };
-    assert!(refused.contains("1 token(s) of its own"), "{refused}");
+    assert!(build_board_server_with(&following, Arc::new(Synced)).is_err());
+    let state = dir.path().join("eccup");
+    assert!(!state.join("tokens.json.pre-follow").exists());
+    assert!(!state.join("tokens.json.followed").exists());
     let handles = build_board_server_with(&own, Arc::new(Synced)).unwrap();
     assert!(handles.access.authenticate(Some(&laptop.secret)).is_ok());
 }
@@ -254,6 +295,7 @@ fn a_followers_operations_write_nothing() {
     following.follow = Some(FollowPrimary {
         url: format!("unix://{}", dir.path().join("p.sock").display()),
         token_file: None,
+        replace_tokens: false,
     });
     let handles = build_board_server_with(&following, Arc::new(Synced)).unwrap();
     // Asked without the 409 gate (a mis-read op), the store still refuses.

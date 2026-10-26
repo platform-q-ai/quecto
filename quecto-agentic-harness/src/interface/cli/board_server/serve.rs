@@ -17,7 +17,7 @@ use crate::infrastructure::http::board_service::listener::{
 
 pub const USAGE: &str = "usage: quecto board-server serve --socket <path> --repo <clone> \
      [--remote <name>] [--listen <ip:port>]... [--state <dir>] \
-     [--follow <url> [--token-file <path>]]\n       \
+     [--follow <url> [--token-file <path>] [--replace-tokens]]\n       \
      quecto board-server token add <name> | revoke <name> | list --socket <path>";
 
 /// The blocking threads the server's reads may hold at once.
@@ -57,10 +57,17 @@ pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
         }
     }
     let (mut socket, mut repo, mut remote, mut state) = (None, None, None, None);
-    let (mut follow, mut token_file) = (None, None);
+    let (mut follow, mut token_file, mut replace_tokens) = (None, None, false);
     let mut listen = Vec::new();
     let mut rest = options.iter();
     while let Some(option) = rest.next() {
+        // The one option that takes no value.
+        if option == "--replace-tokens" {
+            match std::mem::replace(&mut replace_tokens, true) {
+                false => continue,
+                true => return refused(format!("{option} is given twice")),
+            }
+        }
         let known = [
             "--socket",
             "--repo",
@@ -100,14 +107,17 @@ pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
     // A primary over TCP needs its token, read from a file; a socket's
     // primary needs none.
     let follow = match (follow, token_file) {
-        (None, None) => None,
+        (None, None) if !replace_tokens => None,
+        (None, None) => return refused("--replace-tokens needs --follow <url>".into()),
         (Some(url), Some(file)) if url.starts_with("http://") => Some(FollowPrimary {
             url,
             token_file: Some(PathBuf::from(file)),
+            replace_tokens,
         }),
         (Some(url), None) if url.starts_with("unix://") => Some(FollowPrimary {
             url,
             token_file: None,
+            replace_tokens,
         }),
         (Some(url), None) if url.starts_with("http://") => {
             return refused("--follow http://.. needs --token-file <path>".into());
