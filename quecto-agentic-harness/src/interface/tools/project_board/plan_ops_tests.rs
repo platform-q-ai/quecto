@@ -16,7 +16,7 @@ use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
 
 /// The board's operations as `name` writes them.
-fn as_writer(store: &MemoryBoardStore, name: &str) -> LocalBoardOperations {
+pub(super) fn as_writer(store: &MemoryBoardStore, name: &str) -> LocalBoardOperations {
     let client = store.client_as(Identity {
         name: name.into(),
         email: format!("{}@example.com", name.to_lowercase()),
@@ -30,23 +30,23 @@ fn as_writer(store: &MemoryBoardStore, name: &str) -> LocalBoardOperations {
     .unwrap()
 }
 
-fn call(operations: &LocalBoardOperations, request: Value) -> Value {
+pub(super) fn call(operations: &LocalBoardOperations, request: Value) -> Value {
     run(operations, &request.to_string())
 }
 
-fn ok(operations: &LocalBoardOperations, request: Value) -> Value {
+pub(super) fn ok(operations: &LocalBoardOperations, request: Value) -> Value {
     let answer = call(operations, request);
     assert_eq!(answer["ok"], json!(true), "{answer}");
     answer
 }
 
-fn item(id: &str) -> Value {
+pub(super) fn item(id: &str) -> Value {
     json!({"id": id, "title": format!("Item {id}"), "criteria": [format!("{id} proved")], "depends_on": []})
 }
 
 /// A board with task `a` and two drafts of its plan by Ada, the second
 /// with two task items.
-fn drafted() -> (MemoryBoardStore, LocalBoardOperations, LocalBoardOperations) {
+pub(super) fn drafted() -> (MemoryBoardStore, LocalBoardOperations, LocalBoardOperations) {
     let store = MemoryBoardStore::default();
     store.bootstrap().unwrap();
     let (ada, bob) = (as_writer(&store, "Ada"), as_writer(&store, "Bob"));

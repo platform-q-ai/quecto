@@ -23,6 +23,10 @@ mod auth_runtime_builder;
 mod authority_starts;
 #[path = "architecture/bdd_lanes.rs"]
 mod bdd_lanes;
+/// The board orders changes by revision: its burst bound is gone (epic
+/// #2705 B9).
+#[path = "architecture/board_order_by_revision.rs"]
+mod board_order_by_revision;
 /// The board server's listener knows no board and calls injected handles
 /// only (epic #2705 B4).
 #[path = "architecture/board_service.rs"]

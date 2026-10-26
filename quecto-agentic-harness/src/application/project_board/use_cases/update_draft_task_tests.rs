@@ -264,3 +264,35 @@ fn two_edits_in_one_second_are_told_apart() {
         Err(ProjectBoardError::Stale { .. })
     ));
 }
+
+/// #2705 B9: changes are ordered by revision, so a burst of quick edits
+/// to one task never runs its stamp ahead of a referenced clock: 100
+/// edits within 2 s all land (the board once refused them after about
+/// 60, as `task_ahead`).
+#[test]
+fn a_hundred_edits_to_one_task_within_two_seconds_all_land() {
+    let store = holding(&[("a", TaskStatus::Draft, None, &[])]);
+    let cells = || {
+        Arc::new(crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells)
+    };
+    let mut stamps = Vec::new();
+    for edit in 0..100 {
+        let second = match edit < 50 {
+            true => "10:00:00",
+            false => "10:00:01",
+        };
+        let clock = SetClock::with_reference(second, Some("10:00:00"));
+        let update = UpdateDraftTask::new(Arc::new(store.client()), clock, cells()).unwrap();
+        let retitled = DraftUpdate {
+            title: Some(format!("Title {edit}")),
+            ..of("a")
+        };
+        let edited = update.execute(&retitled);
+        assert!(edited.is_ok(), "edit {edit}: {edited:?}");
+        stamps.push((edited.unwrap().fields().updated.clone(), at(second)));
+    }
+    // Each stamp is the clock's, for display: never pushed past it.
+    for (edit, (stamped, clock)) in stamps.iter().enumerate() {
+        assert_eq!(stamped, clock, "edit {edit}");
+    }
+}

@@ -122,3 +122,7 @@ mod tests;
 #[cfg(test)]
 #[path = "plan_ops_tests.rs"]
 mod plan_ops_tests;
+
+#[cfg(test)]
+#[path = "plan_ops_rev_tests.rs"]
+mod plan_ops_rev_tests;
