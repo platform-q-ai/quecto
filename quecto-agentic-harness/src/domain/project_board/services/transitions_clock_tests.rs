@@ -1,5 +1,5 @@
 //! A claim runs by the caller's clock, never a stamp (#2705 B9 review
-//! rounds 1 to 3).
+//! rounds 1 to 4).
 use super::*;
 use crate::domain::project_board::services::fixtures_tests::{at, last_written, person, task};
 
@@ -73,35 +73,90 @@ fn a_task_created_within_the_clock_bound_is_claimed_for_the_callers_two_hours() 
     assert!(taken.is_ok(), "{taken:?}");
 }
 
-/// #2705 B9 review round 3 (F3): a task created more than
+/// `task(status)` created and last written at `created`, its claim (when
+/// it holds one) running from then for a second.
+fn held_from(status: TaskStatus, created: &str) -> Task {
+    let mut fields = task(status).into_fields();
+    (fields.created, fields.updated) = (at(created), at(created));
+    if let Some(claim) = fields.claim.as_mut() {
+        claim.since = at(created);
+        claim.expires = at(created).plus_seconds(1).unwrap();
+    }
+    Task::new(fields).unwrap()
+}
+
+/// #2705 B9 review rounds 3 and 4 (F3): a task created more than
 /// [`CLOCK_AHEAD_SECONDS`] ahead of the caller's clock is never claimed,
 /// taken over or renewed (a start renews or claims): its claim could only
 /// start at its creation and so outlast the caller's two hours. The
-/// refusal names the clock skew, `task_clock_ahead`, and a task created
-/// at the bound is claimed.
+/// refusal names the clock skew, `task_clock_ahead`, and when it clears.
+/// The bound is exact: a task created 60 s ahead is claimed, 61 s ahead
+/// is refused.
 #[test]
 fn a_task_created_past_the_clock_bound_is_refused_a_claim_as_task_clock_ahead() {
     use super::super::claims::{CLOCK_AHEAD_SECONDS, renew, take_over};
-    let skewed = BoardRuleError::TaskClockAhead {
-        created: at("23:00:00"),
+    let skewed = |created: &str, until: &str| BoardRuleError::TaskClockAhead {
+        created: at(created),
+        until: at(until),
     };
     let ada = person("Ada");
     let nine = at("09:00:00");
-    let ready = created_at("23:00:00");
-    let claimed = move_task(&ready, Claimed, &ada, (&[], &[]), &[], &nine);
-    assert_eq!(claimed, Err(skewed.clone()));
-    let mut held = task(InProgress).into_fields();
-    held.created = at("23:00:00");
-    held.updated = at("23:00:00");
-    if let Some(claim) = held.claim.as_mut() {
-        (claim.since, claim.expires) = (at("23:00:00"), at("23:00:01"));
-    }
-    let held = Task::new(held).unwrap();
-    assert_eq!(renew(&held, &ada, &nine), Err(skewed.clone()));
-    assert_eq!(take_over(&held, &person("Bob"), &nine), Err(skewed));
+    let claim =
+        |created: &str| move_task(&created_at(created), Claimed, &ada, (&[], &[]), &[], &nine);
+    assert_eq!(claim("23:00:00"), Err(skewed("23:00:00", "22:59:00")));
+    let held = held_from(InProgress, "23:00:00");
+    assert_eq!(
+        renew(&held, &ada, &nine),
+        Err(skewed("23:00:00", "22:59:00"))
+    );
+    assert_eq!(
+        take_over(&held, &person("Bob"), &nine),
+        Err(skewed("23:00:00", "22:59:00"))
+    );
     assert_eq!(nine.plus_seconds(CLOCK_AHEAD_SECONDS), Ok(at("09:01:00")));
-    let at_bound = created_at("09:01:00");
-    assert!(move_task(&at_bound, Claimed, &ada, (&[], &[]), &[], &nine).is_ok());
+    assert!(claim("09:01:00").is_ok(), "60 s ahead is within the bound");
+    assert_eq!(
+        claim("09:01:01"),
+        Err(skewed("09:01:01", "09:00:01")),
+        "61 s ahead is past it"
+    );
+    assert_eq!(
+        skewed("23:00:00", "22:59:00").to_string(),
+        "the task was created at 2026-10-10T23:00:00Z, ahead of this clock: a clock is wrong, \
+         or wait until 2026-10-10T22:59:00Z"
+    );
+}
+
+/// #2705 B9 review round 4: the clock bound is judged after a take-over's
+/// and a renewal's own refusals (the task's status, who holds it), so a
+/// task created ahead is told those first.
+#[test]
+fn the_clock_bound_is_judged_after_the_status_and_holder_refusals() {
+    use super::super::claims::{renew, take_over};
+    let (ada, bob, nine) = (person("Ada"), person("Bob"), at("09:00:00"));
+    for status in [Draft, Ready, Done, Archived] {
+        let ahead = held_from(status, "23:00:00");
+        assert_eq!(
+            take_over(&ahead, &bob, &nine),
+            Err(BoardRuleError::NotTakeable(status)),
+            "{status:?}"
+        );
+    }
+    let held = held_from(InProgress, "23:00:00");
+    assert_eq!(
+        take_over(&held, &ada, &nine),
+        Err(BoardRuleError::AlreadyHolder)
+    );
+    assert_eq!(renew(&held, &bob, &nine), Err(BoardRuleError::NotHolder));
+    let unclaimed = held_from(Review, "23:00:00");
+    let mut fields = unclaimed.into_fields();
+    fields.claim = None;
+    let unclaimed = Task::new(fields).unwrap();
+    assert_eq!(
+        take_over(&unclaimed, &bob, &nine),
+        Err(BoardRuleError::NoClaim)
+    );
+    assert_eq!(renew(&unclaimed, &ada, &nine), Err(BoardRuleError::NoClaim));
 }
 
 /// #2705 B9 review round 2: a renewal from a clock slower than the one

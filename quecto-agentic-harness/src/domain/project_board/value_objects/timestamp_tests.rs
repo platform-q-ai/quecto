@@ -70,3 +70,17 @@ fn the_seconds_between_two_moments_are_signed() {
     assert_eq!(last.seconds_since(&first), 253_402_300_799);
     assert_eq!(first.seconds_since(&last), -253_402_300_799);
 }
+
+/// #2705 B9 review round 4: a moment `seconds` earlier, refused before
+/// 1970, as a refusal names when a clock bound clears.
+#[test]
+fn a_moment_seconds_earlier_is_spelt_and_refused_before_1970() {
+    let at = Timestamp::parse("2026-10-10T23:00:00Z").unwrap();
+    assert_eq!(
+        at.minus_seconds(60),
+        Ok(Timestamp::parse("2026-10-10T22:59:00Z").unwrap())
+    );
+    let first = Timestamp::parse("1970-01-01T00:00:00Z").unwrap();
+    assert!(first.minus_seconds(1).is_err());
+    assert_eq!(first.minus_seconds(0), Ok(first));
+}
