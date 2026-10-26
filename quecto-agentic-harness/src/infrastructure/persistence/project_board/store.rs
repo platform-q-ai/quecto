@@ -621,11 +621,11 @@ impl ProjectBoardStore for GitBoardStore {
         Ok(board.snapshot(BoardHead(head)).asserted())
     }
 
-    fn artifact_at(
+    fn object_at(
         &self,
         rev: &BoardHead,
         key: &ArtifactKey,
-    ) -> Result<Option<BoardArtifact>, BoardStoreError> {
+    ) -> Result<Option<String>, BoardStoreError> {
         self.held_at(rev, key)
     }
 

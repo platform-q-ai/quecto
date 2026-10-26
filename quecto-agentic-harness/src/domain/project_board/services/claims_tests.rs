@@ -101,19 +101,27 @@ fn a_renewal_by_another_name_keeps_the_holder_as_claimed() {
     );
 }
 
+/// #2705 B9 review round 1: behind the task's stamp, a renewal or a
+/// take-over stamps the task's own time, yet the claim runs from the
+/// caller's clock: a stamp never stretches a claim.
 #[test]
 fn renewing_or_taking_over_behind_the_task_stamps_the_task_s_own_time() {
     let ahead = last_written(task(InProgress), &far_future());
-    let next = far_future();
-    let in_two_hours = next.plus_seconds(CLAIM_TTL_SECONDS).unwrap();
-    for changed in [
-        renew(&ahead, &person("Ada"), &at("10:30:00")).unwrap(),
-        take_over(&ahead, &person("Bob"), &at("11:00:00")).unwrap(),
+    for (changed, now) in [
+        (
+            renew(&ahead, &person("Ada"), &at("10:30:00")).unwrap(),
+            at("10:30:00"),
+        ),
+        (
+            take_over(&ahead, &person("Bob"), &at("11:00:00")).unwrap(),
+            at("11:00:00"),
+        ),
     ] {
         let claim = changed.fields().claim.clone().unwrap();
+        let in_two_hours = now.plus_seconds(CLAIM_TTL_SECONDS).unwrap();
         assert_eq!(
             (&claim.since, &claim.expires, &changed.fields().updated),
-            (&next, &in_two_hours, &next)
+            (&now, &in_two_hours, &far_future())
         );
     }
 }

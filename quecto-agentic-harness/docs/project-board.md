@@ -180,7 +180,9 @@ server's `<epoch>:<revision>`). The pin holds while the artifact it pins is as t
 board held it at that revision, whatever else the board took since; a rev the
 board never held never holds. `expected_updated`, the artifact's stamp, is still
 taken for one release: its answer carries a `deprecated` note, and a request gives
-one pin or the other, never both.
+one pin or the other, never both. It no longer guards as it did: two changes in one
+second share a stamp, so a change pinned by `expected_updated` may overwrite one
+made in the same second as the read. Move every caller to `expected_rev`.
 
 Board text (a title, a line of prose such as a description or a plan's approach,
 and a text cell such as a task item's title or criterion) holds every backslash as
@@ -419,9 +421,10 @@ named; a part not named is left out. With no plan to page through, `plan` is
 reads on with `show(task, approach_from: approach_next, items_from: items_next)`
 until no `_next` is given. Every page moves on: where no cut keeps a character
 as read whole, a page cuts inside it rather than read nothing. Every page names
-the plan's `version` and `updated`; if either differs from the first answer's,
-the plan changed while it was read (a draft edited between two pages, say), so
-read again from 0.
+the board's `rev`; pass the first page's as `expected_rev` on each later page
+(#2705 B9). A page so pinned is refused (`plan_changed`) once its plan changed
+since the first page (a draft edited between two pages, say): read again from 0.
+A change elsewhere on the board does not restart it. Only a page takes the pin.
 
 ## Proposing and editing a plan
 

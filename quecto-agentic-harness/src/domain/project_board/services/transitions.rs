@@ -364,7 +364,7 @@ pub fn move_with_reason(
     };
     next.claim = match effect {
         ClaimEffect::Keep => next.claim,
-        ClaimEffect::Take => Some(new_claim(actor, &at)?),
+        ClaimEffect::Take => Some(new_claim(actor, task, now)?),
         ClaimEffect::Clear => None,
     };
     assert!(

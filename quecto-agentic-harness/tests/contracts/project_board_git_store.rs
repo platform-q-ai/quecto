@@ -251,7 +251,7 @@ fn the_git_store_keeps_each_revisions_artifacts() {
 /// a pin is to a revision of this board alone.
 #[test]
 fn the_git_store_names_no_file_of_a_commit_off_the_boards_history() {
-    use quecto::application::project_board::ports::{ArtifactKey, BoardHead, ProjectBoardStore};
+    use quecto::application::project_board::ports::{ArtifactKey, BoardHead};
     let remote = Remote::new();
     let (alice, _bob) = remote.clients();
     alice.bootstrap().unwrap();

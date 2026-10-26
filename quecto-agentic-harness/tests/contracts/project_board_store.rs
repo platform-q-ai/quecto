@@ -4,7 +4,7 @@
 //! the same checks over two clones of one remote; here they run over the
 //! in-memory store.
 use quecto::application::project_board::ports::{
-    ArtifactKey, BoardArtifact, BoardBootstrap, BoardHead, BoardStoreError, BoardWrite, KeepCopy,
+    ArtifactKey, BoardBootstrap, BoardHead, BoardStoreError, BoardWrite, KeepCopy,
     ProjectBoardStore, SetAsideClear,
 };
 use quecto::domain::project_board::entities::claim::Identity;

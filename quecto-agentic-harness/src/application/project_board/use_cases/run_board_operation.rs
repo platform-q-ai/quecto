@@ -156,7 +156,11 @@ impl RunBoardOperation {
                 if let Some(version) = view.version {
                     shown.version(version)?;
                 }
-                Ok(BoardOutcome::Shown(shown, *view))
+                if let Some(rev) = &view.pin {
+                    assert!(view.page.is_some(), "a pin is a page's");
+                    self.parts.query.page_as_read(&shown, view.version, rev)?;
+                }
+                Ok(BoardOutcome::Shown(shown, view.clone()))
             }
             BoardRequest::Create(new) => {
                 Ok(changed(self.parts.create.execute_noted(new, facts)?, None))

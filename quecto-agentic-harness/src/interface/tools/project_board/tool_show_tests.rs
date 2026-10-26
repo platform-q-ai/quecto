@@ -423,6 +423,7 @@ fn pages_read_on_through_the_whole_plan() {
                 crate::application::project_board::operations::PlanView {
                     version: None,
                     page: Some(page),
+                    pin: None,
                 },
             ),
             None,

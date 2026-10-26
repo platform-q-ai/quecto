@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, owned, task_on, written_plan};
 use super::board_view;
-use super::read_pins::plan_as_read;
-use crate::application::project_board::dto::{PlanDiscard, ProjectBoardError, ReadPin};
+use super::read_pins::plan_read;
+use crate::application::project_board::dto::{PlanDiscard, ProjectBoardError};
 use crate::application::project_board::ports::{BoardArtifact, BoardClock, ProjectBoardStore};
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
@@ -87,11 +87,7 @@ impl DiscardPlan {
                     read = plan.map(|plan| plan.fields().state);
                 }
                 let plan = plan.ok_or(BoardRuleError::UnknownPlanVersion(version))?;
-                plan_as_read(store, board, plan, request.expected.as_ref())?;
-                let expected = request
-                    .expected
-                    .as_ref()
-                    .and_then(ReadPin::deprecated_updated);
+                let expected = plan_read(store, board, Some(plan), request.expected.as_ref())?;
                 let discarded = discard(
                     DraftOf {
                         task,

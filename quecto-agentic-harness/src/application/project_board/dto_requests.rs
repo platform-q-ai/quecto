@@ -182,11 +182,15 @@ pub enum ListSummaries {
 
 /// Which plan a `show` gives and how much of it (#2481 M4b): the version
 /// named (`None`: the task's accepted plan), whole, or only the page
-/// named. The default is the accepted plan, whole.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// named. The default is the accepted plan, whole. A page may be pinned
+/// to the revision its first page was read at (`pin`, #2705 B9): it is
+/// refused (`plan_changed`) once that plan changed since, so a reader
+/// reads again from 0, never mixing two edits.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlanView {
     pub version: Option<u32>,
     pub page: Option<PlanPage>,
+    pub pin: Option<BoardHead>,
 }
 
 /// Where a `show` reads on in its task's accepted plan (#2481 M4a review

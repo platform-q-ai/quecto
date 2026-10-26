@@ -121,7 +121,7 @@
         "links": [],
         "needs_goal": true
       },
-      "deprecated": "expected_updated is deprecated and will be removed: pass expected_rev, the rev show gives"
+      "deprecated": "expected_updated is deprecated and will be removed: it no longer tells two edits in one second apart, so it may overwrite a newer edit; pass expected_rev, the rev show gives"
     }
   },
   {

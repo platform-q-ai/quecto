@@ -5,7 +5,7 @@
 use serde_json::{Map, Value};
 
 use crate::application::project_board::dto::{BoardOp, NewBoardTask, NewBoardTaskStatus};
-use crate::application::project_board::operations::{BoardRequest, ListFilter, PlanPage, PlanView};
+use crate::application::project_board::operations::{BoardRequest, ListFilter};
 use crate::application::project_board::ports::KeepCopy;
 use crate::domain::project_board::entities::task_parts::EntryPolicy;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -205,6 +205,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("items_from", Kind::Offset),
             optional("version", Kind::Version),
             optional("handoff_from", Kind::Offset),
+            optional("expected_rev", Kind::Rev),
         ],
     ),
     (
@@ -508,17 +509,7 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "list" => list(read),
         "list_ready" => Ok(BoardRequest::ListReady),
         "list_takeable" => Ok(BoardRequest::ListTakeable),
-        "show" => Ok(BoardRequest::Show(
-            read.task()?,
-            PlanView {
-                version: read.value("version").map(plans::version).transpose()?,
-                page: PlanPage::paged(
-                    read.offset("approach_from")?,
-                    read.offset("handoff_from")?,
-                    read.offset("items_from")?,
-                ),
-            },
-        )),
+        "show" => Ok(BoardRequest::Show(read.task()?, pins::shown(read)?)),
         "create" => create(read),
         "update_draft" => drafts::update_draft(read),
         "move" => change(moves::moved(read)?),

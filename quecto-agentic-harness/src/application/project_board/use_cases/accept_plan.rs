@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, owned, task_on};
 use super::board_view;
-use super::read_pins::plan_as_read;
+use super::read_pins::plan_read;
 use crate::application::project_board::dto::{PlanAcceptance, ProjectBoardError};
 use crate::application::project_board::ports::{BoardArtifact, BoardClock, ProjectBoardStore};
 use crate::application::project_board::telemetry::OpFacts;
@@ -95,19 +95,17 @@ impl AcceptPlan {
                 if noting {
                     read = state_of(&versions, version);
                 }
-                if let Some(plan) = versions
+                let chosen = versions
                     .iter()
-                    .find(|plan| plan.fields().version == version)
-                {
-                    plan_as_read(store, board, plan, Some(&acceptance.expected))?;
-                }
+                    .find(|plan| plan.fields().version == version);
+                let pinned = plan_read(store, board, chosen, Some(&acceptance.expected))?;
                 let board = TaskPlans {
                     task,
                     versions: &versions,
                     runs: &runs,
                 };
                 let expected = Some(AsRead {
-                    updated: acceptance.expected.deprecated_updated(),
+                    read: pinned,
                     accepted: acceptance.expected_accepted,
                 });
                 let done = accept(&board, version, expected, actor, &Moment::from(when))?;

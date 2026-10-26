@@ -351,18 +351,21 @@ impl ProjectBoardStore for MemoryBoardStore {
         Ok(snapshot.asserted())
     }
 
-    /// As a revision a read or a write of this board saw held it: a rev
-    /// no read or write saw (or no `r<n>` at all) is none of this board's.
-    fn artifact_at(
+    /// As a revision a read or a write of this board saw held it, named
+    /// by its file's bytes: a rev no read or write saw (or no `r<n>` at
+    /// all) is none of this board's.
+    fn object_at(
         &self,
         rev: &BoardHead,
         key: &ArtifactKey,
-    ) -> Result<Option<BoardArtifact>, BoardStoreError> {
+    ) -> Result<Option<String>, BoardStoreError> {
         self.always()?;
         let revision = rev.0.strip_prefix('r').and_then(|n| n.parse::<u64>().ok());
         let board = self.lock();
         let held = revision.and_then(|revision| board.held_at.get(&revision));
-        Ok(held.and_then(|held| held.get(key)).cloned())
+        let file = held.and_then(|held| held.get(key)).map(file_of).transpose();
+        let file = file.map_err(BoardStoreError::Unavailable)?;
+        Ok(file.map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
     }
 
     fn write(

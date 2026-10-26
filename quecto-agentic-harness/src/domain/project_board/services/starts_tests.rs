@@ -86,10 +86,11 @@ fn a_start_claims_a_ready_task_or_works_under_the_starters_own_claim() {
     }
 }
 
-/// The claim, the move and the run share one stamp, as one commit writes
-/// them: the caller's time, or the task's last change if later. A
-/// held claim is renewed at that stamp too, so a run never begins with
-/// only seconds of its claim left.
+/// The move and the run share one stamp, as one commit writes them: the
+/// caller's time, or the task's last change if later. A held claim is
+/// renewed by the caller's clock (#2705 B9 review round 1: a stamp never
+/// stretches a claim), so a run never begins with only seconds of its
+/// claim left.
 #[test]
 fn a_start_stamps_its_claim_its_move_and_its_run_alike() {
     for (status, by) in [(Ready, "Bob"), (Claimed, "Ada"), (InProgress, "Ada")] {
@@ -102,17 +103,18 @@ fn a_start_stamps_its_claim_its_move_and_its_run_alike() {
             let fields = started.task().fields();
             let claim = fields.claim.as_ref().unwrap();
             assert_eq!(fields.updated, at(stamped), "{status:?}");
-            assert_eq!(claim.since, at(stamped), "{status:?}");
-            let expires = at(stamped).plus_seconds(2 * 60 * 60).unwrap();
+            assert_eq!(claim.since, at(now), "{status:?}");
+            let expires = at(now).plus_seconds(2 * 60 * 60).unwrap();
             assert_eq!(claim.expires, expires, "{status:?}");
             assert_eq!(started.run().fields().started, at(stamped), "{status:?}");
         }
     }
 }
 
-/// Liveness is judged at the start's stamp, on the renewed claim: the
-/// starter's own claim, live at the caller's time but lapsed by the stamp
-/// (the task was last written a moment after it ends), still starts.
+/// Liveness is judged at the caller's time, on the renewed claim: the
+/// starter's own claim, live at the caller's time though the task was last
+/// written a moment after it ends, still starts, its claim renewed from
+/// the caller's time and its run stamped as the task is.
 #[test]
 fn liveness_is_judged_at_the_stamp_on_the_renewed_claim() {
     let lapsing = last_written(task(Claimed), &at("11:00:05"));
@@ -120,7 +122,7 @@ fn liveness_is_judged_at_the_stamp_on_the_renewed_claim() {
     assert_eq!(started.run().fields().started, at("11:00:05"));
     assert_eq!(
         started.task().fields().claim.as_ref().unwrap().since,
-        at("11:00:05")
+        at("10:30:00")
     );
 }
 

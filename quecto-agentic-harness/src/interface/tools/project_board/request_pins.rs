@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use super::{Read, RequestError, misfit};
 use crate::application::project_board::dto::ReadPin;
+use crate::application::project_board::operations::{PlanPage, PlanView};
 use crate::application::project_board::ports::BoardHead;
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
 
@@ -36,6 +37,35 @@ fn rev(value: &Value) -> Result<BoardHead, RequestError> {
                 misfit(value.is_string()),
             )
         })
+}
+
+/// What a `show` names of its plan: the version, the page, and the rev
+/// its first page was read at, which a page alone takes (#2705 B9).
+pub(super) fn shown(read: &Read<'_>) -> Result<PlanView, RequestError> {
+    let page = PlanPage::paged(
+        read.offset("approach_from")?,
+        read.offset("handoff_from")?,
+        read.offset("items_from")?,
+    );
+    let pin = read.value(EXPECTED_REV).map(rev).transpose()?;
+    match (&pin, page) {
+        (None, _) | (Some(_), Some(_)) => {}
+        (Some(_), None) => {
+            return Err(RequestError::of(
+                EXPECTED_REV,
+                "is taken by a page alone: give approach_from, handoff_from or items_from",
+                FaultKind::InvalidValue,
+            ));
+        }
+    }
+    Ok(PlanView {
+        version: read
+            .value("version")
+            .map(super::plans::version)
+            .transpose()?,
+        page,
+        pin,
+    })
 }
 
 impl Read<'_> {

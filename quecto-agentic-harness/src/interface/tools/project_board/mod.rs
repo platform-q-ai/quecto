@@ -105,8 +105,9 @@ pub fn run_recorded_with(
 
 /// What an answer to a request pinned by the deprecated `expected_updated`
 /// says of it (#2705 B9), taken for one more release.
-pub const DEPRECATED_PIN: &str =
-    "expected_updated is deprecated and will be removed: pass expected_rev, the rev show gives";
+pub const DEPRECATED_PIN: &str = "expected_updated is deprecated and will be removed: it no longer \
+     tells two edits in one second apart, so it may overwrite a newer edit; pass expected_rev, \
+     the rev show gives";
 
 /// `answer`, saying so ([`DEPRECATED_PIN`], as `deprecated`) when
 /// `request` was pinned by the deprecated `expected_updated`.

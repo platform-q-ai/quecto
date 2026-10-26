@@ -297,10 +297,10 @@ fn a_write_from_a_fast_clock_does_not_stop_another_clients_moves() {
     let claim = claimed.fields().claim.clone().unwrap();
     assert_eq!(
         (&claim.since, &claimed.fields().updated),
-        (&second(0), &second(0)),
-        "the claim starts at the task's own time"
+        (&now, &second(0)),
+        "the claim starts at the caller's time, the stamp at the task's own"
     );
-    assert_eq!(claim.expires, second(2 * 60 * 60));
+    assert_eq!(claim.expires, at("12:00:00"));
     let released = move_task(&claimed, Ready, &bob, (&[], &[]), &[], &now).unwrap();
     assert_eq!(released.fields().updated, second(0));
     let done = complete_merged(

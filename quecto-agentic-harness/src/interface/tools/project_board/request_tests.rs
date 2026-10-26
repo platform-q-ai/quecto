@@ -1,5 +1,6 @@
 use super::*;
 use crate::application::project_board::dto::{DraftUpdate, ReadPin};
+use crate::application::project_board::operations::{PlanPage, PlanView};
 use crate::domain::project_board::entities::task_parts::Entry;
 use crate::domain::project_board::services::transitions::MoveReason;
 use serde_json::json;
@@ -19,6 +20,7 @@ fn paged(approach_from: Option<usize>, items_from: Option<usize>) -> PlanView {
     PlanView {
         version: None,
         page: PlanPage::of(approach_from, items_from),
+        pin: None,
     }
 }
 
@@ -73,6 +75,7 @@ fn each_op_reads_its_own_fields() {
                 PlanView {
                     version: Some(2),
                     page: PlanPage::of(None, Some(1)),
+                    pin: None,
                 },
             ),
         ),
@@ -394,11 +397,15 @@ fn every_field_in_the_table_is_read_by_its_kind() {
             if *op == "end_run" && except == "stop" {
                 object.insert("outcome".into(), json!("stopped"));
             }
-            // An acceptance takes one pin, either one (#2705 B9).
+            // An acceptance takes one pin, either one; a show's pin is a
+            // page's (#2705 B9).
             match (*op, except) {
                 ("accept_plan", "expected_rev" | "expected_updated") => {}
                 ("accept_plan", _) => {
                     object.insert("expected_rev".into(), json!("r1"));
+                }
+                ("show", "expected_rev") => {
+                    object.insert("items_from".into(), json!(0));
                 }
                 _ => {}
             }

@@ -1,4 +1,4 @@
-use super::{plan_as_read, task_as_read};
+use super::{page_as_read, plan_read, task_as_read};
 use crate::application::project_board::dto::{ProjectBoardError, ReadPin};
 use crate::application::project_board::ports::{BoardHead, ProjectBoardStore};
 use crate::application::project_board::use_cases::fixtures_tests::{at, board, fields, slug};
@@ -86,8 +86,9 @@ fn a_deprecated_updated_pin_is_judged_by_the_stamp() {
 }
 
 #[test]
-fn a_plan_pinned_by_a_stale_rev_changed_and_a_deprecated_pin_is_the_rules() {
+fn a_plan_pin_is_told_to_the_rules_as_its_verdict() {
     use crate::application::project_board::use_cases::fixtures_tests::{holding_plans, plan_of};
+    use crate::domain::project_board::services::plans::PlanRead;
     use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskStatus};
     let store = holding_plans(
         "a",
@@ -97,20 +98,37 @@ fn a_plan_pinned_by_a_stale_rev_changed_and_a_deprecated_pin_is_the_rules() {
     let read = store.read().unwrap();
     let plan = read.plans[0].clone();
     assert_eq!(
-        plan_as_read(&store, &read, &plan, Some(&rev(&read.head))),
-        Ok(())
+        plan_read(&store, &read, Some(&plan), None),
+        Ok(PlanRead::Unpinned)
+    );
+    assert_eq!(
+        plan_read(&store, &read, Some(&plan), Some(&rev(&read.head))),
+        Ok(PlanRead::Unchanged)
     );
     let stale = rev(&BoardHead("r999".into()));
     assert_eq!(
-        plan_as_read(&store, &read, &plan, Some(&stale)),
+        plan_read(&store, &read, Some(&plan), Some(&stale)),
+        Ok(PlanRead::Changed)
+    );
+    assert_eq!(
+        plan_read(&store, &read, None, Some(&stale)),
+        Ok(PlanRead::Unpinned),
+        "no plan: the rules refuse"
+    );
+    let deprecated = ReadPin::Updated(at("01:00:00"));
+    assert_eq!(
+        plan_read(&store, &read, Some(&plan), Some(&deprecated)),
+        Ok(PlanRead::Stamped(&at("01:00:00")))
+    );
+    assert_eq!(
+        page_as_read(&store, &read.head, Some(&plan), &BoardHead("r999".into())),
         Err(ProjectBoardError::Rule(BoardRuleError::PlanChanged {
             version: plan.fields().version,
             updated: plan.fields().updated.clone(),
         }))
     );
-    let deprecated = ReadPin::Updated(at("01:00:00"));
     assert_eq!(
-        plan_as_read(&store, &read, &plan, Some(&deprecated)),
+        page_as_read(&store, &read.head, None, &BoardHead("r999".into())),
         Ok(())
     );
 }

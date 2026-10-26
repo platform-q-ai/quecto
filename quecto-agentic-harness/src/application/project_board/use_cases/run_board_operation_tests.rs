@@ -229,15 +229,12 @@ fn a_complete_with_no_host_needs_one_only_for_pull_requests() {
 struct PlanTwice(MemoryBoardStore);
 
 impl crate::application::project_board::ports::ProjectBoardStore for PlanTwice {
-    fn artifact_at(
+    fn object_at(
         &self,
         rev: &crate::application::project_board::ports::BoardHead,
         key: &crate::application::project_board::ports::ArtifactKey,
-    ) -> Result<
-        Option<crate::application::project_board::ports::BoardArtifact>,
-        crate::application::project_board::ports::BoardStoreError,
-    > {
-        self.0.artifact_at(rev, key)
+    ) -> Result<Option<String>, crate::application::project_board::ports::BoardStoreError> {
+        self.0.object_at(rev, key)
     }
 
     fn read(
@@ -675,6 +672,7 @@ mod noted {
         let named = |version| PlanView {
             version: Some(version),
             page: None,
+            pin: None,
         };
         let (shown, facts) = noted(&ops, &BoardRequest::Show(slug("a"), named(2)));
         assert!(shown.is_ok(), "{shown:?}");

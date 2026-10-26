@@ -288,19 +288,22 @@ pub trait ProjectBoardStore: Send + Sync {
     /// No board, or the store's failure.
     fn read(&self) -> Result<BoardSnapshot, BoardStoreError>;
 
-    /// The artifact `key` as the board held it at revision `rev`, a head
-    /// a read of this board answered (#2705 B9): what a change pinned to
-    /// `rev` checks the artifact against. `None` when the board held no
-    /// such artifact then, or `rev` is no revision of this board, so a pin
-    /// to it never holds.
+    /// The object (the store's name for a file's bytes) of artifact
+    /// `key`'s file at revision `rev`, a head a read of this board answered
+    /// (#2705 B9): what a change pinned to `rev` checks the artifact
+    /// against. Two revisions name it alike exactly when its file is the
+    /// same at both. `None` when the board held no such file then (or more
+    /// than one, or one of another kind), or `rev` is no revision of this
+    /// board, so a pin to it never holds. It reads that one file's name,
+    /// never the board whole.
     ///
     /// # Errors
     /// The store's failure to read that revision.
-    fn artifact_at(
+    fn object_at(
         &self,
         rev: &BoardHead,
         key: &ArtifactKey,
-    ) -> Result<Option<BoardArtifact>, BoardStoreError>;
+    ) -> Result<Option<String>, BoardStoreError>;
 
     /// Writes `artifacts` (each whole, replacing any of the same key) in
     /// one change, only if the board is still at `expected`. An artifact

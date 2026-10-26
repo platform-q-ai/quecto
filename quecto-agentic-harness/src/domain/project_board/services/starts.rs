@@ -70,8 +70,9 @@ impl Started {
 /// `runs`: a ready task is claimed by `actor`; a claimed, in-progress,
 /// in-review or blocked one that `actor` holds has its claim renewed (an
 /// expired one too, as [`renew`] allows the holder) and moves to, or stays
-/// in, progress. The task's change, its claim and the run share one stamp,
-/// at which the claim's liveness is judged.
+/// in, progress. The task's change and the run share one stamp; the claim
+/// runs from the caller's clock, at which its liveness is judged (#2705
+/// B9: a stamp is for display, and never stretches a claim).
 ///
 /// # Errors
 /// A draft, done or archived task (`not_allowed`); a ready task a task it
@@ -90,7 +91,7 @@ pub fn start(
 ) -> Result<Started, BoardRuleError> {
     let from = task.fields().status;
     let at = stamp(task, now);
-    // The task's fields once held by `actor` at the stamp: a new claim on
+    // The task's fields once held by `actor`: a new claim on
     // a ready task (set with the move, as a ready task holds none), or
     // the holder's renewed one.
     let mut next = match from {
@@ -99,7 +100,7 @@ pub fn start(
             // Claimed as a move to claimed is: once its dependencies are done.
             relations_allow(task, Claimed, tasks)?;
             let mut next = task.fields().clone();
-            next.claim = Some(new_claim(actor, &at)?);
+            next.claim = Some(new_claim(actor, task, now)?);
             next
         }
         Claimed | Review | Blocked => {
@@ -130,7 +131,7 @@ pub fn start(
     // A reason is kept only beside the move that took it (#2705 T4).
     next.reason = None;
     let started = settle(next, &at)?;
-    let run = begin_run(&started, runs, plan, actor, &at)?;
+    let run = begin_run(&started, runs, plan, actor, now)?;
     let fields = started.fields();
     assert!(
         fields.updated == at && run.fields().started == at,
@@ -140,8 +141,8 @@ pub fn start(
         fields
             .claim
             .as_ref()
-            .is_some_and(|claim| claim.holder.is(actor) && claim.since == at),
-        "a started task is held by its starter, its claim taken or renewed at the stamp"
+            .is_some_and(|claim| claim.holder.is(actor) && claim.since <= at),
+        "a started task is held by its starter, its claim taken or renewed by the stamp"
     );
     Ok(Started {
         task: started,

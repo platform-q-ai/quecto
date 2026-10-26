@@ -632,7 +632,7 @@ mod tasks;
 #[path = "board_writes.rs"]
 mod writes;
 use tasks::{TasksScan, load_tasks, scan_tasks};
-pub use writes::{FolderAfter, FolderFile, folder_file};
+pub use writes::{FolderAfter, FolderFile, artifact_path, folder_file};
 #[path = "board_format.rs"]
 mod format;
 pub use format::read_marker;

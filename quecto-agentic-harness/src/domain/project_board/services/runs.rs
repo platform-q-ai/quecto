@@ -22,7 +22,8 @@ use super::super::value_objects::vocabulary::{ItemState, PlanState, RunOutcome, 
 use super::claims::{held_live_by, stamp};
 
 /// A new run of `task`'s accepted `plan`, begun by `actor`, the holder of
-/// a live claim on it, at `now`, numbered after every run in `runs`.
+/// a claim on it live at `now` (the caller's clock, #2705 B9), stamped as
+/// the task's change is ([`stamp`]), numbered after every run in `runs`.
 ///
 /// # Errors
 /// Not the holder of a live claim; a run of another task, or runs that
@@ -71,7 +72,7 @@ pub fn begin_run(
         task: fields.id.clone(),
         number: last + 1,
         plan_version: planned.version,
-        started: now.clone(),
+        started: stamp(task, now),
         ended: None,
         outcome: None,
         cost: None,

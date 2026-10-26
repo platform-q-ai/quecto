@@ -89,6 +89,7 @@ fn answered(shown: ShownTask, page: Option<PlanPage>) -> Value {
     let view = PlanView {
         version: None,
         page,
+        pin: None,
     };
     capped(outcome(
         "show",

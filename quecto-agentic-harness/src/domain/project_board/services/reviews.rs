@@ -33,7 +33,7 @@ pub struct RoundDraft {
 }
 
 /// `change`'s `review` (or a new one, the change's first) with a round of
-/// `draft` by `reviewer` added `when`: at its `now`, or, if later, a
+/// `draft` by `reviewer` added `when`: at its `now`, or, if later, at
 /// the review's last change (so rounds stay in order, #2705 B9) or, for
 /// the first round, when the change last changed (a review never predates
 /// the change it judges, as its slack check reads).
