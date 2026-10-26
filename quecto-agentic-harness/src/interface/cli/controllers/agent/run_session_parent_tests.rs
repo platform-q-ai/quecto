@@ -146,14 +146,15 @@ fn flags(max_time: Option<&str>) -> AgentFlags {
 /// Run one one-shot session: guarded unless `legacy`, with `notes` queued
 /// on the run's note channel before it starts.
 fn run(replies: Vec<Reply>, legacy: bool, notes: Vec<&str>, max_time: Option<&str>) -> Run {
-    run_quiet(replies, (legacy, notes, max_time), None)
+    run_quiet(replies, (legacy, notes, max_time), (None, false))
 }
 
-/// [`run`], with the quiet bound of a wait for notes set to `quiet`.
+/// [`run`], with the quiet bound of a wait for notes set to `quiet`, and
+/// the note channel `closed` before the run when asked.
 fn run_quiet(
     replies: Vec<Reply>,
     (legacy, notes, max_time): (bool, Vec<&str>, Option<&str>),
-    quiet: Option<std::time::Duration>,
+    (quiet, closed): (Option<std::time::Duration>, bool),
 ) -> Run {
     let provider = Arc::new(Scripted {
         replies: Mutex::new(replies.into()),
@@ -199,6 +200,7 @@ fn run_quiet(
         tx.try_send(SequencedSubagentNotification::new(sequence as u64, note))
             .unwrap();
     }
+    let tx = (!closed).then_some(tx);
     let tmp = tempfile::TempDir::new().unwrap();
     let retention = crate::composition::sessions::build_retention_handles(tmp.path());
     let mut handles = RunHandles::without_children(&retention);
@@ -349,7 +351,7 @@ fn review_2762_a_wait_with_no_deadline_ends_after_the_quiet_bound() {
     let run = run_quiet(
         vec![Reply::Call("launch", json!({})), Reply::Text("Launched.")],
         (false, vec![], None),
-        Some(std::time::Duration::from_millis(300)),
+        (Some(std::time::Duration::from_millis(300)), false),
     );
     assert_eq!(run.code, 1, "{}", run.stderr);
     assert_eq!(
@@ -360,6 +362,26 @@ fn review_2762_a_wait_with_no_deadline_ends_after_the_quiet_bound() {
         )
     );
     assert!(started.elapsed() < std::time::Duration::from_secs(20));
+}
+
+/// Review #2762 round 2: a wait whose note channel closes cannot tell
+/// whether work still runs: it ends needs_user with the unknown line, not
+/// "Work is already running.".
+#[test]
+fn review_2762_a_wait_whose_notes_close_ends_needs_user_unknown() {
+    let run = run_quiet(
+        vec![Reply::Call("launch", json!({})), Reply::Text("Launched.")],
+        (false, vec![], None),
+        (None, true),
+    );
+    assert_eq!(run.code, 1, "{}", run.stderr);
+    assert_eq!(
+        run.stderr,
+        format!(
+            "{}\n",
+            crate::domain::agents::value_objects::turn_outcome::UNKNOWN_REASON
+        )
+    );
 }
 
 #[test]

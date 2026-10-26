@@ -117,8 +117,8 @@ pub(crate) fn drive(
                 match wait_for_note(rt, &mut parent, deadline) {
                     Wait::Note(note) => (TurnAdmission::WorkWake, note),
                     Wait::TimedOut => return timed_out(),
-                    Wait::Closed => return ended(result, Some(record)),
-                    Wait::Quiet => {
+                    // Unable to tell whether work still runs (#2762 round 2).
+                    Wait::Closed | Wait::Quiet => {
                         let reason = UNKNOWN_REASON.to_owned();
                         let outcome = TurnOutcome::NeedsUser;
                         let quiet = TurnOutcomeRecord {
