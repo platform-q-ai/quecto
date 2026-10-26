@@ -92,6 +92,9 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
     let wire_mode = super::super::uds_wire::ConnectionWireMode::default();
     let wire_mode_for_writer = wire_mode.clone();
     let writer_for_task = Arc::clone(&writer);
+    // A busy `get_state` (#2708) is answered by the writer, once it is due.
+    let (answers_tx, mut answers_rx) = tokio::sync::mpsc::channel(8);
+    let answering = busy_state.clone();
 
     // Writer task: multiplex shared broadcast events AND per-client
     // targeted events (currently just `execute_tool` from forwarder
@@ -100,7 +103,11 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
     let writer_task = tokio::spawn(async move {
         let mode = wire_mode_for_writer;
         loop {
+            // Broadcasts first: a reply to this client alone (a busy
+            // `get_state`, computed only then) never overtakes or predates
+            // frames broadcast before it (#2708).
             tokio::select! {
+                biased;
                 b = broadcast_rx.recv() => match b {
                     Ok(line) => {
                         if write_line(&writer_for_task, &line, &mode).await.is_err() {
@@ -130,6 +137,12 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
                         // may still be delivering.
                     }
                 },
+                Some(asked) = answers_rx.recv() => {
+                    let source = answering.as_ref().expect("only a guarded connection asks");
+                    if write_line(&writer_for_task, &source.answer(asked).await, &mode).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -193,10 +206,9 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
         ) {
             continue;
         }
-        let presenter = crate::interface::uds::presenters::uds_busy_state::intercept;
-        let queued_ahead = cmd_tx.capacity() < cmd_tx.max_capacity();
-        let source = (busy_state.as_ref(), queued_ahead);
-        if presenter(&line, source, &client_tool_registry, client_id).await {
+        let asked = crate::interface::uds::presenters::uds_busy_state::asked;
+        if let Some(asked) = asked(&line, busy_state.as_ref()) {
+            let _ = answers_tx.send(asked).await;
             continue;
         }
         if !crate::interface::uds::controllers::uds_reader_dispatch::dispatch(
@@ -322,3 +334,5 @@ async fn write_line(
 mod busy_state_2708_tests;
 #[cfg(test)]
 mod followup_2433_tests;
+#[cfg(test)]
+mod writer_order_2708_tests;

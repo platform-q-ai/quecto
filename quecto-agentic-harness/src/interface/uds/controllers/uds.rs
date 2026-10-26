@@ -313,6 +313,7 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     if !parent_turn::admits(ctx, work) {
         return false; // #2708: a terminal outcome fences automatic turns.
     }
+    let _busy = parent_turn::busy_across_turns(ctx); // #2708: through the drain below
     // #1909: the turn starts as the work it is (a prompt or steer re-arms
     // automatic turns); a failure in it is dated at the generation now (#1721).
     let steer = work.is_steer();
@@ -346,7 +347,6 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         .record_control(id.as_deref(), &type_name, protocol::ControlStatus::Started);
     let admission = parent_turn::accept_prompt(ctx, work, (id.as_deref(), &type_name)).await;
     let accepted = admission.is_some();
-    let _busy = parent_turn::busy_across_turns(ctx); // through the drain below
     let outcome = parent_turn::dispatch_prompt(ctx, message, cancel_rx, admission).await;
     ctx.session
         .record_control(id.as_deref(), &type_name, control_status(&outcome));
@@ -531,6 +531,7 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
 mod parent_turn;
 use crate::application::agent_turn::use_cases::parent_outcome::{ActiveTurn, TurnAdmission};
 use crate::domain::inference::services::turn_suspension::Work;
+pub(in crate::interface) use parent_turn::busy_for;
 pub(super) use parent_turn::{ack_data, episode_id};
 mod pending;
 use pending::drain_and_run_pending;
@@ -538,9 +539,7 @@ use pending::drain_and_run_pending;
 /// Run one drained or injected message through the agent: arm cancel, run,
 /// disarm, refresh busy snapshots. A stale abort (#483) skips the run without
 /// dropping the message's siblings — Fired is consumed, the next arm succeeds.
-/// Callers own the busy flag (#828); this helper does not touch it, because
-/// [`BusyGuard`](crate::interface::uds::framing::uds_multi::BusyGuard) is a plain set/clear flag and
-/// nesting one per message would clear it while an outer scope is still busy.
+/// Callers own the busy flag (#828); a nested `BusyGuard` restores it (#2708).
 #[derive(Clone, Copy)]
 enum TurnAdmissionGuard {
     None,

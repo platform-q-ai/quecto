@@ -44,26 +44,43 @@ fn issue_2708_liveness_retained_idle_and_dead_rows_are_empty() {
     assert_eq!(registry_liveness(None), WorkLiveness::Empty);
 }
 
-/// Review #2762 round 2 (A): an idle coordinator the parent launched holds
-/// work only until it reports otherwise; one in error or exited does not.
-/// (The reported kinds are driven through the monitor in the swarm-wake
-/// tests.)
+/// Review #2762 round 3 (1): an idle coordinator the parent launched holds
+/// work only while its last report was a hold. One that never reported (a
+/// coordinator that ended its first turn without a board sends none) holds
+/// none, nor does one in error or exited. (The reported kinds are driven
+/// through the monitor in the swarm-wake tests.)
 #[test]
-fn issue_2708_liveness_a_launched_coordinator_holds_work_until_it_reports() {
-    for (status, live) in [
-        (SubagentStatus::Idle, WorkLiveness::Live),
-        (SubagentStatus::Error, WorkLiveness::Empty),
-        (SubagentStatus::Exited, WorkLiveness::Empty),
+fn issue_2708_liveness_a_launched_coordinator_holds_work_only_after_a_hold() {
+    use crate::domain::swarm::services::parent_wake::WakeKind;
+    for (status, report, live) in [
+        (SubagentStatus::Idle, None, WorkLiveness::Empty),
+        (
+            SubagentStatus::Idle,
+            Some(WakeKind::Hold),
+            WorkLiveness::Live,
+        ),
+        (
+            SubagentStatus::Error,
+            Some(WakeKind::Hold),
+            WorkLiveness::Empty,
+        ),
+        (
+            SubagentStatus::Exited,
+            Some(WakeKind::Hold),
+            WorkLiveness::Empty,
+        ),
     ] {
         let registry = with(&[("coordinator", None, status.clone())]);
-        registry
-            .lock()
-            .unwrap()
-            .get_mut("coordinator")
-            .unwrap()
-            .coordinator_wake
-            .launched = true;
-        assert_eq!(registry_liveness(Some(&registry)), live, "{status:?}");
+        {
+            let mut entries = registry.lock().unwrap();
+            let wake = &mut entries.get_mut("coordinator").unwrap().coordinator_wake;
+            wake.launched = true;
+            if let Some(kind) = report {
+                wake.report_for_test(kind);
+            }
+        }
+        let case = format!("{status:?} {report:?}");
+        assert_eq!(registry_liveness(Some(&registry)), live, "{case}");
     }
 }
 

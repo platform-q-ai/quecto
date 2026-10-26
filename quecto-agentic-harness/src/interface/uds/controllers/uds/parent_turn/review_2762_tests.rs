@@ -5,6 +5,90 @@ use crate::domain::agents::value_objects::turn_outcome::LIVE_REASON;
 use crate::interface::cli::uds_session::PendingMessage;
 use serde_json::json;
 
+type Snapshot = crate::interface::cli::uds_snapshots::StateSnapshot;
+
+/// A connection that, as each `turn_outcome` frame is written to it, reads
+/// the state snapshot at that very moment and records whether it already
+/// carried that outcome as the latest.
+struct OutcomeWitness {
+    snapshot: Snapshot,
+    pending: Vec<u8>,
+    seen: Vec<bool>,
+}
+
+impl tokio::io::AsyncWrite for OutcomeWitness {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        bytes: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.pending.extend_from_slice(bytes);
+        while let Some(end) = self.pending.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = self.pending.drain(..=end).collect();
+            let Ok(frame) = serde_json::from_slice::<serde_json::Value>(&line) else {
+                continue;
+            };
+            if frame["type"] == "turn_outcome" {
+                let snapshot = self.snapshot.clone();
+                let state = snapshot.try_read().expect("no refresh is mid-write");
+                let state =
+                    crate::interface::cli::uds_state_projection::slim_state_projection(&state);
+                let carried = state["latestTurnOutcome"]["sequence"] == frame["sequence"];
+                self.seen.push(carried);
+            }
+        }
+        std::task::Poll::Ready(Ok(bytes.len()))
+    }
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+/// Review #2762 round 3 (3a): the state snapshot carries a published
+/// outcome before its `turn_outcome` frame goes out, so a client reacting to
+/// outcome N by asking `get_state` mid-turn is answered with latest N.
+#[tokio::test]
+async fn review_2762_the_snapshot_carries_an_outcome_before_its_frame() {
+    let mut root = Root::new(vec![
+        Reply::Call(
+            "declare_turn_outcome",
+            json!({"outcome":"done","reason":"Merged"}),
+        ),
+        Reply::Text("All merged."),
+    ]);
+    let state = root
+        .env
+        .session
+        .state_snapshot("cli:test", 0, None, 0, None);
+    let snapshot: Snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(state));
+    let mut witness = OutcomeWitness {
+        snapshot: snapshot.clone(),
+        pending: Vec::new(),
+        seen: Vec::new(),
+    };
+    let command = crate::interface::uds::wire::protocol::parse_command_line(
+        r#"{"type":"prompt","id":"ep-1","message":"Merge it"}"#,
+    )
+    .unwrap();
+    {
+        let mut ctx = root.env.ctx();
+        ctx.broadcast_tx = None;
+        ctx.stdout = Some(&mut witness);
+        ctx.state_snapshot = snapshot;
+        super::super::dispatch_command(command, &mut ctx).await;
+    }
+    assert_eq!(witness.seen, [true], "one outcome, already in the snapshot");
+}
+
 /// Review #2762 (4): the correction runs as its own turn; the prompt's
 /// control receipt keeps the prompt's result, not the correction's.
 #[tokio::test]
@@ -68,29 +152,18 @@ async fn review_2762_a_queued_instruction_alone_makes_an_undeclared_turn_wait() 
     );
 }
 
-/// Review #2762 (A): a swarm the parent launched is live while its
-/// coordinator is, idle or not: the parent's wake turn waits.
+/// Review #2762 (A): a swarm the parent launched is live while its idle
+/// coordinator's last report holds work: the parent's wake turn waits.
 #[tokio::test]
 async fn review_2762_an_open_swarm_with_an_idle_coordinator_keeps_a_wake_turn_waiting() {
     let mut root = Root::new(vec![
         Reply::Text("Started the swarm."),
         Reply::Text("Noted."),
     ]);
-    {
-        let registry = root.env.subagent_registry.clone().unwrap();
-        let mut coordinator =
-            crate::infrastructure::tools::agents::subagent_registry::SubagentEntry::new(
-                "/s".into(),
-                0,
-            );
-        coordinator.status =
-            crate::infrastructure::tools::agents::subagent_registry::SubagentStatus::Idle;
-        coordinator.coordinator_wake.launched = true;
-        registry
-            .lock()
-            .unwrap()
-            .insert("coordinator".into(), coordinator);
-    }
+    with_idle_coordinator(
+        &root,
+        Some(crate::domain::swarm::services::parent_wake::WakeKind::Hold),
+    );
     root.env
         .session
         .restore_pending(std::iter::once(PendingMessage::Automatic(
@@ -139,6 +212,26 @@ async fn review_2762_a_finished_wake_with_an_idle_coordinator_is_corrected_then_
         &root,
         Some(crate::domain::swarm::services::parent_wake::WakeKind::Finished),
     );
+    root.send(r#"{"type":"prompt","id":"ep-1","message":"Report"}"#)
+        .await;
+    let frames = root.frames();
+    let outcomes = of_type(&frames, "turn_outcome");
+    assert_eq!(outcomes.len(), 1, "{frames:?}");
+    assert_eq!(outcomes[0]["outcome"], "stalled");
+    assert_eq!(root.provider.requests().len(), 2, "one correction");
+}
+
+/// Review #2762 round 3 (1): an idle coordinator that never reported (it
+/// ended its first turn without a board, so it sends no `swarm_state`) is
+/// no work: the undeclared turn is corrected, then stalls, rather than
+/// waiting for ever.
+#[tokio::test]
+async fn review_2762_a_never_reporting_idle_coordinator_is_corrected_then_stalls() {
+    let mut root = Root::new(vec![
+        Reply::Text("Swarm started."),
+        Reply::Text("Swarm started."),
+    ]);
+    with_idle_coordinator(&root, None);
     root.send(r#"{"type":"prompt","id":"ep-1","message":"Report"}"#)
         .await;
     let frames = root.frames();

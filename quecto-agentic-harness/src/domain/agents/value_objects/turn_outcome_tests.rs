@@ -19,7 +19,7 @@ fn record() -> TurnOutcomeRecord {
 fn issue_2708_parent_runtime_the_approved_wording_is_exact() {
     assert_eq!(
         CORRECTION_NOTE,
-        "Nothing is running. Launch the next step, or call declare_turn_outcome: asking if you asked the user something, blocked if you can't proceed, done if you've finished."
+        "Nothing is running. If your reply says you'll start something you haven't launched, you're not done: launch it now, or call declare_turn_outcome with blocked or asking. Otherwise call declare_turn_outcome: asking if you asked the user something, blocked if you can't proceed, done if you've finished."
     );
     assert_eq!(
         DECLARE_GUIDANCE,

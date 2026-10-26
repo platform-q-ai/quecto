@@ -1977,13 +1977,16 @@ loop; the single-client loop is a test rig that is never given it.
   `asking` settles `needs_user`, `done` settles `done`, whatever runs. With
   `waiting` or no declaration, owned work still running settles `waiting`.
   Owned work is a sub-agent starting or running, an idle coordinator it
-  launched whose run still holds work (it has not sent a `swarm_state` yet,
-  or its last one was a `hold`; not once it reported `finished`, `idle` or
-  `paused`, nor after a failed turn), or a queued instruction or note. If
+  launched whose last `swarm_state` was a `hold` (not one that never sent
+  one, as a coordinator without a board doesn't, nor once it reported
+  `finished`, `idle` or `paused`, nor after a failed turn), or a queued
+  instruction or note (a child's turn-end note counts while it waits). If
   nothing runs, the harness runs one correction turn with the note
-  `Nothing is running. Launch the next step, or call declare_turn_outcome:
-  asking if you asked the user something, blocked if you can't proceed,
-  done if you've finished.` (same episode, new
+  `Nothing is running. If your reply says you'll start something you
+  haven't launched, you're not done: launch it now, or call
+  declare_turn_outcome with blocked or asking. Otherwise call
+  declare_turn_outcome: asking if you asked the user something, blocked if
+  you can't proceed, done if you've finished.` (same episode, new
   `turnId`, saved before it runs); if nothing runs after it, the turn
   settles `stalled`. The prompt's control receipt keeps the prompt's own
   result. An interrupted turn (abort, steer, error, shutdown) settles
@@ -2011,14 +2014,30 @@ loop; the single-client loop is a test rig that is never given it.
   snapshots, and the `since` unchanged marker, which then also carries the
   session key: `{"unchanged":true,"generation":27,"sessionKey":"cli:default","turnOutcomeVersion":1,"outcomeEpoch":"5b0d…","latestTurnOutcome":null}`.
   A replayed `latestTurnOutcome` keeps its original `sequence`.
-  While a turn is busy, a guarded harness answers its own `get_state` (no
-  `agent_id`) at once from the snapshot refreshed at each turn boundary and
-  after each `turn_outcome`, with the live `state` (`thinking`,
-  `runningTool`, …), `generation` and `since` handling, rather than after
-  the turn. It stays busy from a prompt through its correction and what the
-  prompt left queued, so the gaps between those back-to-back turns are
-  answered the same way. An unguarded harness still answers it when the
-  turn ends.
+- **`get_state` mid-turn.** While it is busy, a guarded harness answers
+  its own `get_state` (no `agent_id`) at once instead of after the turn:
+  - It is busy from taking a `prompt`, `steer` or `follow_up` until no
+    command is queued behind it, so through the turn, its correction, what
+    it left queued and the instructions sent meanwhile, and the gaps
+    between those back-to-back turns.
+  - The answer comes from the state snapshot, which is refreshed at each
+    turn boundary and before each `turn_outcome` is sent (a client reacting
+    to outcome N reads latest N), with the live `state` (`thinking`,
+    `runningTool`, …), `generation` and workflow overlaid; `since` gets the
+    unchanged marker as on the loop. Its members are the loop's, with no
+    marker of its own.
+  - It goes to the requester only, and is computed when the connection
+    sends it, after every event frame broadcast before, so it never shows
+    an earlier phase than the frames the client already has. While busy,
+    `state` is never `idle`: a phase already idle (between a run's end and
+    its `agent_end`, or between turns) reads `finalizing`.
+  - Staleness: a mid-turn answer is as of the last refresh, and doesn't
+    reflect a command sent before it that the loop hasn't run yet (one
+    queued behind the turn). Once a command's response has arrived, a
+    later `get_state` reflects it: a state change (`new_session`,
+    `clear_history`, …) ends the busy span, so the loop answers in order.
+  - Idle, the loop answers as before. An unguarded harness still answers
+    it when the turn ends.
 - **Epochs.** `new_session`, `resume_session`, `clear_history` and `rewind_to`
   mint a new `outcomeEpoch` and reset `latestTurnOutcome` to `null` once the
   history is replaced (even if the save after it fails); a refused one, a

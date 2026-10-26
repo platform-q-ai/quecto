@@ -1,12 +1,7 @@
-//! A trusted root parent's turn-outcome guard on the UDS loop (#2708).
-//!
-//! Each outer turn a guarded session runs is admitted (`turn_admitted`
-//! once its opener is committed), completed with what runs once it was
-//! saved, and settled by the application runtime: `turn_outcome` after its
-//! `agent_end`, or the one correction run as a turn of its own. A terminal
-//! outcome fences every automatic turn until a fresh external instruction.
-//! An unguarded session (no runtime: the launcher did not switch the guard
-//! on) is unchanged.
+//! A trusted root parent's turn-outcome guard on the UDS loop (#2708): each
+//! outer turn of a guarded session is admitted, completed once saved, and
+//! settled (`turn_outcome`, or the one correction). An unguarded session is
+//! unchanged.
 use super::{AgentEvent, DispatchCtx, PromptOutcome};
 use crate::application::agent_turn::use_cases::parent_outcome::{
     ActiveTurn, ParentVerdict, TurnAdmission, TurnEnd,
@@ -130,16 +125,28 @@ fn observe(ctx: &DispatchCtx<'_>) -> WorkLiveness {
     registry_liveness(ctx.subagent_registry.as_ref()).and(WorkLiveness::of(queued))
 }
 
-/// A guarded session stays busy across consecutive turns (#2708): a prompt,
-/// its correction and what it left queued run back to back, so its reader
-/// answers `get_state` from the snapshot in the gaps between them too.
-/// Unguarded, busy spans only each turn, as before.
-pub(in crate::interface::uds::controllers) fn busy_across_turns(
-    ctx: &DispatchCtx<'_>,
-) -> Option<crate::interface::uds::framing::uds_multi::BusyGuard> {
-    use crate::interface::uds::framing::uds_multi::BusyGuard;
+/// A guarded session stays busy across back-to-back turns (#2708).
+pub(in crate::interface::uds::controllers) fn busy_across_turns(ctx: &DispatchCtx) -> Held {
     guarded(ctx).then(|| BusyGuard::new(&ctx.busy))
 }
+
+/// A guarded loop is busy from taking an instruction until no command is
+/// queued behind it; any other message (a state change) ends that (#2708).
+pub(in crate::interface) fn busy_for(ctx: &DispatchCtx, msg: &ClientMessage, held: &mut Held) {
+    let line = match msg {
+        ClientMessage::Command(command) => command.line.as_str(),
+        _ => "",
+    };
+    let kind = serde_json::from_str::<serde_json::Value>(line).unwrap_or_default();
+    let opens = matches!(
+        kind["type"].as_str(),
+        Some("prompt" | "steer" | "follow_up")
+    );
+    let keep = guarded(ctx) && opens;
+    *held = keep.then(|| held.take().unwrap_or_else(|| BusyGuard::new(&ctx.busy)));
+}
+use crate::interface::uds::framing::uds_multi::{BusyGuard, ClientMessage};
+type Held = Option<BusyGuard>;
 
 /// Run a client's prompt: guarded, admitted, run and settled; unguarded,
 /// exactly as before the guard, one `run_agent_message`.
@@ -149,7 +156,7 @@ pub(super) async fn dispatch_prompt(
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
     admission: Option<TurnAdmission>,
 ) -> PromptOutcome {
-    let _busy = crate::interface::uds::framing::uds_multi::BusyGuard::new(&ctx.busy); // #828
+    let _busy = BusyGuard::new(&ctx.busy); // #828
     let Some(turn) = admit(ctx, admission, &message).await else {
         let mut sink = super::make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
         return super::run_agent_message(super::PromptRun {
@@ -196,9 +203,10 @@ pub(super) async fn settle(
         match runtime.complete(active, end) {
             ParentVerdict::Unsettled => return outcome,
             ParentVerdict::Published(record) => {
+                // Snapshot first: a client reacting to the frame reads it.
+                crate::interface::cli::uds_snapshots::refresh_state_snapshot(ctx).await;
                 super::emit_event_to_broadcast_or_writer(ctx, &AgentEvent::TurnOutcome(record))
                     .await;
-                crate::interface::cli::uds_snapshots::refresh_state_snapshot(ctx).await;
                 return outcome;
             }
             ParentVerdict::Correct => {
