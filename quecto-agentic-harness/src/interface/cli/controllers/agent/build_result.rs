@@ -41,6 +41,23 @@ pub(crate) struct AgentBuildResult {
     pub parent_outcome: Option<super::ParentOutcome>,
 }
 
+impl AgentBuildResult {
+    /// What a one-shot run's turn-outcome guard owns (#2708): the runtime,
+    /// and the registry and note channel of the children it launches.
+    pub(crate) fn take_parent_run(
+        &mut self,
+    ) -> Option<crate::interface::cli::controllers::run_session_parent::ParentRun> {
+        // Unguarded, the receiver stays where it was: exactly as before.
+        let runtime = self.parent_outcome.take()?;
+        let (registry, notes) = (self.subagent_registry.clone(), self.notification_rx.take());
+        crate::interface::cli::controllers::run_session_parent::ParentRun::of(
+            Some(runtime),
+            registry,
+            notes,
+        )
+    }
+}
+
 /// The configured extensions an agent may launch (#2446): a top-level
 /// agent's own global config's; a spawned child's, only the validated list
 /// its parent handed down with its policy. A child's own `--config` (which
