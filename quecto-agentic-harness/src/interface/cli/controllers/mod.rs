@@ -23,6 +23,8 @@ pub(in crate::interface) mod launch_rollback_wait;
 pub(super) mod models;
 pub mod retention_handles;
 pub mod run_end_fleet;
+#[path = "agent/run_session_parent.rs"]
+pub(crate) mod run_session_parent;
 pub mod shared;
 pub mod swarm_board_handles;
 pub(in crate::interface) mod swarm_composition;
