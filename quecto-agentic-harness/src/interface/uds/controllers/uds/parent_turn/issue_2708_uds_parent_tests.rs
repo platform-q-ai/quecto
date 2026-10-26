@@ -420,6 +420,59 @@ async fn issue_2708_terminal_autowake_terminal_fences_notes_until_a_fresh_instru
 }
 
 #[tokio::test]
+async fn issue_2708_protocol_a_queued_follow_up_is_admitted_right_after_the_terminal_outcome() {
+    let mut root = Root::new(vec![
+        Reply::Call(
+            "declare_turn_outcome",
+            json!({"outcome":"done","reason":"First done"}),
+        ),
+        Reply::Text("First."),
+        Reply::Call(
+            "declare_turn_outcome",
+            json!({"outcome":"done","reason":"Second done"}),
+        ),
+        Reply::Text("Second."),
+    ]);
+    // A follow-up the client queued while the first turn ran.
+    let body = crate::interface::cli::uds_session::PromptBody {
+        text: "Then this".into(),
+        images: vec![],
+    };
+    let follow_up = crate::domain::inference::services::turn_suspension::Work::FOLLOW_UP;
+    assert!(
+        root.env
+            .session
+            .enqueue_control(Some("ep-2"), "follow_up", body, follow_up)
+    );
+    root.send(r#"{"type":"prompt","id":"ep-1","message":"First"}"#)
+        .await;
+    let frames = root.frames();
+    let outcomes = of_type(&frames, "turn_outcome");
+    assert_eq!(outcomes.len(), 2, "{frames:?}");
+    assert_eq!(
+        (&outcomes[0]["episodeId"], &outcomes[0]["outcome"]),
+        (&json!("ep-1"), &json!("done")),
+        "queued work does not turn a declared done into waiting"
+    );
+    let first_outcome = position(&frames, |f| f["type"] == "turn_outcome");
+    let first_end = position(&frames, |f| f["type"] == "agent_end");
+    let second = position(&frames, |f| {
+        f["type"] == "turn_admitted" && f["episodeId"] == "ep-2"
+    });
+    assert!(
+        first_end < first_outcome && first_outcome < second,
+        "{frames:?}"
+    );
+    assert!(
+        frames[first_outcome + 1..second]
+            .iter()
+            .all(|f| f["type"] != "agent_start"),
+        "no other turn runs between the outcome and the follow-up's admission"
+    );
+    assert_eq!(outcomes[1]["sequence"], 2);
+}
+
+#[tokio::test]
 async fn issue_2708_protocol_episode_identity_is_bounded_echoed_and_minted() {
     let exact = "e".repeat(512);
     let mut root = Root::new(vec![Reply::Text("ok"); 8]);

@@ -29,7 +29,11 @@ fn full_json() -> serde_json::Value {
                       "attempt": {"number": 1, "elapsedMs": 1, "events": 2, "outputBytes": 3,
                                   "sinceLastEventMs": 4, "firstTokenMs": 5}},
         "agentRequests": {"requests": 2, "inputTokens": 30, "cachedTokens": 20,
-                          "cacheWriteTokens": 50, "outputTokens": 4}
+                          "cacheWriteTokens": 50, "outputTokens": 4},
+        "turnOutcomeVersion": 1, "outcomeEpoch": "e",
+        "latestTurnOutcome": {"type": "turn_outcome", "sessionKey": "k", "outcomeEpoch": "e",
+                              "episodeId": "p", "turnId": "t", "sequence": 2,
+                              "outcome": "done", "reason": "r"}
     })
 }
 
@@ -69,6 +73,7 @@ fn the_member_lists_are_the_projections_own() {
         ("/modelTurn", &reader::MODEL_TURN),
         ("/modelTurn/attempt", &reader::ATTEMPT),
         ("/agentRequests", &reader::AGENT_REQUESTS),
+        ("/latestTurnOutcome", &reader::TURN_OUTCOME),
     ] {
         assert_eq!(
             members(written.pointer(pointer).unwrap()),
@@ -98,6 +103,10 @@ fn the_marker_carries_exactly_the_since_bypassing_members() {
     assert_eq!(live, bypassing);
     let mut idle = full();
     idle.model_turn = None;
+    // #2708: only a turn-outcome producer's marker carries its members.
+    idle.turn_outcome_version = None;
+    idle.outcome_epoch = None;
+    idle.latest_turn_outcome = None;
     assert_eq!(
         serde_json::to_value(UnchangedSnapshot::at(9, &idle)).unwrap(),
         json!({"unchanged": true, "generation": 9})

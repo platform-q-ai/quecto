@@ -556,7 +556,8 @@ fn canonical_controller_scan_inventory_preserves_every_production_node() {
         "controller AST production nodes: {selected}; teardown false-production removals: {}; shared removals: {shared_removed}; unrelated files unchanged: {unchanged}",
         removed.len()
     );
-    assert_eq!(selected, 52);
+    // #2708 adds the trusted root parent's guard (`uds/parent_turn.rs`).
+    assert_eq!(selected, 53);
     assert_eq!(removed.len(), 40);
 }
 

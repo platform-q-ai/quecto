@@ -25,6 +25,18 @@ fn build_runtime_with_entrypoint(
     spawned: bool,
     disabled_tools: &[String],
 ) -> crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuild {
+    build_runtime_guarded(entrypoint, profile_context, spawned, disabled_tools, None)
+}
+
+fn build_runtime_guarded(
+    entrypoint: ToolEntrypoint,
+    profile_context: ToolRuntimeProfileContext,
+    spawned: bool,
+    disabled_tools: &[String],
+    parent_outcome: Option<
+        std::sync::Arc<dyn crate::application::agent_turn::ports::BoundTurnDeclaration>,
+    >,
+) -> crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuild {
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = crate::infrastructure::config::Config::default();
     let client = reqwest::Client::new();
@@ -34,7 +46,7 @@ fn build_runtime_with_entrypoint(
     let mut stderr = String::new();
 
     build_tool_runtime(ToolRuntimeBuildArgs {
-        parent_outcome: None,
+        parent_outcome,
         child_extensions: Vec::new(),
         swarm_context: None,
         swarm_participation:
@@ -191,6 +203,65 @@ fn swarm_runtime_rejects_guards_and_bound_specs_before_loading_files() {
         assert!(
             spec.exists(),
             "rejection must precede bound-spec consumption"
+        );
+    }
+}
+
+/// #2708: a trusted root's binding registers `declare_turn_outcome` on
+/// both entrypoints before policy, so a startup restriction still applies.
+#[test]
+fn issue_2708_cli_parent_a_bound_root_registers_the_declaration_before_policy() {
+    use crate::domain::tool_policy::services::tool_policy_catalogue::BUNDLED_TOOLS;
+    for entrypoint in [ToolEntrypoint::CliAgent, ToolEntrypoint::UdsAgent] {
+        let binding =
+            || Some(crate::composition::bootstrap::agent_turn::build_parent_outcome() as _);
+        let built = build_runtime_guarded(
+            entrypoint,
+            ToolRuntimeProfileContext::Parent,
+            false,
+            &[],
+            binding(),
+        );
+        let declare = built
+            .catalogue_entries
+            .iter()
+            .find(|entry| entry.name == "declare_turn_outcome")
+            .expect("a bound root registers the declaration");
+        assert!(declare.effective_enabled);
+        assert!(
+            BUNDLED_TOOLS
+                .iter()
+                .any(|(provider, name)| *provider == declare.provider_id
+                    && *name == "declare_turn_outcome")
+        );
+        let restricted = build_runtime_guarded(
+            entrypoint,
+            ToolRuntimeProfileContext::Parent,
+            false,
+            &["declare_turn_outcome".to_string()],
+            binding(),
+        );
+        let declare = restricted
+            .catalogue_entries
+            .iter()
+            .find(|entry| entry.name == "declare_turn_outcome")
+            .unwrap();
+        assert!(
+            !declare.effective_enabled,
+            "policy applies after registration"
+        );
+        let unbound = build_runtime_with_entrypoint(
+            entrypoint,
+            ToolRuntimeProfileContext::Parent,
+            false,
+            &[],
+        );
+        assert!(
+            !unbound
+                .catalogue_entries
+                .iter()
+                .any(|entry| entry.name == "declare_turn_outcome"),
+            "no binding, no declaration tool"
         );
     }
 }

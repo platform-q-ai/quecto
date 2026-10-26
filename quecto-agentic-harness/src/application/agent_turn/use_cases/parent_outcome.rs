@@ -132,18 +132,15 @@ impl ParentOutcomeRuntime {
         // Lock order: runtime state, then declarations.
         let entered = self.declarations.enter(TurnBoundary::OuterRun, &identity);
         debug_assert!(entered.is_ok(), "an outer run always enters");
-        Some(ActiveTurn {
-            nonce,
-            identity,
-            episode_id,
-        })
+        Some(ActiveTurn::issued(nonce, identity, episode_id))
     }
 
     /// Complete an admitted turn with what its transport observed once it
     /// was saved. Only the latest admission settles; it is released either way.
     pub fn complete(&self, turn: ActiveTurn, end: TurnEnd) -> ParentVerdict {
+        let (nonce, identity, episode_id) = turn.into_parts();
         let mut state = self.state();
-        if state.active.as_ref().map(|(nonce, _)| *nonce) != Some(turn.nonce) {
+        if state.active.as_ref().map(|(active, _)| *active) != Some(nonce) {
             return ParentVerdict::Unsettled;
         }
         state.active = None;
@@ -157,7 +154,7 @@ impl ParentOutcomeRuntime {
         // An unreadable declaration is never read as "nothing declared".
         let (declaration, liveness) = match declared {
             Ok(declaration) => (
-                declaration.filter(|declared| declared.identity == turn.identity),
+                declaration.filter(|declared| declared.identity == identity),
                 liveness,
             ),
             Err(_) => (None, liveness.and(WorkLiveness::Unknown)),
@@ -173,10 +170,10 @@ impl ParentOutcomeRuntime {
             TurnVerdict::Settle(outcome, reason) => {
                 state.sequence = state.sequence.checked_add(1).expect("sequences never wrap");
                 let record = TurnOutcomeRecord {
-                    session_key: turn.identity.session_key,
-                    outcome_epoch: turn.identity.outcome_epoch,
-                    episode_id: turn.episode_id,
-                    turn_id: turn.identity.turn_id,
+                    session_key: identity.session_key,
+                    outcome_epoch: identity.outcome_epoch,
+                    episode_id,
+                    turn_id: identity.turn_id,
                     sequence: state.sequence,
                     outcome,
                     reason,

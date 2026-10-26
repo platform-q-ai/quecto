@@ -17,15 +17,30 @@ pub enum TurnAdmission {
     Nudge,
 }
 
-/// One admitted outer turn. Move-only: it is completed once.
+/// One admitted outer turn. Move-only: it is completed once, and only the
+/// runtime's latest admission (by nonce) settles.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ActiveTurn {
-    pub(in crate::application::agent_turn) nonce: u64,
-    pub(in crate::application::agent_turn) identity: TurnIdentity,
-    pub(in crate::application::agent_turn) episode_id: String,
+    nonce: u64,
+    identity: TurnIdentity,
+    episode_id: String,
 }
 
 impl ActiveTurn {
+    /// The turn the runtime admitted under `nonce`.
+    pub fn issued(nonce: u64, identity: TurnIdentity, episode_id: String) -> Self {
+        Self {
+            nonce,
+            identity,
+            episode_id,
+        }
+    }
+
+    /// Its nonce, identity and episode, for the runtime to complete it.
+    pub fn into_parts(self) -> (u64, TurnIdentity, String) {
+        (self.nonce, self.identity, self.episode_id)
+    }
+
     /// The admission this turn publishes before it starts.
     pub fn admission(&self) -> TurnAdmissionRecord {
         TurnAdmissionRecord {

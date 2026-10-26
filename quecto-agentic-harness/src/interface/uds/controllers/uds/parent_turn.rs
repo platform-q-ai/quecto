@@ -24,19 +24,18 @@ fn guarded(ctx: &DispatchCtx<'_>) -> bool {
     ctx.broadcast_tx.is_some() && ctx.session.parent_outcome().is_some()
 }
 
-/// The episode identity of an external instruction: unchanged when the
-/// session is unguarded; on a guarded one, a supplied identity of 1..=512
-/// bytes as it is, a missing one minted. `Err` once an out-of-bounds one
-/// was refused, before anything was committed.
+/// The identity of an external instruction: unchanged when the session is
+/// unguarded or none was supplied (its episode is minted at admission); on
+/// a guarded one a supplied identity of 1..=512 bytes as it is. `Err` once
+/// an out-of-bounds one was refused, before anything was committed.
 pub(in crate::interface::uds::controllers) async fn episode_id(
     ctx: &mut DispatchCtx<'_>,
     id: Option<String>,
     type_name: &str,
 ) -> Result<Option<String>, ()> {
     match (guarded(ctx), id) {
-        (false, id) => Ok(id),
+        (false, id) | (true, id @ None) => Ok(id),
         (true, Some(id)) if admissible_episode_id(&id) => Ok(Some(id)),
-        (true, None) => Ok(Some(uuid::Uuid::new_v4().to_string())),
         (true, Some(id)) => {
             ctx.session
                 .record_control(Some(&id), type_name, ControlStatus::Rejected);
@@ -70,24 +69,23 @@ pub(super) fn admits(ctx: &DispatchCtx<'_>, work: Work) -> bool {
     }
 }
 
-/// What a client's `prompt` opens on a guarded session; it is accepted
-/// now, echoing its episode, rather than when it ends.
+/// What a client's `prompt` opens on a guarded session: the episode it
+/// named, or one minted for it, acknowledged now rather than when it ends.
 pub(super) async fn accept_prompt(
     ctx: &mut DispatchCtx<'_>,
     work: Work,
     (id, type_name): (Option<&str>, &str),
 ) -> Option<TurnAdmission> {
-    let (Work::Instruction(_), true, Some(id)) = (work, guarded(ctx), id) else {
+    let (Work::Instruction(_), true) = (work, guarded(ctx)) else {
         return None;
     };
+    let episode_id = id.map_or_else(|| uuid::Uuid::new_v4().to_string(), str::to_owned);
     if type_name != "steer" {
-        let data = ack_data(ctx, serde_json::json!({}), Some(id));
-        let event = AgentEvent::ok(Some(id), type_name, Some(data));
+        let data = serde_json::json!({ "episodeId": episode_id });
+        let event = AgentEvent::ok(id, type_name, Some(data));
         super::emit_event_to_broadcast_or_writer(ctx, &event).await;
     }
-    Some(TurnAdmission::External {
-        episode_id: id.to_owned(),
-    })
+    Some(TurnAdmission::External { episode_id })
 }
 
 /// What a drained message opens: a queued instruction its own episode, a
@@ -201,5 +199,4 @@ pub(super) async fn settle(
 }
 
 #[cfg(test)]
-#[path = "parent_turn_tests.rs"]
 mod issue_2708_uds_parent_tests;

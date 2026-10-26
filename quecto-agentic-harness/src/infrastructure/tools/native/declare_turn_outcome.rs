@@ -111,8 +111,19 @@ fn receipt(identity: &TurnIdentity, intent: Intent, reason: &str) -> ToolResult 
 }
 
 impl Tool for DeclareTurnOutcomeTool {
+    /// The Core factory's definition, projected onto the schema subset
+    /// every provider accepts: `reason` keeps only its type, and the
+    /// service enforces its bound (trimmed, 1..=512 scalars, one line).
     fn definition(&self) -> ToolDefinition {
-        super::turn_outcome_definition::declare_turn_outcome_definition()
+        let mut definition = super::turn_outcome_definition::declare_turn_outcome_definition();
+        let mut schema: serde_json::Value = serde_json::from_str(&definition.parameters_schema)
+            .expect("the factory's schema is JSON");
+        let reason = schema.pointer_mut("/properties/reason");
+        if let Some(reason) = reason.and_then(serde_json::Value::as_object_mut) {
+            reason.retain(|keyword, _| keyword == "type");
+        }
+        definition.parameters_schema = schema.to_string().into();
+        definition
     }
 
     fn execute(

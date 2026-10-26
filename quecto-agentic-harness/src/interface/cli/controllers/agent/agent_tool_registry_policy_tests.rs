@@ -51,6 +51,9 @@ pub(super) fn cli_flags() -> AgentFlags {
     // The project board is composed, as `main` composes it, so the board
     // tool is built.
     flags.project_board = Some(unbuilt_board);
+    // The turn-outcome runtime is composed too (#2708): a root builds
+    // `declare_turn_outcome` on both entrypoints.
+    flags.parent_outcome = Some(crate::composition::bootstrap::agent_turn::build_parent_outcome);
     flags
 }
 
