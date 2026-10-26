@@ -188,3 +188,92 @@ fn held_output_without_a_count_is_bounded() {
         "board watch: stopped at 1024 KiB of output held; give --count to bound it\n"
     );
 }
+
+/// Review (#2757 round 4, L-b): the held bound is for a watch with no
+/// --count; one whose count runs past the bound's lines completes.
+#[test]
+fn a_count_past_the_held_bound_completes() {
+    let count = "30000";
+    let (code, stdout, stderr) = watched(&["--url", "unix:///tmp/endless.sock", "--count", count]);
+    assert_eq!((code, stderr.as_str()), (0, ""));
+    assert_eq!(stdout.lines().count(), 30_000);
+    assert!(
+        stdout.len() > MAX_HELD_BYTES,
+        "past the bound: {}",
+        stdout.len()
+    );
+}
+
+/// A writer that fails every write with `kind`.
+struct Failing(std::io::ErrorKind);
+
+impl std::io::Write for Failing {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::new(self.0, "the output failed"))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Live output to `writer`, over 99 revisions; its exit and stderr.
+fn live_into(writer: &mut dyn std::io::Write, output_open: fn() -> bool) -> (i32, String) {
+    let handles = BoardWatchHandles {
+        output_open,
+        ..watch_of(Streams(Some(99)))
+    };
+    let mut stderr = String::new();
+    let code = watch_into(&handles, None, Some(5), Output::Live(writer), &mut stderr);
+    (code, stderr)
+}
+
+/// Review (#2757 round 4, L-a): only a reader gone (a broken pipe) ends
+/// the watch quietly, exit 0; any other failure of the output is exit 1,
+/// saying so.
+#[test]
+fn only_a_broken_pipe_ends_the_watch_quietly() {
+    let (code, stderr) = live_into(&mut Failing(std::io::ErrorKind::BrokenPipe), || true);
+    assert_eq!((code, stderr.as_str()), (0, ""));
+    let (code, stderr) = live_into(&mut Failing(std::io::ErrorKind::StorageFull), || true);
+    assert_eq!(code, 1);
+    assert_eq!(stderr, "board watch: output failed: the output failed\n");
+}
+
+static ASKED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn gone() -> bool {
+    ASKED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    false
+}
+
+fn never_asked() -> bool {
+    panic!("held output never asks whether standard output has a reader")
+}
+
+/// Review (#2757 round 4): whether standard output has a reader is asked
+/// only of live output; held output never asks it.
+#[test]
+fn only_live_output_asks_for_a_reader() {
+    let mut written = Vec::new();
+    let (code, stderr) = live_into(&mut written, gone);
+    assert_eq!((code, stderr.as_str()), (0, ""));
+    assert!(
+        written.is_empty(),
+        "no reader: nothing opened, nothing written"
+    );
+    assert!(ASKED.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+    let handles = BoardWatchHandles {
+        output_open: never_asked,
+        ..watch_of(Streams(Some(99)))
+    };
+    let (mut held, mut stderr) = (String::new(), String::new());
+    let code = watch_into(
+        &handles,
+        None,
+        Some(3),
+        Output::Held(&mut held),
+        &mut stderr,
+    );
+    assert_eq!((code, held.lines().count()), (0, 3), "{stderr}");
+}

@@ -80,3 +80,28 @@ fn a_pipe_has_a_reader_until_its_read_end_closes() {
     drop(reader);
     assert!(!has_reader(writer.as_raw_fd()), "its reader is gone");
 }
+
+/// Review (#2757 round 4): a terminal whose other side has gone (a pty's
+/// slave once its master closes) polls `POLLHUP`: no reader.
+#[test]
+fn a_hung_up_terminal_has_no_reader() {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    let (mut master, mut slave) = (-1, -1);
+    // SAFETY: two valid out-pointers; no name, termios or window size.
+    let made = unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(made, 0, "a pty: {}", std::io::Error::last_os_error());
+    // SAFETY: openpty gave both descriptors to this test alone.
+    let (master, slave) = unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
+    use std::os::fd::AsRawFd;
+    assert!(has_reader(slave.as_raw_fd()), "its master is open");
+    drop(master);
+    assert!(!has_reader(slave.as_raw_fd()), "its master is gone");
+}

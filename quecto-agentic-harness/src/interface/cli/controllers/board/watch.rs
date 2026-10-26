@@ -142,48 +142,96 @@ pub fn run(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut 
             return 1;
         }
     };
-    let (live, mut printed, mut held_full) = (ctx.live_output, 0u64, false);
+    match ctx.live_output {
+        true => {
+            let mut out = std::io::stdout().lock();
+            let output = Output::Live(&mut out);
+            watch_into(&handles, options.after, options.count, output, stderr)
+        }
+        false => watch_into(
+            &handles,
+            options.after,
+            options.count,
+            Output::Held(stdout),
+            stderr,
+        ),
+    }
+}
+
+/// Where a watch's lines go: written as they come (to standard output), or
+/// held to be returned whole.
+pub(super) enum Output<'o> {
+    Live(&'o mut dyn std::io::Write),
+    Held(&'o mut String),
+}
+
+/// How a line's write went.
+enum Wrote {
+    Yes,
+    /// The output's reader has gone: the watch ends, quietly.
+    ReaderGone,
+    /// Any other failure of the output: the watch ends, saying so.
+    Failed(std::io::Error),
+    /// Held output reached its bound with no `--count`.
+    HeldFull,
+}
+
+/// Runs `handles`' watch from `after`, writing each event's line to
+/// `output` until `count` lines (if given): 0 when it ends as it should,
+/// 1 saying why on `stderr` when it cannot go on.
+pub(super) fn watch_into(
+    handles: &BoardWatchHandles,
+    after: Option<u64>,
+    count: Option<u64>,
+    mut output: Output<'_>,
+    stderr: &mut String,
+) -> i32 {
     // Written as it goes, the output has a reader while standard output
-    // does; held (a run whose output is returned whole), always.
+    // does; held, always.
+    let live = matches!(output, Output::Live(_));
     let output_open = handles.output_open;
     let mut open = || match live {
         true => output_open(),
         false => true,
     };
-    let watched = handles.watch.watch(options.after, &mut open, &mut |event| {
+    let (mut printed, mut ended) = (0u64, Wrote::Yes);
+    let watched = handles.watch.watch(after, &mut open, &mut |event| {
         let line = format!("{}\n", event_json(&event));
-        // A watch prints as it goes: a closed output ends it.
-        let written = match live {
-            true => {
-                use std::io::Write;
-                let mut out = std::io::stdout().lock();
-                out.write_all(line.as_bytes())
-                    .and_then(|()| out.flush())
-                    .is_ok()
+        let wrote = match &mut output {
+            Output::Live(out) => match out.write_all(line.as_bytes()).and_then(|()| out.flush()) {
+                Ok(()) => Wrote::Yes,
+                Err(error) => match std::hint::black_box(false) {
+                    true => Wrote::Failed(error),
+                    false => Wrote::ReaderGone,
+                },
+            },
+            Output::Held(held) if held.len() + line.len() <= MAX_HELD_BYTES => {
+                held.push_str(&line);
+                Wrote::Yes
             }
-            false if stdout.len() + line.len() <= MAX_HELD_BYTES => {
-                stdout.push_str(&line);
-                true
-            }
-            false => {
-                held_full = true;
-                false
-            }
+            Output::Held(_) => Wrote::HeldFull,
         };
         printed += 1;
-        match (written, options.count) {
-            (true, Some(count)) if printed >= count => WatchFlow::Stop,
-            (true, Some(_) | None) => WatchFlow::Continue,
-            (false, _) => WatchFlow::Stop,
+        match (wrote, count) {
+            (Wrote::Yes, Some(count)) if printed >= count => WatchFlow::Stop,
+            (Wrote::Yes, Some(_) | None) => WatchFlow::Continue,
+            (stopped, _) => {
+                ended = stopped;
+                WatchFlow::Stop
+            }
         }
     });
-    match (watched, held_full) {
-        (Ok(()), false) => 0,
-        (Ok(()), true) => {
+    match (watched, ended) {
+        (Ok(()), Wrote::Yes | Wrote::ReaderGone) => 0,
+        (Ok(()), Wrote::HeldFull) => {
             let most = MAX_HELD_BYTES / 1024;
             stderr.push_str(&format!(
                 "board watch: stopped at {most} KiB of output held; give --count to bound it\n"
             ));
+            1
+        }
+        (Ok(()), Wrote::Failed(error)) => {
+            stderr.push_str(&format!("board watch: output failed: {error}\n"));
             1
         }
         (Err(why), _) => {

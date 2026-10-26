@@ -72,9 +72,10 @@ fn ms(millis: u64) -> Duration {
     Duration::from_millis(millis)
 }
 
-/// Fast times: no reopen pause, busy 100 ms to 10 s for a minute or 64 tries.
+/// Fast times: a 1 ms reopen pause (under the busy floor), busy 100 ms to
+/// 10 s for a minute or 64 tries.
 const FAST: WatchTiming = WatchTiming {
-    pause: Duration::ZERO,
+    pause: Duration::from_millis(1),
     min_backoff: Duration::from_millis(100),
     max_backoff: Duration::from_secs(10),
     busy_for: Duration::from_secs(60),
@@ -258,7 +259,8 @@ fn a_busy_server_is_tried_again() {
     assert_eq!(run.asked.len(), 3);
 }
 
-/// Review (#2757 round 3, L2a): a reopen pause of 0 never makes busy spin:
+/// Review (#2757 round 3, L2a): a reopen pause under the floor (1 ms here;
+/// 0 is refused by WatchBoard::new) never makes busy spin:
 /// every busy pause is at least the floor (whatever a reader's clamp does).
 #[test]
 fn busy_pauses_are_never_under_the_floor() {
@@ -321,4 +323,81 @@ fn busy_never_waits_past_its_bound() {
     assert!(why.starts_with("busy (still busy after"), "{why}");
     let total: Duration = run.paused.iter().sum();
     assert_eq!(total, ms(250));
+}
+
+/// Review (#2757 round 4): a stream that gives an event between two busy
+/// spells starts the busy backoff again at its floor.
+#[test]
+fn a_heard_stream_starts_the_busy_backoff_again() {
+    let timing = WatchTiming {
+        busy_tries: 2,
+        ..FAST
+    };
+    let script = vec![Open::Busy, stream(vec![revision(1)]), Open::Busy];
+    let run = run(script, timing, 99, OPEN);
+    assert!(run.result.is_err());
+    assert_eq!(run.paused, vec![ms(100), ms(1), ms(100), ms(200)]);
+}
+
+/// Review (#2757 round 4): a stream's `retry:` is the busy backoff's
+/// start, when it is above the floor.
+#[test]
+fn a_streams_retry_starts_the_busy_backoff() {
+    let timing = WatchTiming {
+        busy_tries: 1,
+        ..FAST
+    };
+    let script = vec![Open::Stream(vec![revision(1)], Some(ms(700))), Open::Busy];
+    let run = run(script, timing, 99, OPEN);
+    assert!(run.result.is_err());
+    assert_eq!(run.paused, vec![ms(700), ms(700)]);
+}
+
+/// Review (#2757 round 4, nit): a watch's times are checked as it is
+/// made: a reopen pause of 0, or a backoff ceiling past an hour, is
+/// refused.
+#[test]
+fn a_zero_pause_is_refused() {
+    let made = std::panic::catch_unwind(|| {
+        run(
+            vec![Open::Busy],
+            WatchTiming {
+                pause: Duration::ZERO,
+                ..FAST
+            },
+            1,
+            OPEN,
+        )
+    });
+    assert!(made.is_err());
+    let made = std::panic::catch_unwind(|| {
+        let ceiling = Duration::from_secs(3_601);
+        run(
+            vec![Open::Busy],
+            WatchTiming {
+                max_backoff: ceiling,
+                ..FAST
+            },
+            1,
+            OPEN,
+        )
+    });
+    assert!(made.is_err());
+}
+
+/// Review (#2757 round 4, nit): the doubling saturates, never panics, at
+/// the largest backoff a timing allows.
+#[test]
+fn the_backoff_doubling_never_overflows() {
+    let hour = Duration::from_secs(3_600);
+    let timing = WatchTiming {
+        min_backoff: hour,
+        max_backoff: hour,
+        busy_for: Duration::MAX,
+        busy_tries: 3,
+        ..FAST
+    };
+    let run = run(vec![Open::Busy], timing, 1, OPEN);
+    assert!(run.result.is_err());
+    assert_eq!(run.paused, vec![hour, hour, hour]);
 }
