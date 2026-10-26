@@ -138,11 +138,7 @@ fn observe(ctx: &DispatchCtx<'_>) -> WorkLiveness {
             .notification_rx
             .as_ref()
             .is_some_and(|rx| !rx.is_empty());
-    let queued = match queued {
-        true => WorkLiveness::Live,
-        false => WorkLiveness::Empty,
-    };
-    registry_liveness(ctx.subagent_registry.as_ref()).and(queued)
+    registry_liveness(ctx.subagent_registry.as_ref()).and(WorkLiveness::of(queued))
 }
 
 /// Settle a guarded turn that ran: publish its outcome after its

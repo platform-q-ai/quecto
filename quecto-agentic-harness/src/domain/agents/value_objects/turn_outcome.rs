@@ -54,6 +54,14 @@ pub enum WorkLiveness {
 }
 
 impl WorkLiveness {
+    /// A source read without doubt: `Live` when it runs, else `Empty`.
+    pub fn of(running: bool) -> Self {
+        match running {
+            true => Self::Live,
+            false => Self::Empty,
+        }
+    }
+
     /// Both sources together: live work anywhere wins, an unreadable source
     /// is never read as empty.
     pub fn and(self, other: Self) -> Self {

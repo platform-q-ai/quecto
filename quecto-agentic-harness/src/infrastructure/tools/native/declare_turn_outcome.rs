@@ -27,28 +27,8 @@ const STALE: &str = "This declaration does not belong to the active turn.";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Arguments {
-    outcome: Intent,
+    outcome: TurnIntent,
     reason: String,
-}
-
-#[derive(Clone, Copy, Deserialize, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-enum Intent {
-    Waiting,
-    Blocked,
-    Asking,
-    Done,
-}
-
-impl Intent {
-    fn typed(self) -> TurnIntent {
-        match self {
-            Self::Waiting => TurnIntent::Waiting,
-            Self::Blocked => TurnIntent::Blocked,
-            Self::Asking => TurnIntent::Asking,
-            Self::Done => TurnIntent::Done,
-        }
-    }
 }
 
 pub struct DeclareTurnOutcomeTool {
@@ -77,7 +57,7 @@ impl DeclareTurnOutcomeTool {
         };
         match self
             .binding
-            .declare(self.authority, &identity, outcome.typed(), &reason)
+            .declare(self.authority, &identity, outcome, &reason)
         {
             Ok(declared) => Ok(receipt(&identity, outcome, &declared.reason)),
             Err(DomainError::Tool(message)) => Ok(refusal(&message)),
@@ -95,7 +75,7 @@ fn refusal(message: &str) -> ToolResult {
     }
 }
 
-fn receipt(identity: &TurnIdentity, intent: Intent, reason: &str) -> ToolResult {
+fn receipt(identity: &TurnIdentity, intent: TurnIntent, reason: &str) -> ToolResult {
     ToolResult {
         content: serde_json::json!({
             "message": RECEIPT,

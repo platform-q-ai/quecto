@@ -48,11 +48,7 @@ impl ParentRun {
 
     fn observe(&self) -> WorkLiveness {
         let noted = self.notes.as_ref().is_some_and(|rx| !rx.is_empty());
-        let noted = match noted {
-            true => WorkLiveness::Live,
-            false => WorkLiveness::Empty,
-        };
-        registry_liveness(self.registry.as_ref()).and(noted)
+        registry_liveness(self.registry.as_ref()).and(WorkLiveness::of(noted))
     }
 }
 
