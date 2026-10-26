@@ -6,7 +6,7 @@
 //! room for it (twice the board and its WAL free), as a file of mode 0600
 //! from the start. Any failure refuses the upgrade, leaves the board as it
 //! was, removes a copy this attempt made, and says why.
-use super::schema::{Schema, schema_of, upgrade};
+use super::schema::{Schema, TABLES, revisions_gapless, schema_of, upgrade};
 use super::*;
 use crate::infrastructure::persistence::project_board::board_tree::told;
 use std::os::unix::fs::OpenOptionsExt;
@@ -30,33 +30,51 @@ pub(super) fn upgrade_in_place(
             path.display()
         ))
     };
-    let (copy, made) =
-        kept_copy(path).map_err(|why| refused(&format!("its copy could not be made: {why}")))?;
+    // A board that cannot be upgraded is refused before it is copied.
+    revisions_gapless(&tx).map_err(|error| refused(&told(&error)))?;
+    let (copy, made) = kept_copy(path, &free_bytes)
+        .map_err(|why| refused(&format!("its copy could not be made: {why}")))?;
     let upgraded = upgrade(&tx).and_then(|()| tx.commit().map_err(unavailable));
     match (upgraded, made) {
         (Ok(()), _) => Ok(()),
         (Err(error), true) => {
-            remove(&copy);
+            remove_if_still_four(path, &copy);
             Err(refused(&told(&error)))
         }
         (Err(error), false) => Err(refused(&told(&error))),
     }
 }
 
+/// Removes `copy` once the board at `path` is read again and found still
+/// at schema 4: a commit that failed ambiguously may have upgraded it, and
+/// then the copy is its only way back.
+fn remove_if_still_four(path: &Path, copy: &Path) {
+    let read = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY;
+    let still = Connection::open_with_flags(path, read)
+        .ok()
+        .is_some_and(|board| matches!(schema_of(&board), Ok(Schema::Four)));
+    if still {
+        remove(copy);
+    }
+}
+
 /// A whole copy of the board at `path`: one already beside it, or one made
 /// now (and whether it was made now).
-fn kept_copy(path: &Path) -> Result<(PathBuf, bool), String> {
+/// The free bytes beside a board, as [`free_bytes`] reads them.
+type FreeBytes = dyn Fn(&Path) -> Result<u64, String>;
+
+fn kept_copy(path: &Path, free: &FreeBytes) -> Result<(PathBuf, bool), String> {
     let read = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY;
     let source = Connection::open_with_flags(path, read).map_err(|e| e.to_string())?;
     source
         .busy_timeout(Duration::from_secs(5))
         .map_err(|e| e.to_string())?;
-    if let Some(copy) = copies(path).into_iter().find(|copy| whole(copy, &source)) {
+    if let Some(copy) = copies(path).into_iter().find(|copy| whole(copy, path)) {
         return Ok((copy, false));
     }
-    room(path)?;
+    room(path, free)?;
     let copy = reserved(path)?;
-    match filled(&source, &copy) {
+    match filled(&source, &copy, path) {
         Ok(()) => Ok((copy, true)),
         Err(why) => {
             remove(&copy);
@@ -81,34 +99,50 @@ fn copies(path: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// Whether `copy` is a whole copy of `source`: sound, one file, schema 4,
-/// its revisions and objects counted alike.
-fn whole(copy: &Path, source: &Connection) -> bool {
-    let read = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY;
-    let Ok(kept) = Connection::open_with_flags(copy, read) else {
+/// Whether `copy` is a whole copy of the board at `board`: sound, one
+/// file, schema 4, and every row of every table the board's, both ways.
+fn whole(copy: &Path, board: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+    let Ok(kept) = Connection::open_with_flags(copy, flags) else {
         return false;
     };
     let text = |sql: &str| kept.query_row(sql, [], |r| r.get::<_, String>(0)).ok();
-    let count = "SELECT (SELECT count(*) FROM revisions), (SELECT count(*) FROM objects)";
-    let counted = |c: &Connection| -> Option<(i64, i64)> {
-        c.query_row(count, [], |r| Ok((r.get(0)?, r.get(1)?))).ok()
-    };
-    let held = counted(source);
-    text("PRAGMA integrity_check(1)").as_deref() == Some("ok")
+    let sound = text("PRAGMA integrity_check(1)").as_deref() == Some("ok")
         && text("PRAGMA journal_mode").as_deref() == Some("delete")
-        && matches!(schema_of(&kept), Ok(Schema::Four))
-        && held.is_some()
-        && counted(&kept) == held
+        && matches!(schema_of(&kept), Ok(Schema::Four));
+    // The board, attached read-only by a URI: its path's bytes escaped.
+    let escaped: String = board
+        .as_os_str()
+        .as_bytes()
+        .iter()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'.' | b'-' | b'_' => {
+                char::from(*byte).to_string()
+            }
+            other => format!("%{other:02X}"),
+        })
+        .collect();
+    let uri = format!("file:{escaped}?mode=ro");
+    let attached = sound && kept.execute("ATTACH DATABASE ?1 AS board", [uri]).is_ok();
+    let same = |table: &str| -> bool {
+        let sql = format!(
+            "SELECT (SELECT count(*) FROM (SELECT * FROM main.{table} EXCEPT SELECT * FROM board.{table})) \
+             + (SELECT count(*) FROM (SELECT * FROM board.{table} EXCEPT SELECT * FROM main.{table}))"
+        );
+        kept.query_row(&sql, [], |r| r.get::<_, i64>(0)) == Ok(0)
+    };
+    attached && TABLES.iter().all(|(table, _)| same(table))
 }
 
 /// `Ok` while the board's directory has room for its copy: twice the
 /// board and its WAL free.
-fn room(path: &Path) -> Result<(), String> {
+fn room(path: &Path, free: &FreeBytes) -> Result<(), String> {
     let size = |path: &Path| std::fs::metadata(path).map_or(0, |meta| meta.len());
     let mut wal = path.as_os_str().to_owned();
     wal.push("-wal");
     let needed = (size(path) + size(Path::new(&wal))).saturating_mul(2);
-    let free = free_bytes(path.parent().unwrap_or(Path::new(".")))?;
+    let free = free(path.parent().unwrap_or(Path::new(".")))?;
     match free >= needed {
         true => Ok(()),
         false => Err(format!(
@@ -166,7 +200,7 @@ fn reserved(path: &Path) -> Result<PathBuf, String> {
 
 /// Fills `copy` with `source` by SQLite's online backup, out of WAL (one
 /// file), and checks it whole.
-fn filled(source: &Connection, copy: &Path) -> Result<(), String> {
+fn filled(source: &Connection, copy: &Path, board: &Path) -> Result<(), String> {
     source
         .backup("main", copy, None)
         .map_err(|e| e.to_string())?;
@@ -175,7 +209,7 @@ fn filled(source: &Connection, copy: &Path) -> Result<(), String> {
         .query_row("PRAGMA journal_mode=DELETE", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
     drop(kept);
-    match (journal == "delete", whole(copy, source)) {
+    match (journal == "delete", whole(copy, board)) {
         (true, true) => Ok(()),
         (_, _) => Err(format!("{} is not a whole copy", copy.display())),
     }

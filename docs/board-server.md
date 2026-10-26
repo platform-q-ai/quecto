@@ -19,11 +19,16 @@ write lock: first a whole copy of it is kept beside it,
 `board.sqlite3.schema4-<UTC, as 20261026T105649Z>` (a new file of mode 0600,
 filled by SQLite's online backup, out of WAL so it is one file, and checked
 whole), then each revision is given its chain (below), in revision order, in
-one transaction. A whole copy already beside the board (from an attempt cut
-short) is used again; a new one is made only with room for it (twice the
-board and its WAL free). Any failure refuses the upgrade: the board is left
-as it was, a copy this attempt made is removed (so a unit restarted again
-and again never fills the disk), and `serve` does not start, saying "the
+one transaction. A copy already beside the board (from an attempt cut
+short) is used again only when it holds every row of every table the board
+holds, no more and no fewer; any other (stale, another board's, or no
+database at all) is left as it is and a new one made, only with room for it
+(twice the board and its WAL free). A board that cannot be upgraded (its
+revisions have a gap) is refused before it is copied. Any failure refuses
+the upgrade: the board is left as it was, a copy this attempt made is
+removed once the board is read again and found still at schema 4 (so a unit
+restarted again and again never fills the disk), and `serve` does not
+start, saying "the
 schema-4 board <path> was not upgraded to schema 5 and is left as it was:
 <why>". Opens at once upgrade once: an open while another holds the lock
 waits for it up to 120 s. `export` and `backup` read schema 4 or 5 and

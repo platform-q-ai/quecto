@@ -198,22 +198,16 @@ pub(super) fn schema_of(tx: &Connection) -> Result<Schema, BoardStoreError> {
 /// what the board holds, so the same history gives the same chains on
 /// every machine.
 pub(super) fn upgrade(tx: &Connection) -> Result<(), BoardStoreError> {
-    let (count, last): (i64, Option<i64>) = tx
-        .query_row("SELECT count(*), max(revision) FROM revisions", [], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })
+    revisions_gapless(tx)?;
+    let last: i64 = tx
+        .query_row(
+            "SELECT coalesce(max(revision), 0) FROM revisions",
+            [],
+            |r| r.get(0),
+        )
         .map_err(unavailable)?;
-    match count == last.unwrap_or(0) {
-        true => {}
-        false => {
-            return Err(unavailable(format!(
-                "its revisions are not numbered 1 to {} with no gap ({count} are held)",
-                last.unwrap_or(0)
-            )));
-        }
-    }
     tx.execute_batch(ADD_CHAIN).map_err(unavailable)?;
-    for revision in 1..=last.unwrap_or(0) {
+    for revision in 1..=last {
         let chain = chain_of(tx, revision)?;
         tx.execute(
             "UPDATE revisions SET chain=?1 WHERE revision=?2",
@@ -223,6 +217,23 @@ pub(super) fn upgrade(tx: &Connection) -> Result<(), BoardStoreError> {
     }
     tx.pragma_update(None, "user_version", VERSION)
         .map_err(unavailable)
+}
+
+/// `Ok` while the board's revisions are numbered 1 to their count, with no
+/// gap: only then can each be given its chain.
+pub(super) fn revisions_gapless(c: &Connection) -> Result<(), BoardStoreError> {
+    let (count, last): (i64, Option<i64>) = c
+        .query_row("SELECT count(*), max(revision) FROM revisions", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .map_err(unavailable)?;
+    match count == last.unwrap_or(0) {
+        true => Ok(()),
+        false => Err(unavailable(format!(
+            "its revisions are not numbered 1 to {} with no gap ({count} are held)",
+            last.unwrap_or(0)
+        ))),
+    }
 }
 
 /// Revision `revision`'s chain (B11): a SHA-256 over the chain before it

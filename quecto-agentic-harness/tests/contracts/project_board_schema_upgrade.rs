@@ -145,6 +145,30 @@ fn an_upgrade_that_fails_after_its_copy_removes_it_and_says_why() {
     }
 }
 
+/// B11 review 3: a board that cannot be upgraded is refused before it is
+/// copied (here, in a directory where no copy could be made, the gap is
+/// what is said, not the copy).
+#[test]
+fn a_board_with_a_gap_is_refused_before_it_is_copied() {
+    let (dir, file, _) = schema_4_board();
+    let c = Connection::open(&file).unwrap();
+    c.execute_batch("DELETE FROM revisions WHERE revision=2")
+        .unwrap();
+    let journal: String = c
+        .query_row("PRAGMA journal_mode=DELETE", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(journal, "delete");
+    drop(c);
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+    let refused = SqliteBoardOps::open(&file, identity());
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let Err(BoardStoreError::Unavailable(why)) = refused else {
+        panic!("refused: {:?}", refused.err());
+    };
+    assert!(why.contains("no gap"), "{why}");
+    assert!(!why.contains("copy"), "no copy was tried: {why}");
+}
+
 /// B11 review 2: a whole copy already beside the board (from an attempt
 /// cut short) is used again, never a second one made.
 #[test]
