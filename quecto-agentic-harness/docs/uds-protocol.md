@@ -1957,8 +1957,8 @@ The guard is opt-in (#2708): its launcher switches it on by starting the
 harness with the environment variable `QUECTO_TURN_OUTCOMES=1` (exactly
 `1`; any other value, or none, is off). The Pocket relay sets it for the
 harness of a task. It then guards a top-level parent only (not spawned, not
-a coordinator, no parent id or parent control, not in a swarm) whose startup
-tool policy does not withhold `declare_turn_outcome`. Every other harness,
+a coordinator, no parent id or parent control, not in a swarm). Every other
+harness,
 an ordinary TUI chat and a plain `quecto agent -m` run among them, is
 unchanged: no declaration tool, no correction turn, no turn-outcome events
 or `get_state` members.

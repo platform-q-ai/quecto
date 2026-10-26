@@ -354,11 +354,8 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     // guarantees the admission poll returns before event I/O, provider work, or
     // tools can run while the subagent registry mutex is held.
     tokio::task::yield_now().await;
-    if let Some(frame) = &admitted {
-        sink.emit(frame).await;
-    }
-    sink.emit(&AgentEvent::AgentStart).await;
-    sink.emit(&AgentEvent::TurnStart).await;
+
+    uds_turn_progress::open_turn(sink, admitted).await;
     update_execution(&execution_state, |state| {
         let visible_count = user_visible_messages(messages, system_prompt).len();
         state.set_hidden_message_count(messages.len().saturating_sub(visible_count));
@@ -628,7 +625,7 @@ async fn run_with_token_drain(
 }
 
 mod uds_turn_progress;
-pub(crate) use uds_turn_progress::{publish_turn_progress, update_execution};
+pub(crate) use uds_turn_progress::publish_turn_progress;
 
 /// Handle one subagent notification received mid-turn: broadcast it to clients
 /// when the sink is `Broadcast`, and collect it for LLM injection unless the
@@ -724,6 +721,17 @@ fn install_progress_callback(
         // the synchronous callback. Dropped presentation events are acceptable.
         let _ = progress_tx.try_send(ev);
     })));
+}
+
+fn update_execution(
+    handle: &Option<crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle>,
+    update: impl FnOnce(&mut crate::interface::uds::presenters::uds_execution_state::ExecutionState),
+) {
+    if let Some(handle) = handle {
+        if let Ok(mut state) = handle.lock() {
+            update(&mut state);
+        }
+    }
 }
 
 mod interrupted;

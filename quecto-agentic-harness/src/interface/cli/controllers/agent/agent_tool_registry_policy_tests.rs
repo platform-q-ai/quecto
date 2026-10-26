@@ -301,23 +301,16 @@ fn a_non_stable_id_is_warned_about() {
     );
 }
 
-/// #2708: only a trusted root is guarded, and only while its declaration
-/// tool is offered: a child, or a root whose startup policy withholds the
-/// tool, runs unguarded.
+/// #2708: with the switch on only a trusted root is guarded; a child is
+/// never offered the declaration nor guarded.
 #[test]
-fn issue_2708_cli_parent_only_an_offered_root_is_guarded() {
+fn issue_2708_cli_parent_only_a_switched_on_root_is_guarded() {
     let config = Config::default();
     for (name, uds) in [("cli", false), ("uds", true)] {
         let mut root = cli_flags();
         root.uds_mode = uds;
         let (built, stderr) = build(&root, &config);
         assert!(built.parent_outcome.is_some(), "{name} root: {stderr}");
-
-        let mut withheld = cli_flags();
-        withheld.uds_mode = uds;
-        withheld.disabled_tools = vec!["declare_turn_outcome".into()];
-        let (built, _) = build(&withheld, &config);
-        assert!(built.parent_outcome.is_none(), "{name}: tool withheld");
 
         let mut child = cli_flags();
         child.uds_mode = uds;

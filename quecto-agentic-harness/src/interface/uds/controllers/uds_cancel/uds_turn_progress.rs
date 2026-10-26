@@ -3,19 +3,16 @@
 
 use super::EventSink;
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
-use crate::interface::uds::presenters::uds_execution_state::{
-    ExecutionState, ExecutionStateHandle,
-};
+use crate::interface::uds::wire::protocol::AgentEvent;
 
-/// Update the live execution view, when the run has one.
-pub(crate) fn update_execution(
-    handle: &Option<ExecutionStateHandle>,
-    update: impl FnOnce(&mut ExecutionState),
-) {
-    if let Some(handle) = handle {
-        if let Ok(mut state) = handle.lock() {
-            update(&mut state);
-        }
+/// Open a turn on its sink: its `turn_admitted` when it is guarded (#2708),
+/// then `agent_start` and `turn_start`.
+pub(super) async fn open_turn(sink: &mut EventSink<'_>, admitted: Option<AgentEvent>) {
+    for event in admitted
+        .into_iter()
+        .chain([AgentEvent::AgentStart, AgentEvent::TurnStart])
+    {
+        sink.emit(&event).await;
     }
 }
 

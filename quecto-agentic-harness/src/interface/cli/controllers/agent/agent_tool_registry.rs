@@ -1,6 +1,5 @@
 use super::*;
 use crate::infrastructure::security::sandbox::Sandbox;
-use crate::infrastructure::tools::native::declare_turn_outcome::DECLARE_TURN_OUTCOME_TOOL;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
 pub(super) struct ToolRegistryBuild {
@@ -193,13 +192,6 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
 
     let _policy_state = runtime.policy_state;
     let _catalogue_entries = runtime.catalogue_entries;
-    // #2708: the guard runs only where its tool is offered; a startup policy
-    // that withholds `declare_turn_outcome` leaves the root as it was.
-    let parent_context =
-        crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent;
-    let mut offered = runtime.registry.definitions_for(parent_context).iter();
-    let offered = offered.any(|definition| definition.name == DECLARE_TURN_OUTCOME_TOOL);
-    let parent_outcome = parent_outcome.filter(|_| offered);
 
     // #926: the parent is always spawn-capable — `SpawnTool` (with `notify_tx`)
     // and `AgentCmdTool` (with the protocol registry) are constructed by the

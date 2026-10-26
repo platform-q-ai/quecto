@@ -14,8 +14,6 @@ use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::domain::turn_declaration::{LaunchAuthority, TurnIdentity, TurnIntent};
 
-/// The tool's name, as the Core factory defines it.
-pub const DECLARE_TURN_OUTCOME_TOOL: &str = "declare_turn_outcome";
 /// The provider the tool registers under.
 pub const DECLARE_TURN_OUTCOME_PROVIDER_ID: &str = "quecto:turn-outcome";
 
