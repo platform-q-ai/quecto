@@ -202,6 +202,21 @@ fn busy_guard_sets_flag_for_its_scope_and_clears_on_drop() {
     assert!(!flag.load(Ordering::SeqCst), "cleared on drop (turn over)");
 }
 
+/// #2708: a turn inside a span held busy between turns leaves it busy.
+#[test]
+fn issue_2708_busy_state_a_nested_busy_guard_restores_the_outer_span() {
+    use std::sync::atomic::Ordering;
+    let flag: BusyFlag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let span = BusyGuard::new(&flag);
+    drop(BusyGuard::new(&flag));
+    assert!(
+        flag.load(Ordering::SeqCst),
+        "the span is still busy after its turn"
+    );
+    drop(span);
+    assert!(!flag.load(Ordering::SeqCst), "idle once the span ends");
+}
+
 #[test]
 fn build_get_state_line_serializes_status_snapshot() {
     let state = SessionState {

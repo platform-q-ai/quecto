@@ -48,6 +48,8 @@ pub(in crate::interface) struct AcceptLoopArgs {
     /// `get_swarm_board`, and the `swarm_board_changed` poll.
     pub(in crate::interface) swarm_boards:
         Option<crate::interface::uds::controllers::uds_swarm_board::SwarmBoards>,
+    /// A guarded harness (#2708): its connections answer a busy `get_state`.
+    pub(in crate::interface) guarded: bool,
 }
 
 /// Spawn the accept loop that listens for new client connections.
@@ -74,7 +76,18 @@ pub(in crate::interface) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::ta
         teardown,
         extensions,
         swarm_boards,
+        guarded,
     } = args;
+    let busy_state =
+        guarded.then(
+            || crate::interface::uds::presenters::uds_busy_state::BusyState {
+                busy: busy.clone(),
+                state: state_snapshot.clone(),
+                runtime_store: runtime_store.clone(),
+                workflow: workflow_state.clone(),
+                execution: execution_state.clone(),
+            },
+        );
     // A recoverable failure's self-wake (#2531) rides the loop's channel.
     turn_control.bind_self_waker(cmd_tx.downgrade());
     tokio::spawn(async move {
@@ -209,6 +222,7 @@ pub(in crate::interface) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::ta
                         subagent_registry: subagent_registry.clone(),
                         teardown: teardown.clone(),
                         swarm_boards: swarm_boards.clone(),
+                        busy_state: busy_state.clone(),
                         _guard: guard,
                     };
                     tokio::spawn(async move { handle_client(args).await });

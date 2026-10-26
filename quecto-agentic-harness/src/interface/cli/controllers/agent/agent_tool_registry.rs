@@ -191,6 +191,13 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         },
     )?;
 
+    // A startup policy that withholds the declaration leaves the root
+    // unguarded: it could never declare, so every turn would stall.
+    let parent_context =
+        crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent;
+    let mut offered = runtime.registry.definitions_for(parent_context).iter();
+    let offered = offered.any(|definition| definition.name == "declare_turn_outcome");
+    let parent_outcome = parent_outcome.filter(|_| offered);
     // #2708: a guarded root is told, with the tools' prompt notes, to declare.
     use crate::domain::agents::value_objects::turn_outcome::DECLARE_GUIDANCE;
     let guidance = parent_outcome.as_ref().map(|_| DECLARE_GUIDANCE);

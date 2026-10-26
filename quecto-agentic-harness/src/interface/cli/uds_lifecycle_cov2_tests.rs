@@ -400,6 +400,25 @@ async fn review_2762_single_client_path_stays_legacy() {
 // A published runtime, not a hand-wired AgentSession or accept-loop rig, is
 // the source of these warnings. The composed catalogue handles must carry its
 // store through lifecycle, dispatch and (for multi-client) the accept push.
+/// Review #2762 round 2 (LOW 2): the single-client loop refuses a guard
+/// runtime outright rather than silently running unguarded with one.
+#[test]
+#[should_panic(expected = "single-client is unguarded")]
+fn review_2762_the_single_client_path_is_never_given_a_runtime() {
+    let dir = tempfile::tempdir().unwrap();
+    // Its client already gone, an unguarded loop would just end.
+    let (client, server_std) = std::os::unix::net::UnixStream::pair().unwrap();
+    drop(client);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut args = loop_args(dir.path(), dir.path().join("unused.sock"));
+    args.socket_override = Some(server_std);
+    args.parent_outcome = Some(crate::composition::bootstrap::agent_turn::build_parent_outcome());
+    rt.block_on(uds_loop_async(args));
+}
+
 fn publish_admission_slots(base: &std::path::Path, slots: &[&str]) {
     use crate::application::catalogue::{
         ports::catalogue_source::{CatalogueSource, SourceEntries},

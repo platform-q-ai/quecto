@@ -130,6 +130,51 @@ fn observe(ctx: &DispatchCtx<'_>) -> WorkLiveness {
     registry_liveness(ctx.subagent_registry.as_ref()).and(WorkLiveness::of(queued))
 }
 
+/// A guarded session stays busy across consecutive turns (#2708): a prompt,
+/// its correction and what it left queued run back to back, so its reader
+/// answers `get_state` from the snapshot in the gaps between them too.
+/// Unguarded, busy spans only each turn, as before.
+pub(in crate::interface::uds::controllers) fn busy_across_turns(
+    ctx: &DispatchCtx<'_>,
+) -> Option<crate::interface::uds::framing::uds_multi::BusyGuard> {
+    use crate::interface::uds::framing::uds_multi::BusyGuard;
+    guarded(ctx).then(|| BusyGuard::new(&ctx.busy))
+}
+
+/// Run a client's prompt: guarded, admitted, run and settled; unguarded,
+/// exactly as before the guard, one `run_agent_message`.
+pub(super) async fn dispatch_prompt(
+    ctx: &mut DispatchCtx<'_>,
+    message: Message,
+    cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    admission: Option<TurnAdmission>,
+) -> PromptOutcome {
+    let _busy = crate::interface::uds::framing::uds_multi::BusyGuard::new(&ctx.busy); // #828
+    let Some(turn) = admit(ctx, admission, &message).await else {
+        let mut sink = super::make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
+        return super::run_agent_message(super::PromptRun {
+            agent: ctx.agent,
+            messages: ctx.messages,
+            active_session: Some(ctx.sessions.active_session.clone()),
+            execution_state: Some(ctx.execution_state.clone()),
+            session: ctx.session,
+            sink: &mut sink,
+            message,
+            system_prompt: ctx.system_prompt,
+            cancel_rx,
+            notification_rx: &mut ctx.notification_rx,
+            subagent_registry: &ctx.subagent_registry,
+            turn_save: Some(super::TurnSave(ctx.save_session.clone())),
+            admitted: None,
+        })
+        .await;
+    };
+    let turn = Some(turn);
+    let guard = super::TurnAdmissionGuard::None;
+    let outcome = super::run_turn(ctx, message, cancel_rx, guard, &turn).await;
+    settle(ctx, turn, outcome).await
+}
+
 /// Settle a guarded turn that ran: publish its outcome after its
 /// `agent_end`, or run the one correction and settle that.
 pub(super) async fn settle(

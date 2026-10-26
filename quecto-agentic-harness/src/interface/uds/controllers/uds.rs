@@ -346,7 +346,8 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         .record_control(id.as_deref(), &type_name, protocol::ControlStatus::Started);
     let admission = parent_turn::accept_prompt(ctx, work, (id.as_deref(), &type_name)).await;
     let accepted = admission.is_some();
-    let outcome = run_prompt_dispatch(ctx, message, cancel_rx, admission).await;
+    let _busy = parent_turn::busy_across_turns(ctx); // through the drain below
+    let outcome = parent_turn::dispatch_prompt(ctx, message, cancel_rx, admission).await;
     ctx.session
         .record_control(id.as_deref(), &type_name, control_status(&outcome));
     disarm_cancel(&ctx.cancel_handle);
@@ -384,6 +385,7 @@ pub(super) use turn_test_hooks::{
 
 /// Drain pending messages, then inject core workflow nudges while progress is advancing (#562).
 pub(in crate::interface) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
+    let _busy = parent_turn::busy_across_turns(ctx);
     drain_pending_and_nudge_turns(ctx).await;
     // #1721: whichever turn failed (prompt, drained or nudged), date its
     // provider-failure suspension by the generation current after it.
@@ -526,17 +528,6 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
     .await;
 }
 
-async fn run_prompt_dispatch(
-    ctx: &mut DispatchCtx<'_>,
-    message: Message,
-    cancel_rx: tokio::sync::oneshot::Receiver<()>,
-    admission: Option<TurnAdmission>,
-) -> PromptOutcome {
-    let _busy = uds_multi::BusyGuard::new(&ctx.busy); // #828: gates connect-time snapshot
-    let turn = parent_turn::admit(ctx, admission, &message).await;
-    let outcome = run_turn(ctx, message, cancel_rx, TurnAdmissionGuard::None, &turn).await;
-    parent_turn::settle(ctx, turn, outcome).await
-}
 mod parent_turn;
 use crate::application::agent_turn::use_cases::parent_outcome::{ActiveTurn, TurnAdmission};
 use crate::domain::inference::services::turn_suspension::Work;

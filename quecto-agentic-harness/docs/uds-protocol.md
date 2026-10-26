@@ -1961,7 +1961,10 @@ a coordinator, no parent id or parent control, not in a swarm). Every other
 harness, an ordinary TUI chat and a plain `quecto agent -m` run among them,
 is unchanged: no declaration tool, no correction turn, no turn-outcome
 events or `get_state` members. The switch is the guarded harness's own: its
-`bash` commands and configured extensions do not inherit it.
+`bash` commands and configured extensions do not inherit it. A root whose
+tool policy withholds `declare_turn_outcome` at startup is not guarded
+either (it could never declare). The guard runs on the multi-client socket
+loop; the single-client loop is a test rig that is never given it.
 
 - **Declaring.** The model is given `declare_turn_outcome` (`outcome`:
   `waiting`, `blocked`, `asking` or `done`; a one-line `reason` of at most 512
@@ -1973,11 +1976,14 @@ events or `get_state` members. The switch is the guarded harness's own: its
 - **Settling.** When a turn ends and was saved: a declared `blocked` or
   `asking` settles `needs_user`, `done` settles `done`, whatever runs. With
   `waiting` or no declaration, owned work still running settles `waiting`.
-  Owned work is a sub-agent starting or running, a coordinator it launched
-  that is still up (its swarm run is open, idle or not), or a queued
-  instruction or note. If nothing runs, the harness runs one correction turn
-  with the note `Nothing is running. Launch the next step, or call
-  declare_turn_outcome to say you're blocked or done.` (same episode, new
+  Owned work is a sub-agent starting or running, an idle coordinator it
+  launched whose run still holds work (it has not sent a `swarm_state` yet,
+  or its last one was a `hold`; not once it reported `finished`, `idle` or
+  `paused`, nor after a failed turn), or a queued instruction or note. If
+  nothing runs, the harness runs one correction turn with the note
+  `Nothing is running. Launch the next step, or call declare_turn_outcome:
+  asking if you asked the user something, blocked if you can't proceed,
+  done if you've finished.` (same episode, new
   `turnId`, saved before it runs); if nothing runs after it, the turn
   settles `stalled`. The prompt's control receipt keeps the prompt's own
   result. An interrupted turn (abort, steer, error, shutdown) settles
@@ -2005,6 +2011,14 @@ events or `get_state` members. The switch is the guarded harness's own: its
   snapshots, and the `since` unchanged marker, which then also carries the
   session key: `{"unchanged":true,"generation":27,"sessionKey":"cli:default","turnOutcomeVersion":1,"outcomeEpoch":"5b0d…","latestTurnOutcome":null}`.
   A replayed `latestTurnOutcome` keeps its original `sequence`.
+  While a turn is busy, a guarded harness answers its own `get_state` (no
+  `agent_id`) at once from the snapshot refreshed at each turn boundary and
+  after each `turn_outcome`, with the live `state` (`thinking`,
+  `runningTool`, …), `generation` and `since` handling, rather than after
+  the turn. It stays busy from a prompt through its correction and what the
+  prompt left queued, so the gaps between those back-to-back turns are
+  answered the same way. An unguarded harness still answers it when the
+  turn ends.
 - **Epochs.** `new_session`, `resume_session`, `clear_history` and `rewind_to`
   mint a new `outcomeEpoch` and reset `latestTurnOutcome` to `null` once the
   history is replaced (even if the save after it fails); a refused one, a

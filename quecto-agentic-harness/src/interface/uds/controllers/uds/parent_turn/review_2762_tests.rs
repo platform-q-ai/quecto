@@ -105,6 +105,86 @@ async fn review_2762_an_open_swarm_with_an_idle_coordinator_keeps_a_wake_turn_wa
     assert_eq!(root.provider.requests().len(), 2, "no correction");
 }
 
+/// The parent's registry with one idle coordinator it launched, whose last
+/// report was `kind` (`None`: it has not reported yet).
+fn with_idle_coordinator(
+    root: &Root,
+    kind: Option<crate::domain::swarm::services::parent_wake::WakeKind>,
+) {
+    let registry = root.env.subagent_registry.clone().unwrap();
+    let mut coordinator =
+        crate::infrastructure::tools::agents::subagent_registry::SubagentEntry::new("/s".into(), 0);
+    coordinator.status =
+        crate::infrastructure::tools::agents::subagent_registry::SubagentStatus::Idle;
+    coordinator.coordinator_wake.launched = true;
+    if let Some(kind) = kind {
+        coordinator.coordinator_wake.report_for_test(kind);
+    }
+    registry
+        .lock()
+        .unwrap()
+        .insert("coordinator".into(), coordinator);
+}
+
+/// Review #2762 round 2 (A): once the coordinator reported its run finished,
+/// an idle coordinator is no work: the undeclared turn is corrected, then
+/// stalls, so Pocket settles instead of waiting forever.
+#[tokio::test]
+async fn review_2762_a_finished_wake_with_an_idle_coordinator_is_corrected_then_stalls() {
+    let mut root = Root::new(vec![
+        Reply::Text("Swarm finished."),
+        Reply::Text("Swarm finished."),
+    ]);
+    with_idle_coordinator(
+        &root,
+        Some(crate::domain::swarm::services::parent_wake::WakeKind::Finished),
+    );
+    root.send(r#"{"type":"prompt","id":"ep-1","message":"Report"}"#)
+        .await;
+    let frames = root.frames();
+    let outcomes = of_type(&frames, "turn_outcome");
+    assert_eq!(outcomes.len(), 1, "{frames:?}");
+    assert_eq!(outcomes[0]["outcome"], "stalled");
+    assert_eq!(root.provider.requests().len(), 2, "one correction");
+}
+
+/// Review #2762 round 2 (A): while its last report is a hold, the idle
+/// coordinator's run is work: the parent waits.
+#[tokio::test]
+async fn review_2762_a_hold_wake_with_an_idle_coordinator_keeps_the_parent_waiting() {
+    let mut root = Root::new(vec![Reply::Text("Swarm running.")]);
+    with_idle_coordinator(
+        &root,
+        Some(crate::domain::swarm::services::parent_wake::WakeKind::Hold),
+    );
+    root.send(r#"{"type":"prompt","id":"ep-1","message":"Report"}"#)
+        .await;
+    let frames = root.frames();
+    let outcomes = of_type(&frames, "turn_outcome");
+    assert_eq!(outcomes.len(), 1, "{frames:?}");
+    assert_eq!(outcomes[0]["outcome"], "waiting");
+    assert_eq!(root.provider.requests().len(), 1, "no correction");
+}
+
+/// Review #2762 round 2 (LOW 1): off the guard the prompt runs exactly as on
+/// master: its acknowledgement comes before the post-turn refresh's
+/// `ledger_advanced`.
+#[tokio::test]
+async fn review_2762_off_path_acknowledges_before_the_post_turn_refresh() {
+    let mut root = Root::legacy(vec![Reply::Text("Answer.")]);
+    root.send(r#"{"type":"prompt","id":"ep-1","message":"Ask"}"#)
+        .await;
+    let frames = root.frames();
+    let end = position(&frames, |f| f["type"] == "agent_end");
+    let ack = position(&frames, |f| f["type"] == "response" && f["id"] == "ep-1");
+    assert!(
+        frames[end..ack]
+            .iter()
+            .all(|f| f["type"] != "ledger_advanced"),
+        "{frames:?}"
+    );
+}
+
 /// Review #2762 (1): a note turn that ends terminal fences the next note,
 /// but never the human's instruction queued behind it.
 #[tokio::test]

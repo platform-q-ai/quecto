@@ -237,6 +237,7 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
         crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
 
     let task = tokio::spawn(handle_client(ClientHandlerArgs {
+        busy_state: None,
         stream: server,
         broadcast_rx,
         targeted_rx,
@@ -323,6 +324,7 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
         crate::interface::uds::controllers::uds::dispatch_session_roster_tests::ephemeral_read_handles(&[]);
 
     let task = tokio::spawn(handle_client(ClientHandlerArgs {
+        busy_state: None,
         stream: server,
         broadcast_rx,
         targeted_rx,
