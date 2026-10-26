@@ -109,25 +109,30 @@ pub fn check_write_and_read((alice, bob): Clients) {
     );
 }
 
-/// Every revision a read answered keeps its artifacts as they were then
-/// (#2705 B9): what a pin to it is judged against, from any client. A
-/// rev the board never held answers none.
-pub fn check_artifact_at((alice, bob): Clients) {
+/// Every revision a read answered names the file each artifact held then
+/// (#2705 B9): what a pin to it is judged against, from any client. The
+/// same file at two revisions is named alike, a changed one otherwise; a
+/// rev the board never held names none.
+pub fn check_object_at((alice, bob): Clients) {
     alice.bootstrap().unwrap();
     let start = alice.read().unwrap().head;
     let first = written(alice.write_tasks(&start, &[task("a", "First")], "board: add a"));
     let renamed = written(bob.write_tasks(&first, &[task("a", "Renamed")], "board: rename a"));
+    let other = written(alice.write_tasks(&renamed, &[task("b", "Other")], "board: add b"));
     let key = ArtifactKey::Task(Slug::parse("a").unwrap());
     // As a pin is judged: after a read of the board as it stands.
     alice.read().unwrap();
-    let at = |rev: &BoardHead| alice.artifact_at(rev, &key).unwrap();
+    let at = |rev: &BoardHead| alice.object_at(rev, &key).unwrap();
     assert_eq!(at(&start), None, "no task a at the bootstrap");
-    assert_eq!(at(&first), Some(BoardArtifact::Task(task("a", "First"))));
+    let (was, now) = (at(&first), at(&renamed));
+    assert!(was.is_some() && now.is_some(), "{was:?} {now:?}");
+    assert_ne!(was, now, "a changed file is named otherwise");
+    assert_eq!(at(&other), now, "a write elsewhere keeps a's file");
     assert_eq!(
-        at(&renamed),
-        Some(BoardArtifact::Task(task("a", "Renamed")))
+        bob.object_at(&first, &key).unwrap(),
+        was,
+        "alike for every client"
     );
-    assert_eq!(bob.artifact_at(&first, &key).unwrap(), at(&first));
     for unknown in ["", "0:0", "zz", &"f".repeat(40)] {
         assert_eq!(at(&BoardHead(unknown.into())), None, "{unknown:?}");
     }
@@ -501,7 +506,7 @@ fn the_memory_store_bootstraps_once() {
 
 #[test]
 fn the_memory_store_keeps_each_revisions_artifacts() {
-    check_artifact_at(memory().1);
+    check_object_at(memory().1);
 }
 
 #[test]

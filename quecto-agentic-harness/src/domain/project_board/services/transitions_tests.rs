@@ -315,6 +315,44 @@ fn a_write_from_a_fast_clock_does_not_stop_another_clients_moves() {
     assert_eq!(done.fields().updated, second(0));
 }
 
+/// #2705 B9 review round 1: a task a fast clock stamped at 23:00 and
+/// claimed at 09:00 by a right one is claimed from 09:00 to 11:00, by the
+/// caller's clock: its stamp (for display) never stretches the claim, so
+/// at 11:00 anyone takes it over. A renewal and a take-over alike.
+#[test]
+fn a_task_stamped_ahead_never_stretches_a_claim_taken_on_it() {
+    let late = at("23:00:00");
+    let ready = last_written(task(Ready), &late);
+    let claimed = move_task(
+        &ready,
+        Claimed,
+        &person("Ada"),
+        (&[], &[]),
+        &[],
+        &at("09:00:00"),
+    )
+    .unwrap();
+    let claim = claimed.fields().claim.clone().unwrap();
+    assert_eq!(
+        (&claim.since, &claim.expires, &claimed.fields().updated),
+        (&at("09:00:00"), &at("11:00:00"), &late),
+        "claimed by the caller's clock, stamped no earlier than the task"
+    );
+    let taken = super::super::claims::take_over(&claimed, &person("Bob"), &at("11:00:00"))
+        .expect("the claim lapsed at 11:00");
+    let claim = taken.fields().claim.clone().unwrap();
+    assert_eq!(
+        (&claim.since, &claim.expires),
+        (&at("11:00:00"), &at("13:00:00"))
+    );
+    let renewed = super::super::claims::renew(&taken, &person("Bob"), &at("12:00:00")).unwrap();
+    let claim = renewed.fields().claim.clone().unwrap();
+    assert_eq!(
+        (&claim.since, &claim.expires),
+        (&at("12:00:00"), &at("14:00:00"))
+    );
+}
+
 #[test]
 fn expiry_is_judged_by_the_callers_clock() {
     // Ada's claim runs 09:00 to 11:00 though the task was last written in

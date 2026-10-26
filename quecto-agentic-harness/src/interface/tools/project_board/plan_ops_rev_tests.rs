@@ -6,8 +6,9 @@ use serde_json::json;
 use super::plan_ops_tests::{call, drafted, item, ok};
 
 /// The note an answer to a request pinned by `expected_updated` carries.
-const DEPRECATED: &str =
-    "expected_updated is deprecated and will be removed: pass expected_rev, the rev show gives";
+const DEPRECATED: &str = "expected_updated is deprecated and will be removed: it no longer \
+     tells two edits in one second apart, so it may overwrite a newer edit; pass expected_rev, \
+     the rev show gives";
 
 #[test]
 fn show_and_its_pages_answer_the_rev_they_were_read_at() {
@@ -166,5 +167,93 @@ fn a_pin_is_given_once_and_an_acceptance_needs_one() {
         ),
         (&json!("invalid_request"), &json!("expected_rev")),
         "{unspellable}"
+    );
+}
+
+/// #2705 B9 review round 1: a rev pin is judged where the stamp pin was,
+/// after the draft and state checks, so a retried acceptance whose first
+/// try landed is told the plan is no draft (`plan_not_draft`), as a
+/// retry of a discard is, and an edit of a draft accepted since.
+#[test]
+fn a_retry_after_its_first_try_landed_is_told_the_plan_is_no_draft() {
+    let (_store, ada, _bob) = drafted();
+    let read = ok(&ada, json!({"op": "show", "task": "a", "version": 2}));
+    let accept = json!({"op": "accept_plan", "task": "a", "version": 2,
+                        "expected_rev": read["rev"], "expected_accepted": null});
+    ok(&ada, accept.clone());
+    let retried = call(&ada, accept);
+    assert_eq!(
+        (
+            &retried["error"]["rule"]["code"],
+            &retried["error"]["rule"]["state"]
+        ),
+        (&json!("plan_not_draft"), &json!("accepted")),
+        "{retried}"
+    );
+    let edited = call(
+        &ada,
+        json!({"op": "edit_plan", "task": "a", "version": 2, "items": [item("late")],
+               "expected_rev": read["rev"]}),
+    );
+    assert_eq!(
+        edited["error"]["rule"]["code"],
+        json!("plan_not_draft"),
+        "{edited}"
+    );
+    let read = ok(&ada, json!({"op": "show", "task": "a", "version": 1}));
+    let discard = json!({"op": "discard_plan", "task": "a", "version": 1,
+                         "expected_rev": read["rev"]});
+    ok(&ada, discard.clone());
+    let retried = call(&ada, discard);
+    assert_eq!(
+        (
+            &retried["error"]["rule"]["code"],
+            &retried["error"]["rule"]["state"]
+        ),
+        (&json!("plan_not_draft"), &json!("discarded")),
+        "{retried}"
+    );
+}
+
+/// #2705 B9 review round 1: a page pinned to the rev of the first page
+/// holds while that plan is as it was, whatever else the board took, and
+/// is refused (`plan_changed`) once the plan changed: read again from 0.
+#[test]
+fn a_page_pinned_by_rev_restarts_only_when_its_plan_changed() {
+    let (_store, ada, bob) = drafted();
+    let first = ok(
+        &bob,
+        json!({"op": "show", "task": "a", "version": 2, "approach_from": 0}),
+    );
+    ok(&ada, json!({"op": "create", "task": "b", "title": "B"}));
+    let next = ok(
+        &bob,
+        json!({"op": "show", "task": "a", "version": 2, "items_from": 0,
+               "expected_rev": first["rev"]}),
+    );
+    assert_ne!(next["rev"], first["rev"], "the board moved");
+    assert_eq!(next["plan"]["items"], json!([item("schema"), item("api")]));
+    ok(
+        &ada,
+        json!({"op": "edit_plan", "task": "a", "version": 2, "items": [item("other")]}),
+    );
+    let stale = call(
+        &bob,
+        json!({"op": "show", "task": "a", "version": 2, "items_from": 0,
+               "expected_rev": first["rev"]}),
+    );
+    assert_eq!(
+        stale["error"]["rule"]["code"],
+        json!("plan_changed"),
+        "{stale}"
+    );
+    let unpaged = call(
+        &bob,
+        json!({"op": "show", "task": "a", "version": 2, "expected_rev": first["rev"]}),
+    );
+    assert_eq!(
+        (&unpaged["error"]["code"], &unpaged["error"]["field"]),
+        (&json!("invalid_request"), &json!("expected_rev")),
+        "a pin is a page's: {unpaged}"
     );
 }

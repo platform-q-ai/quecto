@@ -81,7 +81,7 @@ macro_rules! shared {
 // All fifteen store checks; the shared assertion bodies remain untouched.
 shared!(bootstrap, store::check_bootstrap);
 shared!(write_and_read, store::check_write_and_read);
-shared!(artifact_at, store::check_artifact_at);
+shared!(object_at, store::check_object_at);
 shared!(lock_races, store::check_lock_races);
 shared!(unchanged_write, store::check_unchanged_write);
 shared!(compare_and_swap, store::check_compare_and_swap);

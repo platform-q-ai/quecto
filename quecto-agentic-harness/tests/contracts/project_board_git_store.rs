@@ -1,9 +1,9 @@
 //! The project board store's contract, run against the git store: two
 //! clones of one bare remote, each its own client.
 use super::project_board_store::{
-    Clients, check_artifact_at, check_bootstrap, check_bootstrap_race, check_carried_set_aside,
-    check_clear_set_aside, check_committed_as_writer, check_compare_and_swap, check_invalid_writes,
-    check_lock_races, check_quarantine, check_refused, check_unchanged_write,
+    Clients, check_bootstrap, check_bootstrap_race, check_carried_set_aside, check_clear_set_aside,
+    check_committed_as_writer, check_compare_and_swap, check_invalid_writes, check_lock_races,
+    check_object_at, check_quarantine, check_refused, check_unchanged_write,
     check_write_after_lost_and_refused, check_write_and_read, check_write_before_bootstrap,
     check_writer,
 };
@@ -243,7 +243,38 @@ fn the_git_store_counts_lock_races_only_when_it_meets_one() {
 
 #[test]
 fn the_git_store_keeps_each_revisions_artifacts() {
-    check_artifact_at(Remote::new().clients());
+    check_object_at(Remote::new().clients());
+}
+
+/// #2705 B9 review round 1: a commit this clone holds that is not on the
+/// board's history names no file, even one holding the very same board:
+/// a pin is to a revision of this board alone.
+#[test]
+fn the_git_store_names_no_file_of_a_commit_off_the_boards_history() {
+    use quecto::application::project_board::ports::{ArtifactKey, BoardHead, ProjectBoardStore};
+    let remote = Remote::new();
+    let (alice, _bob) = remote.clients();
+    alice.bootstrap().unwrap();
+    let head = alice.read().unwrap().head;
+    let task = super::project_board_store::task("a", "First");
+    let written = alice.write_tasks(&head, &[task], "board: add a").unwrap();
+    let quecto::application::project_board::ports::BoardWrite::Written(on_board) = written else {
+        panic!("{written:?}")
+    };
+    alice.read().unwrap();
+    let key = ArtifactKey::Task(
+        quecto::domain::project_board::value_objects::slug::Slug::parse("a").unwrap(),
+    );
+    let held = alice.object_at(&on_board, &key).unwrap();
+    assert!(held.is_some(), "the board's own commit names a's file");
+    let tree = format!("{}^{{tree}}", on_board.0);
+    let off = sh(
+        remote.clone_dir(0),
+        &["commit-tree", &tree, "-m", "off the board"],
+        b"",
+    );
+    assert_ne!(off, on_board.0);
+    assert_eq!(alice.object_at(&BoardHead(off), &key).unwrap(), None);
 }
 
 #[test]
