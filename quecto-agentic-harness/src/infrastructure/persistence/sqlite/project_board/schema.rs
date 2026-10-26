@@ -1,7 +1,5 @@
-//! The board file's schema (epic #2705 B7, B11): what this build writes
-//! (schema 5) and reads (4 or 5), recognised before anything else is read;
-//! the in-place upgrade of a schema-4 board, behind a copy of it; and each
-//! revision's chain.
+//! The board file's schema (epic #2705 B7, B11): this build writes 5 and
+//! reads 4 or 5, upgrading 4 in place; and each revision's chain.
 use super::storage::digest;
 use super::*;
 const VERSION: i64 = 5;

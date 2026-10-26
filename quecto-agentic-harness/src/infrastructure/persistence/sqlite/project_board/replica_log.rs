@@ -1,10 +1,6 @@
 //! A primary's history for its followers on the SQLite board (epic #2705
-//! B11), read in one read transaction: its objects in their order (each
-//! row's place, 1, 2, .. with no gap: objects are never deleted), then its
-//! revisions only once every object it holds is sent, so each revision's
-//! objects come before it; with its chain at the follower's revision, its
-//! epochs and its provenance. A batch holds about [`BATCH_BYTES`] of rows,
-//! and one at least.
+//! B11): its objects in their order, then its revisions once every object
+//! is sent, in one read transaction, about [`BATCH_BYTES`] a batch.
 use super::*;
 use crate::application::project_board::ports::replication::*;
 

@@ -1,11 +1,6 @@
 //! The in-place upgrade of a schema-4 board to schema 5 (epic #2705 B11),
-//! behind a copy of it beside it: `<file>.schema4-<UTC>` (as
-//! `board.sqlite3.schema4-20261026T105649Z`). A copy left by an earlier
-//! attempt that checks whole is used again, so a server restarted again
-//! and again never fills the disk with copies; a new one is made only with
-//! room for it (twice the board and its WAL free), as a file of mode 0600
-//! from the start. Any failure refuses the upgrade, leaves the board as it
-//! was, removes a copy this attempt made, and says why.
+//! behind a whole copy beside it (`board.sqlite3.schema4-20261026T105649Z`);
+//! any failure leaves the board as it was and says why.
 use super::schema::{Schema, TABLES, revisions_gapless, schema_of, upgrade};
 use super::*;
 use crate::infrastructure::persistence::project_board::board_tree::told;
@@ -102,29 +97,17 @@ fn copies(path: &Path) -> Vec<PathBuf> {
 /// Whether `copy` is a whole copy of the board at `board`: sound, one
 /// file, schema 4, and every row of every table the board's, both ways.
 fn whole(copy: &Path, board: &Path) -> bool {
-    use std::os::unix::ffi::OsStrExt;
-    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
-    let Ok(kept) = Connection::open_with_flags(copy, flags) else {
+    let read = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY;
+    let Ok(kept) = Connection::open_with_flags(copy, read) else {
         return false;
     };
     let text = |sql: &str| kept.query_row(sql, [], |r| r.get::<_, String>(0)).ok();
     let sound = text("PRAGMA integrity_check(1)").as_deref() == Some("ok")
         && text("PRAGMA journal_mode").as_deref() == Some("delete")
         && matches!(schema_of(&kept), Ok(Schema::Four));
-    // The board, attached read-only by a URI: its path's bytes escaped.
-    let escaped: String = board
-        .as_os_str()
-        .as_bytes()
-        .iter()
-        .map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'.' | b'-' | b'_' => {
-                char::from(*byte).to_string()
-            }
-            other => format!("%{other:02X}"),
-        })
-        .collect();
-    let uri = format!("file:{escaped}?mode=ro");
-    let attached = sound && kept.execute("ATTACH DATABASE ?1 AS board", [uri]).is_ok();
+    // The board, attached read-only, as the copy is opened.
+    let attach = |board: &str| kept.execute("ATTACH DATABASE ?1 AS board", [board]).is_ok();
+    let attached = sound && board.to_str().is_some_and(attach);
     let same = |table: &str| -> bool {
         let sql = format!(
             "SELECT (SELECT count(*) FROM (SELECT * FROM main.{table} EXCEPT SELECT * FROM board.{table})) \
