@@ -21,7 +21,7 @@ use crate::application::project_board::dto::{
 };
 use crate::application::project_board::operations::{
     BoardOperationParts, BoardOutcome, BoardRequest, Completion, ListFilter, ListSummaries,
-    Starting,
+    PlanPage, Starting,
 };
 use crate::application::project_board::ports::{BoardBootstrap, BoardStoreError, ReferenceStatus};
 use crate::application::project_board::task_summary::{Listed, SkipReason, Summarized};
@@ -156,8 +156,7 @@ impl RunBoardOperation {
                 if let Some(version) = view.version {
                     shown.version(version)?;
                 }
-                if let Some(rev) = &view.pin {
-                    assert!(view.page.is_some(), "a pin is a page's");
+                if let Some(rev) = view.page.as_ref().and_then(PlanPage::pin) {
                     self.parts.query.page_as_read(&shown, view.version, rev)?;
                 }
                 Ok(BoardOutcome::Shown(shown, view.clone()))

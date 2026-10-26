@@ -182,27 +182,27 @@ pub enum ListSummaries {
 
 /// Which plan a `show` gives and how much of it (#2481 M4b): the version
 /// named (`None`: the task's accepted plan), whole, or only the page
-/// named. The default is the accepted plan, whole. A page may be pinned
-/// to the revision its first page was read at (`pin`, #2705 B9): it is
-/// refused (`plan_changed`) once that plan changed since, so a reader
-/// reads again from 0, never mixing two edits.
+/// named. The default is the accepted plan, whole.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlanView {
     pub version: Option<u32>,
     pub page: Option<PlanPage>,
-    pub pin: Option<BoardHead>,
 }
 
 /// Where a `show` reads on in its task's accepted plan (#2481 M4a review
 /// round 2): the approach from its character `approach_from`, the handoff
 /// from its character `handoff_from` (#2705 T3), the task items from the
 /// index `items_from`. A part not named is not shown, so a page names at
-/// least one ([`Self::paged`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// least one ([`Self::paged`]). A page may be pinned to the revision its
+/// first page was read at ([`Self::pinned`], #2705 B9): it is refused
+/// (`plan_changed`) once that plan changed since, so a reader reads again
+/// from 0, never mixing two edits. Only a page takes a pin.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanPage {
     approach_from: Option<usize>,
     handoff_from: Option<usize>,
     items_from: Option<usize>,
+    pin: Option<BoardHead>,
 }
 
 impl PlanPage {
@@ -225,8 +225,23 @@ impl PlanPage {
                 approach_from,
                 handoff_from,
                 items_from,
+                pin: None,
             }),
         }
+    }
+
+    /// The page pinned to `rev`, its first page's revision.
+    #[must_use]
+    pub fn pinned(self, rev: BoardHead) -> Self {
+        Self {
+            pin: Some(rev),
+            ..self
+        }
+    }
+
+    /// The revision the page is pinned to, if it is.
+    pub fn pin(&self) -> Option<&BoardHead> {
+        self.pin.as_ref()
     }
 
     pub fn approach_from(&self) -> Option<usize> {

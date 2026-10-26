@@ -474,7 +474,6 @@ fn show_pages_the_handoff_from_a_character() {
             PlanView {
                 version: None,
                 page: PlanPage::paged(None, Some(3), None),
-                pin: None,
             }
         ))
     );

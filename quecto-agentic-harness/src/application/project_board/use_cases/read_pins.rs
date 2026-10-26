@@ -32,7 +32,10 @@ fn unchanged_since(
 }
 
 /// Whether `key`'s file at `head`, which a read just found, is the one it
-/// was at `rev`.
+/// was at `rev`: only when the store names one file at both. A head the
+/// store names no file at (a board rewound since the read, say) holds no
+/// pin, so the caller reads again (#2705 B9 review round 2): never a
+/// panic.
 fn unchanged_at(
     store: &dyn ProjectBoardStore,
     head: &BoardHead,
@@ -44,8 +47,7 @@ fn unchanged_at(
     }
     let then = store.object_at(rev, key)?;
     let now = store.object_at(head, key)?;
-    assert!(now.is_some(), "the board names the file it read");
-    Ok(then.is_some() && then == now)
+    Ok(matches!((&then, &now), (Some(then), Some(now)) if then == now))
 }
 
 /// A page of `plan` (the one a `show` read at `head` gives; `None`: none)

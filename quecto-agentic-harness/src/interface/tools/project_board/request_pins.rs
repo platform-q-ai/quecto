@@ -48,8 +48,9 @@ pub(super) fn shown(read: &Read<'_>) -> Result<PlanView, RequestError> {
         read.offset("items_from")?,
     );
     let pin = read.value(EXPECTED_REV).map(rev).transpose()?;
-    match (&pin, page) {
-        (None, _) | (Some(_), Some(_)) => {}
+    let page = match (pin, page) {
+        (None, page) => page,
+        (Some(rev), Some(page)) => Some(page.pinned(rev)),
         (Some(_), None) => {
             return Err(RequestError::of(
                 EXPECTED_REV,
@@ -57,14 +58,13 @@ pub(super) fn shown(read: &Read<'_>) -> Result<PlanView, RequestError> {
                 FaultKind::InvalidValue,
             ));
         }
-    }
+    };
     Ok(PlanView {
         version: read
             .value("version")
             .map(super::plans::version)
             .transpose()?,
         page,
-        pin,
     })
 }
 

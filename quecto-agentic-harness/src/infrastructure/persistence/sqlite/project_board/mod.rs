@@ -63,9 +63,11 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
         let (head, root) = storage::current(&tx)?;
         Ok(self.board(&tx, &root)?.snapshot(head))
     }
-    /// As the revision named `rev` held it, by the file's object, read
-    /// from that revision's root through the file's folder alone: a rev no
-    /// revision of this board names (any other text, too) is none.
+    /// As the revision `rev` names held it, by the file's object, read
+    /// from that revision's root through the file's folder alone. A rev is
+    /// `<epoch>:<revision>`, the revision within that epoch's interval (an
+    /// opened epoch's held revision is named in both, #2705 B9 review
+    /// round 2); any other text names none.
     fn object_at(
         &self,
         rev: &BoardHead,
@@ -73,13 +75,7 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
     ) -> Result<Option<String>, BoardStoreError> {
         let mut c = self.connection.lock().map_err(unavailable)?;
         let tx = storage::Scope::begin(&mut c, false)?;
-        let root: Option<String> = tx
-            .query_row("SELECT root FROM revisions WHERE head=?1", [&rev.0], |r| {
-                r.get(0)
-            })
-            .optional()
-            .map_err(unavailable)?;
-        let Some(root) = root else {
+        let Some(root) = storage::root_at(&tx, rev)? else {
             return Ok(None);
         };
         let (folder, name) = artifact_path(key);

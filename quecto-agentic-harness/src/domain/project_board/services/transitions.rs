@@ -678,3 +678,7 @@ mod lifecycle_tests;
 #[cfg(test)]
 #[path = "transitions_done_tests.rs"]
 mod done_tests;
+
+#[cfg(test)]
+#[path = "transitions_clock_tests.rs"]
+mod clock_tests;

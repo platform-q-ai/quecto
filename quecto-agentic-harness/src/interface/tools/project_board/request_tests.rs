@@ -20,7 +20,6 @@ fn paged(approach_from: Option<usize>, items_from: Option<usize>) -> PlanView {
     PlanView {
         version: None,
         page: PlanPage::of(approach_from, items_from),
-        pin: None,
     }
 }
 
@@ -75,7 +74,6 @@ fn each_op_reads_its_own_fields() {
                 PlanView {
                     version: Some(2),
                     page: PlanPage::of(None, Some(1)),
-                    pin: None,
                 },
             ),
         ),

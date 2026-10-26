@@ -1,7 +1,8 @@
 //! The git store's revisions as a pin reads them (#2705 B9): the board's
 //! commit is its revision, and an artifact's file is named by its object
-//! as a commit on the board's history held it, read from that one path.
-use super::super::board_tree::{artifact_path, object_id, unavailable};
+//! as a commit on the board's history held it, from that commit's root and
+//! the file's folder alone ([`object_in`]).
+use super::super::board_tree::{artifact_path, object_id, object_in, unavailable};
 use super::super::git::{SHORT_OUTPUT, failed};
 use super::GitBoardStore;
 use crate::application::project_board::ports::{ArtifactKey, BoardHead, BoardStoreError};
@@ -10,8 +11,9 @@ impl GitBoardStore {
     /// The object of `key`'s file as the board's commit `rev` held it, its
     /// head being the git store's revision: a rev that names no commit
     /// this clone holds on the board's history (as its last fetch left it)
-    /// is none. A clone that lacks the commit's trees (a partial clone)
-    /// fetches them as a read of that commit would, and looks again.
+    /// is none. A clone that lacks the commit's root or the file's folder
+    /// (a partial clone) fetches that tree alone, never a file, and looks
+    /// again.
     pub(super) fn held_at(
         &self,
         rev: &BoardHead,
@@ -28,43 +30,12 @@ impl GitBoardStore {
             return Ok(None);
         }
         let (folder, name) = artifact_path(key);
-        let path = format!("{folder}/{name}");
-        match self.listed(&commit, &path)? {
-            Some(listed) => Ok(listed),
-            None => {
-                self.read_fetching(&commit)?;
-                self.listed(&commit, &path)?.ok_or_else(|| {
-                    BoardStoreError::Unavailable(format!("{commit} lacks the trees of {path}"))
-                })
-            }
-        }
-    }
-
-    /// The blob `commit` lists at `path`, if it lists one blob there
-    /// (`Some(None)` otherwise); `None` when this clone lacks a tree on the
-    /// way, so git could not list it.
-    fn listed(&self, commit: &str, path: &str) -> Result<Option<Option<String>>, BoardStoreError> {
-        let args = ["ls-tree", "--full-tree", commit, "--", path];
-        let output = self
-            .git
-            .local(&args, None, SHORT_OUTPUT)
-            .map_err(unavailable)?;
-        match output.status.success() {
-            true => {}
-            false => return Ok(None),
-        }
-        let text = String::from_utf8_lossy(&output.stdout);
-        let rows: Vec<&str> = text.lines().collect();
-        let blob = match rows.as_slice() {
-            [row] => row.split_once('\t').and_then(|(meta, _)| {
-                match meta.split(' ').collect::<Vec<_>>().as_slice() {
-                    [_, "blob", oid] => Some((*oid).to_string()),
-                    _ => None,
-                }
-            }),
-            _ => None,
-        };
-        blob.map(|oid| object_id(&oid)).transpose().map(Some)
+        // A tree this clone lacks (a partial clone) is fetched alone and
+        // looked at again, as a read fetches what it misses.
+        let before = super::fetch_state::FetchState::default();
+        self.reading(&commit, &before, |_| {
+            object_in(&self.git, &commit, (folder, &name), self.limits)
+        })
     }
 
     /// Whether `commit` is a commit here and `tip` or one of its ancestors.

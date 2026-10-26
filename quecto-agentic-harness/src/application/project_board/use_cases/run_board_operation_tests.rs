@@ -672,7 +672,6 @@ mod noted {
         let named = |version| PlanView {
             version: Some(version),
             page: None,
-            pin: None,
         };
         let (shown, facts) = noted(&ops, &BoardRequest::Show(slug("a"), named(2)));
         assert!(shown.is_ok(), "{shown:?}");

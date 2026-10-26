@@ -17,6 +17,7 @@
 use super::super::entities::claim::{CLAIM_TTL_SECONDS, Claim, Identity};
 use super::super::entities::task::{Task, TaskFields};
 use super::super::value_objects::rule_error::BoardRuleError;
+use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::telemetry::ClaimFacts;
 use super::super::value_objects::timestamp::Timestamp;
 
@@ -30,15 +31,24 @@ pub const CLOCK_AHEAD_SECONDS: u64 = 60;
 
 /// The holder's claim runs again from now for [`CLAIM_TTL_SECONDS`]: a
 /// claim never spans more than that, so renewing restarts its window. An
-/// expired claim is renewed too, until someone takes it over.
+/// expired claim is renewed too, until someone takes it over. A renewal
+/// from a clock slower than the one that took the claim never shortens
+/// it, nor moves its start back (#2705 B9 review round 2).
 pub fn renew(task: &Task, holder: &Identity, now: &Timestamp) -> Result<Task, BoardRuleError> {
     let claim = held_or_lapsed_by(task, holder, now)?;
     let at = stamp(task, now);
-    let mut next = task.fields().clone();
-    next.claim = Some(Claim {
+    let fresh = new_claim(holder, task, now)?;
+    let renewed = Claim {
         holder: claim.holder.clone(),
-        ..new_claim(holder, task, now)?
-    });
+        since: fresh.since.max(claim.since.clone()),
+        expires: fresh.expires.max(claim.expires.clone()),
+    };
+    assert!(
+        renewed.since < renewed.expires && renewed.expires >= claim.expires,
+        "a renewal never shortens the claim"
+    );
+    let mut next = task.fields().clone();
+    next.claim = Some(renewed);
     settle(next, &at)
 }
 
@@ -240,20 +250,31 @@ pub(super) fn claim_start(task: &Task, now: &Timestamp) -> Timestamp {
     since
 }
 
-/// A claim on `task` for `holder`, taken or renewed at `now`, for two
-/// hours from [`claim_start`].
+/// A claim on `task` for `holder`, taken or renewed at `now`: from
+/// [`claim_start`] until two hours from `now` by the caller's clock
+/// (#2705 B9 review round 2), so a task created ahead never stretches it.
+/// Only a task created two hours or more ahead holds a claim past that,
+/// for the schema's least, a second past its start (a claim starts while
+/// its task exists, and ends after it starts).
 pub(super) fn new_claim(
     holder: &Identity,
     task: &Task,
     now: &Timestamp,
 ) -> Result<Claim, BoardRuleError> {
-    let at = &claim_start(task, now);
-    let expires = at
-        .plus_seconds(CLAIM_TTL_SECONDS)
-        .map_err(|error| BoardRuleError::Invalid(error.at("claim/expires")))?;
+    let since = claim_start(task, now);
+    let spelt = |at: Result<Timestamp, SchemaError>| {
+        at.map_err(|error| BoardRuleError::Invalid(error.at("claim/expires")))
+    };
+    let two_hours = spelt(now.plus_seconds(CLAIM_TTL_SECONDS))?;
+    let least = spelt(since.plus_seconds(1))?;
+    let expires = two_hours.max(least);
+    assert!(
+        since < expires && expires <= spelt(since.plus_seconds(CLAIM_TTL_SECONDS))?,
+        "a claim ends after it starts, within two hours of its start"
+    );
     Ok(Claim {
         holder: holder.clone(),
-        since: at.clone(),
+        since,
         expires,
     })
 }

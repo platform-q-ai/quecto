@@ -156,7 +156,10 @@ impl SqliteProjectBoardStore {
 
 /// The object `tree` lists under `name`, when it lists it once and it is
 /// an object of `kind` (`blob` or `tree`); none otherwise (#2705 B9): a
-/// name listed twice, or of another kind, a read would set aside.
+/// name listed twice, or of another kind, a read would set aside. It
+/// reads `tree`'s rows by the primary key's `tree` prefix and filters them
+/// by name: the schema is fixed (a new index would leave every board's
+/// schema refused as unsupported), so no index finds a name directly.
 pub(super) fn entry_of(
     c: &Connection,
     tree: &str,

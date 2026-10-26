@@ -390,7 +390,6 @@ fn a_page_answers_only_the_parts_it_names_from_where_it_names() {
                 crate::application::project_board::operations::PlanView {
                     version: None,
                     page,
-                    pin: None,
                 },
             ),
             None,

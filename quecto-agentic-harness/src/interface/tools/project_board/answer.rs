@@ -247,7 +247,7 @@ pub fn outcome(
             fields.insert("created".into(), Value::Bool(*created));
         }
         BoardOutcome::Listing(listing) => fields.extend(listing_fields(listing)),
-        BoardOutcome::Shown(shown, view) => match view.page {
+        BoardOutcome::Shown(shown, view) => match view.page.clone() {
             None => fields.extend(shown_fields(shown, view.version)),
             Some(page) => fields.extend(page_fields(shown, page, view.version)),
         },
