@@ -10,10 +10,13 @@ directory (below). The clone gives only the board's id (from its remote's
 URL) and, for the board's operations, its remote's revisions and pull
 requests. A new server has no board until a `bootstrap` op makes one (an
 import of a `quecto/board` branch, `board-server import` below, writes
-this same file; `export` and the backup read it). A `board.sqlite3` of another
-schema version (an earlier build's) is refused at start, naming the version
-found and the one this build writes: move the file aside and start the
-board again (there are no boards to keep yet).
+this same file; `export` and the backup read it). This build writes schema 5.
+A schema-4 board (the build before B11's) is upgraded in place when `serve`
+or `import` opens it: each revision is given its chain (below), in revision
+order. A `board.sqlite3` of any other schema version is refused at start,
+naming the version found and the one this build writes: move the file aside
+and start the board again. `export` and `backup` read schema 5 only: run
+`serve` once on a schema-4 copy first.
 
 ## Who may connect
 
@@ -82,11 +85,10 @@ SQLite store as admin revisions.)
 | `POST /v1/boards/{id}/op` | one board operation (below): `{"answer": {..}, "facts": {..} or null}` |
 | `GET /v1/boards/{id}/events` | the change feed, a `text/event-stream` (below) |
 | `GET /v1/boards/{id}/revisions?after=<n>[&limit=<1..500>]` | `{"revisions": [<revision events>], "epoch", "tip", "more"}` (below) |
+| `GET /v1/boards/{id}/replicate?after=<n>&objects=<n>[&limit=<1..500>]` | a batch of the board's rows for a follower (B11, below) |
 | `GET /v1/admin/tokens` | `{"tokens": [{"name": "<name>", "created": "<RFC 3339>"}]}` (Unix socket only) |
 | `POST /v1/admin/tokens` `{"name": "<name>"}` | 201 `{"name", "created", "token"}`: the one time the token is shown (Unix socket only) |
 | `POST /v1/admin/tokens/revoke` `{"name": "<name>"}` | `{"name": "<name>", "revoked": true}` (Unix socket only) |
-
-The board snapshot route comes with B11.
 
 ## Operations (`POST /v1/boards/{id}/op`)
 
@@ -216,7 +218,7 @@ answered in the start's `launch_failed` with the server's code and words
 (`run_state` `refused`). A lost begin or undo is sent once more, the same.
 The server reads the remote for a success's plan items' evidence alone,
 refusing one naming more than 2,048 commits, one read at a time: a success
-while one runs is answered 503 `busy` ("the remote is being read for another write: try again shortly"), nothing written. A `409 standby` from a follower and its epoch come with B12.
+while one runs is answered 503 `busy` ("the remote is being read for another write: try again shortly"), nothing written. A `409 standby` from a follower comes with B11's follower; its epoch with B12.
 
 **The clock gate.** The server's clock tells the time only while the
 host affirms its clock is synchronised. On Linux the server asks the
@@ -402,6 +404,34 @@ as for `quecto board --url`.
 - A read waits at most 45 s (three missed 15 s pings) before the stream
   is opened again.
 
+## Replication batches (B11)
+
+A follower (B11's next slice) copies its primary's board in batches from
+this route. Each revision's `chain` is a SHA-256 over the chain before it
+and every column of the revision and its principal. A write makes it as it
+commits; an import makes it from the imported history; a schema-4 board is
+given its chains as it opens. The same history gives the same chains on
+every machine, so a follower whose chain at its last revision is not the
+primary's there holds another history.
+
+**`GET /v1/boards/{id}/replicate?after=<revision>&objects=<object>[&limit=<1..500>]`**
+answers, in one read transaction, the objects after place `objects` in
+the primary's order (each object's place is its row's, 1, 2, .. with no
+gap: objects are never deleted), then, once every object it holds is sent,
+at most `limit` (500 when not given) revisions after `after`, each with all
+its columns, its principal and its chain. Beside them: the primary's chain
+at `after` (null at 0, or when it has no such revision), every epoch, the
+board's provenance row, the admin rows (the device tokens' names, dates
+and SHA-256 digests, never a token), the primary's newest revision (`tip`)
+and whether more follow (`more`). A batch holds about 8 MiB of rows, and
+one at least, so its reader holds about that much. Bytes are base64 and
+every field is read strictly. The query takes only `after` and `objects`
+(both required) and `limit`, each once, as a number (else 400 `query`); a
+`limit` outside 1 to 500 is 400 `limit`. It is a read: over TCP any held
+token may ask it, so any device may read the token digests (a digest of 32
+random bytes gives no token back). The kept write answers (`op_results`)
+are not in it.
+
 ## Error replies
 
 Every error reply the server makes is JSON, `{"error": "<why>", "code":
@@ -410,8 +440,8 @@ Every error reply the server makes is JSON, `{"error": "<why>", "code":
 | Status | `code` | When |
 |---|---|---|
 | 400 | `request` | an admin body that is not `{"name": "<name>"}`, or an op body not shaped as above |
-| 400 | `query` | a feed query with a key other than `after`/`limit`, one twice, one not a number, or `revisions` without `after` |
-| 400 | `limit` | a `revisions` limit outside 1 to 500 |
+| 400 | `query` | a feed query with a key other than `after`/`limit` (and `objects` for `replicate`), one twice, one not a number, or `revisions` without `after` (`replicate` without `after` and `objects`) |
+| 400 | `limit` | a `revisions` or `replicate` limit outside 1 to 500 |
 | 400 | `last_event_id` | a `Last-Event-ID` that is not a revision number |
 | 400 | `write` | a write op without its `write_id` and `committer` |
 | 400 | `token_name` | a token name that is not 1 to 64 of `a-z`, `0-9` and inner `-` |

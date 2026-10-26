@@ -1,0 +1,140 @@
+//! Replication (epic #2705 B11): a follower copies its primary's board,
+//! revision by revision, with each revision's chain (a hash over every
+//! revision before it, so a fork is told), the objects it reaches, the
+//! epochs and the admin rows (the device tokens' digests). A follower
+//! never writes the board otherwise, and never rewrites what it holds.
+use super::feed::BatchLimit;
+use super::{BoardStoreError, TokenError};
+use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::timestamp::Timestamp;
+
+/// The most bytes of objects and revisions a batch carries past its first
+/// row (a batch always carries one, so it always makes progress): what a
+/// follower holds in memory for one batch is about this much.
+pub const BATCH_BYTES: usize = 8 * 1024 * 1024;
+
+/// One revision as the primary holds it, and its chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplicaRevision {
+    pub head: String,
+    pub root: String,
+    pub name: String,
+    pub email: String,
+    pub revision: u64,
+    pub parent: Option<u64>,
+    pub message: String,
+    pub at: i64,
+    pub git_commit: Option<String>,
+    pub git_meta: Option<Vec<u8>>,
+    /// Who the server let in for it (B7), when it recorded one.
+    pub principal: Option<String>,
+    pub chain: String,
+}
+
+/// A tree's entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplicaEntry {
+    pub mode: String,
+    pub raw_name: Vec<u8>,
+    pub oid: String,
+}
+
+/// What an object is: a blob's bytes, or a tree's size and entries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplicaContent {
+    Blob(Vec<u8>),
+    Tree {
+        size: u64,
+        entries: Vec<ReplicaEntry>,
+    },
+}
+
+/// One object, at its place in the primary's order of objects (1, 2, ..,
+/// with no gap), and its original git bytes when it was imported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplicaObject {
+    pub sequence: u64,
+    pub oid: String,
+    pub content: ReplicaContent,
+    /// `Some` for an imported original (its raw tree, `None` for a blob).
+    pub original: Option<Option<Vec<u8>>>,
+}
+
+/// An epoch: from which revision, why and when it was opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplicaEpoch {
+    pub epoch: u64,
+    pub from_revision: u64,
+    pub reason: String,
+    pub at: i64,
+}
+
+/// The board's provenance row (its id, and an import's source).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplicaMeta {
+    pub board_id: Option<String>,
+    pub algorithm: String,
+    pub source_remote: Option<String>,
+    pub source_ref: Option<String>,
+    pub source_head: Option<String>,
+    pub imported_count: u64,
+}
+
+/// An admin row: a device token's name, date and SHA-256 (never a token).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminToken {
+    pub name: Slug,
+    pub created: Timestamp,
+    pub digest: String,
+}
+
+/// One batch of the primary's history after a follower's place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplicaBatch {
+    /// The revision the batch follows, and the primary's chain there
+    /// (none at 0, or when the primary has no such revision).
+    pub after: u64,
+    pub chain_after: Option<String>,
+    /// The objects after the follower's, in order.
+    pub objects: Vec<ReplicaObject>,
+    /// The revisions after `after`, in order: only once every object the
+    /// primary holds is in this batch or before it.
+    pub revisions: Vec<ReplicaRevision>,
+    pub epochs: Vec<ReplicaEpoch>,
+    pub meta: Option<ReplicaMeta>,
+    pub tokens: Vec<AdminToken>,
+    /// The primary's newest revision, and whether more follow this batch.
+    pub tip: u64,
+    pub more: bool,
+}
+
+/// Port: the primary's history, as its store gives it to followers.
+pub trait ReplicationLog: Send + Sync {
+    /// The batch after revision `after` and object `objects_after`, at
+    /// most `limit` revisions and about [`BATCH_BYTES`] of rows.
+    ///
+    /// # Errors
+    /// The store could not be read.
+    fn replica_batch(
+        &self,
+        after: u64,
+        objects_after: u64,
+        limit: BatchLimit,
+    ) -> Result<ReplicaBatch, BoardStoreError>;
+}
+
+/// Port: the server's admin rows (its device tokens' digests): a primary
+/// gives them, a follower takes them in whole.
+pub trait AdminRows: Send + Sync {
+    /// The rows held, by name.
+    ///
+    /// # Errors
+    /// The store failed.
+    fn export(&self) -> Result<Vec<AdminToken>, TokenError>;
+
+    /// Holds `rows` alone from now on (a token not among them is revoked).
+    ///
+    /// # Errors
+    /// A row not as a token is kept, or the store failed.
+    fn replace(&self, rows: &[AdminToken]) -> Result<(), TokenError>;
+}

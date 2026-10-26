@@ -179,6 +179,7 @@ const USE_CASES: &[&str] = &[
     "WatchTiming",
     "FollowBoard",
     "Follower",
+    "ServeReplication",
     "SetTaskDependencies",
     "SettleAuthority",
     "SettleDelegatedChild",

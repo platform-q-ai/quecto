@@ -15,6 +15,7 @@ use crate::application::project_board::dto::{
 use crate::application::project_board::operations::StoreListings;
 use crate::application::project_board::ports::ListenAddress;
 use crate::application::project_board::ports::feed::BoardFeed;
+use crate::application::project_board::ports::replication::{AdminRows, ReplicationLog};
 use crate::application::project_board::ports::{
     BoardClock, BoardOpStore, BoardOperations, BoardOperationsOver, BoardTokens, OperationsOver,
     ProjectBoardStore, PullRequestState, PullRequestStates, PullRequestStatesError,
@@ -24,7 +25,7 @@ use crate::application::project_board::run_facts::StatedRemoteRevisions;
 use crate::application::project_board::synced_clock::{HeldSync, SyncedBoardClock};
 use crate::application::project_board::use_cases::{
     BoardAccess, FollowBoard, QueryBoard, READ_BUDGET, RunBoardOperation, ServeBoard,
-    ServeBoardOperation,
+    ServeBoardOperation, ServeReplication,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::Plan;
@@ -92,8 +93,7 @@ pub fn build_board_server_with(
         ))
     })?;
     let state = board_state_dir(&environment.base_dir, environment.state.as_deref(), &board);
-    let tokens: Arc<dyn BoardTokens> =
-        Arc::new(FileBoardTokens::open(&state).map_err(|why| refused(&why))?);
+    let tokens = Arc::new(FileBoardTokens::open(&state).map_err(|why| refused(&why))?);
     let database = board_database(&environment.base_dir, environment.state.as_deref(), &board);
     let ops = SqliteBoardOps::open(&database, server_identity()).map_err(|error| {
         refused(&format!(
@@ -126,6 +126,11 @@ pub fn build_board_server_with(
     let ops = Arc::new(ops);
     // The feed is the store's own: a write publishes as it commits (B10).
     let feed = FollowBoard::new(Arc::clone(&ops) as Arc<dyn BoardFeed>);
+    // A follower's batches: the store's history and the tokens (B11).
+    let replication = ServeReplication::new(
+        Arc::clone(&ops) as Arc<dyn ReplicationLog>,
+        Arc::clone(&tokens) as Arc<dyn AdminRows>,
+    );
     let ops: Arc<dyn BoardOpStore> = ops;
     let host: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());
     let time = SyncedBoardClock::new(Arc::clone(&host), Arc::clone(&sync));
@@ -141,7 +146,8 @@ pub fn build_board_server_with(
         serve: ServeBoard::new(ops.reads(), Arc::new(time), board),
         operations: ServeBoardOperation::new(ops, Arc::new(served)),
         feed: Some(feed),
-        access: BoardAccess::new(tokens, host),
+        replication: Some(replication),
+        access: BoardAccess::new(tokens as Arc<dyn BoardTokens>, host),
         peers: Arc::new(SocketPeerCredentials),
         uid: this_uid(),
         listen,
@@ -388,3 +394,7 @@ mod tests;
 #[cfg(test)]
 #[path = "board_feed_tests.rs"]
 mod feed_tests;
+
+#[cfg(test)]
+#[path = "board_replicate_tests.rs"]
+mod replicate_tests;

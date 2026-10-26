@@ -19,6 +19,7 @@ mod fixture;
 mod mutation;
 mod op_store;
 mod reader;
+mod replica_log;
 mod storage;
 #[cfg(feature = "test-support")]
 pub use fixture::{FixtureHooks, RawEditor, RawEntry};

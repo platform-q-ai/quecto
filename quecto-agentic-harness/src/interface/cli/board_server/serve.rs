@@ -143,7 +143,8 @@ where
     let parts = ServiceParts {
         handler: Arc::new(
             BoardRoutes::new(handles.serve, handles.access, handles.operations)
-                .with_feed(handles.feed),
+                .with_feed(handles.feed)
+                .with_replication(handles.replication),
         ),
         peers: handles.peers,
         uid: handles.uid,

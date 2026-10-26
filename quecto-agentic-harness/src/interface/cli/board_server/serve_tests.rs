@@ -74,6 +74,7 @@ fn handles(serve: crate::application::project_board::use_cases::ServeBoard) -> B
         serve,
         operations: operating(&MemoryBoardStore::default()),
         feed: None,
+        replication: None,
         access: BoardAccess::new(tokens, Arc::new(SystemBoardClock::default())),
         peers: Arc::new(SocketPeerCredentials) as Arc<dyn PeerCredentials>,
         uid: this_uid(),

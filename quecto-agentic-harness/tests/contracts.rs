@@ -6,6 +6,8 @@
 /// in this binary shares (#2691 review L2).
 pub(crate) static GIT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[path = "contracts/admin_rows.rs"]
+mod admin_rows;
 #[path = "contracts/admission_client.rs"]
 mod admission_client;
 #[path = "contracts/admission_dispatcher.rs"]
@@ -249,6 +251,8 @@ mod refresh_redaction_port;
 mod refreshable_catalogue_source;
 #[path = "contracts/reload_runtime.rs"]
 mod reload_runtime;
+#[path = "contracts/replication_log.rs"]
+mod replication_log;
 #[path = "contracts/retained_context.rs"]
 mod retained_context;
 #[path = "contracts/run_settings_source.rs"]

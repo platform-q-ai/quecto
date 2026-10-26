@@ -80,6 +80,8 @@ const FRONT_END_REACHES: &[&str] = &[
     "crate::infrastructure::http::board_service::listener::bind_tcp",
     "crate::infrastructure::http::board_service::client::BoardServiceClient",
     "crate::infrastructure::http::board_service::client::READ_REPLY",
+    // B11: a primary's batch for its followers, in the wire's one codec.
+    "crate::infrastructure::http::board_replica::encode_batch",
 ];
 
 /// The listener's module, for resolving a synthetic source's paths.

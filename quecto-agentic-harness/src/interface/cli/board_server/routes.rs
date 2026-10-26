@@ -2,9 +2,10 @@
 //! reads `GET /v1/status` and `GET /v1/time`; the board's operations
 //! `POST /v1/boards/{id}/op` ([`super::op`]); the change feed (B10), `GET
 //! /v1/boards/{id}/events` and `GET /v1/boards/{id}/revisions`
-//! ([`super::feed`]); admin `GET`/`POST /v1/admin/tokens` and `POST
-//! /v1/admin/tokens/revoke`, on the Unix socket only (403 over TCP); else
-//! 404, or 405 naming a route's methods.
+//! ([`super::feed`]); a primary's batches for its followers (B11), `GET
+//! /v1/boards/{id}/replicate`; admin `GET`/`POST /v1/admin/tokens` and
+//! `POST /v1/admin/tokens/revoke`, on the Unix socket only (403 over TCP);
+//! else 404, or 405 naming a route's methods.
 use std::sync::PoisonError;
 
 use serde_json::json;
@@ -15,6 +16,7 @@ use crate::application::project_board::ports::{
 };
 use crate::application::project_board::use_cases::{
     BoardAccess, FollowBoard, Principal, Refused, Scope, ServeBoard, ServeBoardOperation,
+    ServeReplication,
 };
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
@@ -32,6 +34,8 @@ pub struct BoardRoutes {
     operations: ServeBoardOperation,
     /// The change feed (B10); none answers its routes 404.
     feed: Option<FollowBoard>,
+    /// The batches for followers (B11); none answers the route 404.
+    replication: Option<ServeReplication>,
     /// The token store's failure last said on stderr.
     unavailable: std::sync::Mutex<String>,
 }
@@ -46,13 +50,15 @@ enum Route {
     Op,
     Events,
     Revisions,
+    Replicate,
 }
 
 /// The routes under a board's id, by their last segment.
-const BOARD_ROUTES: [(&str, Route); 3] = [
+const BOARD_ROUTES: [(&str, Route); 4] = [
     ("/op", Route::Op),
     ("/events", Route::Events),
     ("/revisions", Route::Revisions),
+    ("/replicate", Route::Replicate),
 ];
 
 impl Route {
@@ -70,7 +76,7 @@ impl Route {
     /// The methods it takes, as an `Allow` value.
     fn allow(self) -> &'static str {
         match self {
-            Self::Status | Self::Time | Self::Events | Self::Revisions => "GET",
+            Self::Status | Self::Time | Self::Events | Self::Revisions | Self::Replicate => "GET",
             Self::Tokens => "GET, POST",
             Self::Revoke | Self::Op => "POST",
         }
@@ -85,7 +91,12 @@ impl Route {
     /// The scope a caller needs to reach it (an op's own is judged after).
     fn scope(self) -> Scope {
         match self {
-            Self::Status | Self::Time | Self::Op | Self::Events | Self::Revisions => Scope::Read,
+            Self::Status
+            | Self::Time
+            | Self::Op
+            | Self::Events
+            | Self::Revisions
+            | Self::Replicate => Scope::Read,
             Self::Tokens | Self::Revoke => Scope::Admin,
         }
     }
@@ -115,7 +126,16 @@ impl BoardRoutes {
             access,
             operations,
             feed: None,
+            replication: None,
             unavailable: std::sync::Mutex::default(),
+        }
+    }
+
+    /// The routes, giving followers `replication`'s batches (B11).
+    pub fn with_replication(self, replication: Option<ServeReplication>) -> Self {
+        Self {
+            replication,
+            ..self
         }
     }
 
@@ -224,6 +244,11 @@ impl BoardRoutes {
     fn route(&self, route: Route, request: &ServiceRequest, principal: &Principal) -> ServiceReply {
         match (route, request.method) {
             (Route::Op, _) => self.op(request, principal),
+            (Route::Replicate, _) => match (self.served(&request.path), &self.replication) {
+                (Ok(()), Some(replication)) => super::feed::replicate(replication, request),
+                (Ok(()), None) => coded(404, "route", "no such route"),
+                (Err(reply), _) => reply,
+            },
             (Route::Revisions, _) => match self.feed_of(&request.path) {
                 Ok(feed) => super::feed::revisions(feed, request),
                 Err(reply) => reply,

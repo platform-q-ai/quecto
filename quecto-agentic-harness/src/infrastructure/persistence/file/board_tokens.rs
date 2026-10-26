@@ -15,6 +15,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::application::project_board::ports::replication::{AdminRows, AdminToken};
 use crate::application::project_board::ports::{
     BoardTokens, IssuedToken, MAX_TOKENS, TokenError, TokenRecord,
 };
@@ -278,6 +279,57 @@ impl BoardTokens for FileBoardTokens {
             }
         }
         Ok(found)
+    }
+}
+
+/// The tokens as admin rows (B11): a primary gives them to its followers,
+/// a follower holds its primary's alone, written through only when they
+/// change.
+impl AdminRows for FileBoardTokens {
+    fn export(&self) -> Result<Vec<AdminToken>, TokenError> {
+        let mut rows: Vec<AdminToken> = self.held().iter().map(row).collect();
+        rows.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(rows)
+    }
+
+    fn replace(&self, rows: &[AdminToken]) -> Result<(), TokenError> {
+        let names: std::collections::BTreeSet<_> = rows.iter().map(|row| &row.name).collect();
+        let shaped = |row: &AdminToken| {
+            held(StoredToken {
+                name: row.name.as_str().to_string(),
+                sha256: row.digest.clone(),
+                created: row.created.as_str().to_string(),
+            })
+        };
+        let next: Option<Vec<Held>> = rows.iter().map(shaped).collect();
+        let next = match (next, names.len() == rows.len(), rows.len() <= MAX_TOKENS) {
+            (Some(next), true, true) => next,
+            (_, _, _) => {
+                return Err(TokenError::Unavailable(
+                    "the primary's tokens are not as a token is kept".into(),
+                ));
+            }
+        };
+        let mut now = self.export()?;
+        let mut wanted = rows.to_vec();
+        wanted.sort_by(|a, b| a.name.cmp(&b.name));
+        now.sort_by(|a, b| a.name.cmp(&b.name));
+        match now == wanted {
+            true => Ok(()),
+            false => self.changing(|held| {
+                *held = next;
+                Ok(())
+            }),
+        }
+    }
+}
+
+/// A held token as an admin row.
+fn row(held: &Held) -> AdminToken {
+    AdminToken {
+        name: held.record.name.clone(),
+        created: held.record.created.clone(),
+        digest: held.digest.clone(),
     }
 }
 
