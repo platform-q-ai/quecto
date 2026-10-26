@@ -191,8 +191,8 @@ fn held_output_without_a_count_is_bounded() {
     );
 }
 
-/// Review (#2757 round 4, L-b): the held bound is for a watch with no
-/// --count; one whose count runs past the bound's lines completes.
+/// Review (#2757 round 4, L-b): a count past the no-count bound
+/// (MAX_HELD_BYTES) completes.
 #[test]
 fn a_count_past_the_held_bound_completes() {
     let count = "30000";

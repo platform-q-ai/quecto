@@ -23,7 +23,7 @@ pub const USAGE: &str = "usage: quecto board watch [--url <board server>] [--boa
                          [--repo <path>] [--remote <name>] [--after <revision>] [--count <n>]\n";
 
 /// The most output held, not written as it goes (a run whose output is
-/// returned whole), before the watch stops: 1 MiB.
+/// returned whole), with no `--count`, before the watch stops: 1 MiB.
 pub const MAX_HELD_BYTES: usize = 1024 * 1024;
 
 /// The most output held with a `--count` (which parses up to `u64::MAX`, so
@@ -186,7 +186,7 @@ enum Wrote {
     ReaderGone,
     /// Any other failure of the output: the watch ends, saying so.
     Failed(std::io::Error),
-    /// Held output reached its bound with no `--count`.
+    /// Held output reached its bound ([`held_bound`]).
     HeldFull,
 }
 
