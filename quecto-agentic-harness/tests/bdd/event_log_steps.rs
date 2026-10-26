@@ -153,6 +153,7 @@ fn one_shot(world: &mut QuectoWorld, extra: &[&str]) {
     let mut child = run
         .command()
         .args(["agent", "-m", "Find hello."])
+        .args(["--disable-tool", "declare_turn_outcome"])
         .args(extra)
         .stdout(Stdio::null())
         .stderr(Stdio::null())

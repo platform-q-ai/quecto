@@ -50,6 +50,7 @@ impl ModelTurnRun {
         let mut child = Command::new(env!("CARGO_BIN_EXE_quecto"))
             .args(["agent", "--mode", "uds", "--socket"])
             .arg(&socket)
+            .args(["--disable-tool", "declare_turn_outcome"])
             .current_dir(self.dir("work"))
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
@@ -329,6 +330,7 @@ async fn one_shot_with_deadline(world: &mut QuectoWorld, seconds: String) {
 fn one_shot_with_deadline_blocking(run: &mut ModelTurnRun, seconds: &str) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_quecto"))
         .args(["agent", "-m", "Write a lot.", "--max-time", seconds])
+        .args(["--disable-tool", "declare_turn_outcome"])
         .current_dir(run.dir("work"))
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())

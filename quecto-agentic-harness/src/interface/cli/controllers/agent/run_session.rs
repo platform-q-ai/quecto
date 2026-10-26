@@ -89,7 +89,7 @@ pub(crate) fn run_agent_session(
 
     let guard = (flags.max_time, handles.parent);
     let (agent_result, settled) = match drive(&rt, &mut agent, &mut messages, guard, run_start) {
-        Driven::Ended(result, settled) => (result, settled),
+        Driven::Ended(result, settled) => (*result, settled),
         Driven::TimedOut(secs) => {
             // Saved first: the settling below can take a minute, and a
             // process killed meanwhile must not lose it (#2173).

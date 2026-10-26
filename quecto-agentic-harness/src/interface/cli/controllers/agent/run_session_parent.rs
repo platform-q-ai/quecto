@@ -59,9 +59,16 @@ impl ParentRun {
 /// How a one-shot run ended.
 pub(crate) enum Driven {
     /// Its last run's result and, when guarded, the outcome it settled on.
-    Ended(Result<AgentResult, DomainError>, Option<TurnOutcomeRecord>),
+    Ended(
+        Box<Result<AgentResult, DomainError>>,
+        Option<TurnOutcomeRecord>,
+    ),
     /// `--max-time` (these seconds) stopped it.
     TimedOut(u64),
+}
+
+fn ended(result: Result<AgentResult, DomainError>, settled: Option<TurnOutcomeRecord>) -> Driven {
+    Driven::Ended(Box::new(result), settled)
 }
 
 /// Run the prompt `opener` (already in `messages`), guarded when `parent`
@@ -76,9 +83,9 @@ pub(crate) fn drive(
 ) -> Driven {
     let Some(mut parent) = parent else {
         return match max_time.map(|secs| (secs, run_with_deadline(rt, agent, messages, secs))) {
-            Some((_, DeadlineResult::Completed(result))) => Driven::Ended(result, None),
+            Some((_, DeadlineResult::Completed(result))) => ended(result, None),
             Some((secs, DeadlineResult::TimedOut)) => Driven::TimedOut(secs),
-            None => Driven::Ended(rt.block_on(agent.process(messages)), None),
+            None => ended(rt.block_on(agent.process(messages)), None),
         };
     };
     let deadline = max_time.map(|secs| Instant::now() + Duration::from_secs(secs));
@@ -96,16 +103,16 @@ pub(crate) fn drive(
             Err(_) => TurnEnd::Interrupted,
         };
         let next = match parent.runtime.complete(turn, end) {
-            ParentVerdict::Unsettled => return Driven::Ended(result, None),
+            ParentVerdict::Unsettled => return ended(result, None),
             ParentVerdict::Correct => (TurnAdmission::Correction, CORRECTION_NOTE.to_owned()),
             ParentVerdict::Published(record) if record.outcome == TurnOutcome::Waiting => {
                 match wait_for_note(rt, &mut parent, deadline) {
                     Wait::Note(note) => (TurnAdmission::WorkWake, note),
                     Wait::TimedOut => return timed_out(),
-                    Wait::Closed => return Driven::Ended(result, Some(record)),
+                    Wait::Closed => return ended(result, Some(record)),
                 }
             }
-            ParentVerdict::Published(record) => return Driven::Ended(result, Some(record)),
+            ParentVerdict::Published(record) => return ended(result, Some(record)),
         };
         let note = turn_origin::harness_note(next.1, messages);
         let opener = note.id();

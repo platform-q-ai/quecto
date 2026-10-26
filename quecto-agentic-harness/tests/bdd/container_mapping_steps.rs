@@ -430,6 +430,7 @@ fn when_real_agent_spawns_container_true(world: &mut QuectoWorld) {
     let checkout = checkout(world);
     let mut child = std::process::Command::new(&binary)
         .args(["agent", "-m", SPAWN_MARKER, "--no-session"])
+        .args(["--disable-tool", "declare_turn_outcome"])
         .current_dir(&checkout)
         .env("QUECTO_BASE_DIR", base_path(world))
         .env("QUECTO_CHILD_BINARY", &binary)
