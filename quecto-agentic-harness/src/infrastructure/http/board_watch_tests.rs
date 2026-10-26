@@ -104,4 +104,26 @@ fn a_hung_up_terminal_has_no_reader() {
     assert!(has_reader(slave.as_raw_fd()), "its master is open");
     drop(master);
     assert!(!has_reader(slave.as_raw_fd()), "its master is gone");
+    // What the slave polls: POLLHUP among it (Linux sets POLLERR beside it
+    // on a pty, so the socket case below pins POLLHUP alone).
+    let mut polled = libc::pollfd {
+        fd: slave.as_raw_fd(),
+        events: 0,
+        revents: 0,
+    };
+    // SAFETY: one valid `pollfd`, its count 1, borrowed for the call.
+    assert_eq!(unsafe { libc::poll(&mut polled, 1, 0) }, 1);
+    assert_ne!(polled.revents & libc::POLLHUP, 0, "{:#x}", polled.revents);
+}
+
+/// Review (#2757 round 4): a socket whose peer has gone (standard output
+/// can be one, under a service manager) polls `POLLHUP` alone, not
+/// `POLLERR`: no reader.
+#[test]
+fn a_socket_whose_peer_has_gone_has_no_reader() {
+    use std::os::fd::AsRawFd;
+    let (ours, theirs) = std::os::unix::net::UnixStream::pair().expect("a socket pair");
+    assert!(has_reader(ours.as_raw_fd()), "its peer is there");
+    drop(theirs);
+    assert!(!has_reader(ours.as_raw_fd()), "its peer is gone");
 }

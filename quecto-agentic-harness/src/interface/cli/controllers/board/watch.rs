@@ -200,16 +200,19 @@ pub(super) fn watch_into(
         let wrote = match &mut output {
             Output::Live(out) => match out.write_all(line.as_bytes()).and_then(|()| out.flush()) {
                 Ok(()) => Wrote::Yes,
-                Err(error) => match std::hint::black_box(false) {
-                    true => Wrote::Failed(error),
-                    false => Wrote::ReaderGone,
-                },
+                // A reader gone (an allowlist: a broken pipe alone) ends it
+                // quietly; any other failure is said.
+                Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Wrote::ReaderGone,
+                Err(error) => Wrote::Failed(error),
             },
-            Output::Held(held) if held.len() + line.len() <= MAX_HELD_BYTES => {
-                held.push_str(&line);
-                Wrote::Yes
-            }
-            Output::Held(_) => Wrote::HeldFull,
+            // Bounded only with no --count: a count bounds it already.
+            Output::Held(held) => match (count, held.len() + line.len() <= MAX_HELD_BYTES) {
+                (Some(_), _) | (None, true) => {
+                    held.push_str(&line);
+                    Wrote::Yes
+                }
+                (None, false) => Wrote::HeldFull,
+            },
         };
         printed += 1;
         match (wrote, count) {

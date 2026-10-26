@@ -376,13 +376,21 @@ as for `quecto board --url`.
   printed again, so an idle watch prints nothing as it reconnects.
   `--count <n>` counts these lines.
 - It exits 0 after `--count` lines, or once its output is closed: a write
-  that fails, or, before each reopen, standard output with no reader left
-  (so a watch whose reader has gone does not reconnect for ever). It exits
-  1 when it cannot start, when the server refuses it (any refusal but a
-  503 `busy`: a 503 `unavailable` or `clock_unsynced` too), when a stream
-  is malformed (its error said), or when 5 opens in a row fail or end with
-  no event. With no `--count`, output that is not written as it goes (a
-  run whose output is returned whole) stops at 1 MiB, exit 1.
+  that fails with a broken pipe, or, before each reopen, standard output
+  with no reader left (so a watch whose reader has gone does not reconnect
+  for ever). It exits 1 when it cannot start, when the server refuses it
+  (any refusal but a 503 `busy`: a 503 `unavailable` or `clock_unsynced`
+  too), when a stream is malformed (its error said), when its output fails
+  any other way (`board watch: output failed: <error>`), or when 5 opens
+  in a row fail or end with no event. With no `--count`, output that is
+  not written as it goes (a run whose output is returned whole) stops at
+  1 MiB, exit 1; with `--count`, the count bounds it.
+- A board server restart: the stream is cut, and the watch opens it again
+  each second (the stream's `retry:`). A server back within those 5 opens,
+  about 5 s, is resumed from the last id with no gap. One that is down for
+  longer ends the watch, exit 1, saying why (`... (5 times in a row)`).
+  This is as designed: a script that should outlive a long restart runs
+  the watch again with `--after` its last revision.
 - A 503 `busy` (that code alone) is tried again, with a backoff doubling from 100 ms (or the
   stream's `retry:`, never less) to 8 s, for up to 75 s (past a
   connection's 60 s lifetime, by which a held stream gives its place back)

@@ -41,6 +41,9 @@ impl WatchTiming {
     };
 }
 
+/// The highest busy backoff ceiling a watch takes.
+const MAX_BACKOFF_CEILING: Duration = Duration::from_secs(3_600);
+
 pub struct WatchBoard {
     streams: Box<dyn BoardStreams>,
     pauses: Arc<dyn WatchPauses>,
@@ -62,9 +65,14 @@ impl WatchBoard {
         pauses: Arc<dyn WatchPauses>,
         timing: WatchTiming,
     ) -> Self {
+        // A watch's times are its composition's constants: one out of range is
+        // a bug, caught as it is made.
+        assert!(timing.pause > Duration::ZERO, "a reopen never spins");
         assert!(
-            timing.min_backoff > Duration::ZERO && timing.min_backoff <= timing.max_backoff,
-            "a busy backoff never spins and has a ceiling"
+            timing.min_backoff > Duration::ZERO
+                && timing.min_backoff <= timing.max_backoff
+                && timing.max_backoff <= MAX_BACKOFF_CEILING,
+            "a busy backoff never spins and has a ceiling of at most an hour"
         );
         Self {
             streams,
@@ -115,7 +123,10 @@ impl WatchBoard {
                     *tried = Busy {
                         tries: tried.tries + 1,
                         waited: tried.waited + slept,
-                        backoff: (tried.backoff * 2).clamp(timing.min_backoff, timing.max_backoff),
+                        backoff: tried
+                            .backoff
+                            .saturating_mul(2)
+                            .clamp(timing.min_backoff, timing.max_backoff),
                     };
                     continue;
                 }
