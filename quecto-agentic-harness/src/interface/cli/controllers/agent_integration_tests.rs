@@ -1,6 +1,7 @@
 use super::build_tests::selection_for_test;
 use super::*;
 use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::composition::container_configs::build_agent_container_config_handles;
 use crate::composition::runtime::build_agent_provider;
 use crate::composition::tool_policy::build_tool_policy_persistence;
 use crate::domain::conversation::value_objects::message::Message;
@@ -53,9 +54,7 @@ pub(super) fn composed_ctx(base_dir: &std::path::Path) -> CliContext {
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
-        container_configs: Some(
-            crate::composition::container_configs::build_agent_container_config_handles,
-        ),
+        container_configs: Some(build_agent_container_config_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(build_tool_policy_persistence),
@@ -119,9 +118,7 @@ pub(super) fn test_flags(
         parent_control: None,
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
-        container_configs: Some(
-            crate::composition::container_configs::build_agent_container_config_handles,
-        ),
+        container_configs: Some(build_agent_container_config_handles),
         stdin_is_tty: false,
         environment_registry: None,
         backend: None,
