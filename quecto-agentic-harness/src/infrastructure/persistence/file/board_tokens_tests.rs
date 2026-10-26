@@ -328,6 +328,34 @@ fn a_crash_while_a_set_is_swapped_in_leaves_a_primarys_set() {
     assert_eq!(reopened.verify(&first.secret), Ok(Some(name("phone"))));
 }
 
+/// `tokens.json` written again behind `tokens`, its bytes unchanged: the
+/// next swap is refused once its note is written (a crash before the swap).
+fn rewritten_behind(tokens: &FileBoardTokens) {
+    let path = tokens_path(tokens);
+    let again = path.with_file_name("tokens.again");
+    std::fs::write(&again, std::fs::read(&path).unwrap()).unwrap();
+    std::fs::set_permissions(&again, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::rename(&again, &path).unwrap();
+}
+
+/// B11 review 6: a crash after the note is written and before the swap
+/// leaves the primary's set it held known as its primary's.
+#[test]
+fn a_crash_before_the_swap_leaves_the_primarys_set_held() {
+    let (dir, primary) = opened();
+    primary.add(&name("phone"), &at()).unwrap();
+    let state = dir.path().join("follower");
+    let follower = FileBoardTokens::open(&state).unwrap();
+    follower.replace(&primary.export().unwrap()).unwrap();
+    primary.add(&name("laptop"), &at()).unwrap();
+    rewritten_behind(&follower);
+    assert!(follower.replace(&primary.export().unwrap()).is_err());
+    drop(follower);
+    let reopened = FileBoardTokens::open(&state).unwrap();
+    let held = reopened.followed().unwrap();
+    assert_eq!((held.held, held.copied), (1, true), "the primary's set");
+}
+
 /// B11 review 5: a swap refused after the note is written leaves a
 /// server's own set its own: its digest is never noted as a primary's.
 #[test]
@@ -336,12 +364,7 @@ fn a_swap_refused_after_the_note_leaves_a_servers_own_set_its_own() {
     own.add(&name("laptop"), &at()).unwrap();
     let primary = FileBoardTokens::open(&own.state.with_file_name("primary")).unwrap();
     primary.add(&name("phone"), &at()).unwrap();
-    // The same bytes written again behind the server: its swap is refused.
-    let path = tokens_path(&own);
-    let again = path.with_file_name("tokens.again");
-    std::fs::write(&again, std::fs::read(&path).unwrap()).unwrap();
-    std::fs::set_permissions(&again, std::fs::Permissions::from_mode(0o600)).unwrap();
-    std::fs::rename(&again, &path).unwrap();
+    rewritten_behind(&own);
     assert!(own.replace(&primary.export().unwrap()).is_err());
     let state = own.state.clone();
     drop(own);
