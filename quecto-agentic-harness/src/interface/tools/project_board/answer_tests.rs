@@ -445,7 +445,7 @@ board_rules! {
     R::ChangesUnmerged(_) => R::ChangesUnmerged(vec![1]), "changes_unmerged", ["changes"];
     R::ChangesInconsistent(_) => R::ChangesInconsistent("number 1 twice".into()), "changes_inconsistent", ["reason"];
     R::PlanAhead { .. } => R::PlanAhead { version: 2, updated: at("10:00:00") }, "plan_ahead", ["version", "updated"];
-    R::TaskClockAhead { .. } => R::TaskClockAhead { created: at("10:00:00") }, "task_clock_ahead", ["created"];
+    R::TaskClockAhead { .. } => R::TaskClockAhead { created: at("10:00:00"), until: at("09:59:00") }, "task_clock_ahead", ["created", "until"];
     R::Invalid(_) => R::Invalid(SchemaError::new("title", "is empty")), "invalid", ["field", "problem"];
     R::InvalidPlan(_) => R::InvalidPlan(SchemaError::new("items/0/title", "is empty")), "invalid_plan", ["field", "problem"];
 }

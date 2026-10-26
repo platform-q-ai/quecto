@@ -126,7 +126,10 @@ fn rule_fields(rule: &BoardRuleError) -> Map<String, Value> {
             "updated": updated.as_str(),
         }),
         R::PlansInconsistent(why) => object!({"reason": shown(why)}),
-        R::TaskClockAhead { created } => object!({"created": created.as_str()}),
+        R::TaskClockAhead { created, until } => object!({
+            "created": created.as_str(),
+            "until": until.as_str(),
+        }),
         R::PlanAhead { version, updated } => object!({
             "version": version,
             "updated": updated.as_str(),

@@ -78,7 +78,9 @@ impl Started {
 /// A draft, done or archived task (`not_allowed`); a ready task a task it
 /// depends on (of `tasks`, every task the board holds) holds back
 /// (`dependency_not_done`); a claim `actor` does not
-/// hold, live or not (`not_holder`, `no_claim`); no accepted plan, or its
+/// hold, live or not (`not_holder`, `no_claim`); a task created more
+/// than `CLOCK_AHEAD_SECONDS` ahead of the caller's clock
+/// (`task_clock_ahead`); no accepted plan, or its
 /// file missing, or another plan given; a run still going, or runs that
 /// contradict each other; a stamp or a run number the board cannot spell.
 pub fn start(

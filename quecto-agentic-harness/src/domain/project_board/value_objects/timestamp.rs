@@ -49,6 +49,17 @@ impl Timestamp {
         }
     }
 
+    /// This moment `seconds` earlier, refused before 1970 (#2705 B9).
+    pub fn minus_seconds(&self, seconds: u64) -> Result<Self, SchemaError> {
+        let start = humantime::parse_rfc3339(&self.0).expect("a parsed timestamp reads back");
+        match start.checked_sub(Duration::from_secs(seconds)) {
+            Some(earlier) if earlier >= std::time::UNIX_EPOCH => {
+                Self::parse(&humantime::format_rfc3339_seconds(earlier).to_string())
+            }
+            _ => Err(SchemaError::new("timestamp", "must not be before 1970")),
+        }
+    }
+
     /// This moment `seconds` later, refused past the year 9999.
     pub fn plus_seconds(&self, seconds: u64) -> Result<Self, SchemaError> {
         let start = humantime::parse_rfc3339(&self.0).expect("a parsed timestamp reads back");

@@ -11,9 +11,13 @@
 //! ahead never stretches a claim a right clock takes on it. Whether a
 //! claim has expired is judged by the caller's real `now`, so a client
 //! whose clock runs fast sees claims expire early, and a claim such a
-//! clock took lasts until its own expiry. S1c's write path bounds `now` against an outside
-//! reading of the current time when one can be read: it refuses a `now`
-//! more than [`CLOCK_AHEAD_SECONDS`] ahead of it.
+//! clock took lasts until its own expiry. A task created more than
+//! [`CLOCK_AHEAD_SECONDS`] ahead of the caller's clock is never claimed
+//! ([`claimable_at`], `task_clock_ahead`): its claim could only start at
+//! its creation and so outlast the caller's two hours. S1c's write path
+//! bounds `now` against an outside reading of the current time when one
+//! can be read: it refuses a `now` more than [`CLOCK_AHEAD_SECONDS`] ahead
+//! of it.
 use super::super::entities::claim::{CLAIM_TTL_SECONDS, Claim, Identity};
 use super::super::entities::task::{Task, TaskFields};
 use super::super::value_objects::rule_error::BoardRuleError;
@@ -37,7 +41,6 @@ pub const CLOCK_AHEAD_SECONDS: u64 = 60;
 /// from a clock slower than the one that took the claim never shortens
 /// it, nor moves its start back (#2705 B9 review round 2).
 pub fn renew(task: &Task, holder: &Identity, now: &Timestamp) -> Result<Task, BoardRuleError> {
-    claimable_at(task, now)?;
     let claim = held_or_lapsed_by(task, holder, now)?;
     let at = stamp(task, now);
     let fresh = new_claim(holder, task, now)?;
@@ -58,7 +61,6 @@ pub fn renew(task: &Task, holder: &Identity, now: &Timestamp) -> Result<Task, Bo
 /// Someone else takes an expired claim on a task that may hold one
 /// (claimed, in progress, in review or blocked).
 pub fn take_over(task: &Task, taker: &Identity, now: &Timestamp) -> Result<Task, BoardRuleError> {
-    claimable_at(task, now)?;
     let fields = task.fields();
     let claim = match (&fields.claim, fields.status.may_hold_claim()) {
         (Some(claim), true) => claim,
@@ -68,6 +70,9 @@ pub fn take_over(task: &Task, taker: &Identity, now: &Timestamp) -> Result<Task,
     if claim.holder.is(taker) {
         return Err(BoardRuleError::AlreadyHolder);
     }
+    // After the status and holder refusals, which say more; before the
+    // claim's liveness, which a claim on a task created ahead would hide.
+    claimable_at(task, now)?;
     if is_live(claim, now) {
         return Err(BoardRuleError::ClaimLive);
     }
@@ -274,6 +279,11 @@ pub(super) fn claimable_at(task: &Task, now: &Timestamp) -> Result<(), BoardRule
         true => Ok(()),
         false => Err(BoardRuleError::TaskClockAhead {
             created: created.clone(),
+            // When the caller's clock reaches the bound: past 1970 always,
+            // as the task was created more than the bound after it.
+            until: created
+                .minus_seconds(CLOCK_AHEAD_SECONDS)
+                .unwrap_or_else(|_| created.clone()),
         }),
     }
 }

@@ -169,7 +169,8 @@ Every change stamps what it writes with the writer's clock, or the artifact's ow
 stamp is pushed past the clock, so two changes in one second share one. A claim
 runs from the caller's clock for two hours, never from a stamp; a task created
 more than 60 s ahead of the caller's clock is not claimed, taken over, renewed or
-started (`task_clock_ahead`): a clock is wrong. A plan's change (an acceptance too) is stamped no earlier than any
+started (`task_clock_ahead`, naming `created` and `until`, when the caller's
+clock reaches the bound): a clock is wrong, or wait until then. A plan's change (an acceptance too) is stamped no earlier than any
 plan of its task, and a change's no earlier than any change of its task, each
 within the outside time's bound (one stamped past it, by a hand edit or a clock
 that ran ahead, is left out). So, kind by kind, a task's own stamps never run
