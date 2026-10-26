@@ -292,11 +292,7 @@ fn a_zero_retry_never_spins_on_a_busy_server() {
     );
 }
 
-/// Review (#2757 round 2, M2): busy tries are capped in number too.
-#[test]
-fn busy_tries_are_capped() {
-    assert!(
-        MAX_BUSY_TRIES >= 10 && MAX_BUSY_TRIES <= 64,
-        "{MAX_BUSY_TRIES}"
-    );
-}
+/// Review (#2757 round 2, M2): busy tries are capped in number too, at a
+/// count that still outlasts a connection's lifetime at the backoff's pace
+/// (checked as the build compiles).
+const _: () = assert!(MAX_BUSY_TRIES >= 10 && MAX_BUSY_TRIES <= 64);
