@@ -15,6 +15,9 @@ use crate::application::project_board::dto::{
 use crate::application::project_board::operations::StoreListings;
 use crate::application::project_board::ports::ListenAddress;
 use crate::application::project_board::ports::feed::BoardFeed;
+use crate::application::project_board::ports::replication::{
+    AdminRows, FollowTokens, ReplicaStore, ReplicationLog, ReplicationSource,
+};
 use crate::application::project_board::ports::{
     BoardClock, BoardOpStore, BoardOperations, BoardOperationsOver, BoardTokens, OperationsOver,
     ProjectBoardStore, PullRequestState, PullRequestStates, PullRequestStatesError,
@@ -23,8 +26,8 @@ use crate::application::project_board::ports::{
 use crate::application::project_board::run_facts::StatedRemoteRevisions;
 use crate::application::project_board::synced_clock::{HeldSync, SyncedBoardClock};
 use crate::application::project_board::use_cases::{
-    BoardAccess, FollowBoard, QueryBoard, READ_BUDGET, RunBoardOperation, ServeBoard,
-    ServeBoardOperation,
+    BoardAccess, FollowBoard, QueryBoard, READ_BUDGET, ReadyFollowerTokens, ReplicaTiming,
+    ReplicateBoard, RunBoardOperation, ServeBoard, ServeBoardOperation, ServeReplication,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::Plan;
@@ -33,8 +36,12 @@ use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::config::Config;
+use crate::infrastructure::http::board_remote::endpoint_of;
+use crate::infrastructure::http::board_replica::RemoteReplicationSource;
 use crate::infrastructure::http::board_service::listener::{SocketPeerCredentials, this_uid};
+use crate::infrastructure::http::board_watch::ThreadPauses;
 use crate::infrastructure::persistence::file::board_tokens::FileBoardTokens;
+use crate::infrastructure::persistence::file::token_file::read_token_file;
 use crate::infrastructure::persistence::project_board::board_tree::told;
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
 use crate::infrastructure::persistence::project_board::remote_revisions::GitRemoteRevisions;
@@ -42,7 +49,10 @@ use crate::infrastructure::persistence::project_board::store::{GitBoardStore, St
 use crate::infrastructure::persistence::sqlite::project_board::{BoardBinding, SqliteBoardOps};
 use crate::infrastructure::time::board_clock::SystemBoardClock;
 use crate::infrastructure::time::kernel_time_sync::KernelTimeSync;
-pub use crate::interface::cli::board_server::{BoardServerEnvironment, BoardServerHandles};
+use crate::infrastructure::time::replica_clock::MonotonicReplicaClock;
+pub use crate::interface::cli::board_server::{
+    BoardServerEnvironment, BoardServerHandles, FollowPrimary,
+};
 
 /// Builds the board server for `environment`'s clone and board remote,
 /// its clock gated on the kernel's word ([`build_board_server_with`]).
@@ -92,8 +102,7 @@ pub fn build_board_server_with(
         ))
     })?;
     let state = board_state_dir(&environment.base_dir, environment.state.as_deref(), &board);
-    let tokens: Arc<dyn BoardTokens> =
-        Arc::new(FileBoardTokens::open(&state).map_err(|why| refused(&why))?);
+    let tokens = Arc::new(FileBoardTokens::open(&state).map_err(|why| refused(&why))?);
     let database = board_database(&environment.base_dir, environment.state.as_deref(), &board);
     let ops = SqliteBoardOps::open(&database, server_identity()).map_err(|error| {
         refused(&format!(
@@ -126,7 +135,36 @@ pub fn build_board_server_with(
     let ops = Arc::new(ops);
     // The feed is the store's own: a write publishes as it commits (B10).
     let feed = FollowBoard::new(Arc::clone(&ops) as Arc<dyn BoardFeed>);
-    let ops: Arc<dyn BoardOpStore> = ops;
+    let replication = ServeReplication::new(
+        Arc::clone(&ops) as Arc<dyn ReplicationLog>,
+        Arc::clone(&tokens) as Arc<dyn AdminRows>,
+    );
+    let follower = match &environment.follow {
+        Some(follow) => {
+            let source = replication_source(follow, &board).map_err(|why| refused(&why))?;
+            // A follower holds its primary's tokens: its own are set aside
+            // only when asked, and only once the rest of the start is sound.
+            ReadyFollowerTokens::new(Arc::clone(&tokens) as Arc<dyn FollowTokens>)
+                .ready(follow.replace_tokens)
+                .map_err(|why| refused(&why))?;
+            let primary = source.primary();
+            let replicate = ReplicateBoard::new(
+                Arc::new(source),
+                Arc::clone(&ops) as Arc<dyn ReplicaStore>,
+                Arc::clone(&tokens) as Arc<dyn AdminRows>,
+                Arc::new(ThreadPauses),
+                ReplicaTiming::PRODUCTION,
+                Arc::new(MonotonicReplicaClock),
+            );
+            Some((Arc::new(replicate), primary))
+        }
+        None => None,
+    };
+    // A follower's operations write nothing: only its primary's batches do.
+    let ops: Arc<dyn BoardOpStore> = match &follower {
+        Some(_) => Arc::new(ops.standby()),
+        None => ops,
+    };
     let host: Arc<dyn BoardClock> = Arc::new(SystemBoardClock::default());
     let time = SyncedBoardClock::new(Arc::clone(&host), Arc::clone(&sync));
     let served = ServedOperations {
@@ -137,15 +175,40 @@ pub fn build_board_server_with(
         read_budget: READ_BUDGET,
         revision_reads: Arc::default(),
     };
+    let serve = ServeBoard::new(ops.reads(), Arc::new(time), board);
+    let serve = match &follower {
+        Some((replicate, _)) => serve
+            .following(replicate.status_reader())
+            .serving_devices(replicate.devices_reader()),
+        None => serve,
+    };
     Ok(BoardServerHandles {
-        serve: ServeBoard::new(ops.reads(), Arc::new(time), board),
+        serve,
         operations: ServeBoardOperation::new(ops, Arc::new(served)),
         feed: Some(feed),
-        access: BoardAccess::new(tokens, host),
+        replication: Some(replication),
+        follower,
+        access: BoardAccess::new(tokens as Arc<dyn BoardTokens>, host),
         peers: Arc::new(SocketPeerCredentials),
         uid: this_uid(),
         listen,
     })
+}
+
+/// A follower's primary (B11): `follow`'s URL, reached with the token in
+/// its token file. The file must be this user's alone (no group or other
+/// bits) and hold one token on one line; no error quotes it.
+fn replication_source(
+    follow: &FollowPrimary,
+    board: &BoardId,
+) -> Result<RemoteReplicationSource, String> {
+    let token = match &follow.token_file {
+        None => None,
+        Some(path) => Some(read_token_file(path)?),
+    };
+    let client = endpoint_of(&follow.url, token.as_deref())
+        .map_err(|why| format!("--follow {}: {why}", follow.url))?;
+    Ok(RemoteReplicationSource::new(client, board.clone()))
 }
 
 /// The board's file in the state directory.
@@ -388,3 +451,11 @@ mod tests;
 #[cfg(test)]
 #[path = "board_feed_tests.rs"]
 mod feed_tests;
+
+#[cfg(test)]
+#[path = "board_replicate_tests.rs"]
+mod replicate_tests;
+
+#[cfg(test)]
+#[path = "board_follower_tests.rs"]
+mod follower_tests;

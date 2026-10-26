@@ -4,7 +4,7 @@
 use std::sync::Mutex;
 
 use crate::application::project_board::ports::{
-    BoardTokens, IssuedToken, MAX_TOKENS, TokenError, TokenRecord,
+    BoardTokens, IssuedToken, MAX_TOKENS, TokenError, TokenKind, TokenRecord,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -26,8 +26,13 @@ impl MemoryBoardTokens {
     }
 }
 
-impl BoardTokens for MemoryBoardTokens {
-    fn add(&self, name: &Slug, created: &Timestamp) -> Result<IssuedToken, TokenError> {
+impl MemoryBoardTokens {
+    fn added(
+        &self,
+        name: &Slug,
+        created: &Timestamp,
+        kind: TokenKind,
+    ) -> Result<IssuedToken, TokenError> {
         self.failing()?;
         let mut held = self.held.lock().unwrap();
         if held.iter().any(|(record, _)| &record.name == name) {
@@ -39,10 +44,28 @@ impl BoardTokens for MemoryBoardTokens {
         let record = TokenRecord {
             name: name.clone(),
             created: created.clone(),
+            kind,
         };
         let secret = format!("token-{}", name.as_str());
         held.push((record.clone(), secret.clone()));
         Ok(IssuedToken { record, secret })
+    }
+}
+
+impl BoardTokens for MemoryBoardTokens {
+    fn add(&self, name: &Slug, created: &Timestamp) -> Result<IssuedToken, TokenError> {
+        self.added(name, created, TokenKind::Device)
+    }
+
+    fn add_replica(&self, name: &Slug, created: &Timestamp) -> Result<IssuedToken, TokenError> {
+        self.added(name, created, TokenKind::Replica)
+    }
+
+    fn kind_of(&self, name: &Slug) -> Result<Option<TokenKind>, TokenError> {
+        self.failing()?;
+        let held = self.held.lock().unwrap();
+        let found = held.iter().find(|(record, _)| &record.name == name);
+        Ok(found.map(|(record, _)| record.kind))
     }
 
     fn revoke(&self, name: &Slug) -> Result<(), TokenError> {

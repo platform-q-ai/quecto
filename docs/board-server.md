@@ -1,19 +1,72 @@
 # Board server (`quecto board-server`)
 
 `quecto board-server serve --socket <path> --repo <clone> [--remote origin]
-[--listen <ip:port>]... [--state <dir>]` serves a repository's project
-board over HTTP/1.1 on a Unix socket, and on each allowlisted TCP address,
-until SIGINT or SIGTERM (epic #2705 B4, B5, B7).
+[--listen <ip:port>]... [--state <dir>] [--follow <url> [--token-file
+<path>] [--replace-tokens]]` serves a repository's project board over HTTP/1.1 on a Unix
+socket, and on each allowlisted TCP address, until SIGINT or SIGTERM (epic
+#2705 B4, B5, B7). With `--follow` it is a read-only follower of the
+primary at `<url>` (B11, below).
 
 The board is the server's own: a SQLite file, `board.sqlite3`, in the state
 directory (below). The clone gives only the board's id (from its remote's
 URL) and, for the board's operations, its remote's revisions and pull
 requests. A new server has no board until a `bootstrap` op makes one (an
 import of a `quecto/board` branch, `board-server import` below, writes
-this same file; `export` and the backup read it). A `board.sqlite3` of another
-schema version (an earlier build's) is refused at start, naming the version
-found and the one this build writes: move the file aside and start the
-board again (there are no boards to keep yet).
+this same file; `export` and the backup read it). This build writes schema 5
+and reads schema 4 or 5. A board file is only ever opened by an absolute
+path (`--state` and `QUECTO_BASE_DIR` must be absolute; a backup's `--to` is
+made absolute): SQLite would read a relative name such as `file:..` as a
+URI.
+
+**The schema-5 upgrade (B11).** A schema-4 board (the build before B11's) is
+upgraded in place when `serve` or `import` first opens it, under the board's
+write lock: first a whole copy of it is kept beside it,
+`board.sqlite3.schema4-<UTC, as 20261026T105649Z>` (a new file of mode 0600,
+filled by SQLite's online backup, out of WAL so it is one file, and checked
+whole), then each revision is given its chain (below), in revision order, in
+one transaction. A copy already beside the board (from an attempt cut
+short) is used again only when it holds every row of every table the board
+holds, no more and no fewer; any other (stale, another board's, or no
+database at all) is left as it is and a new one made, only with room for it
+(twice the board and its WAL free). A board that cannot be upgraded (its
+revisions have a gap) is refused before it is copied. Any failure refuses
+the upgrade: the board is left as it was, a copy this attempt made is
+removed once the board is read again and found still at schema 4 (so a unit
+restarted again and again never fills the disk), and `serve` does not
+start, saying "the
+schema-4 board <path> was not upgraded to schema 5 and is left as it was:
+<why>". Opens at once upgrade once: an open while another holds the lock
+waits for it up to 120 s. `export` and `backup` read schema 4 or 5 and
+never upgrade: a backup taken before the upgrade is still admitted and
+pruned, and a schema-4 board still served by the old binary is copied as it
+is.
+
+**The copy** is the way back (below). Delete it once you will not roll back:
+after the upgraded server has run, a schema-5 backup has been taken, and
+both hosts run this build.
+
+**Deploy order.** Upgrade the standby first, or both hosts together, and
+restart each board-server unit as soon as its binary is installed, before
+the next backup sync tick: the build before B11's refuses a schema-5 file
+(and its message says to move the file aside: do not; install this build
+instead). A board of a schema newer than 5 is refused by this build with
+"upgrade this binary to read it".
+
+**Rollback.** Stop the server, then either restore the copy (`mv
+board.sqlite3.schema4-<UTC> board.sqlite3`, dropping any `board.sqlite3-wal`
+and `-shm` first: revisions made since the upgrade are lost), or keep the
+revisions and take the file back to schema 4 in place: `sqlite3
+board.sqlite3 'ALTER TABLE revisions DROP COLUMN chain; PRAGMA
+user_version=4;'`. Either is read by the build before B11's. **Replica
+tokens first:** the build before B11's refuses a `tokens.json` holding a
+replica token (its `"replica": true` is a field it does not read), so before
+going back revoke every replica token (`token revoke <name>` while this build
+runs), or, with the server stopped, delete the `"replica": true` line from
+each entry (which makes it a device token).
+
+Any other schema version is refused at start, naming the version found
+and the one this build writes: move the file aside and start the board
+again.
 
 ## Who may connect
 
@@ -51,9 +104,16 @@ Administer them over the Unix socket, while the server runs:
 
 | Command | Does |
 |---|---|
-| `quecto board-server token add <name> --socket <path>` | makes a token and prints it once, alone on stdout |
+| `quecto board-server token add <name> [--replica] --socket <path>` | makes a token and prints it once, alone on stdout; `--replica`: a follower's (B11, below) |
 | `quecto board-server token revoke <name> --socket <path>` | revokes it; it is refused from the next request |
-| `quecto board-server token list --socket <path>` | names and created dates, never a token |
+| `quecto board-server token list --socket <path>` | names, created dates and kinds (`device` or `replica`), never a token |
+
+A device token reads and writes the board. A replica token (B11) is a
+follower's: it reads the board and takes replication batches
+(`replicate`, below), and writes nothing (403 `replica_reads`). Only a
+replica token, or the Unix socket, may ask `replicate`: a device token is
+refused it (403 `replica_only`). Issue one replica token for each follower,
+and give it to that follower alone.
 
 A name is 1 to 64 of `a-z`, `0-9` and inner `-`. A token is 32 random
 bytes, base64url. Only its SHA-256 is kept, in `tokens.json` (mode 0600)
@@ -77,16 +137,15 @@ SQLite store as admin revisions.)
 
 | Route | Answer |
 |---|---|
-| `GET /v1/status` | `{"role": "primary", "board": "<id>", "head": "<head>" or null}` (read from the server's own board file, never from the clone's remote, so a slow or silent remote never delays it) |
+| `GET /v1/status` | `{"role": "primary", "board": "<id>", "head": "<head>" or null}` (read from the server's own board file, never from the clone's remote, so a slow or silent remote never delays it); a follower's is `"role": "follower"` with `"replication"` (below) |
 | `GET /v1/time` | `{"time": "<RFC 3339, to the second>"}` (the server's clock; 503 `clock_unsynced` while it is not synchronised) |
 | `POST /v1/boards/{id}/op` | one board operation (below): `{"answer": {..}, "facts": {..} or null}` |
 | `GET /v1/boards/{id}/events` | the change feed, a `text/event-stream` (below) |
 | `GET /v1/boards/{id}/revisions?after=<n>[&limit=<1..500>]` | `{"revisions": [<revision events>], "epoch", "tip", "more"}` (below) |
-| `GET /v1/admin/tokens` | `{"tokens": [{"name": "<name>", "created": "<RFC 3339>"}]}` (Unix socket only) |
-| `POST /v1/admin/tokens` `{"name": "<name>"}` | 201 `{"name", "created", "token"}`: the one time the token is shown (Unix socket only) |
+| `GET /v1/boards/{id}/replicate?after=<n>&objects=<n>[&limit=<1..500>]` | a batch of the board's rows for a follower (B11, below) |
+| `GET /v1/admin/tokens` | `{"tokens": [{"name": "<name>", "created": "<RFC 3339>", "kind": "device" or "replica"}]}` (Unix socket only) |
+| `POST /v1/admin/tokens` `{"name": "<name>"[, "replica": true]}` | 201 `{"name", "created", "kind", "token"}`: the one time the token is shown (Unix socket only) |
 | `POST /v1/admin/tokens/revoke` `{"name": "<name>"}` | `{"name": "<name>", "revoked": true}` (Unix socket only) |
-
-The board snapshot route comes with B11.
 
 ## Operations (`POST /v1/boards/{id}/op`)
 
@@ -216,7 +275,7 @@ answered in the start's `launch_failed` with the server's code and words
 (`run_state` `refused`). A lost begin or undo is sent once more, the same.
 The server reads the remote for a success's plan items' evidence alone,
 refusing one naming more than 2,048 commits, one read at a time: a success
-while one runs is answered 503 `busy` ("the remote is being read for another write: try again shortly"), nothing written. A `409 standby` from a follower and its epoch come with B12.
+while one runs is answered 503 `busy` ("the remote is being read for another write: try again shortly"), nothing written. A follower answers every write `409 standby` naming its primary (B11); a client's following of the primary, and epochs, come with B12.
 
 **The clock gate.** The server's clock tells the time only while the
 host affirms its clock is synchronised. On Linux the server asks the
@@ -402,6 +461,141 @@ as for `quecto board --url`.
 - A read waits at most 45 s (three missed 15 s pings) before the stream
   is opened again.
 
+## Replication batches (B11)
+
+A follower (below) copies its primary's board in batches from this
+route. Each revision's `chain` is a SHA-256 over the chain before it
+and every column of the revision and its principal. A write makes it as it
+commits; an import makes it from the imported history; a schema-4 board is
+given its chains as it opens. The same history gives the same chains on
+every machine, so a follower whose chain at its last revision is not the
+primary's there holds another history.
+
+**`GET /v1/boards/{id}/replicate?after=<revision>&objects=<object>[&limit=<1..500>]`**
+answers, in one read transaction, the objects after place `objects` in
+the primary's order (each object's place is its row's, 1, 2, .. with no
+gap: objects are never deleted), then, once every object it holds is sent,
+at most `limit` (500 when not given) revisions after `after`, each with all
+its columns, its principal and its chain. Beside them: the primary's chain
+at `after` (null at 0, or when it has no such revision), every epoch, the
+board's provenance row, the admin rows (the tokens' names, dates, kinds
+and SHA-256 digests, never a token), the primary's newest revision (`tip`)
+and whether more follow (`more`). A batch holds about 8 MiB of rows, and
+one at least, so its reader holds about that much. Bytes are base64 and
+every field is read strictly. The query takes only `after` and `objects`
+(both required) and `limit`, each once, as a number (else 400 `query`); a
+`limit` outside 1 to 500 is 400 `limit`. Over TCP only a replica token
+may ask it (a device token is 403 `replica_only`); on the Unix socket the
+server's own user. The kept write answers (`op_results`) are not in it.
+
+## Follower (B11)
+
+`quecto board-server serve --socket <path> --repo <clone> --follow <url>
+[--token-file <path>] [--replace-tokens]` serves a read-only copy of the
+primary at `<url>`: `unix:///<socket path>` (the primary's own user, no
+token), or `http://<ip>:<port>` on loopback or a Tailscale address with a
+replica token the primary issued (`quecto board-server token add <name>
+--replica` on the primary; a device token is refused `replicate`). The
+token is read from `--token-file`, never from the command line: a regular
+file (never a link, FIFO or device) of the server's own user that no one
+else may read (mode 0600 or 0400), at most 4 KiB, holding the token on one
+line. It is judged before it is opened, and opened without blocking, so a
+FIFO cannot hang the start. No error quotes it. `--token-file` without an
+`http://` primary, or an `http://` primary without it, is refused. Give the
+follower its own `--state <dir>` (its own board file and tokens) and a clone
+of the same remote, so it serves the same board id. Start it on an empty
+state directory, or on a copy of the primary's board file (a backup).
+
+**Its own tokens.** A follower holds its primary's tokens in its
+`tokens.json`, in place of its own. Each set it takes from its primary is
+noted beside them by its digest (`tokens.json.followed`). Tokens of a
+server's own (any set it did not take from a primary: before it first
+follows, or any issued after it is promoted) make a follow refused unless
+`--replace-tokens` is given ("this server holds N token(s) of its own: a
+follower holds its primary's instead. Give --replace-tokens to replace them
+(they are kept as tokens.json.pre-follow, or -1, -2 and on beside an earlier
+one, and refused at once), or give the follower its own --state <dir>").
+Given it, they are kept as `tokens.json.pre-follow`, written whole to a
+temporary file and then linked in (never over an earlier one, nor through a
+link: then as `tokens.json.pre-follow-1`, `-2` and on, to `-99`; a failed
+write leaves no file) and the server holds none, so they are refused at
+once, before its primary's are copied. A start refused for any other reason
+(its token file, its primary's URL) sets nothing aside. A follower's own
+operations write nothing: its store refuses every write, whatever the op.
+
+**What it copies.** Every revision with its objects, principal and chain,
+the epochs, the board's provenance row, and the admin rows: the primary's
+tokens, of either kind. So a token the primary revokes is refused by the
+follower from the batch after the revoke (with the next revision, or within
+about a minute, at the next reopen of the feed), and a device uses its one
+token on either server. A follower that cannot take batches cannot learn of
+a revoke: until its first catch-up since it started, while it is
+diverged, or once stalled for 10 min (by boot time, which counts a
+suspend, from the moment it first stalled), it refuses every request over
+TCP, the change feed and replication batches included, 503 `standby_stale`
+with its primary as `primary` ("this standby's copy is not kept current
+(it is stalled, diverged, or not yet caught up): read its primary"). Its
+`/v1/status` and `/v1/time`, and the Unix socket, are served still; its
+status over TCP is then the least (`role`, and `replication` with only
+`primary` and `state`), and the whole status, with why it stalled, is on
+the socket. A follower chained to a stale one is refused its batches, so
+it stalls and turns stale in turn, never serving a set it cannot renew. Each copied row is checked as it is taken, an allowlist: a native
+object's id is made again from its content, an imported original's git id
+from its raw bytes (SHA-1 or SHA-256, by its width) and a tree's entries
+from its raw tree; the provenance row must name the follower's board (an
+unbound follower takes its primary's binding, and a binding is never
+overwritten, nor with none); an epoch held must be the primary's as held,
+and a new one the next after those held.
+
+**Catching up.** The follower asks `replicate?after=<its last
+revision>&objects=<its last object>&limit=500` (above) until no more
+follow, and applies each batch in one transaction: each object at its
+place, each revision after the one before it with its chain made again
+from its rows and matched to the primary's, or nothing at all. A board of
+1,500 revisions is caught up in 3 batches, to a copy whose every
+replicated row is the primary's, byte for byte. Then it follows the
+primary's change feed (`events`), asking the next batch for each revision
+it does not hold, and once before each reopen of the feed (about once a
+minute), which copies the tokens and epochs (they make no revision).
+
+**Bounded.** The feed is followed by `quecto board watch`'s rules: a
+stream reopened after its `retry:`, a busy primary tried again with a
+backoff doubling to 8 s for at most 75 s, 5 failed opens in a row ending
+it. Ended, or past a batch it could not have or apply, the follower is
+`stalled` (why is in its status), waits and starts again from its place:
+30 s, doubling while it stays stalled, to at most 10 min, and 30 s again
+once it has caught up. No loop goes round without a pause. A follower that
+stops while its server runs is shown `stalled` ("the follower stopped
+following its primary").
+
+**A fork.** If the follower's chain at its last revision is not the
+primary's there (or the primary has no such revision: the follower is
+ahead of it), the follower refuses to go on and marks itself `diverged`,
+with why. The mark is kept beside the board, `board.sqlite3.diverged`, so
+a restart is diverged too and asks its primary nothing. It never rewrites
+what it holds: stop it, move its board file and the mark aside, and start
+it again to follow that primary.
+
+**Writes.** Every write is `409 standby`, `{"error": "this server is a
+standby: write to its primary", "code": "standby", "primary": "<url>"}`:
+a write op, `bootstrap` and `clear_set_aside`, and the token routes' `POST`.
+Reads (status, time, read ops, the feed, `revisions`, `replicate`, the
+token listing) are served from the copy.
+
+**Status.** A follower's `GET /v1/status` adds `"replication": {"primary":
+"<url>", "applied": <its last revision>, "primary_head": <the primary's
+newest as last heard, or null>, "state": "catching_up" | "following" |
+"stalled" | "diverged", "reason": <why, or null>}`. Its lag is
+`primary_head - applied`. Its start-up line ends `, a read-only follower of
+<url>`.
+
+**Limits.** A batch reply passes the client's 64 MiB bound only if its
+largest object does: an imported blob over about 40 MiB cannot be copied,
+and the follower is stalled saying so ("the primary's batch is past the 64
+MiB a reply may hold: an object on the board is too large to copy"),
+backing off to 10 min between tries. Promotion, demotion and the clients'
+following of the highest epoch are B12.
+
 ## Error replies
 
 Every error reply the server makes is JSON, `{"error": "<why>", "code":
@@ -410,16 +604,20 @@ Every error reply the server makes is JSON, `{"error": "<why>", "code":
 | Status | `code` | When |
 |---|---|---|
 | 400 | `request` | an admin body that is not `{"name": "<name>"}`, or an op body not shaped as above |
-| 400 | `query` | a feed query with a key other than `after`/`limit`, one twice, one not a number, or `revisions` without `after` |
-| 400 | `limit` | a `revisions` limit outside 1 to 500 |
+| 400 | `query` | a feed query with a key other than `after`/`limit` (and `objects` for `replicate`), one twice, one not a number, or `revisions` without `after` (`replicate` without `after` and `objects`) |
+| 400 | `limit` | a `revisions` or `replicate` limit outside 1 to 500 |
 | 400 | `last_event_id` | a `Last-Event-ID` that is not a revision number |
 | 400 | `write` | a write op without its `write_id` and `committer` |
 | 400 | `token_name` | a token name that is not 1 to 64 of `a-z`, `0-9` and inner `-` |
 | 401 | `token` | over TCP, no bearer token, or an unknown or revoked one (with `WWW-Authenticate: Bearer`) |
 | 403 | `peer` | the peer is not the server's user |
 | 403 | `local_only` | an admin route asked over TCP, or the op `bootstrap` or `clear_set_aside` over TCP |
+| 403 | `replica_only` | `replicate` asked with a device token (B11) |
+| 403 | `replica_reads` | a write asked with a replica token (B11) |
+| 503 | `standby_stale` | over TCP, a request (but `/v1/status` and `/v1/time`) to a follower not yet caught up since it started, diverged, or stalled for 10 min (B11); names its `primary` |
 | 404 | `board` | an op for a board id this server does not serve |
 | 409 | `write_id_reused` | a `write_id` this principal used for another write |
+| 409 | `standby` | a write to a follower (B11), with its `primary` |
 | 404 | `no_token` | revoking a name no token has |
 | 409 | `token_exists` | adding a name a token has |
 | 409 | `token_limit` | adding a token past 256 |

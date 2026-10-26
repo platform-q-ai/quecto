@@ -67,6 +67,8 @@ pub enum ClientError {
     /// Sent, but no reply came in time: a write may have landed.
     NoReply,
     Malformed(String),
+    /// A reply whose body is past [`MAX_REPLY_BYTES`].
+    TooLarge,
 }
 
 impl ClientError {
@@ -74,7 +76,7 @@ impl ClientError {
     pub fn transport(&self) -> bool {
         match self {
             Self::Connect(_) | Self::Io(_) | Self::Closed => true,
-            Self::Request(_) | Self::NoReply | Self::Malformed(_) => false,
+            Self::Request(_) | Self::NoReply | Self::Malformed(_) | Self::TooLarge => false,
         }
     }
 }
@@ -88,6 +90,11 @@ impl std::fmt::Display for ClientError {
             Self::Closed => f.write_str("the board server closed the connection unanswered"),
             Self::NoReply => f.write_str("the board server sent no reply in time"),
             Self::Malformed(why) => write!(f, "the board server's reply is malformed: {why}"),
+            Self::TooLarge => write!(
+                f,
+                "the board server's reply is past the {} MiB a reply may hold",
+                MAX_REPLY_BYTES / (1024 * 1024)
+            ),
         }
     }
 }
@@ -225,7 +232,7 @@ pub fn parse_reply(bytes: &[u8]) -> Result<ClientReply, ClientError> {
             status,
             body: body.to_vec(),
         }),
-        (false, _) => Err(malformed("a body past its bound")),
+        (false, _) => Err(ClientError::TooLarge),
         (true, false) => Err(malformed("a body not of its Content-Length")),
     }
 }

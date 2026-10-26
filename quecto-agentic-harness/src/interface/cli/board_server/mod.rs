@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::application::project_board::ports::ListenAddress;
 use crate::application::project_board::use_cases::{
-    BoardAccess, FollowBoard, ServeBoard, ServeBoardOperation,
+    BoardAccess, FollowBoard, ReplicateBoard, ServeBoard, ServeBoardOperation, ServeReplication,
 };
 use crate::infrastructure::http::board_service::listener::PeerCredentials;
 use crate::interface::cli::CliContext;
@@ -35,6 +35,19 @@ pub struct BoardServerEnvironment {
     /// `<base_dir>/board-server/<board id>`.
     pub state: Option<PathBuf>,
     pub base_dir: PathBuf,
+    /// The primary this server follows (B11); none: it is a primary.
+    pub follow: Option<FollowPrimary>,
+}
+
+/// A follower's primary (B11): its URL, and the file its device token is
+/// read from (never the command line), for a primary over TCP.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FollowPrimary {
+    pub url: String,
+    pub token_file: Option<PathBuf>,
+    /// Whether this server's own tokens may be replaced by its primary's
+    /// (`--replace-tokens`; they are kept beside them).
+    pub replace_tokens: bool,
 }
 
 /// The board server's graph, and the TCP addresses its config names.
@@ -44,6 +57,11 @@ pub struct BoardServerHandles {
     pub operations: ServeBoardOperation,
     /// The board's change feed (B10); none answers its routes 404.
     pub feed: Option<FollowBoard>,
+    /// The batches it gives its followers (B11).
+    pub replication: Option<ServeReplication>,
+    /// A follower's replication of its primary, and the primary it names
+    /// in a write's 409 (B11); none on a primary.
+    pub follower: Option<(Arc<ReplicateBoard>, String)>,
     pub access: BoardAccess,
     pub peers: Arc<dyn PeerCredentials>,
     pub uid: u32,
@@ -120,6 +138,7 @@ pub fn cmd_board_server(
             .unwrap_or_else(|| base_dir.join("config.json")),
         state: options.state,
         base_dir,
+        follow: options.follow,
     };
     let handles = match build(&environment) {
         Ok(handles) => handles,
@@ -134,6 +153,12 @@ pub fn cmd_board_server(
         false => options.listen,
     };
     let live = ctx.live_output;
+    let following = handles
+        .follower
+        .as_ref()
+        .map_or(String::new(), |(_, primary)| {
+            format!(", a read-only follower of {primary}")
+        });
     let served = serve::serve(
         handles,
         &options.socket,
@@ -147,7 +172,7 @@ pub fn cmd_board_server(
                 .map(|at| format!(" and tcp {at}"))
                 .collect();
             let line = format!(
-                "board-server: serving board {} on {}{tcp} (ready in {} ms)\n",
+                "board-server: serving board {} on {}{tcp}{following} (ready in {} ms)\n",
                 started.board.as_str(),
                 started.socket.display(),
                 started.elapsed.as_millis()

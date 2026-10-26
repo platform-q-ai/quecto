@@ -74,6 +74,8 @@ fn handles(serve: crate::application::project_board::use_cases::ServeBoard) -> B
         serve,
         operations: operating(&MemoryBoardStore::default()),
         feed: None,
+        replication: None,
+        follower: None,
         access: BoardAccess::new(tokens, Arc::new(SystemBoardClock::default())),
         peers: Arc::new(SocketPeerCredentials) as Arc<dyn PeerCredentials>,
         uid: this_uid(),
@@ -258,6 +260,71 @@ fn serve_takes_listen_addresses_and_a_state_directory() {
         "serve --socket /s --repo /r --listen localhost:7979",
     ] {
         assert!(parse(&args(refused)).is_err(), "{refused}");
+    }
+}
+
+/// B11: `--follow` names the primary; over TCP its token comes from
+/// `--token-file`, never the command line; a socket's primary needs none.
+#[test]
+fn serve_follows_a_primary_with_its_token_read_from_a_file() {
+    let tcp = parse(&args(
+        "serve --socket /s --repo /r --follow http://100.64.0.1:7979 --token-file /etc/t",
+    ))
+    .unwrap();
+    assert_eq!(
+        tcp.follow,
+        Some(FollowPrimary {
+            url: "http://100.64.0.1:7979".into(),
+            token_file: Some("/etc/t".into()),
+            replace_tokens: false,
+        })
+    );
+    let replacing = parse(&args(
+        "serve --socket /s --repo /r --follow unix:///p --replace-tokens",
+    ))
+    .unwrap();
+    assert!(replacing.follow.unwrap().replace_tokens);
+    let socket = parse(&args(
+        "serve --socket /s --repo /r --follow unix:///run/p.sock",
+    ))
+    .unwrap();
+    assert_eq!(socket.follow.unwrap().token_file, None);
+    assert_eq!(
+        parse(&args("serve --socket /s --repo /r")).unwrap().follow,
+        None
+    );
+    for (refused, why) in [
+        (
+            "serve --socket /s --repo /r --follow http://100.64.0.1:7979",
+            "needs --token-file",
+        ),
+        (
+            "serve --socket /s --repo /r --token-file /t",
+            "needs --follow",
+        ),
+        (
+            "serve --socket /s --repo /r --replace-tokens",
+            "needs --follow",
+        ),
+        (
+            "serve --socket /s --repo /r --follow unix:///p --replace-tokens --replace-tokens",
+            "given twice",
+        ),
+        (
+            "serve --socket /s --repo /r --follow unix:///p --token-file /t",
+            "is for a primary over TCP",
+        ),
+        (
+            "serve --socket /s --repo /r --follow ftp://p",
+            "--follow takes",
+        ),
+        (
+            "serve --socket /s --repo /r --follow unix:///a --follow unix:///b",
+            "given twice",
+        ),
+    ] {
+        let error = parse(&args(refused)).unwrap_err();
+        assert!(error.contains(why), "{refused}: {error}");
     }
 }
 
@@ -531,7 +598,7 @@ fn stalled_answers_never_wedge_authentication_or_the_socket() {
     let (code, out, err) = token(&socket, "list");
     assert_eq!(
         (code, out.as_str()),
-        (0, "laptop\t2026-10-24T12:00:00Z\n"),
+        (0, "laptop\t2026-10-24T12:00:00Z\tdevice\n"),
         "{err}"
     );
     assert_eq!(token(&socket, "revoke laptop").0, 0);

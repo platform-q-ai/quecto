@@ -10,7 +10,8 @@ use crate::infrastructure::persistence::project_board::{
 use std::path::PathBuf;
 #[path = "history_admission.rs"]
 mod admission;
-use admission::{admission, projection};
+use admission::admission;
+pub(super) use admission::projection;
 
 pub struct SqliteBoardHistoryStore {
     path: PathBuf,
@@ -69,6 +70,7 @@ impl SqliteBoardHistoryStore {
 impl BoardHistoryRead for SqliteBoardHistoryStore {
     fn snapshot(&self) -> HistoryResult<Box<dyn BoardHistorySnapshot>> {
         self.writer.validate("history writer").map_err(error)?;
+        storage::absolute(&self.path).map_err(error)?;
         let c = Connection::open_with_flags(&self.path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| HistoryError::Unavailable(e.to_string()))?;
         c.busy_timeout(Duration::from_secs(5)).map_err(error)?;
@@ -79,8 +81,7 @@ impl BoardHistoryRead for SqliteBoardHistoryStore {
             tip: 0,
             algorithm: None,
         };
-        storage::recognize_on(&view.c, false)
-            .map_err(|e| HistoryError::Unsupported(format!("{e:?}")))?;
+        storage::recognize_on(&view.c).map_err(|e| HistoryError::Unsupported(format!("{e:?}")))?;
         view.algorithm = validate_meta(&view.c, &self.board)?;
         let (frontier, root) = storage::current(&view.c).map_err(error)?;
         let (_, tip) = parse_head(&frontier.0).map_err(error)?;
@@ -634,7 +635,7 @@ impl BoardHistoryStore for SqliteBoardHistoryStore {
             }
             writer
                 .insert(
-                    "INSERT INTO revisions VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                    "INSERT INTO revisions VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,NULL)",
                     params![
                         format!("1:{}", r.sequence),
                         r.root,
@@ -649,6 +650,8 @@ impl BoardHistoryStore for SqliteBoardHistoryStore {
                     ],
                 )
                 .map_err(error)?;
+            // Its chain, made at import from the history alone (B11).
+            writer.seal(r.sequence as i64).map_err(error)?;
             use crate::infrastructure::persistence::project_board::board_tree::{
                 LeftOnRemote, read_root,
             };

@@ -6,11 +6,30 @@ use crate::domain::project_board::value_objects::timestamp::Timestamp;
 /// The most tokens a server holds.
 pub const MAX_TOKENS: usize = 256;
 
-/// A token as listed: its name and when it was made, never the token.
+/// What a token may do, an allowlist (B11): a device's reads and writes,
+/// or a follower's reads and replication batches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TokenKind {
+    Device,
+    Replica,
+}
+
+impl TokenKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Device => "device",
+            Self::Replica => "replica",
+        }
+    }
+}
+
+/// A token as listed: its name, when it was made and what it may do,
+/// never the token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenRecord {
     pub name: Slug,
     pub created: Timestamp,
+    pub kind: TokenKind,
 }
 
 /// A token as made: its secret is shown once, and never kept or logged.
@@ -59,6 +78,16 @@ pub trait BoardTokens: Send + Sync {
     /// # Errors
     /// The name is taken, [`MAX_TOKENS`] are held, or the store failed.
     fn add(&self, name: &Slug, created: &Timestamp) -> Result<IssuedToken, TokenError>;
+
+    /// As [`Self::add`], a token a follower replicates with (B11).
+    /// # Errors
+    /// As [`Self::add`].
+    fn add_replica(&self, name: &Slug, created: &Timestamp) -> Result<IssuedToken, TokenError>;
+
+    /// What the held token named `name` may do; `None` for no such token.
+    /// # Errors
+    /// The store failed.
+    fn kind_of(&self, name: &Slug) -> Result<Option<TokenKind>, TokenError>;
 
     /// Revokes the token named `name`: it is refused from now on.
     /// # Errors

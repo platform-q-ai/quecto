@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::project_board::ports::replication::{FollowTokens, FollowedTokens};
 use std::os::unix::fs::PermissionsExt;
 
 fn name(text: &str) -> Slug {
@@ -300,8 +301,168 @@ fn digests_spell_as_lowercase_hex() {
         name: "laptop".into(),
         sha256: sha256.into(),
         created: "2026-10-24T12:00:00Z".into(),
+        replica: false,
     };
     assert!(held(entry(&sha256("x"))).is_some());
     assert!(held(entry(&"A".repeat(64))).is_none());
     assert!(held(entry("00")).is_none());
+}
+
+/// B11 review 5: a crash inside `replace`, once the primary's next set is
+/// swapped in and before the note is trimmed, leaves a set a restart knows
+/// as its primary's, never as its own.
+#[test]
+fn a_crash_while_a_set_is_swapped_in_leaves_a_primarys_set() {
+    let (dir, primary) = opened();
+    let first = primary.add(&name("phone"), &at()).unwrap();
+    let state = dir.path().join("follower");
+    let follower = FileBoardTokens::open(&state).unwrap();
+    follower.replace(&primary.export().unwrap()).unwrap();
+    primary.add(&name("laptop"), &at()).unwrap();
+    // The crash: `replace` stops once the set is swapped in.
+    follower.swapped_in(&primary.export().unwrap()).unwrap();
+    drop(follower);
+    let reopened = FileBoardTokens::open(&state).unwrap();
+    let held = reopened.followed().unwrap();
+    assert_eq!((held.held, held.copied), (2, true), "the primary's set");
+    assert_eq!(reopened.verify(&first.secret), Ok(Some(name("phone"))));
+}
+
+/// `tokens.json` written again behind `tokens`, its bytes unchanged: the
+/// next swap is refused once its note is written (a crash before the swap).
+fn rewritten_behind(tokens: &FileBoardTokens) {
+    let path = tokens_path(tokens);
+    let again = path.with_file_name("tokens.again");
+    std::fs::write(&again, std::fs::read(&path).unwrap()).unwrap();
+    std::fs::set_permissions(&again, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::rename(&again, &path).unwrap();
+}
+
+/// B11 review 6: a crash after the note is written and before the swap
+/// leaves the primary's set it held known as its primary's.
+#[test]
+fn a_crash_before_the_swap_leaves_the_primarys_set_held() {
+    let (dir, primary) = opened();
+    primary.add(&name("phone"), &at()).unwrap();
+    let state = dir.path().join("follower");
+    let follower = FileBoardTokens::open(&state).unwrap();
+    follower.replace(&primary.export().unwrap()).unwrap();
+    primary.add(&name("laptop"), &at()).unwrap();
+    rewritten_behind(&follower);
+    assert!(follower.replace(&primary.export().unwrap()).is_err());
+    drop(follower);
+    let reopened = FileBoardTokens::open(&state).unwrap();
+    let held = reopened.followed().unwrap();
+    assert_eq!((held.held, held.copied), (1, true), "the primary's set");
+}
+
+/// B11 review 5: a swap refused after the note is written leaves a
+/// server's own set its own: its digest is never noted as a primary's.
+#[test]
+fn a_swap_refused_after_the_note_leaves_a_servers_own_set_its_own() {
+    let (_dir, own) = opened();
+    own.add(&name("laptop"), &at()).unwrap();
+    let primary = FileBoardTokens::open(&own.state.with_file_name("primary")).unwrap();
+    primary.add(&name("phone"), &at()).unwrap();
+    rewritten_behind(&own);
+    assert!(own.replace(&primary.export().unwrap()).is_err());
+    let state = own.state.clone();
+    drop(own);
+    let reopened = FileBoardTokens::open(&state).unwrap();
+    let held = reopened.followed().unwrap();
+    assert_eq!((held.held, held.copied), (1, false), "its own set");
+}
+
+/// B11 review 2: tokens of a server's own are not its primary's set; set
+/// aside, they are kept beside and refused at once; the primary's set,
+/// once taken, is known as such across restarts, and a token issued after
+/// it (as after a promotion) makes the set the server's own again.
+#[test]
+fn a_followers_tokens_are_its_primarys_set_until_its_own_are_issued() {
+    let (_dir, tokens) = opened();
+    let empty = FollowedTokens {
+        held: 0,
+        copied: false,
+    };
+    assert_eq!(tokens.followed(), Ok(empty), "a new directory");
+    let laptop = tokens.add(&name("laptop"), &at()).unwrap();
+    let own = std::fs::read(tokens_path(&tokens)).unwrap();
+    let held = tokens.followed().unwrap();
+    assert_eq!((held.held, held.copied), (1, false), "its own");
+    tokens.set_aside().unwrap();
+    assert_eq!(tokens.verify(&laptop.secret), Ok(None), "refused at once");
+    let kept = tokens.state.join(PRE_FOLLOW_FILE);
+    assert_eq!(std::fs::read(&kept).unwrap(), own, "kept beside");
+    let mode = std::fs::metadata(&kept).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    let none = FollowedTokens {
+        held: 0,
+        copied: true,
+    };
+    assert_eq!(tokens.followed(), Ok(none));
+    // Its primary's set is taken, and known as such when opened again.
+    let primary = FileBoardTokens::open(&tokens.state.with_file_name("primary")).unwrap();
+    primary.add(&name("phone"), &at()).unwrap();
+    tokens.replace(&primary.export().unwrap()).unwrap();
+    let state = tokens.state.clone();
+    drop(tokens);
+    let reopened = FileBoardTokens::open(&state).unwrap();
+    let copied = reopened.followed().unwrap();
+    assert_eq!((copied.held, copied.copied), (1, true), "the primary's set");
+    // A token issued here (after a promotion) makes the set its own again.
+    reopened.add(&name("tablet"), &at()).unwrap();
+    let own = reopened.followed().unwrap();
+    assert_eq!((own.held, own.copied), (2, false), "its own again");
+}
+
+/// B11 review 6: a set aside whose write fails leaves no file, partial or
+/// temporary, behind.
+#[test]
+fn a_failed_set_aside_leaves_no_partial_file() {
+    let (_dir, tokens) = opened();
+    let failed = tokens.kept_aside(|file| {
+        file.write_all(b"[")?;
+        Err(io::Error::other("no space left"))
+    });
+    assert!(failed.is_err());
+    let names: Vec<String> = std::fs::read_dir(&tokens.state)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    let left = |name: &String| name.starts_with(PRE_FOLLOW_FILE) || name.ends_with(".tmp");
+    assert!(!names.iter().any(left), "{names:?}");
+}
+
+/// B11 review 5: a set aside is created new, never through a name taken
+/// meanwhile (a dangling link included): it goes to the next free name.
+#[test]
+fn a_set_aside_set_never_goes_through_a_link_named_as_one() {
+    let (dir, tokens) = opened();
+    tokens.add(&name("laptop"), &at()).unwrap();
+    let own = std::fs::read(tokens_path(&tokens)).unwrap();
+    let link = tokens.state.join(PRE_FOLLOW_FILE);
+    std::os::unix::fs::symlink(dir.path().join("nowhere"), &link).unwrap();
+    tokens.set_aside().unwrap();
+    assert!(std::fs::read_link(&link).is_ok(), "the link is left");
+    assert!(
+        !dir.path().join("nowhere").exists(),
+        "nothing written through it"
+    );
+    let next = tokens.state.join(format!("{PRE_FOLLOW_FILE}-1"));
+    assert_eq!(std::fs::read(next).unwrap(), own);
+}
+
+/// B11 review 4: a set set aside never replaces one kept before it.
+#[test]
+fn a_set_aside_set_never_overwrites_one_kept_before() {
+    let (_dir, tokens) = opened();
+    tokens.add(&name("laptop"), &at()).unwrap();
+    tokens.set_aside().unwrap();
+    let first = std::fs::read(tokens.state.join(PRE_FOLLOW_FILE)).unwrap();
+    tokens.add(&name("tablet"), &at()).unwrap();
+    let second = std::fs::read(tokens_path(&tokens)).unwrap();
+    tokens.set_aside().unwrap();
+    let kept = |name: &str| std::fs::read(tokens.state.join(name)).unwrap();
+    assert_eq!(kept(PRE_FOLLOW_FILE), first, "the first is kept");
+    assert_eq!(kept(&format!("{PRE_FOLLOW_FILE}-1")), second);
 }
