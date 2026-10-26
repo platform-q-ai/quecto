@@ -93,6 +93,7 @@ pub(super) fn environment(
         config: dir.path().join("base").join("config.json"),
         state: None,
         base_dir: dir.path().join("base"),
+        follow: None,
     }
 }
 

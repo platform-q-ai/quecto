@@ -315,6 +315,7 @@ fn served(remote: &Remote, launcher: Option<Launcher>) -> Fixture {
         config: state.join("config.json"),
         state: Some(state.join("state")),
         base_dir: state.clone(),
+        follow: None,
     };
     let handles = build_board_server_with(&environment, std::sync::Arc::new(Synced))
         .expect("the board server is built");

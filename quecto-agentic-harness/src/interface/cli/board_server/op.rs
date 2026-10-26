@@ -90,21 +90,26 @@ fn served_run(
     }
 }
 
-/// Why an op was not answered: a body not an op's (why), access, or the server.
+/// Why an op was not answered: a body not an op's (why), access, a write
+/// to a follower (B11), or the server.
 pub(super) enum OpRefusal {
     Body(String),
     Access(Refused),
+    Standby,
     Serve(ServeError),
 }
 
-/// The answer to the op `body` from `principal`.
+/// The answer to the op `body` from `principal`; on a `standby` (a
+/// follower, B11) only a read is answered.
 ///
 /// # Errors
-/// A body not an op's, an op `principal` may not make, or the server's.
+/// A body not an op's, an op `principal` may not make, a write to a
+/// standby, or the server's.
 pub(super) fn answer_op(
     operations: &ServeBoardOperation,
     principal: &Principal,
     body: &[u8],
+    standby: bool,
 ) -> Result<String, OpRefusal> {
     let shape = || OpRefusal::Body(BODY_SHAPE.into());
     let text = std::str::from_utf8(body).map_err(|_| shape())?;
@@ -120,6 +125,10 @@ pub(super) fn answer_op(
     let request = parse(&body.request, entry_policy(front_end)).ok();
     let scope = request.as_ref().map_or(Scope::Read, Scope::of);
     BoardAccess::authorize(principal, scope).map_err(OpRefusal::Access)?;
+    match (standby, scope) {
+        (false, _) | (true, Scope::Read | Scope::Replicate) => {}
+        (true, Scope::Write | Scope::Admin) => return Err(OpRefusal::Standby),
+    }
     let text = body.request.to_string();
     let sent = served_run(request.as_ref(), body.facts.as_ref(), body.undo.as_ref());
     let sent = sent.ok_or_else(shape)?;

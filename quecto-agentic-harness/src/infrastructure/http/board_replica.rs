@@ -1,17 +1,25 @@
 //! Replication over a board server (epic #2705 B11): a primary's batch as
 //! JSON on the wire (`GET /v1/boards/{id}/replicate?after=&objects=
 //! &limit=`), each field read strictly (an unknown one refused), bytes in
-//! base64.
+//! base64; and the [`ReplicationSource`] a follower reaches its primary
+//! by: that route, and the primary's change feed ([`RemoteBoardStreams`]).
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 
+use super::board_service::client::{BoardServiceClient, ClientError, MAX_REPLY_BYTES, READ_REPLY};
+use super::board_service::limits::Method;
+use super::board_watch::RemoteBoardStreams;
 use crate::application::project_board::ports::TokenKind;
+use crate::application::project_board::ports::feed::{
+    BatchLimit, BoardStream, BoardStreams, OpenRefused,
+};
 use crate::application::project_board::ports::replication::{
     AdminToken, ReplicaBatch, ReplicaContent, ReplicaEntry, ReplicaEpoch, ReplicaMeta,
-    ReplicaObject, ReplicaRevision,
+    ReplicaObject, ReplicaRevision, ReplicationSource,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 
 #[derive(Serialize, Deserialize)]
@@ -285,6 +293,84 @@ pub fn decode_batch(bytes: &[u8]) -> Result<ReplicaBatch, String> {
         tip: wire.tip,
         more: wire.more,
     })
+}
+
+/// A follower's primary, over its board server.
+pub struct RemoteReplicationSource {
+    client: BoardServiceClient,
+    board: BoardId,
+    streams: RemoteBoardStreams,
+}
+
+impl RemoteReplicationSource {
+    pub fn new(client: BoardServiceClient, board: BoardId) -> Self {
+        let streams = RemoteBoardStreams::new(client.clone(), board.clone());
+        Self {
+            client,
+            board,
+            streams,
+        }
+    }
+}
+
+impl ReplicationSource for RemoteReplicationSource {
+    fn batch(
+        &self,
+        after: u64,
+        objects_after: u64,
+        limit: BatchLimit,
+    ) -> Result<ReplicaBatch, OpenRefused> {
+        let path = format!(
+            "/v1/boards/{}/replicate?after={after}&objects={objects_after}&limit={}",
+            self.board.as_str(),
+            limit.get()
+        );
+        let endpoint = self.client.endpoint().to_string();
+        let reply = match self.client.send(Method::Get, &path, b"", READ_REPLY) {
+            Ok(reply) => reply,
+            Err(error) if error.transport() || matches!(error, ClientError::NoReply) => {
+                return Err(OpenRefused::Unreachable(format!("{endpoint}: {error}")));
+            }
+            Err(ClientError::TooLarge) => {
+                return Err(OpenRefused::Refused(format!(
+                    "{endpoint}: the primary's batch is past the {} MiB a reply may hold: \
+                     an object on the board is too large to copy",
+                    MAX_REPLY_BYTES / (1024 * 1024)
+                )));
+            }
+            Err(error) => return Err(OpenRefused::Refused(format!("{endpoint}: {error}"))),
+        };
+        let shown = |body: &[u8]| {
+            String::from_utf8_lossy(body)
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(512)
+                .collect::<String>()
+        };
+        match reply.status {
+            200 => decode_batch(&reply.body).map_err(|why| {
+                OpenRefused::Refused(format!(
+                    "{endpoint}: the primary's batch is malformed: {why}"
+                ))
+            }),
+            503 => Err(OpenRefused::Busy(format!(
+                "{endpoint}: 503 {}",
+                shown(&reply.body)
+            ))),
+            status => Err(OpenRefused::Refused(format!(
+                "{endpoint}: the primary refused the batch ({status}): {}",
+                shown(&reply.body)
+            ))),
+        }
+    }
+
+    fn open(&self, after: Option<u64>) -> Result<Box<dyn BoardStream>, OpenRefused> {
+        self.streams.open(after)
+    }
+
+    fn primary(&self) -> String {
+        self.client.endpoint().to_string()
+    }
 }
 
 #[cfg(test)]

@@ -21,12 +21,13 @@ mod mutation;
 mod op_store;
 mod reader;
 mod replica_log;
+mod replica_store;
 mod schema;
 mod schema_upgrade;
 mod storage;
 #[cfg(feature = "test-support")]
 pub use fixture::{FixtureHooks, RawEditor, RawEntry};
-pub use op_store::{BoardBinding, SqliteBoardOps};
+pub use op_store::{BoardBinding, SqliteBoardOps, StandbyOps};
 
 pub struct SqliteProjectBoardStore {
     connection: Arc<Mutex<Connection>>,

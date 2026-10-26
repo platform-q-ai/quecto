@@ -4,17 +4,23 @@
 use std::sync::Arc;
 
 use crate::application::project_board::dto::ProjectBoardError;
+use crate::application::project_board::ports::replication::ReplicaStatus;
 use crate::application::project_board::ports::{
     BoardClock, BoardStoreError, ProjectBoardStore, ServeError, ServedStatus, ServerRole,
 };
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 
+/// A reader of a follower's status.
+pub type ReplicaReader = Arc<dyn Fn() -> ReplicaStatus + Send + Sync>;
+
 /// The board server's reads of its board.
 pub struct ServeBoard {
     store: Arc<dyn ProjectBoardStore>,
     clock: Arc<dyn BoardClock>,
     board: BoardId,
+    /// A follower's status (B11); none on a primary.
+    following: Option<ReplicaReader>,
 }
 
 impl ServeBoard {
@@ -27,6 +33,7 @@ impl ServeBoard {
             store,
             clock,
             board,
+            following: None,
         }
     }
 
@@ -44,11 +51,29 @@ impl ServeBoard {
             Err(BoardStoreError::NoBoard) => None,
             Err(error) => return Err(ServeError::Board(ProjectBoardError::Store(error))),
         };
+        let replica = self.following.as_ref().map(|status| status());
         Ok(ServedStatus {
-            role: ServerRole::Primary,
+            role: match replica {
+                Some(_) => ServerRole::Follower,
+                None => ServerRole::Primary,
+            },
             board: self.board.clone(),
             head,
+            replica,
         })
+    }
+
+    /// These reads, of a follower whose status `status` reads (B11).
+    pub fn following(self, status: ReplicaReader) -> Self {
+        Self {
+            following: Some(status),
+            ..self
+        }
+    }
+
+    /// Whether this server follows a primary (B11).
+    pub fn is_follower(&self) -> bool {
+        self.following.is_some()
     }
 
     /// What time it is, by the server's clock: the clock authority.

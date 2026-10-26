@@ -4,10 +4,11 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use super::BoardServerHandles;
 use super::routes::BoardRoutes;
+use super::{BoardServerHandles, FollowPrimary};
 use crate::application::project_board::ports::ListenAddress;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::infrastructure::http::board_service::listener::{
@@ -15,7 +16,8 @@ use crate::infrastructure::http::board_service::listener::{
 };
 
 pub const USAGE: &str = "usage: quecto board-server serve --socket <path> --repo <clone> \
-     [--remote <name>] [--listen <ip:port>]... [--state <dir>]\n       \
+     [--remote <name>] [--listen <ip:port>]... [--state <dir>] \
+     [--follow <url> [--token-file <path>]]\n       \
      quecto board-server token add <name> | revoke <name> | list --socket <path>";
 
 /// The blocking threads the server's reads may hold at once.
@@ -30,6 +32,8 @@ pub struct ServeOptions {
     pub listen: Vec<ListenAddress>,
     /// Where the server keeps its tokens; none is the default.
     pub state: Option<PathBuf>,
+    /// The primary it follows, read-only (B11); none: it is a primary.
+    pub follow: Option<FollowPrimary>,
 }
 
 /// `args` (after `board-server`) as `serve`'s options (only `--listen`
@@ -53,10 +57,19 @@ pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
         }
     }
     let (mut socket, mut repo, mut remote, mut state) = (None, None, None, None);
+    let (mut follow, mut token_file) = (None, None);
     let mut listen = Vec::new();
     let mut rest = options.iter();
     while let Some(option) = rest.next() {
-        let known = ["--socket", "--repo", "--remote", "--state", "--listen"];
+        let known = [
+            "--socket",
+            "--repo",
+            "--remote",
+            "--state",
+            "--listen",
+            "--follow",
+            "--token-file",
+        ];
         let Some(value) = rest.next().filter(|_| known.contains(&option.as_str())) else {
             return match known.contains(&option.as_str()) {
                 true => refused(format!("{option} needs a value")),
@@ -68,6 +81,8 @@ pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
             "--repo" => &mut repo,
             "--remote" => &mut remote,
             "--state" => &mut state,
+            "--follow" => &mut follow,
+            "--token-file" => &mut token_file,
             "--listen" => match ListenAddress::parse(value) {
                 Ok(address) => {
                     listen.push(address);
@@ -82,6 +97,29 @@ pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
             Some(_) => return refused(format!("{option} is given twice")),
         }
     }
+    // A primary over TCP needs its token, read from a file; a socket's
+    // primary needs none.
+    let follow = match (follow, token_file) {
+        (None, None) => None,
+        (Some(url), Some(file)) if url.starts_with("http://") => Some(FollowPrimary {
+            url,
+            token_file: Some(PathBuf::from(file)),
+        }),
+        (Some(url), None) if url.starts_with("unix://") => Some(FollowPrimary {
+            url,
+            token_file: None,
+        }),
+        (Some(url), None) if url.starts_with("http://") => {
+            return refused("--follow http://.. needs --token-file <path>".into());
+        }
+        (Some(_), Some(_)) => {
+            return refused("--token-file is for a primary over TCP (--follow http://..)".into());
+        }
+        (None, Some(_)) => return refused("--token-file needs --follow <url>".into()),
+        (Some(_), None) => {
+            return refused("--follow takes unix:///<socket path> or http://<ip>:<port>".into());
+        }
+    };
     match (socket, repo) {
         (Some(socket), Some(repo)) => Ok(ServeOptions {
             socket: PathBuf::from(socket),
@@ -89,6 +127,7 @@ pub fn parse(args: &[String]) -> Result<ServeOptions, String> {
             remote: remote.unwrap_or_else(|| "origin".into()),
             listen,
             state: state.map(PathBuf::from),
+            follow,
         }),
         (None, _) => refused("--socket <path> is required".into()),
         (Some(_), None) => refused("--repo <clone> is required".into()),
@@ -140,12 +179,15 @@ where
             Err(error) => return gone(error.to_string()),
         }
     }
+    let routes = BoardRoutes::new(handles.serve, handles.access, handles.operations)
+        .with_feed(handles.feed)
+        .with_replication(handles.replication);
+    let (routes, following) = match handles.follower {
+        Some((replicate, primary)) => (routes.standby(primary), Some(replicate)),
+        None => (routes, None),
+    };
     let parts = ServiceParts {
-        handler: Arc::new(
-            BoardRoutes::new(handles.serve, handles.access, handles.operations)
-                .with_feed(handles.feed)
-                .with_replication(handles.replication),
-        ),
+        handler: Arc::new(routes),
         peers: handles.peers,
         uid: handles.uid,
         limits: ConnectionLimits::PRODUCTION,
@@ -159,6 +201,17 @@ where
         Ok(runtime) => runtime,
         Err(error) => return gone(format!("the runtime did not start: {error}")),
     };
+    // A follower follows on a thread of its own until the server stops.
+    let running = Arc::new(AtomicBool::new(true));
+    if let Some(replicate) = following {
+        let running = Arc::clone(&running);
+        let spawned = std::thread::Builder::new()
+            .name("board-follower".into())
+            .spawn(move || replicate.run(&|| running.load(Ordering::SeqCst)));
+        if let Err(error) = spawned {
+            return gone(format!("the follower did not start: {error}"));
+        }
+    }
     let served = runtime.block_on(async {
         // The stop is made inside the runtime (a signal watch needs it).
         let stop = stop();
@@ -170,6 +223,7 @@ where
         });
         listen(listeners, parts, stop).await
     });
+    running.store(false, Ordering::SeqCst);
     // Requests in flight have a moment to finish; then the server goes.
     runtime.shutdown_timeout(Duration::from_secs(1));
     let removed = remove_socket(socket, ours);

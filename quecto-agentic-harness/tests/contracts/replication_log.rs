@@ -13,7 +13,7 @@ use quecto::application::project_board::use_cases::ServeReplication;
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::timestamp::Timestamp;
 use quecto::infrastructure::persistence::file::board_tokens::FileBoardTokens;
-use quecto::infrastructure::persistence::sqlite::project_board::SqliteBoardOps;
+use quecto::infrastructure::persistence::sqlite::project_board::{BoardBinding, SqliteBoardOps};
 
 use super::board_feed::{board, wrote};
 
@@ -25,8 +25,20 @@ pub(super) struct Server {
     pub(super) file: std::path::PathBuf,
 }
 
+/// The board id the contract's servers serve.
+pub(super) const BOARD: &str = "0123456789abcdef";
+
+/// A server of [`BOARD`], its board file bound to it as `serve` binds it.
 pub(super) fn server() -> Server {
+    server_of(Some(BOARD))
+}
+
+/// A server whose board file is bound to `board` (none: unbound).
+pub(super) fn server_of(board_id: Option<&str>) -> Server {
     let (dir, ops) = board();
+    if let Some(board_id) = board_id {
+        assert_eq!(ops.bind(board_id), Ok(BoardBinding::Bound));
+    }
     let tokens = FileBoardTokens::open(&dir.path().join("state")).expect("tokens");
     Server {
         file: dir.path().join("board.sqlite3"),

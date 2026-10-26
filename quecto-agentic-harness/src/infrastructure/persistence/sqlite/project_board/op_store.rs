@@ -12,7 +12,15 @@ pub struct SqliteBoardOps {
     pub(super) feed: feed::FeedHub,
     /// The board this file is bound to, once [`Self::bind`] binds it.
     board: std::sync::OnceLock<String>,
+    /// The board file's path, for a follower's diverged mark beside it.
+    pub(super) path: std::path::PathBuf,
 }
+
+/// The write lock and the write connection, held together.
+pub(super) type Applying<'a> = (
+    std::sync::MutexGuard<'a, u64>,
+    std::sync::MutexGuard<'a, Connection>,
+);
 
 /// Binds an unbound board (#2741); a bound one is left as it is.
 const BIND: &str = "UPDATE history_meta SET board_id=?1 WHERE id=1 AND board_id IS NULL";
@@ -42,6 +50,7 @@ impl SqliteBoardOps {
             lock: Mutex::new(published),
             feed: feed::FeedHub::default(),
             board: std::sync::OnceLock::new(),
+            path: path.to_path_buf(),
         })
     }
 
@@ -103,7 +112,7 @@ impl SqliteBoardOps {
     /// write connection, `c`, under the write lock), which becomes the
     /// last one. One that cannot be read resets every subscriber, which
     /// then resumes from the store: never a silent gap.
-    fn publish(&self, c: &Connection, published: &mut u64) {
+    pub(super) fn publish(&self, c: &Connection, published: &mut u64) {
         match feed::after(c, *published, MAX_REVISION_BATCH) {
             Ok(revisions) => {
                 if let Some(last) = revisions.last() {
@@ -122,6 +131,50 @@ impl SqliteBoardOps {
 
     fn locked(&self) -> Result<std::sync::MutexGuard<'_, Connection>, BoardStoreError> {
         self.writes.connection.lock().map_err(unavailable)
+    }
+
+    /// The write lock (the last revision published) and the write
+    /// connection, for a follower's batch (B11).
+    pub(super) fn locked_for_apply(&self) -> Result<Applying<'_>, BoardStoreError> {
+        let published = self.lock.lock().map_err(unavailable)?;
+        Ok((published, self.locked()?))
+    }
+
+    /// The board this file is bound to, once bound.
+    pub(super) fn bound(&self) -> Option<&str> {
+        self.board.get().map(String::as_str)
+    }
+}
+
+/// A follower's operations store (B11): it reads its board, and refuses
+/// every write outright, so no op (even one mis-read as a read) can fork
+/// its copy: only its primary's batches change it.
+pub struct StandbyOps(Arc<SqliteBoardOps>);
+
+impl SqliteBoardOps {
+    /// This store as a follower's operations store.
+    pub fn standby(self: &Arc<Self>) -> StandbyOps {
+        StandbyOps(Arc::clone(self))
+    }
+}
+
+impl BoardOpStore for StandbyOps {
+    fn reads(&self) -> Arc<dyn ProjectBoardStore> {
+        self.0.reads()
+    }
+
+    fn kept(&self, write: &OpWrite) -> Result<Option<Transacted>, BoardStoreError> {
+        self.0.kept(write)
+    }
+
+    fn transact(
+        &self,
+        _: &OpWrite,
+        _: &mut dyn FnMut(Arc<dyn ProjectBoardStore>) -> Result<String, BoardStoreError>,
+    ) -> Result<Transacted, BoardStoreError> {
+        Err(BoardStoreError::Unavailable(
+            "this server is a standby: it writes nothing but its primary's copy".into(),
+        ))
     }
 }
 

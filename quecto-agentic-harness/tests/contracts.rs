@@ -192,6 +192,8 @@ mod external_credential_source;
 mod fleet_settlement;
 #[path = "contracts/fold_back_recorder.rs"]
 mod fold_back_recorder;
+#[path = "contracts/follow_tokens.rs"]
+mod follow_tokens;
 #[path = "contracts/fresh_session_identity_generator.rs"]
 mod fresh_session_identity_generator;
 #[path = "contracts/historical_roster_source.rs"]
@@ -232,6 +234,8 @@ mod project_board_kinds;
 mod project_board_op_log;
 #[path = "contracts/project_board_remote_revisions.rs"]
 mod project_board_remote_revisions;
+#[path = "contracts/project_board_replication.rs"]
+mod project_board_replication;
 #[path = "contracts/project_board_schema_upgrade.rs"]
 mod project_board_schema_upgrade;
 #[path = "contracts/project_board_sqlite.rs"]
@@ -253,8 +257,12 @@ mod refresh_redaction_port;
 mod refreshable_catalogue_source;
 #[path = "contracts/reload_runtime.rs"]
 mod reload_runtime;
+#[path = "contracts/replica_store.rs"]
+mod replica_store;
 #[path = "contracts/replication_log.rs"]
 mod replication_log;
+#[path = "contracts/replication_source.rs"]
+mod replication_source;
 #[path = "contracts/retained_context.rs"]
 mod retained_context;
 #[path = "contracts/run_settings_source.rs"]

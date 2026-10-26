@@ -15,7 +15,9 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::application::project_board::ports::replication::{AdminRows, AdminToken};
+use crate::application::project_board::ports::replication::{
+    AdminRows, AdminToken, FollowTokens, FollowedTokens,
+};
 use crate::application::project_board::ports::{
     BoardTokens, IssuedToken, MAX_TOKENS, TokenError, TokenKind, TokenRecord,
 };
@@ -29,6 +31,11 @@ use crate::infrastructure::persistence::file::state_dir::{
 /// The tokens file's name in the state directory.
 pub const TOKENS_FILE: &str = "tokens.json";
 const TOKENS_NAME: &CStr = c"tokens.json";
+
+/// The digest of the token set a follower last took from its primary,
+/// beside the tokens (B11).
+pub const FOLLOWED_FILE: &str = "tokens.json.followed";
+const FOLLOWED_NAME: &CStr = c"tokens.json.followed";
 
 /// A file's (inode, mtime, mtime ns, size), to tell a hand edit.
 type Stamp = (u64, i64, i64, u64);
@@ -164,15 +171,21 @@ impl FileBoardTokens {
         });
         let text = serde_json::to_vec_pretty(&tokens.collect::<Vec<_>>());
         let text = text.map_err(|e| self.unavailable(e))?;
+        self.write_through(TOKENS_NAME, &text)
+    }
+
+    /// Writes `text` as the file `name` in the locked directory: a
+    /// temporary file renamed over it.
+    fn write_through(&self, name: &CStr, text: &[u8]) -> Result<(), TokenError> {
         let temp = CString::new(format!(".{TOKENS_FILE}.{}.tmp", uuid::Uuid::new_v4()));
         let temp = temp.map_err(|error| self.unavailable(error))?;
         let dir = self.lock.as_raw_fd();
         let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL;
         let written = self.open_at(&temp, flags).and_then(|mut file| {
-            file.write_all(&text)?;
+            file.write_all(text)?;
             file.sync_all()?;
             // SAFETY: names in the directory this adapter holds open.
-            match unsafe { libc::renameat(dir, temp.as_ptr(), dir, TOKENS_NAME.as_ptr()) } {
+            match unsafe { libc::renameat(dir, temp.as_ptr(), dir, name.as_ptr()) } {
                 0 => Ok(()),
                 _ => Err(io::Error::last_os_error()),
             }
@@ -185,6 +198,30 @@ impl FileBoardTokens {
                 let _ = unsafe { libc::unlinkat(dir, temp.as_ptr(), 0) };
                 Err(self.unavailable(error))
             }
+        }
+    }
+
+    /// The digests kept of the sets taken from a primary: the last one,
+    /// and while a set is being swapped in, the one it replaces too.
+    fn copied(&self) -> Result<Vec<String>, TokenError> {
+        let file = match self.open_at(FOLLOWED_NAME, libc::O_RDONLY | libc::O_NONBLOCK) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(self.unavailable(error)),
+        };
+        let mut text = String::new();
+        (file.take(256).read_to_string(&mut text)).map_err(|error| self.unavailable(error))?;
+        Ok(text.lines().map(str::to_string).collect())
+    }
+
+    /// Keeps `digests` as the sets taken from a primary.
+    fn keep_copied(&self, digests: &[String]) -> Result<(), TokenError> {
+        match self.copied()? == digests {
+            true => Ok(()),
+            false => self.write_through(
+                FOLLOWED_NAME,
+                format!("{}\n", digests.join("\n")).as_bytes(),
+            ),
         }
     }
 
@@ -228,6 +265,51 @@ impl FileBoardTokens {
 }
 
 impl FileBoardTokens {
+    /// Notes, then swaps in, the primary's set `rows` (a replace untrimmed).
+    fn swapped_in(&self, rows: &[AdminToken]) -> Result<String, TokenError> {
+        let names: std::collections::BTreeSet<_> = rows.iter().map(|row| &row.name).collect();
+        let shaped = |row: &AdminToken| {
+            held(StoredToken {
+                name: row.name.as_str().to_string(),
+                sha256: row.digest.clone(),
+                created: row.created.as_str().to_string(),
+                replica: row.kind == TokenKind::Replica,
+            })
+        };
+        let next: Option<Vec<Held>> = rows.iter().map(shaped).collect();
+        let next = match (next, names.len() == rows.len(), rows.len() <= MAX_TOKENS) {
+            (Some(next), true, true) => next,
+            (_, _, _) => {
+                return Err(TokenError::Unavailable(
+                    "the primary's tokens are not as a token is kept".into(),
+                ));
+            }
+        };
+        let mut now = self.export()?;
+        let mut wanted = rows.to_vec();
+        wanted.sort_by(|a, b| a.name.cmp(&b.name));
+        now.sort_by(|a, b| a.name.cmp(&b.name));
+        let (held, taken) = (set_digest(&now), set_digest(&wanted));
+        // While the set is swapped, both it and the one it replaces (when
+        // that was the primary's too) are noted: a crash between the two
+        // writes leaves a set a restart knows as its primary's.
+        match now == wanted {
+            true => {}
+            false => {
+                let mut noted = vec![taken.clone()];
+                if self.copied()?.contains(&held) {
+                    noted.push(held);
+                }
+                self.keep_copied(&noted)?;
+                self.changing(|held| {
+                    *held = next;
+                    Ok(())
+                })?;
+            }
+        }
+        Ok(taken)
+    }
+
     /// Makes a token of `kind`, keeping its digest.
     fn added(
         &self,
@@ -320,36 +402,35 @@ impl AdminRows for FileBoardTokens {
     }
 
     fn replace(&self, rows: &[AdminToken]) -> Result<(), TokenError> {
-        let names: std::collections::BTreeSet<_> = rows.iter().map(|row| &row.name).collect();
-        let shaped = |row: &AdminToken| {
-            held(StoredToken {
-                name: row.name.as_str().to_string(),
-                sha256: row.digest.clone(),
-                created: row.created.as_str().to_string(),
-                replica: row.kind == TokenKind::Replica,
-            })
-        };
-        let next: Option<Vec<Held>> = rows.iter().map(shaped).collect();
-        let next = match (next, names.len() == rows.len(), rows.len() <= MAX_TOKENS) {
-            (Some(next), true, true) => next,
-            (_, _, _) => {
-                return Err(TokenError::Unavailable(
-                    "the primary's tokens are not as a token is kept".into(),
-                ));
-            }
-        };
-        let mut now = self.export()?;
-        let mut wanted = rows.to_vec();
-        wanted.sort_by(|a, b| a.name.cmp(&b.name));
-        now.sort_by(|a, b| a.name.cmp(&b.name));
-        match now == wanted {
-            true => Ok(()),
-            false => self.changing(|held| {
-                *held = next;
-                Ok(())
-            }),
-        }
+        let taken = self.swapped_in(rows)?;
+        self.keep_copied(&[taken])
     }
+}
+
+/// A follower's tokens (B11): the set held is its primary's when its digest
+/// is the one kept as the last set taken from it.
+impl FollowTokens for FileBoardTokens {
+    fn followed(&self) -> Result<FollowedTokens, TokenError> {
+        let rows = self.export()?;
+        let copied = self.copied()?;
+        Ok(FollowedTokens {
+            held: rows.len(),
+            copied: copied.contains(&set_digest(&rows)),
+        })
+    }
+}
+
+/// The digest of a token set, as rows sorted by name.
+fn set_digest(rows: &[AdminToken]) -> String {
+    let mut lines: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            let (name, created) = (row.name.as_str(), row.created.as_str());
+            format!("{name}\t{created}\t{}\t{}\n", row.kind.as_str(), row.digest)
+        })
+        .collect();
+    lines.sort();
+    sha256(&lines.concat())
 }
 
 /// A held token as an admin row.
