@@ -69,6 +69,7 @@ impl SqliteBoardHistoryStore {
 impl BoardHistoryRead for SqliteBoardHistoryStore {
     fn snapshot(&self) -> HistoryResult<Box<dyn BoardHistorySnapshot>> {
         self.writer.validate("history writer").map_err(error)?;
+        storage::absolute(&self.path).map_err(error)?;
         let c = Connection::open_with_flags(&self.path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| HistoryError::Unavailable(e.to_string()))?;
         c.busy_timeout(Duration::from_secs(5)).map_err(error)?;

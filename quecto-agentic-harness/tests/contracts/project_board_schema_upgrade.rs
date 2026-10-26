@@ -95,30 +95,48 @@ fn a_schema_4_board_is_given_its_chain_behind_a_whole_copy() {
     assert_eq!(copies(&file).len(), 1);
 }
 
-/// B9 on an upgraded board: a revision pin still names the file that
-/// revision held, as it did at schema 4.
+/// B9 on an upgraded board: each revision pin, in either epoch, names
+/// exactly the file it named before the board went back to schema 4.
 #[test]
 fn an_upgraded_board_resolves_revision_pins_as_before() {
     use quecto::application::project_board::ports::{ArtifactKey, BoardHead, BoardOpStore};
     use quecto::domain::project_board::value_objects::slug::Slug;
-    let (_dir, file, _) = schema_4_board();
+    use quecto::domain::project_board::value_objects::telemetry::BoardId;
+    use quecto::infrastructure::persistence::sqlite::project_board::history::SqliteBoardHistoryStore;
+    let (dir, ops) = board();
+    wrote(&ops, 1, true, 2);
+    let file = dir.path().join("board.sqlite3");
+    let board_id = BoardId::of_hex("0123456789abcdef").unwrap();
+    let history = SqliteBoardHistoryStore::new(file.clone(), identity(), board_id);
+    let promoted = history.open_epoch(1, "promoted", 1_700_000_000).unwrap();
+    assert_eq!(promoted, BoardHead("2:3".into()));
+    wrote(&ops, 2, false, 1);
     let key = ArtifactKey::Plan(Slug::parse("t").unwrap(), 1);
-    let pinned = |rev: &str| {
-        let c = Connection::open(&file).unwrap();
-        let held: Option<String> = c
-            .query_row("SELECT root FROM revisions WHERE head=?1", [rev], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        held
+    let pins = ["1:1", "1:2", "1:3", "2:3", "2:4", "1:4", "2:2", "2:9"];
+    let at = |ops: &SqliteBoardOps| -> Vec<Option<String>> {
+        let at = |rev: &str| ops.reads().object_at(&BoardHead(rev.into()), &key).unwrap();
+        pins.iter().map(|rev| at(rev)).collect()
     };
-    let before = pinned("1:3");
-    let ops = SqliteBoardOps::open(&file, identity()).unwrap();
-    assert_eq!(pinned("1:3"), before, "the upgrade changes no root");
-    let at = |rev: &str| ops.reads().object_at(&BoardHead(rev.into()), &key).unwrap();
-    assert!(at("1:3").is_some(), "revision 3 names the plan's file");
-    assert_eq!(at("1:1"), None, "the bootstrap held no plan");
-    assert_eq!(at("1:9"), None, "no such revision");
+    let before = at(&ops);
+    let held = |pin: usize| before[pin].clone();
+    assert!(held(1).is_some() && held(4).is_some(), "{before:?}");
+    assert_eq!(held(2), held(3), "one revision by either epoch");
+    assert_eq!(
+        (held(0), held(5), held(6), held(7)),
+        (None, None, None, None)
+    );
+    drop(ops);
+    let c = Connection::open(&file).unwrap();
+    c.execute_batch("ALTER TABLE revisions DROP COLUMN chain; PRAGMA user_version=4;")
+        .unwrap();
+    drop(c);
+    let upgraded = SqliteBoardOps::open(&file, identity()).unwrap();
+    assert_eq!(version(&file), 5);
+    assert_eq!(
+        at(&upgraded),
+        before,
+        "every pin names exactly what it named"
+    );
 }
 
 #[test]
@@ -251,6 +269,19 @@ fn concurrent_opens_upgrade_a_schema_4_board_once() {
     }
     assert_eq!(chains(&file), made);
     assert_eq!(copies(&file).len(), 1, "upgraded once, behind one copy");
+}
+
+/// B11 review 4: SQLite reads a relative `file:..` name as a URI, so a
+/// board file named relatively is refused before anything opens it.
+#[test]
+fn a_board_named_relatively_is_refused_before_it_is_opened() {
+    let named = Path::new("file:board-b11-review.sqlite3?mode=memory");
+    let Err(BoardStoreError::Unavailable(why)) = SqliteBoardOps::open(named, identity()) else {
+        panic!("a relative board file is refused");
+    };
+    assert!(why.contains("absolute"), "{why}");
+    assert!(!Path::new("file:board-b11-review.sqlite3?mode=memory").exists());
+    assert!(!Path::new("board-b11-review.sqlite3").exists());
 }
 
 #[test]

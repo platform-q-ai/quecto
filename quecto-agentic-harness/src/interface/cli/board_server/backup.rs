@@ -38,7 +38,8 @@ fn parse(args: &[String]) -> Result<Options, &'static str> {
             board.is_none(),
             state.is_none(),
         ) {
-            ("--to", true, _, _) => to = Some(PathBuf::from(value)),
+            // Named absolutely: SQLite reads a relative `file:..` as a URI.
+            ("--to", true, _, _) => to = std::path::absolute(value).ok(),
             ("--board-id", _, true, _) => {
                 BoardId::of_hex(value).ok_or("backup: invalid board id")?;
                 board = Some(value.clone());

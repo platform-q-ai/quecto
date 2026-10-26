@@ -96,7 +96,15 @@ fn asked(write: &OpWrite) -> String {
     digest(b"op", &fields)
 }
 
+/// `Ok` when `path` is absolute: SQLite reads a relative name such as
+/// `file:..` as a URI, so a board file is only ever named absolutely.
+pub(super) fn absolute(path: &Path) -> Result<(), BoardStoreError> {
+    let named = format!("the board file {} must be named absolutely", path.display());
+    path.is_absolute().then_some(()).ok_or(unavailable(named))
+}
+
 pub(super) fn open(path: &Path) -> Result<Connection, BoardStoreError> {
+    absolute(path)?;
     let mut c = Connection::open(path).map_err(unavailable)?;
     c.busy_timeout(super::schema::OPEN_WAIT)
         .map_err(unavailable)?;

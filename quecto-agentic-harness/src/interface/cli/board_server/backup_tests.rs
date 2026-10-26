@@ -16,7 +16,7 @@ fn backup_options_admit_only_complete_known_pairs() {
         parse(&["--board-id", "0123456789abcdef", "--to", "./my snapshots"].map(str::to_owned))
             .unwrap();
     assert_eq!(options.board.as_deref(), Some("0123456789abcdef"));
-    assert_eq!(options.to, PathBuf::from("./my snapshots"));
+    assert_eq!(options.to, std::path::absolute("./my snapshots").unwrap());
 }
 #[test]
 fn backup_invalid_options_never_construct_graph() {
@@ -31,6 +31,16 @@ fn backup_invalid_options_never_construct_graph() {
         run(&context, &[], &mut String::new(), &mut String::new()),
         1
     );
+}
+
+/// B11 review 4: SQLite reads a relative `file:..` name as a URI, so the
+/// destination is named absolutely before anything opens it.
+#[test]
+fn a_relative_destination_is_named_absolutely() {
+    let args = ["--to", "file:out"].map(str::to_owned);
+    let to = parse(&args).unwrap().to;
+    assert!(to.is_absolute(), "{}", to.display());
+    assert!(to.ends_with("file:out"), "{}", to.display());
 }
 
 #[test]

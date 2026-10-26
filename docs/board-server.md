@@ -11,7 +11,10 @@ URL) and, for the board's operations, its remote's revisions and pull
 requests. A new server has no board until a `bootstrap` op makes one (an
 import of a `quecto/board` branch, `board-server import` below, writes
 this same file; `export` and the backup read it). This build writes schema 5
-and reads schema 4 or 5.
+and reads schema 4 or 5. A board file is only ever opened by an absolute
+path (`--state` and `QUECTO_BASE_DIR` must be absolute; a backup's `--to` is
+made absolute): SQLite would read a relative name such as `file:..` as a
+URI.
 
 **The schema-5 upgrade (B11).** A schema-4 board (the build before B11's) is
 upgraded in place when `serve` or `import` first opens it, under the board's
