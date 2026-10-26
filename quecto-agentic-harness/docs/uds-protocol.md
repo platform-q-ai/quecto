@@ -1979,8 +1979,11 @@ loop; the single-client loop is a test rig that is never given it.
   Owned work is a sub-agent starting or running, an idle coordinator it
   launched whose last `swarm_state` was a `hold` (not one that never sent
   one, as a coordinator without a board doesn't, nor once it reported
-  `finished`, `idle` or `paused`, nor after a failed turn), or a queued
-  instruction or note (a child's turn-end note counts while it waits). If
+  `finished`, `idle` or `paused`), or a queued instruction or note (a
+  child's turn-end note counts while it waits). A coordinator whose last
+  report was `unknown`, or whose turn failed since it last reported, may
+  still have workers running: that turn settles `needs_user` with the
+  diagnostic below, with no correction. If
   nothing runs, the harness runs one correction turn with the note
   `Nothing is running. If your reply says you'll start something you
   haven't launched, you're not done: launch it now, or call
@@ -2027,8 +2030,9 @@ loop; the single-client loop is a test rig that is never given it.
     unchanged marker as on the loop. Its members are the loop's, with no
     marker of its own.
   - It goes to the requester only, and is computed when the connection
-    sends it, after every event frame broadcast before, so it never shows
-    an earlier phase than the frames the client already has. While busy,
+    sends it, after every event frame broadcast before: it is never behind
+    the frames the client already has, and it may be ahead (a frame
+    broadcast while it was computed comes after it). While busy,
     `state` is never `idle`: a phase already idle (between a run's end and
     its `agent_end`, or between turns) reads `finalizing`.
   - Staleness: a mid-turn answer is as of the last refresh, and doesn't
@@ -2036,6 +2040,11 @@ loop; the single-client loop is a test rig that is never given it.
     queued behind the turn). Once a command's response has arrived, a
     later `get_state` reflects it: a state change (`new_session`,
     `clear_history`, …) ends the busy span, so the loop answers in order.
+  - It still waits for a turn when it reaches the loop first: a `get_state`
+    sent in the instant between the loop going idle and its taking an
+    instruction that had just arrived; one sent while the loop runs another
+    command (a state change) with an instruction queued behind it; and one
+    with an `agent_id` (a child's state, forwarded as before).
   - Idle, the loop answers as before. An unguarded harness still answers
     it when the turn ends.
 - **Epochs.** `new_session`, `resume_session`, `clear_history` and `rewind_to`

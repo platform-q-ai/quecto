@@ -241,6 +241,29 @@ async fn review_2762_a_never_reporting_idle_coordinator_is_corrected_then_stalls
     assert_eq!(root.provider.requests().len(), 2, "one correction");
 }
 
+/// Review #2762 round 4 (L5): an idle coordinator whose last report was
+/// unknown may still have workers running: the parent is not corrected
+/// (it could relaunch running work) but needs the user, with the diagnostic.
+#[tokio::test]
+async fn review_2762_an_unknown_coordinator_report_needs_the_user() {
+    let mut root = Root::new(vec![Reply::Text("Swarm running.")]);
+    with_idle_coordinator(
+        &root,
+        Some(crate::domain::swarm::services::parent_wake::WakeKind::Unknown),
+    );
+    root.send(r#"{"type":"prompt","id":"ep-1","message":"Report"}"#)
+        .await;
+    let frames = root.frames();
+    let outcomes = of_type(&frames, "turn_outcome");
+    assert_eq!(outcomes.len(), 1, "{frames:?}");
+    assert_eq!(outcomes[0]["outcome"], "needs_user");
+    assert_eq!(
+        outcomes[0]["reason"],
+        crate::domain::agents::value_objects::turn_outcome::UNKNOWN_REASON
+    );
+    assert_eq!(root.provider.requests().len(), 1, "no correction");
+}
+
 /// Review #2762 round 2 (A): while its last report is a hold, the idle
 /// coordinator's run is work: the parent waits.
 #[tokio::test]

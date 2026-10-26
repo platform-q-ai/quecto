@@ -133,16 +133,16 @@ pub(in crate::interface::uds::controllers) fn busy_across_turns(ctx: &DispatchCt
 /// A guarded loop is busy from taking an instruction until no command is
 /// queued behind it; any other message (a state change) ends that (#2708).
 pub(in crate::interface) fn busy_for(ctx: &DispatchCtx, msg: &ClientMessage, held: &mut Held) {
-    let line = match msg {
-        ClientMessage::Command(command) => command.line.as_str(),
-        _ => "",
+    let keep = match (guarded(ctx), msg) {
+        (true, ClientMessage::Command(command)) => {
+            let kind: serde_json::Value = serde_json::from_str(&command.line).unwrap_or_default();
+            matches!(
+                kind["type"].as_str(),
+                Some("prompt" | "steer" | "follow_up")
+            )
+        }
+        _ => false,
     };
-    let kind = serde_json::from_str::<serde_json::Value>(line).unwrap_or_default();
-    let opens = matches!(
-        kind["type"].as_str(),
-        Some("prompt" | "steer" | "follow_up")
-    );
-    let keep = guarded(ctx) && opens;
     *held = keep.then(|| held.take().unwrap_or_else(|| BusyGuard::new(&ctx.busy)));
 }
 use crate::interface::uds::framing::uds_multi::{BusyGuard, ClientMessage};

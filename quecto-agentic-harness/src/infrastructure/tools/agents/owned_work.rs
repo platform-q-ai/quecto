@@ -5,26 +5,26 @@
 use super::subagent_registry::SubagentRegistry;
 use crate::domain::agents::value_objects::turn_outcome::WorkLiveness;
 
-/// The registry's read: `Live` while any entry starts or runs, or an idle
-/// coordinator it launched still holds its run's work (its last report a
-/// hold), `Empty`
-/// when none does (or the harness has no spawn tool to own one), and
-/// `Unknown` when the registry cannot be read: never assumed empty.
+/// The registry's read, any `Live` entry winning: `Unknown` (never assumed
+/// empty) when unreadable or a coordinator's work can't be told.
 pub fn registry_liveness(registry: Option<&SubagentRegistry>) -> WorkLiveness {
     match registry.map(|registry| registry.lock()) {
-        Some(Ok(entries)) if entries.values().any(live) => WorkLiveness::Live,
-        None | Some(Ok(_)) => WorkLiveness::Empty,
+        Some(Ok(entries)) => entries
+            .values()
+            .map(work)
+            .fold(WorkLiveness::Empty, WorkLiveness::and),
+        None => WorkLiveness::Empty,
         Some(Err(_)) => WorkLiveness::Unknown,
     }
 }
 
-fn live(entry: &super::subagent_registry::SubagentEntry) -> bool {
-    use super::subagent_registry::SubagentStatus::{Idle, Running, Starting};
-    let holds = entry.coordinator_wake.holds_work();
-    matches!(
-        (&entry.status, holds),
-        (Starting | Running, _) | (Idle, true)
-    )
+fn work(entry: &super::subagent_registry::SubagentEntry) -> WorkLiveness {
+    use super::subagent_registry::SubagentStatus::{Error, Idle, Running, Starting};
+    match entry.status {
+        Starting | Running => WorkLiveness::Live,
+        Idle | Error => entry.coordinator_wake.work(),
+        _ => WorkLiveness::Empty,
+    }
 }
 
 #[cfg(test)]

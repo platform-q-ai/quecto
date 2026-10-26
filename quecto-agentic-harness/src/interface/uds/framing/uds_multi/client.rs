@@ -103,11 +103,7 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
     let writer_task = tokio::spawn(async move {
         let mode = wire_mode_for_writer;
         loop {
-            // Broadcasts first: a reply to this client alone (a busy
-            // `get_state`, computed only then) never overtakes or predates
-            // frames broadcast before it (#2708).
             tokio::select! {
-                biased;
                 b = broadcast_rx.recv() => match b {
                     Ok(line) => {
                         if write_line(&writer_for_task, &line, &mode).await.is_err() {
@@ -137,8 +133,20 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
                         // may still be delivering.
                     }
                 },
+                // A busy `get_state` (#2708), never behind earlier broadcasts.
                 Some(asked) = answers_rx.recv() => {
                     let source = answering.as_ref().expect("only a guarded connection asks");
+                    loop {
+                        use tokio::sync::broadcast::error::TryRecvError::Lagged;
+                        let line = match broadcast_rx.try_recv() {
+                            Ok(line) => line,
+                            Err(Lagged(n)) => format!("{{\"type\":\"error\",\"message\":\"dropped {n} events — use get_messages to re-sync\"}}\n"),
+                            Err(_) => break,
+                        };
+                        if write_line(&writer_for_task, &line, &mode).await.is_err() {
+                            return;
+                        }
+                    }
                     if write_line(&writer_for_task, &source.answer(asked).await, &mode).await.is_err() {
                         break;
                     }
