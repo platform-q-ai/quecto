@@ -95,13 +95,18 @@ async fn pump(streamed: Streamed, out: mpsc::Sender<Bytes>, conn: Driven) {
     let keepalive = Bytes::from_static(source.keepalive());
     let ends = conn.ends;
     let mut ask = true;
+    // When it last sent anything: a starved stream keeps its keep-alives.
+    let mut spoke = tokio::time::Instant::now();
     while tokio::time::Instant::now() < ends {
         if !ask {
             tokio::select! {
                 () = woken.notified() => {}
                 () = tokio::time::sleep(conn.ping) => {
                     match sent(&out, keepalive.clone(), ends).await {
-                        true => continue,
+                        true => {
+                            spoke = tokio::time::Instant::now();
+                            continue;
+                        }
                         false => break,
                     }
                 }
@@ -114,11 +119,19 @@ async fn pump(streamed: Streamed, out: mpsc::Sender<Bytes>, conn: Driven) {
             None => None,
             Some(Some(held)) => Some(held),
             // Every blocking answer of its caller is held: it waits a
-            // moment and asks again, unless its reader goes meanwhile.
+            // moment and asks again, unless its reader goes meanwhile; a
+            // keep-alive still goes out each ping, so its reader never
+            // times out while it waits.
             Some(None) => {
                 tokio::select! {
                     () = tokio::time::sleep(STREAM_RETRY) => {}
                     () = out.closed() => break,
+                }
+                if spoke.elapsed() >= conn.ping {
+                    match sent(&out, keepalive.clone(), ends).await {
+                        true => spoke = tokio::time::Instant::now(),
+                        false => break,
+                    }
                 }
                 ask = true;
                 continue;
@@ -135,7 +148,14 @@ async fn pump(streamed: Streamed, out: mpsc::Sender<Bytes>, conn: Driven) {
             StreamStep::Send { bytes, more } => (bytes, more, false),
             StreamStep::End(bytes) => (bytes, false, true),
         };
-        let delivered = bytes.is_empty() || sent(&out, Bytes::from(bytes), ends).await;
+        let delivered = match bytes.is_empty() {
+            true => true,
+            false => {
+                let delivered = sent(&out, Bytes::from(bytes), ends).await;
+                spoke = tokio::time::Instant::now();
+                delivered
+            }
+        };
         match (delivered, end) {
             (true, false) => ask = more,
             (true, true) | (false, _) => break,
