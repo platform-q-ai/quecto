@@ -276,7 +276,7 @@ pub(crate) fn cmd_agent(
             return 1;
         }
     };
-    let mut build = match build_agent_from_config(&base_dir, &selection, &flags, stderr, None) {
+    let build = match build_agent_from_config(&base_dir, &selection, &flags, stderr, None) {
         Some(r) => r,
         None => return 1,
     };
@@ -288,7 +288,6 @@ pub(crate) fn cmd_agent(
         &parent_playbook,
     ));
     let mut out = AgentOutput { stdout, stderr };
-    let parent = build.take_parent_run();
     // The interface never constructs a session store (#1970): without
     // composition's builder there is nothing to persist against.
     let Some(sessions) = ctx.sessions else {
@@ -307,7 +306,6 @@ pub(crate) fn cmd_agent(
     event_log::attach(&mut agent, &flags, &target, out.stderr);
     let handles = super::run_end_fleet::RunHandles {
         retention: &build.retention,
-        parent,
         run_end: super::run_end_fleet::RunEnd::compose(
             ctx.run_end_fleet,
             build.subagent_registry,

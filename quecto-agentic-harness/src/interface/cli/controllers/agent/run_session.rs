@@ -2,10 +2,9 @@
 //! session through the composed store, run the prompt, persist the result.
 //! The store comes from composition's sessions builder (#1970); this module
 //! never constructs one.
-use super::super::run_session_parent::{Driven, drive, exit_code};
 use super::run_session_save::TranscriptSave;
-use super::{AgentFlags, AgentOutput, settle_stopped_run};
-use crate::application::agent_turn::agent_loop::AgentLoopImpl;
+use super::{AgentFlags, AgentOutput, DeadlineResult, run_with_deadline, settle_stopped_run};
+use crate::application::{agent_turn::agent_loop::AgentLoopImpl, agent_turn::ports::AgentLoop};
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::file::crash_record;
@@ -87,20 +86,23 @@ pub(crate) fn run_agent_session(
     let run_start = prompt.id();
     messages.push(prompt);
 
-    let guard = (flags.max_time, handles.parent);
-    let (agent_result, settled) = match drive(&rt, &mut agent, &mut messages, guard, run_start) {
-        Driven::Ended(result, settled) => (*result, settled),
-        Driven::TimedOut(secs) => {
-            // Saved first: the settling below can take a minute, and a
-            // process killed meanwhile must not lose it (#2173).
-            let saving =
-                TranscriptSave::new(&rt, &sessions, (system_prompt_id, run_start), ephemeral);
-            saving.stopped(&mut messages, secs, out);
-            settle_stopped_run(&rt, &agent, secs);
-            out.stderr.push_str("max-time exceeded\n");
-            handles.retention.recall.scrub_ephemeral(ephemeral);
-            return handles.run_end.after(&rt, out, 2);
+    let agent_result = if let Some(secs) = flags.max_time {
+        match run_with_deadline(&rt, &mut agent, &mut messages, secs) {
+            DeadlineResult::Completed(inner) => inner,
+            DeadlineResult::TimedOut => {
+                // Saved first: the settling below can take a minute, and a
+                // process killed meanwhile must not lose it (#2173).
+                let saving =
+                    TranscriptSave::new(&rt, &sessions, (system_prompt_id, run_start), ephemeral);
+                saving.stopped(&mut messages, secs, out);
+                settle_stopped_run(&rt, &agent, secs);
+                out.stderr.push_str("max-time exceeded\n");
+                handles.retention.recall.scrub_ephemeral(ephemeral);
+                return handles.run_end.after(&rt, out, 2);
+            }
         }
+    } else {
+        rt.block_on(agent.process(&mut messages))
     };
     // Nothing an ephemeral run spilled for in-run recall may outlive the run.
     handles.retention.recall.scrub_ephemeral(ephemeral);
@@ -111,8 +113,7 @@ pub(crate) fn run_agent_session(
                 .save(&mut messages, out);
             out.stdout.push_str(&result.response);
             out.stdout.push('\n');
-            let code = exit_code(settled.as_ref(), out);
-            handles.run_end.after(&rt, out, code)
+            handles.run_end.after(&rt, out, 0)
         }
         Err(e) => {
             out.stderr.push_str(&format!("Error: {}\n", e));

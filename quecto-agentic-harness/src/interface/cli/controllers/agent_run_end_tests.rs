@@ -89,7 +89,6 @@ impl Child {
     ) -> (i32, String) {
         let retention = crate::composition::sessions::build_retention_handles(dir);
         let handles = RunHandles {
-            parent: None,
             retention: &retention,
             run_end: RunEnd::compose(
                 Some(crate::composition::subagent_teardown::build_run_end_fleet),
