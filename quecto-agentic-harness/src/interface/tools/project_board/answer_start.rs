@@ -125,7 +125,6 @@ pub fn refused(request: &BoardRequest, error: &ProjectBoardError) -> Option<Stri
         | E::InvalidWriter(_)
         | E::PrStateUnknown(_)
         | E::PullRequests(_)
-        | E::TaskAhead { .. }
         | E::ClockOutOfRange(_)
         | E::ClockAhead { .. }
         | E::Refused(_)

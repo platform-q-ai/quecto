@@ -1,6 +1,6 @@
 //! Discards a draft version of a task's plan (#2481 M4c) as a
 //! compare-and-swap; the plan is kept, as discarded. With
-//! `expected_updated`, the draft must still be as the caller read it, so
+//! a pin (`expected_rev`, #2705 B9), the draft must still be as the caller read it, so
 //! a draft edited since is refused (`plan_changed`), never discarded
 //! unread. The claim holder decides for a held task, anyone for one
 //! nobody holds. Only the plan is written. Blocking: a lost write pauses
@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, owned, task_on, written_plan};
 use super::board_view;
+use super::read_pins::plan_read;
 use crate::application::project_board::dto::{PlanDiscard, ProjectBoardError};
 use crate::application::project_board::ports::{BoardArtifact, BoardClock, ProjectBoardStore};
 use crate::application::project_board::telemetry::OpFacts;
@@ -86,7 +87,7 @@ impl DiscardPlan {
                     read = plan.map(|plan| plan.fields().state);
                 }
                 let plan = plan.ok_or(BoardRuleError::UnknownPlanVersion(version))?;
-                let expected = request.expected_updated.as_ref();
+                let expected = plan_read(store, board, Some(plan), request.expected.as_ref())?;
                 let discarded = discard(
                     DraftOf {
                         task,

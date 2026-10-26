@@ -2,7 +2,7 @@
 //! compare-and-swap: the task, the plan accepted and the plan it
 //! supersedes, if one was accepted, are written in one change, task
 //! first. The draft must still be as the caller read it
-//! (`expected_updated`), so the content accepted is the content reviewed,
+//! (`expected_rev`, #2705 B9), so the content accepted is the content reviewed,
 //! and the task must still name the plan the caller saw accepted
 //! (`expected_accepted`), so an acceptance never supersedes one its caller
 //! did not see and a rollback is a knowing choice;
@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, owned, task_on};
 use super::board_view;
+use super::read_pins::plan_read;
 use crate::application::project_board::dto::{PlanAcceptance, ProjectBoardError};
 use crate::application::project_board::ports::{BoardArtifact, BoardClock, ProjectBoardStore};
 use crate::application::project_board::telemetry::OpFacts;
@@ -50,8 +51,8 @@ impl AcceptPlan {
     /// The acceptance `acceptance` makes, as written.
     ///
     /// # Errors
-    /// No such task, or its file, one of its plans' or runs' set aside; a
-    /// task stamped ahead; the rules' (a done or archived task, plans or
+    /// No such task, or its file, one of its plans' or runs' set aside; the
+    /// draft changed since the pinned read; the rules' (a done or archived task, plans or
     /// runs that contradict each other, no such version, not a draft,
     /// changed since it was read, another version accepted than the one
     /// seen, stamped ahead, an actor who may not decide, a run going); the
@@ -89,19 +90,22 @@ impl AcceptPlan {
                 // This attempt's read, or none: never an earlier one's.
                 read = None;
                 let task = task_on(board, id)?;
-                when.may_build_on(task)?;
                 let versions = owned(board_view::plans_of(board, id)?);
                 let runs = owned(board_view::runs_of(board, id)?);
                 if noting {
                     read = state_of(&versions, version);
                 }
+                let chosen = versions
+                    .iter()
+                    .find(|plan| plan.fields().version == version);
+                let pinned = plan_read(store, board, chosen, Some(&acceptance.expected))?;
                 let board = TaskPlans {
                     task,
                     versions: &versions,
                     runs: &runs,
                 };
                 let expected = Some(AsRead {
-                    updated: &acceptance.expected_updated,
+                    read: pinned,
                     accepted: acceptance.expected_accepted,
                 });
                 let done = accept(&board, version, expected, actor, &Moment::from(when))?;

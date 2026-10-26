@@ -94,7 +94,7 @@ impl GitBoardStore {
     /// What `read` makes of board commit `commit`, fetching in one round
     /// at a time what this clone does not hold yet, from the blobs `before`
     /// found left on the remote.
-    fn reading<T>(
+    pub(super) fn reading<T>(
         &self,
         commit: &str,
         before: &FetchState,

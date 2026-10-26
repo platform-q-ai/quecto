@@ -308,6 +308,7 @@ fn a_summary_agrees_with_show_and_show_is_unchanged() {
                 "plan",
                 "plans",
                 "quarantined",
+                "rev",
                 "runs",
                 "task"
             ]

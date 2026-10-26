@@ -20,6 +20,7 @@ mod list_left_runs;
 mod plan_text;
 mod propose_plan;
 mod query_board;
+mod read_pins;
 mod run_board_operation;
 mod serve_board;
 mod serve_board_operation;

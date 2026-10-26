@@ -94,10 +94,10 @@ fn an_unsynchronised_clock_refuses_a_clock_reading_write_and_keeps_no_answer() {
     assert_eq!(served.revisions().len(), before + 1);
 }
 
-/// A synchronised host is no outside reference: the burst bound
-/// (`task_ahead`) stays off on the server, as in B7, until B9. So many
-/// changes to one task within a second or two all land, though each
-/// stamps the task a second past the last.
+/// A synchronised host is no outside reference, and the board orders its
+/// changes by revision (#2705 B9), with no burst bound at all. So many
+/// changes to one task within a second or two all land, each stamped
+/// the server's time for display alone.
 #[test]
 fn a_synchronised_server_takes_a_burst_of_changes_to_one_task() {
     let said = Arc::new(Said::synced());

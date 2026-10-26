@@ -107,7 +107,6 @@ impl ChangeBoardTask {
                         .map(|task| (task.fields().status, claim_facts(task, actor, &when.now)));
                 }
                 let task = task?;
-                when.may_build_on(task)?;
                 let changed = apply(task, board, actor, op, &when.now)?;
                 Ok(vec![BoardArtifact::Task(changed)])
             },

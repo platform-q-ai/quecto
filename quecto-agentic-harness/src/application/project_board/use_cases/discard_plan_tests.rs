@@ -1,6 +1,7 @@
 //! #2481 M4c: a discard discards a draft, keeping it as discarded, and
 //! writes it alone.
 use super::DiscardPlan;
+use crate::application::project_board::dto::ReadPin;
 use crate::application::project_board::dto::{PlanDiscard, ProjectBoardError};
 use crate::application::project_board::ports::ProjectBoardStore;
 use crate::application::project_board::telemetry::OpFacts;
@@ -21,7 +22,7 @@ fn of(version: u32) -> PlanDiscard {
     PlanDiscard {
         task: slug("a"),
         version,
-        expected_updated: None,
+        expected: None,
     }
 }
 
@@ -39,7 +40,7 @@ fn a_discarded_draft_is_kept_and_written_alone() {
     let before = store.read().unwrap();
     let mut facts = OpFacts::default();
     let pinned = PlanDiscard {
-        expected_updated: Some(at("09:00:00")),
+        expected: Some(ReadPin::Updated(at("09:00:00"))),
         ..of(1)
     };
     let discarded = discard_as(&store, "Ada")
@@ -119,7 +120,7 @@ fn a_stale_or_unheld_discard_is_refused() {
         vec![plan_of("a", 1, PlanState::Draft)],
     );
     let stale = PlanDiscard {
-        expected_updated: Some(at("08:00:00")),
+        expected: Some(ReadPin::Updated(at("08:00:00"))),
         ..of(1)
     };
     assert_eq!(

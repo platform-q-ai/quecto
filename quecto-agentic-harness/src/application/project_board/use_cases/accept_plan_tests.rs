@@ -1,6 +1,7 @@
 //! #2481 M4c: an acceptance names a draft as the task's plan and
 //! supersedes the one accepted before, in one change of three files.
 use super::AcceptPlan;
+use crate::application::project_board::dto::ReadPin;
 use crate::application::project_board::dto::{PlanAcceptance, ProjectBoardError};
 use crate::application::project_board::ports::{ArtifactKey, BoardArtifact, ProjectBoardStore};
 use crate::application::project_board::telemetry::OpFacts;
@@ -59,7 +60,7 @@ fn of(version: u32, accepted: Option<u32>) -> PlanAcceptance {
     PlanAcceptance {
         task: slug("a"),
         version,
-        expected_updated: at("09:00:00"),
+        expected: ReadPin::Updated(at("09:00:00")),
         expected_accepted: accepted,
     }
 }
@@ -231,7 +232,7 @@ fn a_stale_expected_updated_is_refused_as_plan_changed() {
         vec![],
     );
     let stale = PlanAcceptance {
-        expected_updated: at("08:00:00"),
+        expected: ReadPin::Updated(at("08:00:00")),
         ..of(1, None)
     };
     assert_eq!(
@@ -266,7 +267,7 @@ fn an_acceptance_that_loses_to_an_edit_of_its_draft_is_refused() {
             approach: Some("Edited.".into()),
             items: None,
             team: None,
-            expected_updated: None,
+            expected: None,
         };
         let editor = EditPlan::new(Arc::new(other), SetClock::at("09:30:00")).unwrap();
         editor.execute(&edit).unwrap();
@@ -389,25 +390,21 @@ fn a_retry_refused_before_its_read_notes_no_earlier_state() {
     assert_eq!((facts.plan_state_from, facts.plan_state_to), (None, None));
 }
 
-/// Review round 1 (L3): a task stamped ahead of the outside time by a
-/// clock running ahead is not built on, as for every task write.
+/// #2705 B9: a task stamped ahead of the outside time is built on, as
+/// for every task write (a stamp is for display; the board's revision
+/// orders changes), and its stamp never runs backwards.
 #[test]
-fn a_task_stamped_ahead_is_not_accepted_on() {
+fn a_task_stamped_ahead_is_accepted_on_and_its_stamp_holds() {
     let store = seeded(
         naming(None),
         vec![plan_of("a", 1, PlanState::Draft)],
         vec![],
     );
     let client = store.client_as(person("Ada"));
-    let behind = SetClock::with_reference("08:00:00", Some("08:00:00"));
+    let behind = SetClock::with_reference("08:59:00", Some("08:59:00"));
     let accepting = AcceptPlan::new(Arc::new(client), behind).unwrap();
-    assert_eq!(
-        accepting.execute(&of(1, None)).map(|_| ()),
-        Err(ProjectBoardError::TaskAhead {
-            id: slug("a"),
-            updated: at("09:00:00"),
-        })
-    );
+    let accepted = accepting.execute(&of(1, None)).unwrap();
+    assert_eq!(accepted.task.fields().updated, at("09:00:00"));
 }
 
 /// Review round 2 (LOW-4): Ada accepts version 3 between Bob's read and

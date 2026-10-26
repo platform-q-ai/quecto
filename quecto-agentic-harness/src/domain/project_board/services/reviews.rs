@@ -33,8 +33,8 @@ pub struct RoundDraft {
 }
 
 /// `change`'s `review` (or a new one, the change's first) with a round of
-/// `draft` by `reviewer` added `when`: at its `now`, or, if later, a
-/// second past the review's last change (so rounds stay in order) or, for
+/// `draft` by `reviewer` added `when`: at its `now`, or, if later, at
+/// the review's last change (so rounds stay in order, #2705 B9) or, for
 /// the first round, when the change last changed (a review never predates
 /// the change it judges, as its slack check reads).
 ///
@@ -73,7 +73,7 @@ pub fn add_round(
                     });
                 }
             }
-            (fields.clone(), after_last(&fields.updated, now)?)
+            (fields.clone(), after_last(&fields.updated, now))
         }
         None => {
             // The first round is stamped no earlier than the change: a
@@ -123,8 +123,8 @@ pub fn add_round(
         "the change's review"
     );
     assert!(
-        review.is_none_or(|review| fields.updated > review.fields().updated),
-        "a round moves updated forward"
+        review.is_none_or(|review| fields.updated >= review.fields().updated),
+        "a round never moves updated backwards"
     );
     Ok(added)
 }

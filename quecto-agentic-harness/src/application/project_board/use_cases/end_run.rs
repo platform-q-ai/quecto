@@ -34,7 +34,7 @@
 //! live claim, or anyone when nobody claims the task; one who finds the
 //! claim expired takes the task over first), recording what is known of
 //! it as a held end does: its swarm's kept board, or every item as todo
-//! (#2657). With `expected_updated`, the
+//! (#2657). With a pin (`expected_rev`, #2705 B9), the
 //! task must still be as the caller read it. The end moves the task in the
 //! same write (#2705 T5, `run_outcomes::task_after_end`): a success to
 //! review, a stop whose kept board ended blocked to blocked, any other end
@@ -46,6 +46,7 @@ use super::board_change::{
     When, checked_now, checked_writer, commit_run, run_end_writes, task_on, written_run_end,
 };
 use super::board_view;
+use super::read_pins::task_as_read;
 use crate::application::project_board::dto::{
     EndedRun, LivenessCheck, ProjectBoardError, RunEnd, RunEndOutcome, RunReport,
 };
@@ -117,8 +118,8 @@ impl EndRun {
     ///
     /// # Errors
     /// A run whose swarm still runs here; no such task, run or plan
-    /// version, or one of their files set aside; a task stamped ahead, or
-    /// changed since it was read; the rules' (an
+    /// version, or one of their files set aside; a task changed since it
+    /// was read; the rules' (an
     /// actor who may not end it, a run that has ended); the clock's; a
     /// board that kept moving; the store's.
     pub fn execute(&self, request: &RunEnd) -> Result<EndedRun, ProjectBoardError> {
@@ -362,17 +363,7 @@ impl EndRun {
     ) -> Result<(Run, Option<FoldBackItems>), ProjectBoardError> {
         let (id, number, actor) = (&request.task, request.run, &self.actor);
         let task = task_on(board, id)?;
-        when.may_build_on(task)?;
-        match &request.expected_updated {
-            Some(expected) if *expected != task.fields().updated => {
-                return Err(ProjectBoardError::Stale {
-                    id: id.clone(),
-                    expected: expected.clone(),
-                    updated: task.fields().updated.clone(),
-                });
-            }
-            Some(_) | None => {}
-        }
+        task_as_read(&*self.store, board, task, request.expected.as_ref())?;
         let runs = board_view::runs_of(board, id)?;
         let plans = board_view::plans_of(board, id)?;
         let (run, plan) = run_and_plan(&runs, &plans, number)?;

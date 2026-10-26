@@ -34,75 +34,9 @@ pub use time_sync::{ClockSync, TimeSync};
 
 mod head;
 pub use head::BoardHead;
+mod artifact_key;
+pub use artifact_key::ArtifactKey;
 pub mod fence;
-
-/// Which artifact a board file holds (#2481's artifact model): what names
-/// it on the board, one file each. A task by its id; a plan, run or change
-/// by its task and number; a review by its task and its change's number; a
-/// discussion by its id.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ArtifactKey {
-    Task(Slug),
-    Plan(Slug, u32),
-    Run(Slug, u32),
-    Change(Slug, u32),
-    Review(Slug, u32),
-    Discussion(Slug),
-}
-
-impl ArtifactKey {
-    pub fn of_task(task: &Task) -> Self {
-        Self::Task(task.fields().id.clone())
-    }
-
-    pub fn of_plan(plan: &Plan) -> Self {
-        Self::Plan(plan.fields().task.clone(), plan.fields().version)
-    }
-
-    pub fn of_run(run: &Run) -> Self {
-        Self::Run(run.fields().task.clone(), run.fields().number)
-    }
-
-    pub fn of_change(change: &Change) -> Self {
-        Self::Change(change.fields().task.clone(), change.fields().number)
-    }
-
-    pub fn of_review(review: &Review) -> Self {
-        Self::Review(review.fields().task.clone(), review.fields().change)
-    }
-
-    pub fn of_discussion(discussion: &Discussion) -> Self {
-        Self::Discussion(discussion.fields().id.clone())
-    }
-
-    /// The task's id, when it is a task's own key (not the task a plan,
-    /// run, change or review belongs to).
-    pub fn as_task(&self) -> Option<&Slug> {
-        match self {
-            Self::Task(id) => Some(id),
-            Self::Plan(..)
-            | Self::Run(..)
-            | Self::Change(..)
-            | Self::Review(..)
-            | Self::Discussion(_) => None,
-        }
-    }
-}
-
-/// How a message names it: `task x`, `plan 2 of task x`, `review 3 of
-/// task x` (the review of its change 3), `discussion d`.
-impl std::fmt::Display for ArtifactKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Task(id) => write!(f, "task {}", id.as_str()),
-            Self::Plan(id, version) => write!(f, "plan {version} of task {}", id.as_str()),
-            Self::Run(id, number) => write!(f, "run {number} of task {}", id.as_str()),
-            Self::Change(id, number) => write!(f, "change {number} of task {}", id.as_str()),
-            Self::Review(id, change) => write!(f, "review {change} of task {}", id.as_str()),
-            Self::Discussion(id) => write!(f, "discussion {}", id.as_str()),
-        }
-    }
-}
 
 /// One artifact as a write gives it, whole.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,6 +155,48 @@ impl BoardSnapshot {
         self
     }
 
+    /// The artifact the board holds under `key`, as read.
+    pub fn artifact(&self, key: &ArtifactKey) -> Option<BoardArtifact> {
+        fn find<T: Clone>(
+            held: &[T],
+            key: &ArtifactKey,
+            key_of: impl Fn(&T) -> ArtifactKey,
+            wrap: impl Fn(T) -> BoardArtifact,
+        ) -> Option<BoardArtifact> {
+            held.iter()
+                .find(|one| key_of(one) == *key)
+                .cloned()
+                .map(wrap)
+        }
+        match key {
+            ArtifactKey::Task(_) => {
+                find(&self.tasks, key, ArtifactKey::of_task, BoardArtifact::Task)
+            }
+            ArtifactKey::Plan(..) => {
+                find(&self.plans, key, ArtifactKey::of_plan, BoardArtifact::Plan)
+            }
+            ArtifactKey::Run(..) => find(&self.runs, key, ArtifactKey::of_run, BoardArtifact::Run),
+            ArtifactKey::Change(..) => find(
+                &self.changes,
+                key,
+                ArtifactKey::of_change,
+                BoardArtifact::Change,
+            ),
+            ArtifactKey::Review(..) => find(
+                &self.reviews,
+                key,
+                ArtifactKey::of_review,
+                BoardArtifact::Review,
+            ),
+            ArtifactKey::Discussion(_) => find(
+                &self.discussions,
+                key,
+                ArtifactKey::of_discussion,
+                BoardArtifact::Discussion,
+            ),
+        }
+    }
+
     /// Whether every artifact read is held under its own key once.
     fn held_once(&self) -> bool {
         let keys: Vec<ArtifactKey> = self
@@ -311,6 +287,23 @@ pub trait ProjectBoardStore: Send + Sync {
     /// # Errors
     /// No board, or the store's failure.
     fn read(&self) -> Result<BoardSnapshot, BoardStoreError>;
+
+    /// The object (the store's name for a file's bytes) of artifact
+    /// `key`'s file at revision `rev`, a head a read of this board answered
+    /// (#2705 B9): what a change pinned to `rev` checks the artifact
+    /// against. Two revisions name it alike exactly when its file is the
+    /// same at both. `None` when the board held no such file then (or more
+    /// than one, or one of another kind), or `rev` is no revision of this
+    /// board, so a pin to it never holds. It reads that one file's name,
+    /// never the board whole.
+    ///
+    /// # Errors
+    /// The store's failure to read that revision.
+    fn object_at(
+        &self,
+        rev: &BoardHead,
+        key: &ArtifactKey,
+    ) -> Result<Option<String>, BoardStoreError>;
 
     /// Writes `artifacts` (each whole, replacing any of the same key) in
     /// one change, only if the board is still at `expected`. An artifact

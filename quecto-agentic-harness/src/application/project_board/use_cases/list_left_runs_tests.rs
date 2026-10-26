@@ -67,7 +67,7 @@ fn a_run_the_session_launched_and_the_board_shows_open_is_left_to_end_as_stopped
             task: slug("board-store"),
             run: 1,
             outcome: RunEndOutcome::Stopped,
-            expected_updated: None,
+            expected: None,
             stop: None,
         }]
     );
@@ -100,7 +100,7 @@ fn a_run_ended_unknown_or_never_launched_here_is_not_left() {
         task: slug("board-store"),
         run: 1,
         outcome: RunEndOutcome::Failed,
-        expected_updated: None,
+        expected: None,
         stop: None,
     })
     .unwrap();

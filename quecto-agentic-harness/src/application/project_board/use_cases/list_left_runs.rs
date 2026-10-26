@@ -54,7 +54,7 @@ impl ListLeftRuns {
                     task,
                     run: number,
                     outcome: LEFT_RUN_END,
-                    expected_updated: None,
+                    expected: None,
                     stop: None,
                 });
             }

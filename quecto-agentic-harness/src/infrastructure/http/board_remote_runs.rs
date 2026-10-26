@@ -36,10 +36,7 @@ impl RemoteBoardRuns {
     /// # Errors
     /// The server could not be asked.
     pub fn running(&self, task: &Slug, run: u32) -> Result<bool, ProjectBoardError> {
-        let view = PlanView {
-            version: None,
-            page: None,
-        };
+        let view = PlanView::default();
         let request = BoardRequest::Show(task.clone(), view);
         let text = json!({"op": "show", "task": task.as_str()}).to_string();
         let read = ReadRequest {

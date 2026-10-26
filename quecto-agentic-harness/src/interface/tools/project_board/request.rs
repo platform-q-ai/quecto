@@ -4,10 +4,8 @@
 //! once, for every front end.
 use serde_json::{Map, Value};
 
-use crate::application::project_board::dto::{
-    BoardOp, DraftUpdate, NewBoardTask, NewBoardTaskStatus,
-};
-use crate::application::project_board::operations::{BoardRequest, ListFilter, PlanPage, PlanView};
+use crate::application::project_board::dto::{BoardOp, NewBoardTask, NewBoardTaskStatus};
+use crate::application::project_board::operations::{BoardRequest, ListFilter};
 use crate::application::project_board::ports::KeepCopy;
 use crate::domain::project_board::entities::task_parts::EntryPolicy;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -118,6 +116,8 @@ pub enum Kind {
     Lines,
     /// A time as the board spells it (RFC 3339, UTC, to the second).
     Timestamp,
+    /// A board revision, as `show` answers it in `rev` (#2705 B9).
+    Rev,
     /// A task status.
     Status,
     /// `draft` or `ready`.
@@ -205,6 +205,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("items_from", Kind::Offset),
             optional("version", Kind::Version),
             optional("handoff_from", Kind::Offset),
+            optional("expected_rev", Kind::Rev),
         ],
     ),
     (
@@ -235,6 +236,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("links", Kind::Lines),
             optional("parent", Kind::OptionalSlug),
             optional("depends_on", Kind::Slugs),
+            optional("expected_rev", Kind::Rev),
             optional("expected_updated", Kind::Timestamp),
         ],
     ),
@@ -263,6 +265,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("approach", Kind::Text),
             optional("items", Kind::PlanItems),
             optional("team", Kind::Team),
+            optional("expected_rev", Kind::Rev),
             optional("expected_updated", Kind::Timestamp),
             optional("handoff", Kind::Text),
         ],
@@ -272,7 +275,8 @@ pub const OPS: &[(&str, &[Field])] = &[
         &[
             TASK,
             required("version", Kind::Version),
-            required("expected_updated", Kind::Timestamp),
+            optional("expected_rev", Kind::Rev),
+            optional("expected_updated", Kind::Timestamp),
             required("expected_accepted", Kind::AcceptedVersion),
         ],
     ),
@@ -281,6 +285,7 @@ pub const OPS: &[(&str, &[Field])] = &[
         &[
             TASK,
             required("version", Kind::Version),
+            optional("expected_rev", Kind::Rev),
             optional("expected_updated", Kind::Timestamp),
         ],
     ),
@@ -291,6 +296,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             TASK,
             required("run", Kind::Run),
             required("outcome", Kind::RunEnd),
+            optional("expected_rev", Kind::Rev),
             optional("expected_updated", Kind::Timestamp),
             optional("stop", Kind::RunStop),
         ],
@@ -503,19 +509,9 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "list" => list(read),
         "list_ready" => Ok(BoardRequest::ListReady),
         "list_takeable" => Ok(BoardRequest::ListTakeable),
-        "show" => Ok(BoardRequest::Show(
-            read.task()?,
-            PlanView {
-                version: read.value("version").map(plans::version).transpose()?,
-                page: PlanPage::paged(
-                    read.offset("approach_from")?,
-                    read.offset("handoff_from")?,
-                    read.offset("items_from")?,
-                ),
-            },
-        )),
+        "show" => Ok(BoardRequest::Show(read.task()?, pins::shown(read)?)),
         "create" => create(read),
-        "update_draft" => update_draft(read),
+        "update_draft" => drafts::update_draft(read),
         "move" => change(moves::moved(read)?),
         "done_without_run" => moves::done_without_run(read),
         "renew" => change(BoardOp::Renew),
@@ -699,38 +695,6 @@ fn create(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     }))
 }
 
-fn update_draft(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
-    let parent = match read.value("parent") {
-        None => None,
-        Some(Value::Null) => Some(None),
-        Some(value) => Some(Some(slug("parent", value)?)),
-    };
-    let expected_updated = read.timestamp("expected_updated")?;
-    let (described, entry) = description::description(read)?;
-    let update = DraftUpdate {
-        id: read.task()?,
-        title: read.text("title")?,
-        description: described,
-        parent,
-        depends_on: read.slugs("depends_on")?,
-        expected_updated,
-        entry,
-    };
-    let sets_something = update.title.is_some()
-        || update.description.is_some()
-        || update.parent.is_some()
-        || update.depends_on.is_some();
-    match sets_something {
-        true => Ok(BoardRequest::UpdateDraft(update)),
-        // No field to change was given.
-        false => Err(RequestError::of(
-            "op",
-            "update_draft sets nothing: name a field to change",
-            FaultKind::Missing,
-        )),
-    }
-}
-
 #[path = "request_plans.rs"]
 mod plans;
 
@@ -739,6 +703,12 @@ mod description;
 
 #[path = "request_moves.rs"]
 mod moves;
+
+#[path = "request_pins.rs"]
+mod pins;
+
+#[path = "request_drafts.rs"]
+mod drafts;
 pub use description::entry_policy;
 
 #[cfg(test)]

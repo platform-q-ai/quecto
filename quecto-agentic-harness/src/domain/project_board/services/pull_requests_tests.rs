@@ -50,10 +50,7 @@ fn only_the_holder_of_a_live_claim_unlinks_a_linked_pull_request() {
 fn unlinking_behind_the_task_stamps_the_task_s_own_time() {
     let ahead = last_written(task(InProgress), &far_future());
     let unlinked = remove_pr(&ahead, &person("Ada"), 2483, &at("10:00:00")).unwrap();
-    assert_eq!(
-        unlinked.fields().updated,
-        far_future().plus_seconds(1).unwrap()
-    );
+    assert_eq!(unlinked.fields().updated, far_future());
 }
 
 #[test]
@@ -150,7 +147,7 @@ fn a_task_nobody_holds_links_no_pull_request_and_a_behind_clock_stamps_forward()
     .unwrap();
     assert_eq!(
         linked.fields().updated,
-        at("10:30:01"),
+        at("10:30:00"),
         "never stamped behind the task"
     );
 }

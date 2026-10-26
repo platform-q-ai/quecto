@@ -465,7 +465,6 @@ pub(super) fn refusal_parts(
         | E::InvalidWriter(_)
         | E::PrStateUnknown(_)
         | E::PullRequests(_)
-        | E::TaskAhead { .. }
         | E::ClockOutOfRange(_)
         | E::ClockAhead { .. }
         | E::Contended { .. }
@@ -527,6 +526,7 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         | R::AcceptedPlanChanged { .. }
         | R::PlansInconsistent(..)
         | R::PlanAhead { .. }
+        | R::TaskClockAhead { .. }
         | R::RunsInconsistent(..)
         | R::PlanNotAccepted(..)
         | R::NoAcceptedPlan

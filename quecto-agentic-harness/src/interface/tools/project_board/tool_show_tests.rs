@@ -422,7 +422,7 @@ fn pages_read_on_through_the_whole_plan() {
                 shown.clone(),
                 crate::application::project_board::operations::PlanView {
                     version: None,
-                    page: Some(page),
+                    page: Some(page.clone()),
                 },
             ),
             None,

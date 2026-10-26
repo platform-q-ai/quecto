@@ -102,7 +102,6 @@ impl FinishWithoutRun {
                         .map(|task| (task.fields().status, claim_facts(task, actor, &when.now)));
                 }
                 let task = task?;
-                when.may_build_on(task)?;
                 let reads = done_without_run_reads(task, actor, &when.now)?;
                 let runs = match reads.runs {
                     true => owned(board_view::runs_of(board, id)?),

@@ -2,6 +2,7 @@
 use crate::application::project_board::ports::feed::*;
 use crate::application::project_board::ports::*;
 use crate::domain::project_board::{entities::claim::Identity, value_objects::schema_error::line};
+use crate::infrastructure::persistence::project_board::board_tree::artifact_path;
 use crate::infrastructure::persistence::project_board::board_tree::{
     Board, LIMITS, MAX_BOARD_ENTRIES, object_id,
 };
@@ -64,6 +65,27 @@ impl ProjectBoardStore for SqliteProjectBoardStore {
         let tx = storage::Scope::begin(&mut c, false)?;
         let (head, root) = storage::current(&tx)?;
         Ok(self.board(&tx, &root)?.snapshot(head))
+    }
+    /// As the revision `rev` names held it, by the file's object, read
+    /// from that revision's root through the file's folder alone. A rev is
+    /// `<epoch>:<revision>`, the revision within that epoch's interval (an
+    /// opened epoch's held revision is named in both, #2705 B9 review
+    /// round 2); any other text names none.
+    fn object_at(
+        &self,
+        rev: &BoardHead,
+        key: &ArtifactKey,
+    ) -> Result<Option<String>, BoardStoreError> {
+        let mut c = self.connection.lock().map_err(unavailable)?;
+        let tx = storage::Scope::begin(&mut c, false)?;
+        let Some(root) = storage::root_at(&tx, rev)? else {
+            return Ok(None);
+        };
+        let (folder, name) = artifact_path(key);
+        let Some(tree) = reader::entry_of(&tx, &root, folder, "tree")? else {
+            return Ok(None);
+        };
+        reader::entry_of(&tx, &tree, &name, "blob")
     }
     fn bootstrap(&self) -> Result<BoardBootstrap, BoardStoreError> {
         use crate::infrastructure::persistence::project_board::{

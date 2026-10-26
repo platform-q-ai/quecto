@@ -125,7 +125,6 @@ impl CompleteMergedTask {
                     .map(|task| (task.fields().status, task.fields().prs.len()));
             }
             let task = task?;
-            when.may_build_on(task)?;
             // A task the rule would not complete is refused as such, before
             // its changes and runs are read.
             completable(task)?;

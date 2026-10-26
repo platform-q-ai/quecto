@@ -43,7 +43,6 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         C::ClockUnreadable => &["read"],
         C::ClosesCycle | C::IdInUse => &["task", "by"],
         C::PrStateUnknown => &["pr"],
-        C::TaskAhead => &["task", "updated"],
         C::ClockOutOfRange => &["reference"],
         C::ClockAhead => &["now", "reference"],
         C::Contended => &["attempts"],
@@ -159,10 +158,6 @@ board_errors! {
     E::PullRequests(PullRequestStatesError::Unavailable(_)) => {
         E::PullRequests(PullRequestStatesError::Unavailable("no gh".into()))
     },
-    E::TaskAhead { .. } => E::TaskAhead {
-        id: slug("a"),
-        updated: at("10:00:00"),
-    },
     E::ClockOutOfRange(_) => E::ClockOutOfRange(at("10:00:00")),
     E::ClockAhead { .. } => E::ClockAhead {
         now: at("10:00:00"),
@@ -179,7 +174,7 @@ board_errors! {
     ),
     E::Stale { .. } => E::Stale {
         id: slug("a"),
-        expected: at("09:00:00"),
+        expected: crate::application::project_board::dto::ReadPin::Updated(at("09:00:00")),
         updated: at("10:00:00"),
     },
     E::NoLauncher => E::NoLauncher,
@@ -450,6 +445,7 @@ board_rules! {
     R::ChangesUnmerged(_) => R::ChangesUnmerged(vec![1]), "changes_unmerged", ["changes"];
     R::ChangesInconsistent(_) => R::ChangesInconsistent("number 1 twice".into()), "changes_inconsistent", ["reason"];
     R::PlanAhead { .. } => R::PlanAhead { version: 2, updated: at("10:00:00") }, "plan_ahead", ["version", "updated"];
+    R::TaskClockAhead { .. } => R::TaskClockAhead { created: at("10:00:00"), until: at("09:59:00") }, "task_clock_ahead", ["created", "until"];
     R::Invalid(_) => R::Invalid(SchemaError::new("title", "is empty")), "invalid", ["field", "problem"];
     R::InvalidPlan(_) => R::InvalidPlan(SchemaError::new("items/0/title", "is empty")), "invalid_plan", ["field", "problem"];
 }

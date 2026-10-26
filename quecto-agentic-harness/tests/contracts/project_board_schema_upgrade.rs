@@ -95,6 +95,32 @@ fn a_schema_4_board_is_given_its_chain_behind_a_whole_copy() {
     assert_eq!(copies(&file).len(), 1);
 }
 
+/// B9 on an upgraded board: a revision pin still names the file that
+/// revision held, as it did at schema 4.
+#[test]
+fn an_upgraded_board_resolves_revision_pins_as_before() {
+    use quecto::application::project_board::ports::{ArtifactKey, BoardHead, BoardOpStore};
+    use quecto::domain::project_board::value_objects::slug::Slug;
+    let (_dir, file, _) = schema_4_board();
+    let key = ArtifactKey::Plan(Slug::parse("t").unwrap(), 1);
+    let pinned = |rev: &str| {
+        let c = Connection::open(&file).unwrap();
+        let held: Option<String> = c
+            .query_row("SELECT root FROM revisions WHERE head=?1", [rev], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        held
+    };
+    let before = pinned("1:3");
+    let ops = SqliteBoardOps::open(&file, identity()).unwrap();
+    assert_eq!(pinned("1:3"), before, "the upgrade changes no root");
+    let at = |rev: &str| ops.reads().object_at(&BoardHead(rev.into()), &key).unwrap();
+    assert!(at("1:3").is_some(), "revision 3 names the plan's file");
+    assert_eq!(at("1:1"), None, "the bootstrap held no plan");
+    assert_eq!(at("1:9"), None, "no such revision");
+}
+
 #[test]
 fn a_copy_that_cannot_be_made_refuses_the_upgrade_and_leaves_the_board() {
     let (dir, file, _) = schema_4_board();

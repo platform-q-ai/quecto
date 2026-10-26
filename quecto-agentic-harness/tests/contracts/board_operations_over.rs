@@ -400,7 +400,7 @@ fn begun(
     )
     .expect("shown");
     let accept = json!({"op": "accept_plan", "task": "a", "version": 1,
-                        "expected_updated": shown["plan"]["updated"], "expected_accepted": null});
+                        "expected_rev": shown["rev"], "expected_accepted": null});
     assert_eq!(serve_run(&operations, accept, &plain)["ok"], json!(true));
     let started = serve_run(
         &operations,

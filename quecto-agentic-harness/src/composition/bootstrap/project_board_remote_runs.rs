@@ -187,7 +187,7 @@ impl BoardOperations for RemoteRuns {
                     task,
                     run,
                     outcome: LEFT_RUN_END,
-                    expected_updated: None,
+                    expected: None,
                     stop: None,
                 });
             }

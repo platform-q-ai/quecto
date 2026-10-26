@@ -121,6 +121,28 @@ pub(super) fn open(path: &Path) -> Result<Connection, BoardStoreError> {
     }
 }
 
+/// The root tree of the revision `rev` names (#2705 B9): `<epoch>:<n>`,
+/// canonical, with revision `n` within that epoch's interval, from its
+/// first revision to the next epoch's first (an opened epoch's held
+/// revision lies in both) or the newest; `None` for any other text.
+pub(super) fn root_at(c: &Connection, rev: &BoardHead) -> Result<Option<String>, BoardStoreError> {
+    let Ok((epoch, revision)) = super::history::parse_head(&rev.0) else {
+        return Ok(None);
+    };
+    let root: Option<String> = c
+        .query_row(
+            "SELECT r.root FROM revisions r JOIN epochs e ON e.epoch=?1 \
+             WHERE r.revision=?2 AND ?2>=e.from_revision AND ?2<=coalesce(\
+             (SELECT from_revision FROM epochs WHERE epoch=?1+1),\
+             (SELECT max(revision) FROM revisions))",
+            params![epoch, revision],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(unavailable)?;
+    root.map(|root| object_id(&root)).transpose()
+}
+
 pub(super) fn current(c: &Connection) -> Result<(BoardHead, String), BoardStoreError> {
     let lengths:Option<(i64,Option<i64>)>=c.query_row("SELECT length(CAST(state.head AS BLOB)),length(CAST(revisions.root AS BLOB)) FROM state LEFT JOIN revisions ON revisions.head=state.head WHERE state.id=1",[],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(unavailable)?;
     if lengths.is_none_or(|(head, root)| head <= 64 && root.is_some_and(|n| n <= 64)) {
