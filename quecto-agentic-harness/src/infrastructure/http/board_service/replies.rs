@@ -113,8 +113,13 @@ async fn pump(streamed: Streamed, out: mpsc::Sender<Bytes>, conn: Driven) {
         let held = match principal.as_deref().map(|p| conn.answers.admit(p)) {
             None => None,
             Some(Some(held)) => Some(held),
+            // Every blocking answer of its caller is held: it waits a
+            // moment and asks again, unless its reader goes meanwhile.
             Some(None) => {
-                tokio::time::sleep(STREAM_RETRY).await;
+                tokio::select! {
+                    () = tokio::time::sleep(STREAM_RETRY) => {}
+                    () = out.closed() => break,
+                }
                 ask = true;
                 continue;
             }
