@@ -5,3 +5,4 @@ pub mod harness_lifetime;
 pub mod subagent_launch;
 
 pub mod turn_declaration;
+pub mod turn_outcome;
