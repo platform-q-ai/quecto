@@ -142,20 +142,22 @@ impl BoardWatch for RemoteBoardWatch {
             epoch: None,
         };
         let (mut failed, mut pause) = (0, timing.pause);
-        let mut busy: Option<(std::time::Instant, Duration)> = None;
+        // While busy: the pauses slept so far, and the next one. Counted, so
+        // the client reads no clock.
+        let mut busy: Option<(Duration, Duration)> = None;
         loop {
             let failure = match self.client.open_events(&path, standing.cursor, timing.idle) {
                 // Busy (a token's 2 streams, or the server's 32): a place
                 // frees within a connection's lifetime.
                 Ok(Opened::Refused(reply)) if reply.status == 503 => {
-                    let (since, backoff) = *busy.get_or_insert((std::time::Instant::now(), pause));
-                    if since.elapsed() >= timing.busy_for {
+                    let (waited, backoff) = *busy.get_or_insert((Duration::ZERO, pause));
+                    if waited >= timing.busy_for {
                         let why = refusal(reply.status, &reply.body);
-                        let waited = timing.busy_for.as_secs_f64();
+                        let waited = waited.as_secs_f64();
                         return Err(format!("{why} (still busy after {waited:.1} s)"));
                     }
                     std::thread::sleep(backoff);
-                    busy = Some((since, (backoff * 2).min(MAX_BACKOFF)));
+                    busy = Some((waited + backoff, (backoff * 2).min(MAX_BACKOFF)));
                     continue;
                 }
                 Ok(Opened::Refused(reply)) => return Err(refusal(reply.status, &reply.body)),
