@@ -515,9 +515,10 @@ follows, or any issued after it is promoted) make a follow refused unless
 follower holds its primary's instead. Give --replace-tokens to replace them
 (they are kept as tokens.json.pre-follow, or -1, -2 and on beside an earlier
 one, and refused at once), or give the follower its own --state <dir>").
-Given it, they are kept as `tokens.json.pre-follow`, created new (never
-over an earlier one, nor through a link: then as `tokens.json.pre-follow-1`,
-`-2` and on, to `-99`) and the server holds none, so they are refused at
+Given it, they are kept as `tokens.json.pre-follow`, written whole to a
+temporary file and then linked in (never over an earlier one, nor through a
+link: then as `tokens.json.pre-follow-1`, `-2` and on, to `-99`; a failed
+write leaves no file) and the server holds none, so they are refused at
 once, before its primary's are copied. A start refused for any other reason
 (its token file, its primary's URL) sets nothing aside. A follower's own
 operations write nothing: its store refuses every write, whatever the op.
@@ -534,8 +535,10 @@ suspend, from the moment it first stalled), it refuses every request over
 TCP, the change feed and replication batches included, 503 `standby_stale`
 with its primary as `primary` ("this standby's copy is not kept current
 (it is stalled, diverged, or not yet caught up): read its primary"). Its
-`/v1/status` (which says why) and `/v1/time`, and the Unix socket, are
-served still. A follower chained to a stale one is refused its batches, so
+`/v1/status` and `/v1/time`, and the Unix socket, are served still; its
+status over TCP is then the least (`role`, and `replication` with only
+`primary` and `state`), and the whole status, with why it stalled, is on
+the socket. A follower chained to a stale one is refused its batches, so
 it stalls and turns stale in turn, never serving a set it cannot renew. Each copied row is checked as it is taken, an allowlist: a native
 object's id is made again from its content, an imported original's git id
 from its raw bytes (SHA-1 or SHA-256, by its width) and a tree's entries

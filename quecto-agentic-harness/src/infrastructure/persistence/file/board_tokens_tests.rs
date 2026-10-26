@@ -415,6 +415,24 @@ fn a_followers_tokens_are_its_primarys_set_until_its_own_are_issued() {
     assert_eq!((own.held, own.copied), (2, false), "its own again");
 }
 
+/// B11 review 6: a set aside whose write fails leaves no file, partial or
+/// temporary, behind.
+#[test]
+fn a_failed_set_aside_leaves_no_partial_file() {
+    let (_dir, tokens) = opened();
+    let failed = tokens.kept_aside(|file| {
+        file.write_all(b"[")?;
+        Err(io::Error::other("no space left"))
+    });
+    assert!(failed.is_err());
+    let names: Vec<String> = std::fs::read_dir(&tokens.state)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    let left = |name: &String| name.starts_with(PRE_FOLLOW_FILE) || name.ends_with(".tmp");
+    assert!(!names.iter().any(left), "{names:?}");
+}
+
 /// B11 review 5: a set aside is created new, never through a name taken
 /// meanwhile (a dangling link included): it goes to the next free name.
 #[test]

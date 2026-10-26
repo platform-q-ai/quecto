@@ -34,7 +34,9 @@ fn follower_in(state: ReplicaState, devices: bool) -> BoardRoutes {
         .serving_devices(Arc::new(move || devices));
     let tokens = Arc::new(MemoryBoardTokens::default());
     let access = BoardAccess::new(tokens, Arc::new(SystemBoardClock::default()));
-    BoardRoutes::new(serve, access, operating(&store)).standby(PRIMARY.into())
+    BoardRoutes::new(serve, access, operating(&store))
+        .standby(PRIMARY.into())
+        .with_feed(Some(super::super::feed::tests::feed_of(2)))
 }
 
 fn sent(routes: &BoardRoutes, method: ServiceMethod, path: &str, body: Value) -> (u16, Value) {
@@ -56,7 +58,9 @@ fn sent(routes: &BoardRoutes, method: ServiceMethod, path: &str, body: Value) ->
 /// A device's read of the board's revisions over TCP: its status and code.
 fn device_reads(routes: &BoardRoutes) -> (u16, Value) {
     let revisions = format!("/v1/boards/{BOARD}/revisions");
-    let reply = routes.answer(&device(ServiceMethod::Get, &revisions, vec![]));
+    let mut read = device(ServiceMethod::Get, &revisions, vec![]);
+    read.query = Some("after=0".into());
+    let reply = routes.answer(&read);
     let body: Value = serde_json::from_slice(&reply.body).unwrap();
     (reply.status, body["code"].clone())
 }
@@ -75,13 +79,14 @@ fn device(method: ServiceMethod, path: &str, body: Vec<u8>) -> ServiceRequest {
 }
 
 /// B11 review 2: a follower whose copy is not kept current (stalled past
-/// its bound, or diverged) refuses devices' reads, so a token its primary
-/// revoked meanwhile reads nothing; the Unix socket is served still.
+/// its bound, or diverged) refuses devices' board reads, so a token its
+/// primary revoked meanwhile reads no board; the Unix socket is served
+/// still.
 #[test]
 fn a_stale_follower_refuses_devices_reads_and_serves_the_socket() {
     let stalled = || ReplicaState::Stalled("no primary".into());
     let short = follower_in(stalled(), true);
-    assert_ne!(device_reads(&short).1, "standby_stale", "stalled briefly");
+    assert_eq!(device_reads(&short).0, 200, "stalled briefly, it serves");
     let refusal = (503, json!("standby_stale"));
     for stale in [
         follower_in(stalled(), false),
@@ -124,9 +129,10 @@ fn a_stale_followers_feed_and_writes_are_refused_naming_its_primary() {
     assert_eq!(body["primary"], PRIMARY, "{body}");
 }
 
-/// B11 review 5: a stale follower's status and time are served to devices
-/// (its status says why it is stale); its board routes, replication
-/// batches included, are not, so a follower chained to it stalls too.
+/// B11 review 5: a stale follower's status and time are served to devices;
+/// its board routes, replication batches included, are not, so a follower
+/// chained to it stalls too. Review 6: its status over TCP is the least
+/// (role, replication state, primary); the socket's is whole.
 #[test]
 fn a_stale_followers_status_and_time_are_served_its_batches_are_not() {
     let stale = follower_in(ReplicaState::Stalled("no primary".into()), false);
@@ -136,7 +142,20 @@ fn a_stale_followers_status_and_time_are_served_its_batches_are_not() {
     }
     let status = stale.answer(&device(ServiceMethod::Get, "/v1/status", vec![]));
     let status: Value = serde_json::from_slice(&status.body).unwrap();
-    assert!(status.to_string().contains("no primary"), "{status}");
+    let least = json!({"role": "follower",
+        "replication": {"primary": PRIMARY, "state": "stalled"}});
+    assert_eq!(status, least);
+    let (_, whole) = sent(&stale, ServiceMethod::Get, "/v1/status", Value::Null);
+    assert_eq!(whole["replication"]["reason"], "no primary", "{whole}");
+    assert_eq!(whole["replication"]["applied"], 2, "{whole}");
+    assert!(whole["head"].is_string(), "{whole}");
+    let fresh = follower_in(ReplicaState::Following, true);
+    let status = fresh.answer(&device(ServiceMethod::Get, "/v1/status", vec![]));
+    let status: Value = serde_json::from_slice(&status.body).unwrap();
+    assert_eq!(
+        status["replication"]["applied"], 2,
+        "whole while fresh: {status}"
+    );
     let replicate = format!("/v1/boards/{BOARD}/replicate");
     let mut batches = device(ServiceMethod::Get, &replicate, vec![]);
     batches.principal = Some("replica:eccup".into());
