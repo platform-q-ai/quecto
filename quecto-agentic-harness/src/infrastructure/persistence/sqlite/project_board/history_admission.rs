@@ -7,7 +7,10 @@ use crate::infrastructure::persistence::project_board::{
     board_tree::raw_entry_bytes, history::commit_links,
 };
 
-pub(super) fn projection(o: &HistoryObject, width: usize) -> HistoryResult<()> {
+pub(in crate::infrastructure::persistence::sqlite::project_board) fn projection(
+    o: &HistoryObject,
+    width: usize,
+) -> HistoryResult<()> {
     let mut bytes = o.bytes.as_slice();
     for row in &o.entries {
         let space = bytes

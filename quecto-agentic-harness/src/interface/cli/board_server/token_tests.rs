@@ -13,6 +13,10 @@ fn token_takes_add_revoke_and_list_with_a_socket() {
             TokenAction::Add("laptop".into()),
         ),
         (
+            "add eccup --replica --socket /run/board.sock",
+            TokenAction::AddReplica("eccup".into()),
+        ),
+        (
             "revoke laptop --socket /run/board.sock",
             TokenAction::Revoke("laptop".into()),
         ),

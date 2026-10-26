@@ -2,19 +2,22 @@
 //! reads `GET /v1/status` and `GET /v1/time`; the board's operations
 //! `POST /v1/boards/{id}/op` ([`super::op`]); the change feed (B10), `GET
 //! /v1/boards/{id}/events` and `GET /v1/boards/{id}/revisions`
-//! ([`super::feed`]); admin `GET`/`POST /v1/admin/tokens` and `POST
-//! /v1/admin/tokens/revoke`, on the Unix socket only (403 over TCP); else
-//! 404, or 405 naming a route's methods.
+//! ([`super::feed`]); a primary's batches for its followers (B11), `GET
+//! /v1/boards/{id}/replicate`; admin `GET`/`POST /v1/admin/tokens` and
+//! `POST /v1/admin/tokens/revoke`, on the Unix socket only (403 over TCP);
+//! else 404, or 405 naming a route's methods. A follower (B11) answers
+//! every write 409 `standby`, naming its primary.
 use std::sync::PoisonError;
 
 use serde_json::json;
 
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{
-    BoardClockError, BoardStoreError, ServeError, TokenError,
+    BoardClockError, BoardStoreError, ServeError, TokenError, TokenKind,
 };
 use crate::application::project_board::use_cases::{
     BoardAccess, FollowBoard, Principal, Refused, Scope, ServeBoard, ServeBoardOperation,
+    ServeReplication,
 };
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
@@ -32,6 +35,10 @@ pub struct BoardRoutes {
     operations: ServeBoardOperation,
     /// The change feed (B10); none answers its routes 404.
     feed: Option<FollowBoard>,
+    /// The batches for followers (B11); none answers the route 404.
+    replication: Option<ServeReplication>,
+    /// A follower's primary (B11): every write is refused, naming it.
+    standby: Option<String>,
     /// The token store's failure last said on stderr.
     unavailable: std::sync::Mutex<String>,
 }
@@ -46,13 +53,15 @@ enum Route {
     Op,
     Events,
     Revisions,
+    Replicate,
 }
 
 /// The routes under a board's id, by their last segment.
-const BOARD_ROUTES: [(&str, Route); 3] = [
+const BOARD_ROUTES: [(&str, Route); 4] = [
     ("/op", Route::Op),
     ("/events", Route::Events),
     ("/revisions", Route::Revisions),
+    ("/replicate", Route::Replicate),
 ];
 
 impl Route {
@@ -70,7 +79,7 @@ impl Route {
     /// The methods it takes, as an `Allow` value.
     fn allow(self) -> &'static str {
         match self {
-            Self::Status | Self::Time | Self::Events | Self::Revisions => "GET",
+            Self::Status | Self::Time | Self::Events | Self::Revisions | Self::Replicate => "GET",
             Self::Tokens => "GET, POST",
             Self::Revoke | Self::Op => "POST",
         }
@@ -86,6 +95,7 @@ impl Route {
     fn scope(self) -> Scope {
         match self {
             Self::Status | Self::Time | Self::Op | Self::Events | Self::Revisions => Scope::Read,
+            Self::Replicate => Scope::Replicate,
             Self::Tokens | Self::Revoke => Scope::Admin,
         }
     }
@@ -108,6 +118,15 @@ struct Named {
     name: String,
 }
 
+/// A token's making: its name, and whether it is a follower's (B11).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Adding {
+    name: String,
+    #[serde(default)]
+    replica: bool,
+}
+
 impl BoardRoutes {
     pub fn new(serve: ServeBoard, access: BoardAccess, operations: ServeBoardOperation) -> Self {
         Self {
@@ -115,8 +134,52 @@ impl BoardRoutes {
             access,
             operations,
             feed: None,
+            replication: None,
+            standby: None,
             unavailable: std::sync::Mutex::default(),
         }
+    }
+
+    /// The routes, giving followers `replication`'s batches (B11).
+    pub fn with_replication(self, replication: Option<ServeReplication>) -> Self {
+        Self {
+            replication,
+            ..self
+        }
+    }
+
+    /// The routes of a follower of `primary` (B11): every write is 409.
+    pub fn standby(self, primary: String) -> Self {
+        Self {
+            standby: Some(primary),
+            ..self
+        }
+    }
+
+    /// A follower's refusal of a device's request while its copy is not
+    /// kept current: 503 `standby_stale`. Its status (which says why) and
+    /// time, and the Unix socket, are served still; its batches are not, so
+    /// a follower chained to it stalls too.
+    fn stale(&self, route: Route, transport: Transport) -> Option<ServiceReply> {
+        match (route, transport, self.serve.serves_devices()) {
+            (Route::Status | Route::Time, _, _) | (_, Transport::Local, _) | (_, _, true) => None,
+            (_, Transport::Tcp, false) => {
+                let primary = self.standby.as_deref().unwrap_or_default();
+                let primary = redact_secrets(&redact_url_userinfo(primary));
+                let why = "this standby's copy is not kept current (it is stalled, diverged, or \
+                           not yet caught up): read its primary";
+                let body = json!({"error": why, "code": "standby_stale", "primary": primary});
+                Some(ServiceReply::json(503, &body))
+            }
+        }
+    }
+
+    /// A follower's refusal of a write: 409 `standby`, naming its primary.
+    fn refused_standby(primary: &str) -> ServiceReply {
+        let primary = redact_secrets(&redact_url_userinfo(primary));
+        let body = json!({"error": "this server is a standby: write to its primary",
+            "code": "standby", "primary": primary});
+        ServiceReply::json(409, &body)
     }
 
     /// The routes, serving `feed` as the board's change feed (B10).
@@ -171,13 +234,20 @@ impl BoardRoutes {
         if let Err(reply) = self.served(&request.path) {
             return reply;
         }
-        match answer_op(&self.operations, principal, &request.body) {
+        let standby = self.standby.as_deref();
+        match answer_op(
+            &self.operations,
+            principal,
+            &request.body,
+            standby.is_some(),
+        ) {
             Ok(answer) => ServiceReply {
                 body: answer.into_bytes(),
                 ..ServiceReply::json(200, &serde_json::Value::Null)
             },
             Err(OpRefusal::Body(why)) => coded(400, "request", &why),
             Err(OpRefusal::Access(refused)) => self.refusal(&refused, request.transport),
+            Err(OpRefusal::Standby) => Self::refused_standby(standby.unwrap_or_default()),
             Err(OpRefusal::Serve(error)) => failed(&error),
         }
     }
@@ -198,6 +268,17 @@ impl BoardRoutes {
                 403,
                 "local_only",
                 "forbidden: admin routes and operations are served on the Unix socket only",
+            ),
+            Refused::ReplicaOnly => coded(
+                403,
+                "replica_only",
+                "forbidden: replication batches are served to a replica token \
+                 (`token add <name> --replica`) or on the Unix socket only",
+            ),
+            Refused::ReadOnly => coded(
+                403,
+                "replica_reads",
+                "forbidden: a replica token reads and replicates, and writes nothing",
             ),
             Refused::Unavailable(error) => match transport {
                 Transport::Local => coded(503, "unavailable", &error.to_string()),
@@ -222,8 +303,34 @@ impl BoardRoutes {
 
     /// Answers `request` from `principal` on `route`, a method it takes.
     fn route(&self, route: Route, request: &ServiceRequest, principal: &Principal) -> ServiceReply {
+        // A follower writes nothing but its primary's batches: an allowlist
+        // of the routes it answers whole (an op is judged by its scope).
+        let read_only = matches!(
+            (route, request.method),
+            (Route::Tokens, ServiceMethod::Get)
+                | (
+                    Route::Status
+                        | Route::Time
+                        | Route::Op
+                        | Route::Events
+                        | Route::Revisions
+                        | Route::Replicate,
+                    _
+                )
+        );
+        if let (Some(primary), false) = (&self.standby, read_only) {
+            return Self::refused_standby(primary);
+        }
+        if let Some(stale) = self.stale(route, request.transport) {
+            return stale;
+        }
         match (route, request.method) {
             (Route::Op, _) => self.op(request, principal),
+            (Route::Replicate, _) => match (self.served(&request.path), &self.replication) {
+                (Ok(()), Some(replication)) => super::feed::replicate(replication, request),
+                (Ok(()), None) => coded(404, "route", "no such route"),
+                (Err(reply), _) => reply,
+            },
             (Route::Revisions, _) => match self.feed_of(&request.path) {
                 Ok(feed) => super::feed::revisions(feed, request),
                 Err(reply) => reply,
@@ -234,11 +341,30 @@ impl BoardRoutes {
             // or a future front end, which is told to read the feed as a stream.
             (Route::Events, _) => coded(400, "stream", "the change feed is read as a stream"),
             (Route::Status, _) => read(self.serve.status().map(|status| {
-                json!({
-                    "role": status.role.as_str(),
-                    "board": status.board.as_str(),
-                    "head": status.head.map(|head| head.0),
-                })
+                // Whole on the socket, or to a device while the copy is kept
+                // current; else the least: role, replication state, primary.
+                let whole = match (request.transport, self.serve.serves_devices()) {
+                    (Transport::Local, _) | (Transport::Tcp, true) => true,
+                    (Transport::Tcp, false) => false,
+                };
+                let mut body = json!({ "role": status.role.as_str() });
+                if whole {
+                    body["board"] = json!(status.board.as_str());
+                    body["head"] = json!(status.head.map(|head| head.0));
+                }
+                if let Some(replica) = status.replica {
+                    let primary = redact_secrets(&redact_url_userinfo(&replica.primary));
+                    let state = replica.state.as_str();
+                    body["replication"] = json!({ "primary": primary, "state": state });
+                    if whole {
+                        let replication = &mut body["replication"];
+                        replication["applied"] = json!(replica.applied);
+                        replication["primary_head"] = json!(replica.primary_head);
+                        let reason = replica.state.reason().map(redact_secrets);
+                        replication["reason"] = json!(reason);
+                    }
+                }
+                body
             })),
             (Route::Time, _) => read(
                 self.serve
@@ -248,22 +374,37 @@ impl BoardRoutes {
             (Route::Tokens, ServiceMethod::Get) => administer(self.access.list().map(|records| {
                 let tokens: Vec<_> = records
                     .iter()
-                    .map(|token| json!({"name": token.name.as_str(), "created": token.created.as_str()}))
+                    .map(|token| {
+                        json!({"name": token.name.as_str(),
+                        "created": token.created.as_str(), "kind": token.kind.as_str()})
+                    })
                     .collect();
                 (200, json!({ "tokens": tokens }))
             })),
-            (Route::Tokens, ServiceMethod::Post) => named(&request.body, |name| {
-                administer(self.access.add(name).map(|issued| {
+            (Route::Tokens, ServiceMethod::Post) => {
+                let Ok(adding) = serde_json::from_slice::<Adding>(&request.body) else {
+                    let why = "the body must be {\"name\": \"<token name>\"} \
+                               (and \"replica\": true for a follower's)";
+                    return coded(400, "request", why);
+                };
+                let kind = match adding.replica {
+                    true => TokenKind::Replica,
+                    false => TokenKind::Device,
+                };
+                administer(self.access.add_kind(&adding.name, kind).map(|issued| {
                     let record = &issued.record;
                     let body = json!({"name": record.name.as_str(),
-                        "created": record.created.as_str(), "token": issued.secret});
+                        "created": record.created.as_str(), "kind": record.kind.as_str(),
+                        "token": issued.secret});
                     (201, body)
                 }))
-            }),
+            }
             (Route::Revoke, _) => named(&request.body, |name| {
-                administer(self.access.revoke(name).map(|name| {
-                    (200, json!({ "name": name.as_str(), "revoked": true }))
-                }))
+                administer(
+                    self.access
+                        .revoke(name)
+                        .map(|name| (200, json!({ "name": name.as_str(), "revoked": true }))),
+                )
             }),
         }
     }
@@ -289,9 +430,11 @@ impl ServiceHandler for BoardRoutes {
     /// A TCP caller with no held token is 401; a held token's name is the
     /// principal the listener hands to `answer`.
     fn authenticate_remote(&self, authorization: Option<&str>) -> Result<String, ServiceReply> {
-        let device = self.access.authenticate(authorization.and_then(bearer));
-        let device = device.map_err(|refused| self.refusal(&refused, Transport::Tcp))?;
-        Ok(device.as_str().to_string())
+        let principal = self
+            .access
+            .authenticate_principal(authorization.and_then(bearer));
+        let principal = principal.map_err(|refused| self.refusal(&refused, Transport::Tcp))?;
+        Ok(principal.gated())
     }
 
     fn answer(&self, request: &ServiceRequest) -> ServiceReply {
@@ -314,7 +457,11 @@ impl ServiceHandler for BoardRoutes {
         request: &ServiceRequest,
         wake: StreamWake,
     ) -> Result<Box<dyn ServiceStream>, ServiceReply> {
-        match self.admitted(request)? {
+        let admitted = self.admitted(request)?;
+        if let Some(stale) = self.stale(admitted.0, request.transport) {
+            return Err(stale);
+        }
+        match admitted {
             (Route::Events, _) => super::feed::open(self.feed_of(&request.path)?, request, wake),
             (_, _) => Err(coded(404, "route", "no such route")),
         }
@@ -417,3 +564,7 @@ pub(super) fn failed(error: &ServeError) -> ServiceReply {
 #[cfg(test)]
 #[path = "routes_tests.rs"]
 pub(super) mod tests;
+
+#[cfg(test)]
+#[path = "routes_follower_tests.rs"]
+mod follower_tests;

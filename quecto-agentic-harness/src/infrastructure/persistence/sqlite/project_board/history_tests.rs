@@ -113,7 +113,7 @@ fn imported_native_unchanged_clear_can_carry_original_root_both_formats() {
         let c = storage::open(&store.path).unwrap();
         c.execute_batch("BEGIN IMMEDIATE").unwrap();
         let mut writer = storage::ObjectWriter::new(&c);
-        writer.insert("INSERT INTO revisions VALUES ('2:2',?1,'History','h@example.com',2,1,'Clear',2,NULL,NULL)",[&root]).unwrap();
+        writer.insert("INSERT INTO revisions VALUES ('2:2',?1,'History','h@example.com',2,1,'Clear',2,NULL,NULL,NULL)",[&root]).unwrap();
         writer
             .insert("INSERT INTO epochs VALUES (2,2,'clear',2)", [])
             .unwrap();
@@ -163,6 +163,61 @@ fn import_dto_projection_messages_are_charged_to_metadata_before_rows() {
         r.message = "x".repeat(65536);
     }
     assert!(matches!(admission(&h), Err(HistoryError::Bounds(_))));
+}
+
+/// B11: an import makes each revision's chain from the history alone, so
+/// the same history imported on two machines holds the same chains.
+#[test]
+fn an_import_makes_each_chain_the_same_on_every_machine() {
+    let chains = |algorithm| {
+        let temp = tempfile::tempdir().unwrap();
+        let store = fixture(temp.path().join("board.db"), algorithm);
+        let chain: Option<String> = storage::open(&store.path)
+            .unwrap()
+            .query_row("SELECT chain FROM revisions WHERE revision=1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        chain.expect("an imported revision has its chain")
+    };
+    for algorithm in [HistoryAlgorithm::Sha1, HistoryAlgorithm::Sha256] {
+        assert_eq!(chains(algorithm), chains(algorithm));
+    }
+    assert_ne!(
+        chains(HistoryAlgorithm::Sha1),
+        chains(HistoryAlgorithm::Sha256),
+        "another history, another chain"
+    );
+}
+
+/// B11 review: an imported board (its revisions holding their original
+/// commits) at schema 4 is upgraded to the chains its import makes now.
+#[test]
+fn an_imported_schema_4_board_is_upgraded_to_its_imports_chains() {
+    for algorithm in [HistoryAlgorithm::Sha1, HistoryAlgorithm::Sha256] {
+        let temp = tempfile::tempdir().unwrap();
+        let store = fixture(temp.path().join("board.db"), algorithm);
+        let read = |c: &Connection| -> (Option<String>, Option<String>, Option<Vec<u8>>) {
+            c.query_row(
+                "SELECT chain,git_commit,git_meta FROM revisions WHERE revision=1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap()
+        };
+        let imported = read(&storage::open(&store.path).unwrap());
+        assert!(imported.1.is_some() && imported.2.is_some(), "an original");
+        Connection::open(&store.path)
+            .unwrap()
+            .execute_batch("ALTER TABLE revisions DROP COLUMN chain; PRAGMA user_version=4;")
+            .unwrap();
+        let upgraded = read(&storage::open(&store.path).unwrap());
+        assert_eq!(upgraded, imported, "{algorithm:?}");
+        assert!(
+            store.snapshot().is_ok(),
+            "export reads it after the upgrade"
+        );
+    }
 }
 
 #[test]

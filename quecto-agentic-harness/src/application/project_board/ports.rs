@@ -28,7 +28,7 @@ pub use served::{
 mod listen_address;
 pub use listen_address::ListenAddress;
 mod tokens;
-pub use tokens::{BoardTokens, IssuedToken, MAX_TOKENS, TokenError, TokenRecord};
+pub use tokens::{BoardTokens, IssuedToken, MAX_TOKENS, TokenError, TokenKind, TokenRecord};
 mod time_sync;
 pub use time_sync::{ClockSync, TimeSync};
 
@@ -739,3 +739,4 @@ pub trait BoardOperations: Send + Sync {
 pub mod backup;
 pub mod feed;
 pub mod history;
+pub mod replication;

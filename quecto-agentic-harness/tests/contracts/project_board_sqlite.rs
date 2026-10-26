@@ -895,7 +895,7 @@ fn round2_recognized_names_wrong_ddl_refused_before_any_mutation() {
         INSERT INTO objects VALUES ('unreachable-blob','blob',X'00FF',NULL);
         INSERT INTO objects VALUES ('unreachable-tree','tree',NULL,19);
         INSERT INTO tree_entries VALUES ('unreachable-tree',0,'100644',X'FF00','unreachable-blob');
-        INSERT INTO revisions VALUES ('unreachable-revision','unreachable-tree','Unreachable','unreachable@example.com',3,NULL,'unreachable fixture',0,NULL,NULL);").unwrap();
+        INSERT INTO revisions VALUES ('unreachable-revision','unreachable-tree','Unreachable','unreachable@example.com',3,NULL,'unreachable fixture',0,NULL,NULL,NULL);").unwrap();
     let names = rows(
         &raw,
         "SELECT name,type,tbl_name FROM sqlite_schema ORDER BY name",
@@ -903,7 +903,7 @@ fn round2_recognized_names_wrong_ddl_refused_before_any_mutation() {
     assert_eq!(
         names.len(),
         16,
-        "nine schema-4 tables and seven indexes (B7 adds op_results and revision_principals)"
+        "nine schema-5 tables and seven indexes (B7 adds op_results and revision_principals)"
     );
     assert_eq!(
         rows(&raw, "PRAGMA application_id"),
@@ -911,7 +911,7 @@ fn round2_recognized_names_wrong_ddl_refused_before_any_mutation() {
     );
     assert_eq!(
         rows(&raw, "PRAGMA user_version"),
-        vec![vec![Value::Integer(4)]]
+        vec![vec![Value::Integer(5)]]
     );
     assert_eq!(
         rows(&raw, "PRAGMA integrity_check"),

@@ -166,6 +166,7 @@ fn served_with(
         config: dir.path().join("base").join("config.json"),
         state: Some(dir.path().join("state")),
         base_dir: dir.path().join("base"),
+        follow: None,
     };
     let handles = build_board_server_with(&environment, sync).unwrap();
     let board = handles.serve.board().clone();
