@@ -308,9 +308,9 @@ fn digests_spell_as_lowercase_hex() {
     assert!(held(entry("00")).is_none());
 }
 
-/// B11 review 4: a crash while a follower swaps in its primary's next set
-/// (after the digests are noted, before or after tokens.json is replaced)
-/// leaves a set a restart knows as its primary's, never as its own.
+/// B11 review 5: a crash inside `replace`, once the primary's next set is
+/// swapped in and before the note is trimmed, leaves a set a restart knows
+/// as its primary's, never as its own.
 #[test]
 fn a_crash_while_a_set_is_swapped_in_leaves_a_primarys_set() {
     let (dir, primary) = opened();
@@ -318,42 +318,34 @@ fn a_crash_while_a_set_is_swapped_in_leaves_a_primarys_set() {
     let state = dir.path().join("follower");
     let follower = FileBoardTokens::open(&state).unwrap();
     follower.replace(&primary.export().unwrap()).unwrap();
-    let older = follower.export().unwrap();
     primary.add(&name("laptop"), &at()).unwrap();
-    let mut newer = primary.export().unwrap();
-    newer.sort_by(|a, b| a.name.cmp(&b.name));
-    // The swap's first write: both sets noted.
-    let noted = vec![set_digest(&newer), set_digest(&older)];
-    follower.keep_copied(&noted).unwrap();
-    for swapped in [false, true] {
-        if swapped {
-            // The swap's second write: tokens.json holds the newer set.
-            let rows: Vec<Held> = newer
-                .iter()
-                .map(|row| Held {
-                    record: TokenRecord {
-                        name: row.name.clone(),
-                        created: row.created.clone(),
-                        kind: row.kind,
-                    },
-                    digest: row.digest.clone(),
-                })
-                .collect();
-            follower
-                .changing(|held| {
-                    *held = rows;
-                    Ok(())
-                })
-                .unwrap();
-        }
-        let held = follower.followed().unwrap();
-        assert!(
-            held.copied,
-            "a primary's set (swapped: {swapped}): {held:?}"
-        );
-    }
+    // The crash: `replace` stops once the set is swapped in.
+    follower.swapped_in(&primary.export().unwrap()).unwrap();
     drop(follower);
     let reopened = FileBoardTokens::open(&state).unwrap();
-    assert!(reopened.followed().unwrap().copied);
+    let held = reopened.followed().unwrap();
+    assert_eq!((held.held, held.copied), (2, true), "the primary's set");
     assert_eq!(reopened.verify(&first.secret), Ok(Some(name("phone"))));
+}
+
+/// B11 review 5: a swap refused after the note is written leaves a
+/// server's own set its own: its digest is never noted as a primary's.
+#[test]
+fn a_swap_refused_after_the_note_leaves_a_servers_own_set_its_own() {
+    let (_dir, own) = opened();
+    own.add(&name("laptop"), &at()).unwrap();
+    let primary = FileBoardTokens::open(&own.state.with_file_name("primary")).unwrap();
+    primary.add(&name("phone"), &at()).unwrap();
+    // The same bytes written again behind the server: its swap is refused.
+    let path = tokens_path(&own);
+    let again = path.with_file_name("tokens.again");
+    std::fs::write(&again, std::fs::read(&path).unwrap()).unwrap();
+    std::fs::set_permissions(&again, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::rename(&again, &path).unwrap();
+    assert!(own.replace(&primary.export().unwrap()).is_err());
+    let state = own.state.clone();
+    drop(own);
+    let reopened = FileBoardTokens::open(&state).unwrap();
+    let held = reopened.followed().unwrap();
+    assert_eq!((held.held, held.copied), (1, false), "its own set");
 }

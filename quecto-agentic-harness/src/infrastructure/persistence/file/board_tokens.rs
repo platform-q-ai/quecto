@@ -265,6 +265,51 @@ impl FileBoardTokens {
 }
 
 impl FileBoardTokens {
+    /// Notes, then swaps in, the primary's set `rows` (a replace untrimmed).
+    fn swapped_in(&self, rows: &[AdminToken]) -> Result<String, TokenError> {
+        let names: std::collections::BTreeSet<_> = rows.iter().map(|row| &row.name).collect();
+        let shaped = |row: &AdminToken| {
+            held(StoredToken {
+                name: row.name.as_str().to_string(),
+                sha256: row.digest.clone(),
+                created: row.created.as_str().to_string(),
+                replica: row.kind == TokenKind::Replica,
+            })
+        };
+        let next: Option<Vec<Held>> = rows.iter().map(shaped).collect();
+        let next = match (next, names.len() == rows.len(), rows.len() <= MAX_TOKENS) {
+            (Some(next), true, true) => next,
+            (_, _, _) => {
+                return Err(TokenError::Unavailable(
+                    "the primary's tokens are not as a token is kept".into(),
+                ));
+            }
+        };
+        let mut now = self.export()?;
+        let mut wanted = rows.to_vec();
+        wanted.sort_by(|a, b| a.name.cmp(&b.name));
+        now.sort_by(|a, b| a.name.cmp(&b.name));
+        let (held, taken) = (set_digest(&now), set_digest(&wanted));
+        // While the set is swapped, both it and the one it replaces (when
+        // that was the primary's too) are noted: a crash between the two
+        // writes leaves a set a restart knows as its primary's.
+        match now == wanted {
+            true => {}
+            false => {
+                let mut noted = vec![taken.clone()];
+                if self.copied()?.contains(&held) {
+                    noted.push(held);
+                }
+                self.keep_copied(&noted)?;
+                self.changing(|held| {
+                    *held = next;
+                    Ok(())
+                })?;
+            }
+        }
+        Ok(taken)
+    }
+
     /// Makes a token of `kind`, keeping its digest.
     fn added(
         &self,
@@ -357,46 +402,7 @@ impl AdminRows for FileBoardTokens {
     }
 
     fn replace(&self, rows: &[AdminToken]) -> Result<(), TokenError> {
-        let names: std::collections::BTreeSet<_> = rows.iter().map(|row| &row.name).collect();
-        let shaped = |row: &AdminToken| {
-            held(StoredToken {
-                name: row.name.as_str().to_string(),
-                sha256: row.digest.clone(),
-                created: row.created.as_str().to_string(),
-                replica: row.kind == TokenKind::Replica,
-            })
-        };
-        let next: Option<Vec<Held>> = rows.iter().map(shaped).collect();
-        let next = match (next, names.len() == rows.len(), rows.len() <= MAX_TOKENS) {
-            (Some(next), true, true) => next,
-            (_, _, _) => {
-                return Err(TokenError::Unavailable(
-                    "the primary's tokens are not as a token is kept".into(),
-                ));
-            }
-        };
-        let mut now = self.export()?;
-        let mut wanted = rows.to_vec();
-        wanted.sort_by(|a, b| a.name.cmp(&b.name));
-        now.sort_by(|a, b| a.name.cmp(&b.name));
-        let (held, taken) = (set_digest(&now), set_digest(&wanted));
-        // While the set is swapped, both it and the one it replaces (when
-        // that was the primary's too) are noted: a crash between the two
-        // writes leaves a set a restart knows as its primary's.
-        match now == wanted {
-            true => {}
-            false => {
-                let mut noted = vec![taken.clone()];
-                if self.copied()?.contains(&held) {
-                    noted.push(held);
-                }
-                self.keep_copied(&noted)?;
-                self.changing(|held| {
-                    *held = next;
-                    Ok(())
-                })?;
-            }
-        }
+        let taken = self.swapped_in(rows)?;
         self.keep_copied(&[taken])
     }
 }
