@@ -136,7 +136,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
             uds_single_client::SingleClientArgs {
                 agent,
                 turn_session,
-                parent_outcome,
                 workspace,
                 messages,
                 model,
