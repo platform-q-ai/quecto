@@ -15,6 +15,8 @@ use super::limits::MAX_HEAD_BYTES;
 
 /// The most bytes one event, all its lines, may take.
 pub const MAX_EVENT_BYTES: usize = 8 * 1024;
+/// The longest reconnection delay a stream's `retry:` is taken at.
+pub const MAX_RETRY: Duration = Duration::from_secs(60);
 
 /// One event as the stream sent it: its id, its name, its data lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,6 +132,11 @@ impl BoardServiceClient {
 }
 
 impl EventReader {
+    /// The reconnection delay the stream's `retry:` set, if it set one.
+    pub fn retry(&self) -> Option<Duration> {
+        None
+    }
+
     /// The next event; `None` once the stream ends (an event cut short is
     /// dropped, never handed on).
     ///

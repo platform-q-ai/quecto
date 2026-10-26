@@ -138,13 +138,71 @@ fn an_event_cut_short_is_dropped() {
     assert_eq!(reader.next_event().unwrap(), None);
 }
 
+/// Review (#2757 M1): a bad chunk size is a malformed stream, not a
+/// transport failure a watch would quietly retry.
 #[test]
-fn a_bad_chunk_size_is_a_failed_read() {
+fn a_bad_chunk_size_is_malformed() {
     let mut reply = chunked("", 1);
     reply.truncate(reply.len() - 5);
     reply.extend(b"zz\r\n");
     let Ok(Opened::Stream(mut reader)) = opened(reply).0 else {
         panic!("a stream opens");
     };
-    assert!(matches!(reader.next_event(), Err(ClientError::Io(_))));
+    assert!(matches!(
+        reader.next_event(),
+        Err(ClientError::Malformed(_))
+    ));
+}
+
+/// Every event a stream of `body` gives, to its end.
+fn all_events(body: &str) -> Vec<StreamEvent> {
+    let Ok(Opened::Stream(mut reader)) = opened(chunked(body, 5)).0 else {
+        panic!("a stream opens");
+    };
+    std::iter::from_fn(|| reader.next_event().unwrap()).collect()
+}
+
+/// Review (#2757 L3, L4): lines end in LF, CRLF or a bare CR alike; data
+/// over several lines is joined by LF.
+#[test]
+fn lines_end_in_lf_crlf_or_cr_and_data_lines_join() {
+    for body in [
+        "id: 4\nevent: revision\ndata: a\ndata: b\n\n",
+        "id: 4\r\nevent: revision\r\ndata: a\r\ndata: b\r\n\r\n",
+        "id: 4\revent: revision\rdata: a\rdata: b\r\r",
+    ] {
+        let events = all_events(body);
+        let want = StreamEvent {
+            id: Some("4".into()),
+            event: "revision".into(),
+            data: "a\nb".into(),
+        };
+        assert_eq!(events, vec![want], "{body:?}");
+    }
+}
+
+/// Review (#2757 L3): an event with no data is not dispatched, as the SSE
+/// spec has it; the next one is.
+#[test]
+fn an_event_with_no_data_is_not_dispatched() {
+    let events = all_events("id: 3\nevent: epoch\n\nid: 4\nevent: revision\ndata: x\n\n");
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].id.as_deref(), Some("4"));
+}
+
+/// Review (#2757 L3): a stream's `retry:` is the reader's reconnection
+/// delay, up to a minute; one not a number is ignored.
+#[test]
+fn retry_sets_the_reconnection_delay() {
+    for (body, retry) in [
+        ("retry: 2500\n\n", Some(Duration::from_millis(2_500))),
+        ("retry: soon\n\n", None),
+        ("retry: 999999999\n\n", Some(MAX_RETRY)),
+    ] {
+        let Ok(Opened::Stream(mut reader)) = opened(chunked(body, 5)).0 else {
+            panic!("a stream opens");
+        };
+        assert_eq!(reader.next_event().unwrap(), None);
+        assert_eq!(reader.retry(), retry, "{body:?}");
+    }
 }

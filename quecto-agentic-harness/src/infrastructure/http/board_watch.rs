@@ -21,6 +21,28 @@ pub const PAUSE: Duration = Duration::from_secs(1);
 /// Opens that may fail in a row before the watch gives up.
 pub const ATTEMPTS: u32 = 5;
 
+/// How long a busy server is tried again: past a connection's 60 s
+/// lifetime, by which every stream holding a place has given it back.
+pub const BUSY_FOR: Duration = Duration::from_secs(75);
+
+/// A watch's times: how long a read may wait, the pause before a stream is
+/// opened again (until a stream's `retry:` says otherwise), and how long a
+/// busy server is tried again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WatchTiming {
+    pub idle: Duration,
+    pub pause: Duration,
+    pub busy_for: Duration,
+}
+
+impl WatchTiming {
+    pub const PRODUCTION: Self = Self {
+        idle: IDLE,
+        pause: PAUSE,
+        busy_for: BUSY_FOR,
+    };
+}
+
 pub struct RemoteBoardWatch {
     client: BoardServiceClient,
     board: BoardId,
@@ -30,21 +52,16 @@ pub struct RemoteBoardWatch {
 
 impl RemoteBoardWatch {
     pub fn new(client: BoardServiceClient, board: BoardId) -> Self {
-        Self::timed(client, board, IDLE, PAUSE)
+        Self::timed(client, board, WatchTiming::PRODUCTION)
     }
 
-    /// A watch whose reads wait `idle` and whose reopens pause `pause`.
-    pub fn timed(
-        client: BoardServiceClient,
-        board: BoardId,
-        idle: Duration,
-        pause: Duration,
-    ) -> Self {
+    /// A watch held to `timing`.
+    pub fn timed(client: BoardServiceClient, board: BoardId, timing: WatchTiming) -> Self {
         Self {
             client,
             board,
-            idle,
-            pause,
+            idle: timing.idle,
+            pause: timing.pause,
         }
     }
 
