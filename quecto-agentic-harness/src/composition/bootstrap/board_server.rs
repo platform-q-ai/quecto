@@ -4,23 +4,29 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use super::project_board::{operation_parts, pull_request_states};
+use super::project_board::{RunSight, StartSide, operation_parts, pull_request_states};
 use super::project_board_operations::LocalBoardOperations;
-use crate::application::project_board::dto::{BoardOp, BoardRequest, NoPullRequestHost};
+use crate::application::project_board::dto::{
+    BoardOp, BoardRequest, NoPullRequestHost, RunEnd, RunEndOutcome,
+};
 use crate::application::project_board::operations::StoreListings;
 use crate::application::project_board::ports::ListenAddress;
 use crate::application::project_board::ports::{
     BoardClock, BoardOpStore, BoardOperations, BoardOperationsOver, BoardTokens, OperationsOver,
     ProjectBoardStore, PullRequestState, PullRequestStates, PullRequestStatesError,
-    RemoteRevisions, TimeSync,
+    RemoteRevisions, ServeError, ServedRun, TimeSync,
 };
+use crate::application::project_board::run_facts::StatedRemoteRevisions;
 use crate::application::project_board::synced_clock::{HeldSync, SyncedBoardClock};
 use crate::application::project_board::use_cases::{
     BoardAccess, QueryBoard, READ_BUDGET, RunBoardOperation, ServeBoard, ServeBoardOperation,
 };
 use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::entities::plan::Plan;
+use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
@@ -124,6 +130,7 @@ pub fn build_board_server_with(
         prs: pull_request_states(&url, &environment.vars),
         revisions: Arc::new(GitRemoteRevisions::of_store(&store)),
         read_budget: READ_BUDGET,
+        revision_reads: Arc::default(),
     };
     Ok(BoardServerHandles {
         serve: ServeBoard::new(ops.reads(), Arc::new(time), board),
@@ -175,47 +182,133 @@ fn server_identity() -> Identity {
     }
 }
 
-/// The board's operations as a server runs them (B7): no launcher (B8).
-/// Each op's clock is `clock`, its time gated on `sync` as read once when
-/// the op begins (#2705).
+/// The board's operations as a server runs them (B7): a start is begun
+/// here and launched by its client, an end judged on its client's facts
+/// and on `revisions` read before the lock (B8). Each op's clock is
+/// `clock`, its time gated on `sync` as read once when the op begins.
 pub struct ServedOperations {
     pub clock: Arc<dyn BoardClock>,
     pub sync: Arc<dyn TimeSync>,
     pub prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
     pub revisions: Arc<dyn RemoteRevisions>,
     pub read_budget: Duration,
+    /// Set while a read of `revisions` runs: one at a time (B8).
+    pub revision_reads: Arc<AtomicBool>,
+}
+
+/// The plan run `end.run` of `end.task` was begun on, as `reads` holds it.
+fn plan_of(reads: &dyn ProjectBoardStore, end: &RunEnd) -> Option<Plan> {
+    let board = reads.read().ok()?;
+    let ran = |run: &&Run| (&run.fields().task, run.fields().number) == (&end.task, end.run);
+    let version = board.runs.iter().find(ran)?.fields().plan_version;
+    let planned =
+        |plan: &&Plan| (&plan.fields().task, plan.fields().version) == (&end.task, version);
+    board.plans.iter().find(planned).cloned()
 }
 
 impl BoardOperationsOver for ServedOperations {
     fn prepare(
         &self,
         request: Option<&BoardRequest>,
+        sent: &ServedRun,
         reads: &dyn ProjectBoardStore,
-    ) -> OperationsOver {
+    ) -> Result<OperationsOver, ServeError> {
         let prs = self.prs.clone().map(|host| {
             let stated = StatedPullRequests::read(&*host, request, reads, self.read_budget);
             Arc::new(stated) as Arc<dyn PullRequestStates>
         });
-        let (host, revisions) = (Arc::clone(&self.clock), Arc::clone(&self.revisions));
+        // An end's facts are its client's, of the run it names; the
+        // remote's revisions are read here, before the lock, within the
+        // budget (B8). Facts with any other request are none.
+        let (facts, ended) = match (request, sent) {
+            (Some(BoardRequest::EndRun(end)), ServedRun::Facts(facts)) => (Some(facts), Some(end)),
+            (_, ServedRun::Plain | ServedRun::Facts(_) | ServedRun::Undo(_)) => (None, None),
+        };
+        // Only a success asks, for its plan's items' evidence alone.
+        let success = ended.filter(|end| end.outcome == RunEndOutcome::Succeeded);
+        let plan = success.and_then(|end| plan_of(reads, end));
+        let named = facts
+            .zip(plan)
+            .map(|(facts, plan)| facts.named_commits(&plan));
+        let (budget, reading) = (self.read_budget, &self.revision_reads);
+        let revisions = Arc::new(match named.unwrap_or(Ok(vec![])) {
+            Ok(named) => revisions_read(&self.revisions, named, budget, reading)?,
+            Err(why) => StatedRemoteRevisions::unread(&why),
+        });
+        let run = ended.map(|end| (&end.task, end.run));
+        let liveness = facts.zip(run).and_then(|(facts, run)| facts.liveness(run));
+        let reports = facts.zip(run).and_then(|(facts, run)| facts.reports(run));
+        let undo = match sent {
+            ServedRun::Undo(undo) => Some(undo.clone()),
+            ServedRun::Plain | ServedRun::Facts(_) => None,
+        };
+        let host = Arc::clone(&self.clock);
         let sync = Arc::clone(&self.sync);
-        Box::new(move |store| {
+        Ok(Box::new(move |store| {
             // The host's word once for the whole op, however often it reads the time.
             let held = Arc::new(HeldSync::read(&*sync));
             let clock: Arc<dyn BoardClock> =
                 Arc::new(SyncedBoardClock::new(Arc::clone(&host), held));
             let listings = StoreListings(QueryBoard::new(Arc::clone(&store)));
+            let sight = RunSight {
+                revisions: Arc::clone(&revisions) as Arc<dyn RemoteRevisions>,
+                liveness: liveness.clone(),
+                reports: reports.clone(),
+                start: StartSide::Serve(undo.clone()),
+            };
             let parts = operation_parts(
                 (Arc::clone(&store), store),
                 clock,
                 Arc::new(listings),
                 prs.clone(),
-                Arc::clone(&revisions),
-                None,
+                sight,
             )?;
             let operations = LocalBoardOperations::new(RunBoardOperation::new(parts));
             Ok(Box::new(operations) as Box<dyn BoardOperations>)
-        })
+        }))
     }
+}
+
+/// Which of `named` the remote holds, read on a thread of its own within
+/// `budget`: past it, none is (the end is refused, as for a remote that
+/// cannot be read), and the read is left to finish on its own, each of its
+/// git calls bounded. Nothing named, nothing is read; one read at a time
+/// (`reading`), so reads past their budget never pile up.
+///
+/// # Errors
+/// A read still runs: the write is busy (nothing written; its retry, the
+/// same write id, is safe).
+fn revisions_read(
+    remote: &Arc<dyn RemoteRevisions>,
+    named: Vec<String>,
+    budget: Duration,
+    reading: &Arc<AtomicBool>,
+) -> Result<StatedRemoteRevisions, ServeError> {
+    if named.is_empty() {
+        return Ok(StatedRemoteRevisions::unread(
+            "no revision was read before this write",
+        ));
+    }
+    match reading.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst) {
+        Ok(_) => {}
+        Err(_) => return Err(ServeError::Reading),
+    }
+    /// Lets the next read go when the read ends, however it ends.
+    struct Reading(Arc<AtomicBool>);
+    impl Drop for Reading {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::SeqCst);
+        }
+    }
+    let (remote, (sent, read)) = (Arc::clone(remote), std::sync::mpsc::channel());
+    let reading = Reading(Arc::clone(reading));
+    std::thread::spawn(move || {
+        let _reading = reading;
+        let _ = sent.send(StatedRemoteRevisions::read(&*remote, &named));
+    });
+    Ok(read.recv_timeout(budget).unwrap_or_else(|_| {
+        StatedRemoteRevisions::unread("the remote was not read within its time budget")
+    }))
 }
 
 /// The states of the pull requests a write may complete its task by.

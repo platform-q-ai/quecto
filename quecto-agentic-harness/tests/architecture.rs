@@ -641,7 +641,19 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
     // `BoardOperations` port carries, #2705 B6) hold from beside them: a
     // listing, a started task, and what a noted request saw. None of
     // these modules names a use case.
-    ("project_board::start", &["StartedTask"]),
+    // B8: what a board server is sent beside a request for its run (an
+    // end's facts, a start's undo), and the undo port's fold-back.
+    (
+        "project_board::start",
+        &[
+            "StartedTask",
+            "Begun",
+            "StartWrite",
+            "StartUndo",
+            "NotedFoldBack",
+        ],
+    ),
+    ("project_board::run_facts", &["RunFacts"]),
     ("project_board::task_summary", &["Listed"]),
     ("project_board::telemetry", &["OpFacts"]),
 ];
@@ -1642,6 +1654,22 @@ fn application_path_allowed(path: &str) -> bool {
             | "ProjectBoardError" | "ReadRequest" | "RunEnd" | "ServedAnswer" | "BoardRequest",
         ]
         | ["crate", "application", "project_board", "telemetry", "OpFacts"] => true,
+        // B8: a start across the wire: the start the remote adapter reads
+        // from its server's begun answer, and the undo it sends back.
+        [
+            "crate",
+            "application",
+            "project_board",
+            "dto",
+            "TaskStart" | "RunAfterUndo" | "PlanView",
+        ]
+        | [
+            "crate",
+            "application",
+            "project_board",
+            "start",
+            "Begun" | "StartFacts" | "StartUndo" | "NotedFoldBack",
+        ] => true,
         // The project board's listings port (#2476 S1e) answers the
         // capability's own listing DTO; the index builds it to implement
         // the port.

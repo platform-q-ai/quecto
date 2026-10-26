@@ -335,6 +335,11 @@ fn failed(error: &ServeError) -> ServiceReply {
             "busy",
             "too many writes at once: try again shortly".into(),
         ),
+        ServeError::Reading => (
+            503,
+            "busy",
+            "the remote is being read for another write: try again shortly".into(),
+        ),
     };
     coded(status, code, &shown(&why))
 }

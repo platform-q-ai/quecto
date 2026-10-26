@@ -107,14 +107,14 @@ pub fn assembled_reporting(
             liveness,
             reports,
         )?,
-        start: StartBoardTask::new(
+        start: super::Starting::Launched(StartBoardTask::new(
             Arc::clone(&store),
             Arc::clone(&store),
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
             launcher,
             None,
-        )?,
+        )?),
         left_runs: started.map(|started| {
             crate::application::project_board::use_cases::ListLeftRuns::new(
                 Arc::clone(&store),

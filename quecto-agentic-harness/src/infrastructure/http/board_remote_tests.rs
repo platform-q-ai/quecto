@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::{Arc, Mutex};
 
 const TOKEN: &str = "c2VjcmV0LXRva2VuLWZvci10ZXN0cw";
 
@@ -64,12 +65,17 @@ fn a_reply_is_an_answer_or_a_refusal_by_its_code() {
     );
 }
 
-/// A start is refused before anything is sent: no server starts runs yet.
+/// B8: a start is a write like any other, sent with its write id and
+/// committer, and with what is sent beside it (a start's undo).
 #[test]
-fn a_start_is_refused_unsent() {
+fn a_start_is_sent_with_what_goes_beside_it() {
     let client = endpoint_of("unix:///nonexistent/board.sock", None).unwrap();
     let board = BoardId::of_hex("0123456789abcdef").unwrap();
-    let remote = RemoteBoardOperations::new(vec![client], board, None);
+    let ada = Identity {
+        name: "Ada".into(),
+        email: "ada@example.com".into(),
+    };
+    let remote = RemoteBoardOperations::new(vec![client], board, Some(ada));
     let value = json!({"op": "start", "task": "a", "plan_version": 1});
     let policy = crate::domain::project_board::entities::task_parts::EntryPolicy::Sectioned;
     let request = crate::interface::tools::project_board::request::parse(&value, policy).unwrap();
@@ -78,11 +84,13 @@ fn a_start_is_refused_unsent() {
         text: &value.to_string(),
         front_end: crate::domain::project_board::value_objects::telemetry::FrontEnd::Tool,
     };
-    let refused = remote.execute(read, ListSummaries::Omitted, OpNoting::Unnoted);
-    assert_eq!(
-        refused.result,
-        Err(ProjectBoardError::Refused(NO_START.into()))
-    );
+    let undo = json!({"run": 1, "from": "ready", "reason": "no runtime"});
+    let beside = Map::from_iter([("undo".to_string(), undo.clone())]);
+    let body = remote.body(read, false, false, beside).unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!((&body["request"], &body["undo"]), (&value, &undo));
+    assert!(body["write_id"].as_str().is_some(), "{body}");
+    assert_eq!(body["committer"]["name"], json!("Ada"));
 }
 
 /// B7 round 3: a server that accepts and never replies fails a read once
@@ -151,4 +159,119 @@ fn a_hung_server_fails_a_read_and_a_write_once_each() {
     assert_eq!(count(), 2, "a write with no reply is sent once");
     let said = ProjectBoardError::Unanswered(why).to_string();
     assert!(said.contains("the write may have landed"), "{said}");
+}
+
+/// The body of the HTTP request `stream` carries.
+fn request_body(stream: &mut std::os::unix::net::UnixStream) -> String {
+    use std::io::Read;
+    let mut seen = Vec::new();
+    let mut byte = [0u8; 1];
+    while !seen.ends_with(b"\r\n\r\n") {
+        stream.read_exact(&mut byte).unwrap();
+        seen.push(byte[0]);
+    }
+    let head = String::from_utf8_lossy(&seen).to_lowercase();
+    let length = head
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length: "))
+        .and_then(|length| length.trim().parse::<usize>().ok())
+        .unwrap();
+    let mut body = vec![0u8; length];
+    stream.read_exact(&mut body).unwrap();
+    String::from_utf8(body).unwrap()
+}
+
+/// A start's answer, as a server replies it.
+pub(crate) const START_ANSWER: &str = r#"{"answer":{"ok":true,"op":"start"},"facts":null}"#;
+
+/// A socket that holds the first `held` requests unanswered and answers
+/// the rest with `reply` (its status and body), keeping each body sent.
+pub(crate) fn holding(
+    held: usize,
+    (status, answer): (u16, &'static str),
+) -> (
+    tempfile::TempDir,
+    BoardServiceClient,
+    Arc<Mutex<Vec<Value>>>,
+) {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("held.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let bodies = Arc::new(Mutex::new(Vec::new()));
+    let kept = Arc::clone(&bodies);
+    std::thread::spawn(move || {
+        let mut holding = vec![];
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let body: Value = serde_json::from_str(&request_body(&mut stream)).unwrap();
+            let mut kept = kept.lock().unwrap();
+            kept.push(body);
+            if kept.len() <= held {
+                holding.push(stream);
+                continue;
+            }
+            let reply = format!(
+                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\
+                 connection: close\r\n\r\n{answer}",
+                answer.len()
+            );
+            stream.write_all(reply.as_bytes()).unwrap();
+        }
+    });
+    let client = endpoint_of(&format!("unix://{}", socket.display()), None).unwrap();
+    (dir, client, bodies)
+}
+
+/// Review round 1 (B8): a begin whose answer never came is sent once more,
+/// the same body (its write id), so the server answers it from its kept
+/// answer; one never answered is refused, pointing at show and end_run.
+/// A start through `execute` is refused unsent: only a launching client
+/// begins one.
+#[test]
+fn a_begin_unanswered_is_sent_once_more_the_same() {
+    use std::time::Duration;
+    let ada = Identity {
+        name: "Ada".into(),
+        email: "ada@example.com".into(),
+    };
+    let board = BoardId::of_hex("0123456789abcdef").unwrap();
+    let value = json!({"op": "start", "task": "a", "plan_version": 1});
+    let policy = crate::domain::project_board::entities::task_parts::EntryPolicy::Sectioned;
+    let request = crate::interface::tools::project_board::request::parse(&value, policy).unwrap();
+    let text = value.to_string();
+    let read = ReadRequest {
+        request: &request,
+        text: &text,
+        front_end: crate::domain::project_board::value_objects::telemetry::FrontEnd::Cli,
+    };
+    // Round 2 (L3): a resend refused (here 503) points at show and end_run too.
+    let unavailable = r#"{"error":"down","code":"unavailable"}"#;
+    for (held, reply, answered) in [
+        (1, (200, START_ANSWER), true),
+        (5, (200, START_ANSWER), false),
+        (1, (503, unavailable), false),
+    ] {
+        let (_dir, client, bodies) = holding(held, reply);
+        let mut remote = RemoteBoardOperations::new(vec![client], board.clone(), Some(ada.clone()));
+        remote.replies = (Duration::from_millis(300), Duration::from_millis(300));
+        let refused = remote.execute(read, ListSummaries::Omitted, OpNoting::Unnoted);
+        let Err(ProjectBoardError::Store(BoardStoreError::Unavailable(why))) = refused.result
+        else {
+            panic!("{:?}", refused.result)
+        };
+        assert!(why.contains("launches its coordinator"), "{why}");
+        assert!(bodies.lock().unwrap().is_empty(), "refused unsent");
+        let begun = remote.begin(read, OpNoting::Unnoted).result;
+        let bodies = bodies.lock().unwrap().clone();
+        assert_eq!(bodies.len(), 2, "sent twice");
+        assert_eq!(bodies[0], bodies[1], "the same body, its write id too");
+        match (answered, begun) {
+            (true, Ok(answered)) => assert!(matches!(answered.outcome, BoardOutcome::Served(_))),
+            (false, Err(ProjectBoardError::Unanswered(why))) => {
+                assert!(why.contains("end_run"), "{why}");
+            }
+            (_, other) => panic!("{other:?}"),
+        }
+    }
 }

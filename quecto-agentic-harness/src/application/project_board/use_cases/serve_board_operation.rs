@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use crate::application::project_board::dto::{BoardRequest, ProjectBoardError};
 use crate::application::project_board::ports::{
     BoardOpStore, BoardOperations, BoardOperationsOver, BoardStoreError, OpWrite, ServeError,
-    Transacted,
+    ServedRun, Transacted,
 };
 
 /// The answer the front end renders on the operations handed, or why the
@@ -46,6 +46,21 @@ impl ServeBoardOperation {
         write: Option<&OpWrite>,
         present: &mut Present<'_>,
     ) -> Result<Transacted, ServeError> {
+        self.execute_run(request, write, &ServedRun::Plain, present)
+    }
+
+    /// [`Self::execute`], with what the client sent for the request's
+    /// `run` (B8), `sent`: an end's facts or a start's undo.
+    ///
+    /// # Errors
+    /// As [`Self::execute`].
+    pub fn execute_run(
+        &self,
+        request: Option<&BoardRequest>,
+        write: Option<&OpWrite>,
+        sent: &ServedRun,
+        present: &mut Present<'_>,
+    ) -> Result<Transacted, ServeError> {
         let failed = |error| ServeError::Board(ProjectBoardError::Store(error));
         let writes = request.map(BoardRequest::writes);
         // Admitted first, so busy is answered before any host is read.
@@ -62,7 +77,9 @@ impl ServeBoardOperation {
                 None => {}
             }
         }
-        let over = self.operations.prepare(request, &*self.store.reads());
+        let over = self
+            .operations
+            .prepare(request, sent, &*self.store.reads())?;
         let mut run = |store| {
             let operations = over(store).map_err(|error| error.to_string());
             operations.and_then(|operations| present(&*operations))

@@ -516,3 +516,63 @@ fn serve_binds_its_board_file_to_its_board() {
         "the server's id exports"
     );
 }
+
+/// A remote that answers once let go, counting what it is asked.
+struct GatedRemote(
+    std::sync::atomic::AtomicUsize,
+    std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+);
+
+impl RemoteRevisions for GatedRemote {
+    fn not_on_remote(
+        &self,
+        _: &[String],
+    ) -> Result<Vec<String>, crate::application::project_board::ports::BoardStoreError> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let _ = self.1.lock().unwrap().recv();
+        Ok(vec![])
+    }
+
+    fn commit_id_hex_len(
+        &self,
+    ) -> Result<usize, crate::application::project_board::ports::BoardStoreError> {
+        Ok(40)
+    }
+}
+
+/// Review rounds 1 and 2 (B8): one read of the remote at a time. A read
+/// past its budget is left to finish; a write meanwhile is busy (nothing
+/// written, its retry safe), so threads and git never pile up; once the
+/// read ends, however it ends, the next write reads again.
+#[test]
+fn the_remote_is_read_for_one_write_at_a_time() {
+    let (release, gate) = std::sync::mpsc::channel();
+    let gated = Arc::new(GatedRemote(
+        std::sync::atomic::AtomicUsize::new(0),
+        std::sync::Mutex::new(gate),
+    ));
+    let remote: Arc<dyn RemoteRevisions> = Arc::clone(&gated) as _;
+    let reading = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let named = || vec!["abc123abc123".to_string()];
+    let first = revisions_read(&remote, named(), Duration::ZERO, &reading).unwrap();
+    assert!(
+        first.commit_id_hex_len().is_err(),
+        "past its budget: unread"
+    );
+    let second = revisions_read(&remote, named(), Duration::ZERO, &reading);
+    assert_eq!(
+        second.err(),
+        Some(ServeError::Reading),
+        "one read in flight"
+    );
+    release.send(()).unwrap();
+    release.send(()).unwrap();
+    let third = loop {
+        match revisions_read(&remote, named(), Duration::from_secs(30), &reading) {
+            Err(ServeError::Reading) => std::thread::yield_now(),
+            read => break read.unwrap(),
+        }
+    };
+    assert_eq!(third.not_on_remote(&named()), Ok(vec![]));
+    assert_eq!(gated.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+}

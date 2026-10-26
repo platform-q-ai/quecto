@@ -89,7 +89,8 @@ impl FoldBackFacts {
 }
 
 /// How a swarm ended: one of the statuses that end it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum SwarmEnd {
     Succeeded,
     Failed,
@@ -144,7 +145,8 @@ impl SwarmEnd {
 }
 
 /// Where a swarm item stood: one of the five statuses the swarm writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SwarmItemState {
     Ready,
     Claimed,
@@ -213,14 +215,16 @@ impl SwarmItemState {
 }
 
 /// One evidence entry a swarm item was submitted with.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SwarmEvidence {
     pub artifact: String,
     pub revision: String,
 }
 
 /// One item of an ended swarm's board.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SwarmItemView {
     pub title: String,
     pub state: SwarmItemState,
@@ -256,7 +260,8 @@ impl SwarmItemView {
 /// An ended swarm's board, as its live view (`get_swarm_board`) reads
 /// it: how it ended, its items in the view's order, and the tokens it
 /// was observed to spend.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SwarmRunView {
     pub end: SwarmEnd,
     pub items: Vec<SwarmItemView>,

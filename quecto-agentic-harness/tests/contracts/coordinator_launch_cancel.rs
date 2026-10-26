@@ -149,7 +149,7 @@ async fn a_coordinator_that_came_up_as_the_call_was_cancelled_is_stopped() {
 }
 
 /// A board holding task `a`, ready, its plan's version 1 accepted.
-fn ready_board(store: &MemoryBoardStore) {
+pub(crate) fn ready_board(store: &MemoryBoardStore) {
     let clock = Arc::new(SystemBoardClock::default());
     let ada: Arc<dyn ProjectBoardStore> = Arc::new(store.client());
     store.bootstrap().unwrap();

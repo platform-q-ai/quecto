@@ -8,21 +8,25 @@ use crate::application::project_board::dto::{
     BoardExecution, BoardRequest, ListSummaries, OpNoting, ProjectBoardError, ReadRequest, RunEnd,
 };
 use crate::application::project_board::ports::{
-    BoardClockError, BoardOperations, OpWrite, ServeError, Transacted, WriteId,
+    BoardClockError, BoardOperations, OpWrite, ServeError, ServedRun, Transacted, WriteId,
 };
+use crate::application::project_board::run_facts::RunFacts;
+use crate::application::project_board::start::StartUndo;
 use crate::application::project_board::telemetry::OpFacts;
 use crate::application::project_board::use_cases::{
     BoardAccess, Principal, Refused, Scope, ServeBoardOperation,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::telemetry::{Client, FrontEnd};
+use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 use crate::interface::tools::project_board::recording::BoardCall;
 use crate::interface::tools::project_board::request::{entry_policy, parse};
 use crate::interface::tools::project_board::{read, run_recorded_with};
 
 const BODY_SHAPE: &str = "the body must be {\"request\": {..}, \"front_end\": \
      \"cli\" or \"tool\", \"summary\", \"noted\", and for a write \"write_id\" and \
-     \"committer\": {\"name\", \"email\"}}";
+     \"committer\": {\"name\", \"email\"}; an end_run may add its \"facts\", a start \
+     its \"undo\": {\"run\", \"from\", \"reason\"}}";
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -35,6 +39,10 @@ struct OpBody {
     noted: bool,
     write_id: Option<String>,
     committer: Option<Committer>,
+    /// What the client saw of an end's run (B8).
+    facts: Option<Value>,
+    /// A start's undo, its launch having failed (B8).
+    undo: Option<Undo>,
 }
 
 #[derive(serde::Deserialize)]
@@ -42,6 +50,44 @@ struct OpBody {
 struct Committer {
     name: String,
     email: String,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct Undo {
+    run: u32,
+    from: String,
+    reason: String,
+}
+
+/// What `facts` and `undo` say for `request`'s run: facts only with an
+/// end (an end without them saw nothing and kept nothing), an undo only
+/// with a start; `None` for any other pairing.
+fn served_run(
+    request: Option<&BoardRequest>,
+    facts: Option<&Value>,
+    undo: Option<&Undo>,
+) -> Option<ServedRun> {
+    match (request, facts, undo) {
+        (Some(BoardRequest::EndRun(_)), facts, None) => {
+            let facts = facts.map_or(Ok(RunFacts::unseen()), |facts| {
+                serde_json::from_value(facts.clone())
+            });
+            facts.ok().map(ServedRun::Facts)
+        }
+        (Some(BoardRequest::Start(start)), None, Some(undo)) => {
+            let from = TaskStatus::parse(&undo.from)?;
+            Some(ServedRun::Undo(StartUndo {
+                task: start.task.clone(),
+                plan_version: start.plan_version,
+                run: undo.run,
+                from,
+                reason: crate::interface::tools::project_board::answer::shown(&undo.reason),
+            }))
+        }
+        (_, None, None) => Some(ServedRun::Plain),
+        (_, Some(_), _) | (_, None, Some(_)) => None,
+    }
 }
 
 /// Why an op was not answered: a body not an op's (why), access, or the server.
@@ -75,6 +121,10 @@ pub(super) fn answer_op(
     let scope = request.as_ref().map_or(Scope::Read, Scope::of);
     BoardAccess::authorize(principal, scope).map_err(OpRefusal::Access)?;
     let text = body.request.to_string();
+    let sent = served_run(request.as_ref(), body.facts.as_ref(), body.undo.as_ref());
+    let sent = sent.ok_or_else(shape)?;
+    // A write id is bound to its run's facts or undo too.
+    let beside = json!({"facts": body.facts, "undo": body.undo}).to_string();
     let writes = request.as_ref().map(BoardRequest::writes);
     let write = match (writes, body.write_id, body.committer) {
         (Some(true), Some(id), Some(Committer { name, email })) => {
@@ -84,7 +134,7 @@ pub(super) fn answer_op(
             committer.validate("committer").map_err(invalid)?;
             Some(OpWrite {
                 write_id: WriteId::parse(&id).ok_or_else(unshaped)?,
-                request: format!("{}\n{text}", front_end.as_str()),
+                request: format!("{}\n{text}\n{beside}", front_end.as_str()),
                 committer,
                 principal: principal.recorded(),
             })
@@ -108,7 +158,7 @@ pub(super) fn answer_op(
             unkept.message
         })
     };
-    let executed = operations.execute(request.as_ref(), write.as_ref(), &mut answer);
+    let executed = operations.execute_run(request.as_ref(), write.as_ref(), &sent, &mut answer);
     match (executed, unsynced) {
         (Ok(Transacted::Answered(answer) | Transacted::Replayed(answer)), _) => Ok(answer),
         (Ok(Transacted::Reused), _) => Err(OpRefusal::Serve(ServeError::WriteIdReused)),
@@ -145,7 +195,9 @@ fn present(
     let mut call = BoardCall::start(None, front_end, Client::Other);
     let answer = run_recorded_with(&captured, text, summaries, &mut call);
     let error = &answer["error"];
-    let message = error["message"].as_str().unwrap_or_default().to_string();
+    // The refusal's own reason: the reply names the store's failure once.
+    let message = error["reason"].as_str().or(error["message"].as_str());
+    let message = message.unwrap_or_default().to_string();
     match error["code"].as_str() {
         Some("store_unavailable" | "clock_unreadable") => {
             return Err(Unkept {
@@ -196,3 +248,7 @@ impl BoardOperations for Captured<'_> {
         self.board.left_runs()
     }
 }
+
+#[cfg(test)]
+#[path = "op_tests.rs"]
+mod tests;

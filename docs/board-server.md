@@ -157,14 +157,64 @@ other write. Those reads share the 30 s budget a local completion has: a
 pull request left unread past it is unavailable, so the write is answered
 (`pull_requests_unavailable`) rather than failed. A write's worst case is
 that budget plus one 20 s `gh` read, then its turn at the lock behind one
-other write, which stays under the client's 75 s reply timeout. `end_run`'s
-check that a run's evidence is on the remote still runs inside the lock.
+other write, which stays under the client's 75 s reply timeout.
 
-The server runs no start, and `left_runs` is empty, until B8 carries
-start and `end_run` across the wire: a client refuses a `start` before
-sending it, `the board refused the write: the board server can't start
-runs yet (B8)`. A `409 standby` from a follower and its epoch come with
-B12.
+**Runs across the wire (B8).** A run's swarm runs where its client's
+session is, so the server and the client each do their half:
+
+- **start**: the server begins it (the task started and run 1 of its
+  accepted plan written in one change) and answers what its coordinator
+  is launched with: the start's answer without `coordinator`, plus the
+  status it took the task `from` and `launch` (`plan_version`, the
+  coordinator's `brief`, `model`, `effort`). The client launches the
+  coordinator and answers the start with its `coordinator` in place of
+  those two. A launch that fails, or a call cancelled during it, is undone
+  on the server: the client sends the same start with
+  `"undo": {"run", "from", "reason"}`, the server folds the run back as
+  failed (as a local undo does) and answers `launch_failed` with
+  `run_state`; the client answers the start's `launch_failed` from it. An
+  undo the server never answers leaves the run `open`, for `end_run`; one
+  is never sent while the client sees the coordinator running.
+- **end_run**: the client sends what its session saw beside the request,
+  `"facts": {"liveness", "reports"}`: `liveness` is `"unseen"` (a front
+  end that sees no swarm, the CLI) or `{"seen": <agent or null>}`, and
+  `reports` is `null` or the swarm boards it kept for the run
+  (`{"ended", "left"}`). The server judges the end on them inside its
+  transaction: `run_live` while the client saw the coordinator running,
+  the kept board's items, owners, evidence and cost. A success's evidence
+  revisions are read from the server's own remote before the write lock,
+  on a thread of their own within the 30 s budget; past it, the success is
+  refused as for a remote that cannot be read. Nothing inside the lock
+  asks git or a front end. A client drops a kept board once the server
+  recorded it.
+- **left runs**: a session owes each run its starts launched that the
+  server's `show` gives as still running.
+
+The facts are trusted cooperatively: a client with write access asserts
+what its front end saw, as a local board trusts its own front end. A
+client could end a run it says is not running; the server cannot see the
+client's swarms. The remote's revisions and the pull requests' states the
+server reads itself. A write's `write_id` is bound to its facts or undo
+too.
+
+The facts are a strict wire contract: the swarm boards' fields (`end`,
+`items` with `title`, `state`, `owner`, `evidence` and
+`stood_before_death`, `observed_tokens`) are read with unknown fields
+refused, so a client and server of different builds can refuse each
+other's ends. Upgrade every host that runs a board server or a client of
+one together. Facts past the request's 1 MiB go smaller: first without the
+board a run was left on beside the one it ended on; an end that is no
+success then without its evidence, then without its boards; a success
+keeps only the evidence naming commits, and is refused on the client
+("the run's facts are too large to send") if still too large. An undo of
+an open run is made only by the holder of the task's live claim, while
+the task is in progress and the run is its latest, from `ready`,
+`claimed`, `in_progress`, `review` or `blocked`; a refused undo is
+answered in the start's `launch_failed` with the server's code and words
+(`run_state` `refused`). A lost begin or undo is sent once more, the same.
+The server reads the remote for a success's plan items' evidence alone,
+refusing one naming more than 2,048 commits, one read at a time: a success
+while one runs is answered 503 `busy` ("the remote is being read for another write: try again shortly"), nothing written. A `409 standby` from a follower and its epoch come with B12.
 
 **The clock gate.** The server's clock tells the time only while the
 host affirms its clock is synchronised. On Linux the server asks the
@@ -267,7 +317,7 @@ Every error reply the server makes is JSON, `{"error": "<why>", "code":
 | 500 | `handler` | the request's handler failed |
 | 503 | `unavailable` | the board's store, the clock or the tokens could not answer (over TCP a token failure says only `the token store is unavailable`) |
 | 503 | `clock_unsynced` | the host's clock is not synchronised, so a request that reads it is refused; `reason` says why |
-| 503 | `busy` | over TCP, the caller already has 4 answers in flight, or all TCP callers together have 12; or 2 writes are already held; or the token already holds 8 TCP connections (this one is then closed) |
+| 503 | `busy` | over TCP, the caller already has 4 answers in flight, or all TCP callers together have 12; or 2 writes are already held; or the token already holds 8 TCP connections (this one is then closed); or a success's end while the remote is read for another write ("the remote is being read for another write: try again shortly", nothing written) |
 
 Over TCP the token is checked first: an unauthenticated request is 401
 before any limit or route answers it (only the HTTP parser's own bodyless

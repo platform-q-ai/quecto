@@ -44,7 +44,6 @@ use crate::application::project_board::ports::{
     ArtifactKey, BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError,
     QuarantinedFile,
 };
-use crate::application::project_board::start::StartedTask;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::shown_text::shown_board_path;
@@ -154,9 +153,12 @@ pub enum ErrorCode {
     /// `brief`: `{"code"}`, why the plan cannot brief a swarm (S4c).
     Brief,
     /// `reason` (the launch's), `run`, `run_state` (`folded`,
-    /// `ended_already`, or `open`: for `end_run`), `released` (true: the
-    /// run's fold-back moved the task back to ready; false: the task is
-    /// still held; `null`: another end moved it, #2705 T5), `restored`
+    /// `ended_already`, `open`: for `end_run`, or `refused`: a board server
+    /// refused the undo, its code and words in `reason`), `released` (true:
+    /// the run's fold-back moved the task back to ready; false: the task is
+    /// still held; `null`: another end moved it, #2705 T5, or, after a
+    /// refused undo, unknown: the task is still held, nothing moved it),
+    /// `restored`
     /// (`null`, or the `review` or `blocked` status the fold-back moved the
     /// task back to, its claim kept), `still_running` (`null`, or the coordinator that may still run:
     /// nothing was undone): the coordinator did not launch, and the start
@@ -312,6 +314,7 @@ pub fn outcome(
             }
         }
         BoardOutcome::Started(started) => fields.extend(started_fields(started)),
+        BoardOutcome::Begun(begun) => fields.extend(begun_fields(begun)),
         BoardOutcome::Served(_) => {}
         BoardOutcome::Accepted(accepted) => {
             fields.insert("task".into(), task_json(&accepted.task));
@@ -337,43 +340,9 @@ pub fn outcome(
     Value::Object(answer)
 }
 
-/// What `start` answers (S4c): the `task` as written, its `run`, the
-/// `coordinator` launched for it (its `agent` and the container it runs
-/// in, `environment_ref`), the worker roles whose models were not applied
-/// (`not_applied`: `role`, `model`, `effort`), whether the start took
-/// the claim (`claim`: `fresh`) or found it held by the starter (`held`);
-/// on the agent tool, [`outcome`] adds the `steps` for running it
-/// ([`start_steps::running`]).
-fn started_fields(started: &StartedTask) -> Map<String, Value> {
-    let not_applied: Vec<Value> = started
-        .not_applied
-        .iter()
-        .map(|role| {
-            json!({
-                "role": slug_json(&role.role),
-                "model": shown(&role.model),
-                "effort": role.effort.as_str(),
-            })
-        })
-        .collect();
-    let coordinator = &started.coordinator;
-    fields([
-        ("task", task_json(&started.task)),
-        ("run", run_json(&started.run)),
-        (
-            "coordinator",
-            json!({
-                "agent": shown(&coordinator.agent),
-                "environment_ref": shown(&coordinator.environment_ref),
-            }),
-        ),
-        ("not_applied", Value::Array(not_applied)),
-        ("claim", json!(started.claim.as_str())),
-        // When to renew the claim: halfway through it (#2656). A started
-        // task is held by its starter.
-        ("renew_after", renew_after_json(&started.task)),
-    ])
-}
+#[path = "answer_started.rs"]
+mod started;
+use started::{begun_fields, started_fields};
 
 /// When the claim `task` holds is next renewed (#2656): halfway through
 /// it; `null` for a task that holds none.

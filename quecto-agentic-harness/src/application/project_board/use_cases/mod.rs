@@ -14,6 +14,7 @@ mod edit_plan;
 mod end_run;
 mod finish_without_run;
 mod fold_back_run;
+mod launch_begun_run;
 mod list_left_runs;
 mod plan_text;
 mod propose_plan;
@@ -38,13 +39,14 @@ pub use edit_plan::EditPlan;
 pub use end_run::EndRun;
 pub use finish_without_run::FinishWithoutRun;
 pub use fold_back_run::FoldBackRun;
-pub use list_left_runs::ListLeftRuns;
+pub use launch_begun_run::LaunchBegunRun;
+pub use list_left_runs::{LEFT_RUN_END, ListLeftRuns};
 pub use propose_plan::ProposePlan;
 pub use query_board::QueryBoard;
 pub use run_board_operation::RunBoardOperation;
 pub use serve_board::ServeBoard;
 pub use serve_board_operation::{Present, ServeBoardOperation};
-pub use start_board_task::StartBoardTask;
+pub use start_board_task::{BeginBoardRun, StartBoardTask};
 pub use update_draft_task::UpdateDraftTask;
 
 #[cfg(test)]

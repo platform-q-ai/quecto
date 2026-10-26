@@ -19,15 +19,17 @@ pub fn carried_by(front_end: FrontEnd) -> bool {
     }
 }
 
-/// The steps an answered `outcome` carries: a started task's.
+/// The steps an answered `outcome` carries: a started task's, or one a
+/// board server began for its client to launch (B8).
 pub fn started(outcome: &BoardOutcome) -> Option<String> {
-    let BoardOutcome::Started(started) = outcome else {
-        return None;
-    };
-    Some(running(
-        &started.task.fields().id,
-        started.run.fields().number,
-    ))
+    match outcome {
+        BoardOutcome::Started(started) => Some(running(
+            &started.task.fields().id,
+            started.run.fields().number,
+        )),
+        BoardOutcome::Begun(begun) => Some(running(&begun.launch.task, begun.launch.run)),
+        _ => None,
+    }
 }
 
 /// The op whose answers carry steps.
@@ -82,6 +84,10 @@ pub fn running(task: &Slug, run: u32) -> String {
     )
 }
 
+/// The step added for an undo a board server refused (#2705 B8).
+pub const REFUSED_UNDO: &str =
+    "with run_state \"refused\", show(task), then end_run(task, run, outcome failed)";
+
 /// The steps for undoing a start of task `task` whose coordinator did
 /// not launch, by the `launch_failed` answer's fields.
 pub fn undo(task: &Slug) -> String {
@@ -89,8 +95,8 @@ pub fn undo(task: &Slug) -> String {
     format!(
         "On \"launch_failed\", undo by its fields: stop any coordinator still_running names \
          with agent_cmd kill; with run_state \"open\", call end_run(task \"{task}\", the run it \
-         names, outcome \"failed\"), which moves the task back to ready; say why the launch \
-         failed, and stop."
+         names, outcome \"failed\"), which moves the task back to ready; {REFUSED_UNDO}; say \
+         why the launch failed, and stop."
     )
 }
 

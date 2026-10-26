@@ -2,7 +2,7 @@
 //! request's text to `POST /v1/boards/{id}/op`, its answer as the server
 //! rendered it ([`BoardOutcome::Served`]): no board decoded, no clock read.
 //! One endpoint until followers (B12).
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::board_service::client::{
     BearerToken, BoardServiceClient, ClientError, Endpoint, READ_REPLY, WRITE_REPLY,
@@ -23,7 +23,9 @@ use crate::domain::project_board::value_objects::telemetry::BoardId;
 pub const ATTEMPTS: u64 = 3;
 /// The most a request pauses, in all, while its server answers busy.
 pub const BUSY_MS: u64 = 10_000;
-pub const NO_START: &str = "the board server can't start runs yet (B8)";
+/// Why a start sent other than by a client that launches its coordinator is refused.
+pub const NO_LAUNCH: &str =
+    "a start is begun on a board server only by a client that launches its coordinator";
 pub const URL_SHAPE: &str = "a board server URL is unix:///<socket path> or \
                              http://<ip>:<port> on loopback or a Tailscale address";
 
@@ -56,7 +58,7 @@ pub struct RemoteBoardOperations {
     /// Who a write is made as; `None` for a front end that only reads.
     committer: Option<Identity>,
     /// How long a read's reply, and a write's, may take.
-    replies: (std::time::Duration, std::time::Duration),
+    pub(super) replies: (std::time::Duration, std::time::Duration),
 }
 
 impl RemoteBoardOperations {
@@ -70,17 +72,81 @@ impl RemoteBoardOperations {
         }
     }
 
+    /// [`BoardOperations::execute`], sending `beside` the request (B8: an
+    /// end's `facts`, a start's `undo`).
+    pub fn execute_with(
+        &self,
+        read: ReadRequest<'_>,
+        (summaries, noting): (ListSummaries, OpNoting),
+        beside: Map<String, Value>,
+    ) -> BoardExecution {
+        self.executed(read, (summaries, noting), beside, false).0
+    }
+
+    /// A start begun on the server, for this client to launch (B8). Its
+    /// body is sent once more, the same (its write id), when its answer
+    /// never came, so the server answers it from its kept answer; a resend
+    /// that fails too says what to do.
+    pub fn begin(&self, read: ReadRequest<'_>, noting: OpNoting) -> BoardExecution {
+        let asked = (ListSummaries::Omitted, noting);
+        let (mut begun, resent) = self.executed(read, asked, Map::new(), true);
+        if let (Err(error), true) = (&begun.result, resent) {
+            let why = match error {
+                ProjectBoardError::Unanswered(why) => why.clone(),
+                other => other.to_string(),
+            };
+            begun.result = Err(ProjectBoardError::Unanswered(format!(
+                "{why}, after its first send went unanswered: show the task, and end_run any \
+                 run this start began as failed before starting it again"
+            )));
+        }
+        begun
+    }
+
+    /// The answer to `read` with `beside` it; its body sent once more, the
+    /// same, after no answer came when `again` (replay-safe by its write
+    /// id), and whether it was.
+    pub(super) fn executed(
+        &self,
+        read: ReadRequest<'_>,
+        (summaries, noting): (ListSummaries, OpNoting),
+        beside: Map<String, Value>,
+        again: bool,
+    ) -> (BoardExecution, bool) {
+        let noted = noting == OpNoting::Noted;
+        let body = self.body(read, summaries == ListSummaries::Wanted, noted, beside);
+        let send = |body: &[u8]| self.sent(body, read.request.writes());
+        let mut resent = false;
+        let replied = body.and_then(|body| match send(&body) {
+            Err(ProjectBoardError::Unanswered(_)) if again => {
+                resent = true;
+                send(&body)
+            }
+            replied => replied,
+        });
+        let (result, facts) = match replied.and_then(|(status, body)| answered(status, &body)) {
+            Ok((answer, facts)) => (Ok(answer), facts),
+            Err(error) => (Err(error), None),
+        };
+        let facts = noted.then(|| facts.unwrap_or_default());
+        (BoardExecution { result, facts }, resent)
+    }
+
     /// The body; a write's with a fresh write id and its committer.
     fn body(
         &self,
         read: ReadRequest<'_>,
         wanted: bool,
         noted: bool,
+        beside: Map<String, Value>,
     ) -> Result<Vec<u8>, ProjectBoardError> {
         let request: Value = serde_json::from_str(read.text)
             .map_err(|error| refused(&format!("the request is not JSON: {error}")))?;
         let mut body = json!({"request": request, "front_end": read.front_end.as_str(),
                               "summary": wanted, "noted": noted});
+        body.as_object_mut()
+            .expect("a body is an object")
+            .extend(beside);
         match (read.request.writes(), &self.committer) {
             (true, Some(committer)) => {
                 body["write_id"] = json!(uuid::Uuid::new_v4().to_string());
@@ -141,21 +207,18 @@ impl BoardOperations for RemoteBoardOperations {
         summaries: ListSummaries,
         noting: OpNoting,
     ) -> BoardExecution {
-        let noted = noting == OpNoting::Noted;
-        let body = match read.request {
-            BoardRequest::Start(_) => Err(ProjectBoardError::Refused(NO_START.into())),
-            _ => self.body(read, summaries == ListSummaries::Wanted, noted),
-        };
-        let replied = body.and_then(|body| self.sent(&body, read.request.writes()));
-        let (result, facts) = match replied.and_then(|(status, body)| answered(status, &body)) {
-            Ok((answer, facts)) => (Ok(answer), facts),
-            Err(error) => (Err(error), None),
-        };
-        let facts = noted.then(|| facts.unwrap_or_default());
-        BoardExecution { result, facts }
+        match read.request {
+            // Only a client that launches begins a start ([`Self::begin`]).
+            BoardRequest::Start(_) => BoardExecution {
+                result: Err(refused(NO_LAUNCH)),
+                facts: (noting == OpNoting::Noted).then(OpFacts::default),
+            },
+            _ => self.execute_with(read, (summaries, noting), Map::new()),
+        }
     }
 
-    /// No start is served until B8, so none is left open.
+    /// This adapter starts nothing (its client's runs are B8's
+    /// `RemoteRuns`), so it leaves none open.
     fn left_runs(&self) -> Result<Vec<RunEnd>, ProjectBoardError> {
         Ok(vec![])
     }
@@ -213,7 +276,7 @@ fn answered(
 }
 
 /// `text` without control characters, cut to 512 characters.
-fn shown(text: &str) -> String {
+pub(super) fn shown(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).take(512).collect()
 }
 
@@ -223,4 +286,4 @@ fn refused(why: &str) -> ProjectBoardError {
 
 #[cfg(test)]
 #[path = "board_remote_tests.rs"]
-mod tests;
+pub(super) mod tests;

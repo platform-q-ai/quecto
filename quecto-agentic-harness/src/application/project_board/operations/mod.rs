@@ -13,10 +13,11 @@ pub use super::dto::{
     BoardOutcome, BoardRequest, Completion, ListFilter, ListSummaries, PlanPage, PlanView,
 };
 use super::ports::{BoardClock, BoardListings, BoardStoreError};
+use super::start::StartUndo;
 use super::use_cases::{
-    AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
-    CreateBoardTask, DiscardPlan, EditPlan, EndRun, FinishWithoutRun, ListLeftRuns, ProposePlan,
-    QueryBoard, StartBoardTask, UpdateDraftTask,
+    AcceptPlan, BeginBoardRun, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside,
+    CompleteMergedTask, CreateBoardTask, DiscardPlan, EditPlan, EndRun, FinishWithoutRun,
+    ListLeftRuns, ProposePlan, QueryBoard, StartBoardTask, UpdateDraftTask,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -67,6 +68,17 @@ impl BoardListings for StoreListings {
     }
 }
 
+/// What a `start` does where these operations run (epic #2705 B8).
+pub enum Starting {
+    /// This front end begins it, launches its coordinator, and undoes it
+    /// when the launch fails.
+    Launched(StartBoardTask),
+    /// A board server begins it, for the client that launches.
+    Begun(BeginBoardRun),
+    /// A board server undoes a start its client began and could not launch.
+    Undone(BeginBoardRun, StartUndo),
+}
+
 /// The use cases and ports one run of [`RunBoardOperation`] is made of,
 /// built by composition over one board.
 ///
@@ -87,7 +99,7 @@ pub struct BoardOperationParts {
     pub accept_plan: AcceptPlan,
     pub discard_plan: DiscardPlan,
     pub end_run: EndRun,
-    pub start: StartBoardTask,
+    pub start: Starting,
     /// The runs this front end's starts launched that it would leave open
     /// as its session ends (#2655); `None` for one that launches none.
     pub left_runs: Option<ListLeftRuns>,

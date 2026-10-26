@@ -1,6 +1,8 @@
 //! The start answers' steps are the Pocket start prompt's words, moved
 //! unchanged: only the task's id and the run's number are filled in.
-use super::{CONTENDED, PUSH_STEP, REFUSED, refused, refused_before_board, running, undo};
+use super::{
+    CONTENDED, PUSH_STEP, REFUSED, REFUSED_UNDO, refused, refused_before_board, running, undo,
+};
 use crate::application::project_board::dto::{ProjectBoardError, RunAfterUndo, TaskStart};
 use crate::application::project_board::operations::BoardRequest;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -54,7 +56,10 @@ fn the_steps_are_the_prompts_words_moved_unchanged() {
         "end_run(task \"a\", the run start answered)",
     );
     let run = run.replace(&format!("{PUSH_STEP} "), "");
+    // The step added for a refused undo (#2705 B8), taken out whole.
     let undo = undo(&task);
+    assert_eq!(undo.matches(REFUSED_UNDO).count(), 1, "{undo}");
+    let undo = undo.replace(&format!("{REFUSED_UNDO}; "), "");
     let mut rest = PROMPT.to_string();
     for step in [CONTENDED, REFUSED, undo.as_str(), run.as_str()] {
         assert_eq!(PROMPT.matches(step).count(), 1, "verbatim, once: {step}");
@@ -82,8 +87,9 @@ fn the_fixed_steps_read_exactly() {
         undo(&slug("board-store")),
         "On \"launch_failed\", undo by its fields: stop any coordinator still_running names \
          with agent_cmd kill; with run_state \"open\", call end_run(task \"board-store\", the \
-         run it names, outcome \"failed\"), which moves the task back to ready; say why the \
-         launch failed, and stop."
+         run it names, outcome \"failed\"), which moves the task back to ready; with \
+         run_state \"refused\", show(task), then end_run(task, run, outcome failed); say why \
+         the launch failed, and stop."
     );
     assert_eq!(
         PUSH_STEP,

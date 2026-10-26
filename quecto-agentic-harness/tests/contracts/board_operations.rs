@@ -10,6 +10,15 @@
 //! composition picks for `--url`, against an in-process board server on
 //! its Unix socket.
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+use quecto::application::project_board::ports::{
+    CoordinatorLaunch, CoordinatorRequest, LaunchRefused, LaunchedCoordinator, RunLiveness,
+    StartedRuns,
+};
+use quecto::domain::project_board::value_objects::slug::Slug;
+use quecto::interface::tools::project_board::site::Launcher;
 
 use quecto::application::project_board::dto::{
     BoardExecution, ListSummaries, OpNoting, ReadRequest, SUMMARIES_LISTINGS_ONLY,
@@ -232,14 +241,18 @@ fn vars(repo: &Path) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
 
 /// The operations composition builds for `quecto board` in `repo`, at
 /// the board server `url` when one is given.
-fn built(repo: &Path, known: KnownLocation) -> Box<dyn BoardOperations> {
+fn built(
+    repo: &Path,
+    known: KnownLocation,
+    launcher: Option<Launcher>,
+) -> Box<dyn BoardOperations> {
     let environment = ProjectBoardEnvironment {
         repo: repo.to_path_buf(),
         remote: "origin".into(),
         access: Access::Write,
         vars: vars(repo),
         cancelled: None,
-        launcher: None,
+        launcher,
         swarm_session: None,
         known,
     };
@@ -252,14 +265,14 @@ fn built(repo: &Path, known: KnownLocation) -> Box<dyn BoardOperations> {
 /// The local adapter over a fresh clone of `remote`, writing as `Ada`, as
 /// composition builds it for `quecto board` (no launcher). A local remote
 /// gives no outside time, for the reason [`reference_source`] says.
-fn local(remote: &Remote) -> Fixture {
+fn local(remote: &Remote, launcher: Option<Launcher>) -> Fixture {
     let repo = remote.clone_dir(0).to_path_buf();
     let url = sh(&repo, &["remote", "get-url", "origin"], b"");
     let ReferenceSource::Unavailable(why) = reference_source(&url) else {
         panic!("a local remote gives no time: {url}")
     };
     Fixture {
-        operations: built(&repo, KnownLocation::default()),
+        operations: built(&repo, KnownLocation::default(), launcher),
         clock_note: Some(why),
         _server: None,
     }
@@ -292,7 +305,7 @@ impl TimeSync for Synced {
 /// server for a fresh clone of `remote`, its board in a fresh state
 /// directory; the server's host clock is synchronised, and its clock
 /// reads no outside time.
-fn served(remote: &Remote) -> Fixture {
+fn served(remote: &Remote, launcher: Option<Launcher>) -> Fixture {
     let repo = remote.clone_dir(0).to_path_buf();
     let state = repo.join(".git").join("served");
     let environment = BoardServerEnvironment {
@@ -327,7 +340,7 @@ fn served(remote: &Remote) -> Fixture {
         url: Some(format!("unix://{}", socket.display())),
     };
     Fixture {
-        operations: built(&repo, known),
+        operations: built(&repo, known, launcher),
         clock_note: Some("this machine's clock reads no outside time".into()),
         _server: Some(Server {
             stop: Some(stop),
@@ -338,9 +351,9 @@ fn served(remote: &Remote) -> Fixture {
 
 fn each(check: fn(Fixture)) {
     let remote = Remote::new();
-    check(local(&remote));
+    check(local(&remote, None));
     let remote = Remote::new();
-    check(served(&remote));
+    check(served(&remote, None));
 }
 
 #[test]
@@ -376,4 +389,124 @@ fn board_operations_clock_notes() {
 #[test]
 fn board_operations_no_left_runs() {
     each(check_no_left_runs);
+}
+
+/// A session's swarms for the run checks: a launch comes up as `c-1`
+/// while `up`, a coordinator is seen running as `running` says, and the
+/// runs it launched are kept.
+#[derive(Default)]
+pub struct Swarms {
+    up: AtomicBool,
+    running: Mutex<Option<String>>,
+    started: Mutex<Vec<(Slug, u32)>>,
+}
+
+impl CoordinatorLaunch for Swarms {
+    fn may_launch(&self) -> bool {
+        true
+    }
+
+    fn launch(
+        &self,
+        request: &CoordinatorRequest,
+        _: &AtomicBool,
+    ) -> Result<LaunchedCoordinator, LaunchRefused> {
+        let mut started = self.started.lock().expect("started");
+        started.push((request.task.clone(), request.run));
+        match self.up.load(Ordering::SeqCst) {
+            true => Ok(LaunchedCoordinator {
+                agent: "c-1".into(),
+                environment_ref: "env-1".into(),
+            }),
+            false => Err(LaunchRefused::because("no container runtime")),
+        }
+    }
+}
+
+impl RunLiveness for Swarms {
+    fn running_coordinator(&self, _: &Slug, _: u32) -> Option<String> {
+        self.running.lock().expect("running").clone()
+    }
+}
+
+impl StartedRuns for Swarms {
+    fn started(&self) -> Vec<(Slug, u32)> {
+        self.started.lock().expect("started").clone()
+    }
+}
+
+/// B8: a start and its run's end read alike on every adapter: a launch
+/// that fails is undone, one that comes up is answered with its
+/// coordinator, an end is refused while its swarm is seen running, and a
+/// session owes the run it left running until it is ended.
+pub fn check_starts_and_ends(fixture: Fixture, swarms: &Swarms) {
+    let operations = &*fixture.operations;
+    bootstrap(operations);
+    assert_eq!(run(operations, create("a"))["ok"], json!(true));
+    let proposed = run(
+        operations,
+        json!({"op": "propose_plan", "task": "a", "approach": "Build it.",
+               "items": [{"id": "schema", "title": "Schema"}]}),
+    );
+    let accept = json!({"op": "accept_plan", "task": "a", "version": 1,
+                        "expected_updated": proposed["plan"]["updated"],
+                        "expected_accepted": null});
+    assert_eq!(run(operations, accept)["ok"], json!(true));
+    let start = json!({"op": "start", "task": "a", "plan_version": 1});
+    let failed = run(operations, start.clone());
+    let error = &failed["error"];
+    assert_eq!(
+        (
+            &error["code"],
+            &error["run"],
+            &error["run_state"],
+            &error["released"]
+        ),
+        (
+            &json!("launch_failed"),
+            &json!(1),
+            &json!("folded"),
+            &json!(true)
+        ),
+        "{failed}"
+    );
+    swarms.up.store(true, Ordering::SeqCst);
+    let started = run(operations, start);
+    assert_eq!(
+        (
+            &started["ok"],
+            &started["run"]["number"],
+            &started["coordinator"]["agent"]
+        ),
+        (&json!(true), &json!(2), &json!("c-1")),
+        "{started}"
+    );
+    assert_eq!(started["task"]["status"], json!("in_progress"));
+    let owed = operations.left_runs().expect("the runs owed");
+    assert_eq!(
+        owed.iter().map(|end| end.run).collect::<Vec<_>>(),
+        [2],
+        "only the run still running"
+    );
+    let end = json!({"op": "end_run", "task": "a", "run": 2, "outcome": "failed"});
+    *swarms.running.lock().expect("running") = Some("c-1".into());
+    let live = run(operations, end.clone());
+    assert_eq!(code(&live), &json!("run_live"), "{live}");
+    *swarms.running.lock().expect("running") = None;
+    let ended = run(operations, end);
+    assert_eq!(
+        (&ended["ok"], &ended["status"], &ended["liveness"]),
+        (&json!(true), &json!("ready"), &json!("checked")),
+        "{ended}"
+    );
+    assert_eq!(operations.left_runs(), Ok(vec![]));
+}
+
+#[test]
+fn board_operations_starts_and_ends() {
+    for fixture in [local, served] {
+        let swarms = Arc::new(Swarms::default());
+        let remote = Remote::new();
+        check_starts_and_ends(fixture(&remote, Some(Arc::clone(&swarms) as _)), &swarms);
+    }
 }

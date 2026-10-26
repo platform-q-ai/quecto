@@ -559,5 +559,8 @@ mod undo;
 #[path = "start_board_task_dependency_tests.rs"]
 mod dependency;
 
+#[path = "start_board_task_served_tests.rs"]
+mod served;
+
 #[path = "start_board_task_restore_tests.rs"]
 mod restore;

@@ -241,4 +241,4 @@ async fn spawns_refusal_or_an_answer_naming_no_container_is_a_refusal() {
 }
 
 #[path = "coordinator_launch_cancel.rs"]
-mod cancel;
+pub(crate) mod cancel;

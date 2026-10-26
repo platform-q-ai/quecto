@@ -90,12 +90,16 @@ pub(in crate::interface::cli::board_server) fn operating(
         fn prepare(
             &self,
             _: Option<&crate::application::project_board::dto::BoardRequest>,
+            _: &crate::application::project_board::ports::ServedRun,
             _: &dyn ProjectBoardStore,
-        ) -> crate::application::project_board::ports::OperationsOver {
+        ) -> Result<
+            crate::application::project_board::ports::OperationsOver,
+            crate::application::project_board::ports::ServeError,
+        > {
             use crate::composition::bootstrap::project_board_operations::fixtures::{
                 QueryListings, assembled,
             };
-            Box::new(|store| {
+            Ok(Box::new(|store| {
                 let listings = QueryListings(
                     crate::application::project_board::use_cases::QueryBoard::new(Arc::clone(
                         &store,
@@ -106,7 +110,7 @@ pub(in crate::interface::cli::board_server) fn operating(
                 let clock = Arc::new(SystemBoardClock::default());
                 assembled(store, clock, Arc::new(listings), Err(no_host))
                     .map(|operations| Box::new(operations) as Box<dyn BoardOperations>)
-            })
+            }))
         }
     }
     crate::application::project_board::use_cases::ServeBoardOperation::new(
