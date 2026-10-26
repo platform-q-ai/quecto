@@ -166,6 +166,8 @@ const KNOWN_KINDS: &[&str] = &[
     "plan_changed",
     "plans_inconsistent",
     "plan_ahead",
+    // A task created past the clock bound (#2705 B9).
+    "task_clock_ahead",
     "runs_inconsistent",
     "plan_not_accepted",
     "change_already_linked",

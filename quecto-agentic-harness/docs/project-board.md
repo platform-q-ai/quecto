@@ -166,7 +166,10 @@ in `attempts` and `races_lost`; each fetch again is counted in its `lock_races`.
 The board orders its changes by revision (#2705 B9): a stamp is for display.
 Every change stamps what it writes with the writer's clock, or the artifact's own
 `updated` if that clock reads earlier, and never before its task's `updated`; no
-stamp is pushed past the clock, so two changes in one second share one. A plan's change (an acceptance too) is stamped no earlier than any
+stamp is pushed past the clock, so two changes in one second share one. A claim
+runs from the caller's clock for two hours, never from a stamp; a task created
+more than 60 s ahead of the caller's clock is not claimed, taken over, renewed or
+started (`task_clock_ahead`): a clock is wrong. A plan's change (an acceptance too) is stamped no earlier than any
 plan of its task, and a change's no earlier than any change of its task, each
 within the outside time's bound (one stamped past it, by a hand edit or a clock
 that ran ahead, is left out). So, kind by kind, a task's own stamps never run

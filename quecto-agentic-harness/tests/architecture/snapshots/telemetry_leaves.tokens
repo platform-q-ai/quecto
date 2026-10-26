@@ -119,6 +119,7 @@ const KNOWN_KINDS : & [
 "plan_changed" ,
 "plans_inconsistent" ,
 "plan_ahead" ,
+"task_clock_ahead" ,
 "runs_inconsistent" ,
 "plan_not_accepted" ,
 "change_already_linked" ,

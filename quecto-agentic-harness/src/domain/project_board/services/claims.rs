@@ -26,7 +26,9 @@ use super::super::value_objects::timestamp::Timestamp;
 pub const STAMP_SLACK_SECONDS: u64 = 30;
 
 /// How far a clock may run ahead of an outside reading of the current
-/// time before the board refuses to take its time.
+/// time before the board refuses to take its time; and how far ahead of
+/// the caller's clock a task may have been created and still be claimed
+/// ([`claimable_at`]).
 pub const CLOCK_AHEAD_SECONDS: u64 = 60;
 
 /// The holder's claim runs again from now for [`CLAIM_TTL_SECONDS`]: a
@@ -35,6 +37,7 @@ pub const CLOCK_AHEAD_SECONDS: u64 = 60;
 /// from a clock slower than the one that took the claim never shortens
 /// it, nor moves its start back (#2705 B9 review round 2).
 pub fn renew(task: &Task, holder: &Identity, now: &Timestamp) -> Result<Task, BoardRuleError> {
+    claimable_at(task, now)?;
     let claim = held_or_lapsed_by(task, holder, now)?;
     let at = stamp(task, now);
     let fresh = new_claim(holder, task, now)?;
@@ -55,6 +58,7 @@ pub fn renew(task: &Task, holder: &Identity, now: &Timestamp) -> Result<Task, Bo
 /// Someone else takes an expired claim on a task that may hold one
 /// (claimed, in progress, in review or blocked).
 pub fn take_over(task: &Task, taker: &Identity, now: &Timestamp) -> Result<Task, BoardRuleError> {
+    claimable_at(task, now)?;
     let fields = task.fields();
     let claim = match (&fields.claim, fields.status.may_hold_claim()) {
         (Some(claim), true) => claim,
@@ -250,27 +254,53 @@ pub(super) fn claim_start(task: &Task, now: &Timestamp) -> Timestamp {
     since
 }
 
+/// Whether `task` may be claimed at `now` (#2705 B9 review round 3): only
+/// when it was created no more than [`CLOCK_AHEAD_SECONDS`] ahead of the
+/// caller's clock. A claim starts no earlier than its task's creation, so
+/// one on a task created further ahead would outlast the caller's two
+/// hours: refused as `task_clock_ahead`, since a clock is wrong. It reads
+/// `created`, never `updated`, so no burst of changes is ever bounded.
+///
+/// # Errors
+/// The task was created past that bound.
+pub(super) fn claimable_at(task: &Task, now: &Timestamp) -> Result<(), BoardRuleError> {
+    let created = &task.fields().created;
+    let within = match now.plus_seconds(CLOCK_AHEAD_SECONDS) {
+        Ok(bound) => *created <= bound,
+        // A clock at the end of time bounds nothing it could spell past.
+        Err(_) => true,
+    };
+    match within {
+        true => Ok(()),
+        false => Err(BoardRuleError::TaskClockAhead {
+            created: created.clone(),
+        }),
+    }
+}
+
 /// A claim on `task` for `holder`, taken or renewed at `now`: from
 /// [`claim_start`] until two hours from `now` by the caller's clock
-/// (#2705 B9 review round 2), so a task created ahead never stretches it.
-/// Only a task created two hours or more ahead holds a claim past that,
-/// for the schema's least, a second past its start (a claim starts while
-/// its task exists, and ends after it starts).
+/// (#2705 B9 review round 2), so a task created ahead never stretches it:
+/// one created more than [`CLOCK_AHEAD_SECONDS`] ahead is never claimed
+/// ([`claimable_at`]).
+///
+/// # Errors
+/// A task created past that bound; a time the board cannot spell.
 pub(super) fn new_claim(
     holder: &Identity,
     task: &Task,
     now: &Timestamp,
 ) -> Result<Claim, BoardRuleError> {
+    claimable_at(task, now)?;
     let since = claim_start(task, now);
     let spelt = |at: Result<Timestamp, SchemaError>| {
         at.map_err(|error| BoardRuleError::Invalid(error.at("claim/expires")))
     };
-    let two_hours = spelt(now.plus_seconds(CLAIM_TTL_SECONDS))?;
-    let least = spelt(since.plus_seconds(1))?;
-    let expires = two_hours.max(least);
+    let expires = spelt(now.plus_seconds(CLAIM_TTL_SECONDS))?;
     assert!(
         since < expires && expires <= spelt(since.plus_seconds(CLAIM_TTL_SECONDS))?,
-        "a claim ends after it starts, within two hours of its start"
+        "a claim ends after it starts, within two hours of its start: \
+         its task was created within the clock bound"
     );
     Ok(Claim {
         holder: holder.clone(),

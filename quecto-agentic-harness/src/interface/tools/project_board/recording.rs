@@ -526,6 +526,7 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         | R::AcceptedPlanChanged { .. }
         | R::PlansInconsistent(..)
         | R::PlanAhead { .. }
+        | R::TaskClockAhead { .. }
         | R::RunsInconsistent(..)
         | R::PlanNotAccepted(..)
         | R::NoAcceptedPlan

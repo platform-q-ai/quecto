@@ -93,9 +93,9 @@ fn a_task_created_past_the_clock_bound_is_refused_a_claim_as_task_clock_ahead() 
     let mut held = task(InProgress).into_fields();
     held.created = at("23:00:00");
     held.updated = at("23:00:00");
-    held.claim.as_mut().map(|claim| {
+    if let Some(claim) = held.claim.as_mut() {
         (claim.since, claim.expires) = (at("23:00:00"), at("23:00:01"));
-    });
+    }
     let held = Task::new(held).unwrap();
     assert_eq!(renew(&held, &ada, &nine), Err(skewed.clone()));
     assert_eq!(take_over(&held, &person("Bob"), &nine), Err(skewed));

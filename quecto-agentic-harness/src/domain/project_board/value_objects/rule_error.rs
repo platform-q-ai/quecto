@@ -74,6 +74,10 @@ pub enum BoardRuleError {
     /// The plan was stamped by a clock running ahead of the outside time:
     /// building on it would drag the task ahead too.
     PlanAhead { version: u32, updated: Timestamp },
+    /// The task was created more than `CLOCK_AHEAD_SECONDS` ahead of the
+    /// caller's clock (#2705 B9): a claim on it could only start at its
+    /// creation and so outlast the caller's two hours. A clock is wrong.
+    TaskClockAhead { created: Timestamp },
     /// The task's plans contradict each other (a hand edit, a hostile
     /// push): mend them before deciding on one.
     PlansInconsistent(String),
@@ -325,6 +329,11 @@ impl fmt::Display for BoardRuleError {
                 updated.as_str()
             ),
             Self::PlansInconsistent(why) => write!(f, "the task's plans contradict: {why}"),
+            Self::TaskClockAhead { created } => write!(
+                f,
+                "the task was created at {}, ahead of this clock: a clock is wrong",
+                created.as_str()
+            ),
             Self::PlanAhead { version, updated } => write!(
                 f,
                 "plan version {version} was stamped {} by a clock that ran ahead",

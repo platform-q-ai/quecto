@@ -38,6 +38,7 @@ pub fn rule_code(rule: &BoardRuleError) -> &'static str {
         R::AcceptedPlanChanged { .. } => "accepted_plan_changed",
         R::PlansInconsistent(..) => "plans_inconsistent",
         R::PlanAhead { .. } => "plan_ahead",
+        R::TaskClockAhead { .. } => "task_clock_ahead",
         R::RunsInconsistent(..) => "runs_inconsistent",
         R::PlanNotAccepted(..) => "plan_not_accepted",
         R::NoAcceptedPlan => "no_accepted_plan",
@@ -125,6 +126,7 @@ fn rule_fields(rule: &BoardRuleError) -> Map<String, Value> {
             "updated": updated.as_str(),
         }),
         R::PlansInconsistent(why) => object!({"reason": shown(why)}),
+        R::TaskClockAhead { created } => object!({"created": created.as_str()}),
         R::PlanAhead { version, updated } => object!({
             "version": version,
             "updated": updated.as_str(),
