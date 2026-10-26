@@ -170,3 +170,7 @@ pub(super) fn response(reply: ServiceReply) -> Response<ReplyBody> {
     }
     response
 }
+
+#[cfg(test)]
+#[path = "replies_tests.rs"]
+mod tests;
