@@ -5,7 +5,8 @@
 //! ([`super::feed`]); a primary's batches for its followers (B11), `GET
 //! /v1/boards/{id}/replicate`; admin `GET`/`POST /v1/admin/tokens` and
 //! `POST /v1/admin/tokens/revoke`, on the Unix socket only (403 over TCP);
-//! else 404, or 405 naming a route's methods.
+//! else 404, or 405 naming a route's methods. A follower (B11) answers
+//! every write 409 `standby`, naming its primary.
 use std::sync::PoisonError;
 
 use serde_json::json;
@@ -36,6 +37,8 @@ pub struct BoardRoutes {
     feed: Option<FollowBoard>,
     /// The batches for followers (B11); none answers the route 404.
     replication: Option<ServeReplication>,
+    /// A follower's primary (B11): every write is refused, naming it.
+    standby: Option<String>,
     /// The token store's failure last said on stderr.
     unavailable: std::sync::Mutex<String>,
 }
@@ -132,6 +135,7 @@ impl BoardRoutes {
             operations,
             feed: None,
             replication: None,
+            standby: None,
             unavailable: std::sync::Mutex::default(),
         }
     }
@@ -142,6 +146,22 @@ impl BoardRoutes {
             replication,
             ..self
         }
+    }
+
+    /// The routes of a follower of `primary` (B11): every write is 409.
+    pub fn standby(self, primary: String) -> Self {
+        Self {
+            standby: Some(primary),
+            ..self
+        }
+    }
+
+    /// A follower's refusal of a write: 409 `standby`, naming its primary.
+    fn refused_standby(primary: &str) -> ServiceReply {
+        let primary = redact_secrets(&redact_url_userinfo(primary));
+        let body = json!({"error": "this server is a standby: write to its primary",
+            "code": "standby", "primary": primary});
+        ServiceReply::json(409, &body)
     }
 
     /// The routes, serving `feed` as the board's change feed (B10).
@@ -196,13 +216,20 @@ impl BoardRoutes {
         if let Err(reply) = self.served(&request.path) {
             return reply;
         }
-        match answer_op(&self.operations, principal, &request.body) {
+        let standby = self.standby.as_deref();
+        match answer_op(
+            &self.operations,
+            principal,
+            &request.body,
+            standby.is_some(),
+        ) {
             Ok(answer) => ServiceReply {
                 body: answer.into_bytes(),
                 ..ServiceReply::json(200, &serde_json::Value::Null)
             },
             Err(OpRefusal::Body(why)) => coded(400, "request", &why),
             Err(OpRefusal::Access(refused)) => self.refusal(&refused, request.transport),
+            Err(OpRefusal::Standby) => Self::refused_standby(standby.unwrap_or_default()),
             Err(OpRefusal::Serve(error)) => failed(&error),
         }
     }
@@ -258,6 +285,24 @@ impl BoardRoutes {
 
     /// Answers `request` from `principal` on `route`, a method it takes.
     fn route(&self, route: Route, request: &ServiceRequest, principal: &Principal) -> ServiceReply {
+        // A follower writes nothing but its primary's batches: an allowlist
+        // of the routes it answers whole (an op is judged by its scope).
+        let read_only = matches!(
+            (route, request.method),
+            (Route::Tokens, ServiceMethod::Get)
+                | (
+                    Route::Status
+                        | Route::Time
+                        | Route::Op
+                        | Route::Events
+                        | Route::Revisions
+                        | Route::Replicate,
+                    _
+                )
+        );
+        if let (Some(primary), false) = (&self.standby, read_only) {
+            return Self::refused_standby(primary);
+        }
         match (route, request.method) {
             (Route::Op, _) => self.op(request, principal),
             (Route::Replicate, _) => match (self.served(&request.path), &self.replication) {
@@ -275,11 +320,22 @@ impl BoardRoutes {
             // or a future front end, which is told to read the feed as a stream.
             (Route::Events, _) => coded(400, "stream", "the change feed is read as a stream"),
             (Route::Status, _) => read(self.serve.status().map(|status| {
-                json!({
+                let mut body = json!({
                     "role": status.role.as_str(),
                     "board": status.board.as_str(),
                     "head": status.head.map(|head| head.0),
-                })
+                });
+                if let Some(replica) = status.replica {
+                    let primary = redact_secrets(&redact_url_userinfo(&replica.primary));
+                    body["replication"] = json!({
+                        "primary": primary,
+                        "applied": replica.applied,
+                        "primary_head": replica.primary_head,
+                        "state": replica.state.as_str(),
+                        "reason": replica.state.reason().map(redact_secrets),
+                    });
+                }
+                body
             })),
             (Route::Time, _) => read(
                 self.serve
@@ -475,3 +531,7 @@ pub(super) fn failed(error: &ServeError) -> ServiceReply {
 #[cfg(test)]
 #[path = "routes_tests.rs"]
 pub(super) mod tests;
+
+#[cfg(test)]
+#[path = "routes_follower_tests.rs"]
+mod follower_tests;

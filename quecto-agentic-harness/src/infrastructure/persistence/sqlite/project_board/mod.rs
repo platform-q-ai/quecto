@@ -21,6 +21,7 @@ mod mutation;
 mod op_store;
 mod reader;
 mod replica_log;
+mod replica_store;
 mod schema;
 mod schema_upgrade;
 mod storage;

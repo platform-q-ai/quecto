@@ -1,0 +1,389 @@
+//! A follower's policy (epic #2705 B11) over a scripted primary, an
+//! in-memory replica and recorded pauses: batched catch-up, fork refusal,
+//! admin rows taken whole, the feed followed, and no loop that spins.
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use super::*;
+use crate::application::project_board::ports::TokenError;
+use crate::application::project_board::ports::feed::{BoardRevision, StreamRead};
+use crate::application::project_board::ports::replication::{
+    AdminToken, ReplicaBatch, ReplicaPosition, ReplicaRevision,
+};
+use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::timestamp::Timestamp;
+
+/// Calls past which a follower is a runaway.
+const RUNAWAY: usize = 10_000;
+
+fn chain(revision: u64) -> String {
+    format!("c{revision}")
+}
+
+fn revision(revision: u64) -> ReplicaRevision {
+    ReplicaRevision {
+        head: format!("1:{revision}"),
+        root: "r".into(),
+        name: "Ada".into(),
+        email: "ada@example.com".into(),
+        revision,
+        parent: revision.checked_sub(1).filter(|parent| *parent > 0),
+        message: "board: edit".into(),
+        at: 0,
+        git_commit: None,
+        git_meta: None,
+        principal: None,
+        chain: chain(revision),
+    }
+}
+
+fn token(name: &str) -> AdminToken {
+    AdminToken {
+        name: Slug::parse(name).unwrap(),
+        created: Timestamp::parse("2026-10-26T00:00:00Z").unwrap(),
+        kind: crate::application::project_board::ports::TokenKind::Device,
+        digest: "0".repeat(64),
+    }
+}
+
+/// A primary of `tip` revisions (more as the test adds them), its tokens
+/// and feed scripted; each batch asked counted.
+struct Primary {
+    tip: Mutex<u64>,
+    tokens: Mutex<Vec<AdminToken>>,
+    batches: AtomicUsize,
+    unreachable: bool,
+    feed: Mutex<VecDeque<Vec<StreamRead>>>,
+    /// The tip it grows to as its feed is next opened.
+    grows_to: Mutex<Option<u64>>,
+}
+
+impl Primary {
+    fn of(tip: u64) -> Arc<Self> {
+        Arc::new(Self::plain(tip))
+    }
+
+    fn plain(tip: u64) -> Self {
+        Self {
+            tip: Mutex::new(tip),
+            tokens: Mutex::new(vec![token("phone")]),
+            batches: AtomicUsize::new(0),
+            unreachable: false,
+            feed: Mutex::new(VecDeque::new()),
+            grows_to: Mutex::new(None),
+        }
+    }
+}
+
+struct Played(VecDeque<StreamRead>);
+
+impl BoardStream for Played {
+    fn read(&mut self) -> StreamRead {
+        self.0.pop_front().unwrap_or(StreamRead::Ended)
+    }
+
+    fn retry(&self) -> Option<Duration> {
+        None
+    }
+}
+
+impl ReplicationSource for Primary {
+    fn batch(
+        &self,
+        after: u64,
+        _objects_after: u64,
+        limit: BatchLimit,
+    ) -> Result<ReplicaBatch, OpenRefused> {
+        let asked = self.batches.fetch_add(1, Ordering::SeqCst);
+        assert!(asked < RUNAWAY, "the follower asked {RUNAWAY} batches");
+        if self.unreachable {
+            return Err(OpenRefused::Unreachable("no primary".into()));
+        }
+        let tip = *self.tip.lock().unwrap();
+        let last = tip.min(after + limit.get() as u64);
+        Ok(ReplicaBatch {
+            after,
+            chain_after: (1..=tip).contains(&after).then(|| chain(after)),
+            objects: vec![],
+            revisions: (after + 1..=last).map(revision).collect(),
+            epochs: vec![],
+            meta: None,
+            tokens: self.tokens.lock().unwrap().clone(),
+            tip,
+            more: last < tip,
+        })
+    }
+
+    fn open(&self, _after: Option<u64>) -> Result<Box<dyn BoardStream>, OpenRefused> {
+        if let Some(tip) = self.grows_to.lock().unwrap().take() {
+            *self.tip.lock().unwrap() = tip;
+        }
+        match self.feed.lock().unwrap().pop_front() {
+            Some(reads) => Ok(Box::new(Played(reads.into()))),
+            None => Err(OpenRefused::Refused("the feed is done".into())),
+        }
+    }
+
+    fn primary(&self) -> String {
+        "http://100.64.0.1:7979".into()
+    }
+}
+
+/// A replica in memory: its revisions' chains, each applied in order.
+#[derive(Default)]
+struct Replica {
+    chains: Mutex<Vec<String>>,
+}
+
+impl ReplicaStore for Replica {
+    fn position(&self) -> Result<ReplicaPosition, ReplicaError> {
+        let chains = self.chains.lock().unwrap();
+        Ok(ReplicaPosition {
+            revision: chains.len() as u64,
+            chain: chains.last().cloned(),
+            objects: 0,
+        })
+    }
+
+    fn apply(&self, batch: &ReplicaBatch) -> Result<ReplicaPosition, ReplicaError> {
+        {
+            let mut chains = self.chains.lock().unwrap();
+            for revision in &batch.revisions {
+                assert_eq!(revision.revision, chains.len() as u64 + 1, "in order");
+                chains.push(revision.chain.clone());
+            }
+        }
+        self.position()
+    }
+}
+
+#[derive(Default)]
+struct Admin(Mutex<Vec<Vec<AdminToken>>>);
+
+impl AdminRows for Admin {
+    fn export(&self) -> Result<Vec<AdminToken>, TokenError> {
+        Ok(self.0.lock().unwrap().last().cloned().unwrap_or_default())
+    }
+
+    fn replace(&self, rows: &[AdminToken]) -> Result<(), TokenError> {
+        self.0.lock().unwrap().push(rows.to_vec());
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct Recorded(Mutex<Vec<Duration>>);
+
+impl WatchPauses for Recorded {
+    fn pause(&self, how_long: Duration) {
+        let mut paused = self.0.lock().unwrap();
+        assert!(
+            paused.len() < RUNAWAY,
+            "the follower paused {RUNAWAY} times"
+        );
+        paused.push(how_long);
+    }
+}
+
+const FAST: ReplicaTiming = ReplicaTiming {
+    watch: WatchTiming {
+        pause: Duration::from_millis(1),
+        min_backoff: Duration::from_millis(1),
+        max_backoff: Duration::from_millis(8),
+        busy_for: Duration::from_millis(100),
+        busy_tries: 4,
+        attempts: 2,
+    },
+    restart: Duration::from_millis(7),
+};
+
+struct Follower {
+    primary: Arc<Primary>,
+    replica: Arc<Replica>,
+    admin: Arc<Admin>,
+    pauses: Arc<Recorded>,
+    follower: ReplicateBoard,
+}
+
+fn following(primary: Arc<Primary>, replica: Replica) -> Follower {
+    let (replica, admin, pauses) = (
+        Arc::new(replica),
+        Arc::new(Admin::default()),
+        Arc::new(Recorded::default()),
+    );
+    let follower = ReplicateBoard::new(
+        Arc::clone(&primary) as _,
+        Arc::clone(&replica) as _,
+        Arc::clone(&admin) as _,
+        Arc::clone(&pauses) as _,
+        FAST,
+    );
+    Follower {
+        primary,
+        replica,
+        admin,
+        pauses,
+        follower,
+    }
+}
+
+#[test]
+fn a_follower_of_1500_revisions_catches_up_in_at_most_3_batches() {
+    let f = following(Primary::of(1_500), Replica::default());
+    let caught = f.follower.catch_up().expect("caught up");
+    assert!(caught.batches <= 3, "{caught:?}");
+    assert_eq!(caught.applied, 1_500);
+    assert_eq!(
+        f.primary.batches.load(Ordering::SeqCst),
+        caught.batches as usize
+    );
+    let status = f.follower.status();
+    assert_eq!(
+        (status.applied, status.primary_head),
+        (1_500, Some(1_500)),
+        "the lag shows in status"
+    );
+    assert_eq!(status.primary, "http://100.64.0.1:7979");
+}
+
+#[test]
+fn a_follower_whose_last_chain_differs_is_refused_and_marked_diverged() {
+    let forked = Replica {
+        chains: Mutex::new(vec![chain(1), "forked".into()]),
+    };
+    let f = following(Primary::of(5), forked);
+    let refused = f.follower.catch_up();
+    assert!(
+        matches!(&refused, Err(ReplicaError::Diverged(why)) if why.contains("revision 2")),
+        "{refused:?}"
+    );
+    assert_eq!(
+        f.replica.chains.lock().unwrap().len(),
+        2,
+        "nothing rewritten"
+    );
+    assert_eq!(f.follower.status().state.as_str(), "diverged");
+    // A diverged follower stops for good: no pause, no batch more.
+    f.follower.run(&|| true);
+    assert_eq!(f.primary.batches.load(Ordering::SeqCst), 2);
+    assert!(f.pauses.0.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_follower_ahead_of_its_primary_is_diverged() {
+    let ahead = Replica {
+        chains: Mutex::new((1..=6).map(chain).collect()),
+    };
+    let f = following(Primary::of(5), ahead);
+    assert!(matches!(
+        f.follower.catch_up(),
+        Err(ReplicaError::Diverged(_))
+    ));
+}
+
+#[test]
+fn each_batch_takes_the_admin_rows_whole() {
+    let f = following(Primary::of(3), Replica::default());
+    f.follower.catch_up().unwrap();
+    f.primary.tokens.lock().unwrap().clear();
+    f.follower.catch_up().unwrap();
+    let replaced = f.admin.0.lock().unwrap();
+    assert_eq!(replaced.first(), Some(&vec![token("phone")]));
+    assert_eq!(
+        replaced.last(),
+        Some(&vec![]),
+        "a revoked token is revoked here"
+    );
+}
+
+#[test]
+fn a_batch_that_says_more_but_makes_no_progress_is_refused() {
+    struct Stuck;
+    impl ReplicationSource for Stuck {
+        fn batch(&self, after: u64, _: u64, _: BatchLimit) -> Result<ReplicaBatch, OpenRefused> {
+            Ok(ReplicaBatch {
+                after,
+                chain_after: None,
+                objects: vec![],
+                revisions: vec![],
+                epochs: vec![],
+                meta: None,
+                tokens: vec![],
+                tip: 9,
+                more: true,
+            })
+        }
+        fn open(&self, _: Option<u64>) -> Result<Box<dyn BoardStream>, OpenRefused> {
+            Err(OpenRefused::Refused("no".into()))
+        }
+        fn primary(&self) -> String {
+            "unix:///p".into()
+        }
+    }
+    let follower = ReplicateBoard::new(
+        Arc::new(Stuck),
+        Arc::new(Replica::default()),
+        Arc::new(Admin::default()),
+        Arc::new(Recorded::default()),
+        FAST,
+    );
+    assert!(matches!(follower.catch_up(), Err(ReplicaError::Invalid(_))));
+}
+
+#[test]
+fn an_unreachable_primary_stalls_the_follower_which_pauses_before_each_try() {
+    let primary = Arc::new(Primary {
+        unreachable: true,
+        ..Primary::plain(1)
+    });
+    let f = following(primary, Replica::default());
+    let rounds = AtomicUsize::new(0);
+    f.follower
+        .run(&|| rounds.fetch_add(1, Ordering::SeqCst) < 6);
+    let status = f.follower.status();
+    assert_eq!(status.state.as_str(), "stalled");
+    assert!(status.state.reason().unwrap().contains("no primary"));
+    let paused = f.pauses.0.lock().unwrap();
+    let batches = f.primary.batches.load(Ordering::SeqCst);
+    assert!(
+        batches >= 1 && paused.len() >= batches,
+        "{batches} tries, {paused:?}"
+    );
+    assert!(paused.iter().all(|pause| *pause == FAST.restart));
+}
+
+#[test]
+fn the_feed_pulls_each_revision_the_follower_does_not_hold() {
+    let primary = Primary::of(2);
+    let told = |revision| StreamRead::Event {
+        id: revision,
+        event: FeedEvent::Revision(BoardRevision { epoch: 1, revision }),
+    };
+    primary.feed.lock().unwrap().push_back(vec![
+        StreamRead::Event {
+            id: 2,
+            event: FeedEvent::Epoch { epoch: 1 },
+        },
+        told(3),
+    ]);
+    // The primary makes revision 3 as the follower opens its feed.
+    *primary.grows_to.lock().unwrap() = Some(3);
+    let f = following(primary, Replica::default());
+    let rounds = AtomicUsize::new(0);
+    // It runs until its third batch: the catch-up (to 2), the feed's
+    // revision 3, and one before the feed would be opened again.
+    let running = || {
+        let asked = f.primary.batches.load(Ordering::SeqCst);
+        rounds.fetch_add(1, Ordering::SeqCst) < 40 && asked < 3
+    };
+    f.follower.run(&running);
+    assert_eq!(f.replica.chains.lock().unwrap().len(), 3);
+    let status = f.follower.status();
+    assert_eq!((status.applied, status.primary_head), (3, Some(3)));
+    assert_eq!(f.primary.batches.load(Ordering::SeqCst), 3);
+    assert_eq!(status.state.as_str(), "following");
+    assert!(
+        f.pauses.0.lock().unwrap().is_empty(),
+        "stopped before a pause"
+    );
+}

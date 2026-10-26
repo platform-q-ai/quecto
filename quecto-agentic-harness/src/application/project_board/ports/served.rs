@@ -8,26 +8,31 @@ use crate::application::project_board::start::{NotedFoldBack, StartUndo};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::telemetry::BoardId;
 
-/// What a board server is to its board: an allowlist (a follower is B11).
+/// What a board server is to its board: an allowlist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerRole {
     Primary,
+    /// A read-only copy of a primary (B11).
+    Follower,
 }
 
 impl ServerRole {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Primary => "primary",
+            Self::Follower => "follower",
         }
     }
 }
 
-/// A board server's status; `head` is `None` while there is no board.
+/// A board server's status; `head` is `None` while there is no board. A
+/// follower's says how far behind its primary it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServedStatus {
     pub role: ServerRole,
     pub board: BoardId,
     pub head: Option<BoardHead>,
+    pub replica: Option<super::replication::ReplicaStatus>,
 }
 
 /// Why a board server could not answer (the write cases are B7's).
