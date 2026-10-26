@@ -133,6 +133,8 @@ impl ReplicationSource for Primary {
 #[derive(Default)]
 struct Replica {
     chains: Mutex<Vec<String>>,
+    /// Its diverged mark, kept as a store keeps it across restarts.
+    mark: Mutex<Option<String>>,
 }
 
 impl ReplicaStore for Replica {
@@ -154,6 +156,15 @@ impl ReplicaStore for Replica {
             }
         }
         self.position()
+    }
+
+    fn diverged(&self) -> Result<Option<String>, ReplicaError> {
+        Ok(self.mark.lock().unwrap().clone())
+    }
+
+    fn mark_diverged(&self, why: &str) -> Result<(), ReplicaError> {
+        *self.mark.lock().unwrap() = Some(why.to_string());
+        Ok(())
     }
 }
 
@@ -195,6 +206,7 @@ const FAST: ReplicaTiming = ReplicaTiming {
         attempts: 2,
     },
     restart: Duration::from_millis(7),
+    max_restart: Duration::from_millis(28),
 };
 
 struct Follower {
@@ -250,6 +262,7 @@ fn a_follower_of_1500_revisions_catches_up_in_at_most_3_batches() {
 fn a_follower_whose_last_chain_differs_is_refused_and_marked_diverged() {
     let forked = Replica {
         chains: Mutex::new(vec![chain(1), "forked".into()]),
+        ..Replica::default()
     };
     let f = following(Primary::of(5), forked);
     let refused = f.follower.catch_up();
@@ -265,7 +278,7 @@ fn a_follower_whose_last_chain_differs_is_refused_and_marked_diverged() {
     assert_eq!(f.follower.status().state.as_str(), "diverged");
     // A diverged follower stops for good: no pause, no batch more.
     f.follower.run(&|| true);
-    assert_eq!(f.primary.batches.load(Ordering::SeqCst), 2);
+    assert_eq!(f.primary.batches.load(Ordering::SeqCst), 1);
     assert!(f.pauses.0.lock().unwrap().is_empty());
 }
 
@@ -273,6 +286,7 @@ fn a_follower_whose_last_chain_differs_is_refused_and_marked_diverged() {
 fn a_follower_ahead_of_its_primary_is_diverged() {
     let ahead = Replica {
         chains: Mutex::new((1..=6).map(chain).collect()),
+        ..Replica::default()
     };
     let f = following(Primary::of(5), ahead);
     assert!(matches!(
@@ -339,7 +353,7 @@ fn an_unreachable_primary_stalls_the_follower_which_pauses_before_each_try() {
     let f = following(primary, Replica::default());
     let rounds = AtomicUsize::new(0);
     f.follower
-        .run(&|| rounds.fetch_add(1, Ordering::SeqCst) < 6);
+        .run(&|| rounds.fetch_add(1, Ordering::SeqCst) < 16);
     let status = f.follower.status();
     assert_eq!(status.state.as_str(), "stalled");
     assert!(status.state.reason().unwrap().contains("no primary"));
@@ -349,7 +363,77 @@ fn an_unreachable_primary_stalls_the_follower_which_pauses_before_each_try() {
         batches >= 1 && paused.len() >= batches,
         "{batches} tries, {paused:?}"
     );
-    assert!(paused.iter().all(|pause| *pause == FAST.restart));
+    // Stalled again and again, it backs off, doubling to its ceiling.
+    let ms = |millis| Duration::from_millis(millis);
+    assert_eq!(paused[..4], [ms(7), ms(14), ms(28), ms(28)], "{paused:?}");
+}
+
+/// B11 review: a diverged follower is kept so across a restart: it asks
+/// its primary nothing and stays diverged.
+#[test]
+fn a_diverged_follower_stays_diverged_across_a_restart() {
+    let forked = Replica {
+        chains: Mutex::new(vec![chain(1), "forked".into()]),
+        ..Replica::default()
+    };
+    let f = following(Primary::of(5), forked);
+    assert!(f.follower.catch_up().is_err());
+    let why = f.replica.mark.lock().unwrap().clone();
+    assert!(
+        why.as_deref().is_some_and(|why| why.contains("revision 2")),
+        "{why:?}"
+    );
+    // The server restarts: a new follower over the same store.
+    let restarted = ReplicateBoard::new(
+        Arc::clone(&f.primary) as _,
+        Arc::clone(&f.replica) as _,
+        Arc::clone(&f.admin) as _,
+        Arc::clone(&f.pauses) as _,
+        FAST,
+    );
+    assert_eq!(restarted.status().state.as_str(), "diverged");
+    let asked = f.primary.batches.load(Ordering::SeqCst);
+    restarted.run(&|| true);
+    assert!(matches!(
+        restarted.catch_up(),
+        Err(ReplicaError::Diverged(_))
+    ));
+    assert_eq!(
+        f.primary.batches.load(Ordering::SeqCst),
+        asked,
+        "nothing asked"
+    );
+    assert_eq!(restarted.status().state.as_str(), "diverged");
+}
+
+/// B11 review: a follower whose thread dies while its server runs is
+/// shown stalled, never following.
+#[test]
+fn a_follower_that_dies_is_shown_stalled() {
+    struct Dying;
+    impl ReplicationSource for Dying {
+        fn batch(&self, _: u64, _: u64, _: BatchLimit) -> Result<ReplicaBatch, OpenRefused> {
+            panic!("the follower's thread dies");
+        }
+        fn open(&self, _: Option<u64>) -> Result<Box<dyn BoardStream>, OpenRefused> {
+            Err(OpenRefused::Refused("no".into()))
+        }
+        fn primary(&self) -> String {
+            "unix:///p".into()
+        }
+    }
+    let follower = ReplicateBoard::new(
+        Arc::new(Dying),
+        Arc::new(Replica::default()),
+        Arc::new(Admin::default()),
+        Arc::new(Recorded::default()),
+        FAST,
+    );
+    let died = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| follower.run(&|| true)));
+    assert!(died.is_err());
+    let status = follower.status();
+    assert_eq!(status.state.as_str(), "stalled");
+    assert!(status.state.reason().unwrap().contains("stopped following"));
 }
 
 #[test]

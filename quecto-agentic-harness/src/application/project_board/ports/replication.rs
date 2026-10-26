@@ -188,6 +188,19 @@ pub trait ReplicaStore: Send + Sync {
     /// # Errors
     /// As [`ReplicaError`]; nothing is applied.
     fn apply(&self, batch: &ReplicaBatch) -> Result<ReplicaPosition, ReplicaError>;
+
+    /// Why this follower was found diverged, kept across restarts; none
+    /// while it is not.
+    ///
+    /// # Errors
+    /// The mark could not be read.
+    fn diverged(&self) -> Result<Option<String>, ReplicaError>;
+
+    /// Keeps that this follower diverged, and why, across restarts.
+    ///
+    /// # Errors
+    /// The mark could not be kept.
+    fn mark_diverged(&self, why: &str) -> Result<(), ReplicaError>;
 }
 
 /// Port: the server's admin rows (its device tokens' digests): a primary

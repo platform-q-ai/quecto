@@ -2,7 +2,7 @@
 
 `quecto board-server serve --socket <path> --repo <clone> [--remote origin]
 [--listen <ip:port>]... [--state <dir>] [--follow <url> [--token-file
-<path>]]` serves a repository's project board over HTTP/1.1 on a Unix
+<path>] [--replace-tokens]]` serves a repository's project board over HTTP/1.1 on a Unix
 socket, and on each allowlisted TCP address, until SIGINT or SIGTERM (epic
 #2705 B4, B5, B7). With `--follow` it is a read-only follower of the
 primary at `<url>` (B11, below).
@@ -491,23 +491,41 @@ server's own user. The kept write answers (`op_results`) are not in it.
 ## Follower (B11)
 
 `quecto board-server serve --socket <path> --repo <clone> --follow <url>
-[--token-file <path>]` serves a read-only copy of the primary at `<url>`:
-`unix:///<socket path>` (the primary's own user, no token), or
-`http://<ip>:<port>` on loopback or a Tailscale address with a device token
-the primary issued. The token is read from `--token-file`, never from the
-command line: a file of the server's own user that no one else may read
-(mode 0600 or 0400), at most 4 KiB, holding the token on one line. No error
-quotes it. `--token-file` without an `http://` primary, or an `http://`
-primary without it, is refused. Give the follower its own `--state <dir>`
-(its own board file and tokens) and a clone of the same remote, so it
-serves the same board id. Start it on an empty state directory, or on a copy
-of the primary's board file (a backup).
+[--token-file <path>] [--replace-tokens]` serves a read-only copy of the
+primary at `<url>`: `unix:///<socket path>` (the primary's own user, no
+token), or `http://<ip>:<port>` on loopback or a Tailscale address with a
+replica token the primary issued (`quecto board-server token add <name>
+--replica` on the primary; a device token is refused `replicate`). The
+token is read from `--token-file`, never from the command line: a regular
+file (never a link, FIFO or device) of the server's own user that no one
+else may read (mode 0600 or 0400), at most 4 KiB, holding the token on one
+line. It is judged before it is opened, and opened without blocking, so a
+FIFO cannot hang the start. No error quotes it. `--token-file` without an
+`http://` primary, or an `http://` primary without it, is refused. Give the
+follower its own `--state <dir>` (its own board file and tokens) and a clone
+of the same remote, so it serves the same board id. Start it on an empty
+state directory, or on a copy of the primary's board file (a backup).
+
+**Its own tokens.** A follower holds its primary's tokens in its
+`tokens.json`, in place of its own. The first time a state directory is
+followed from, its `tokens.json` is kept as `tokens.json.pre-follow` (which
+also marks the directory a follower's from then on). A state directory
+holding tokens of its own is refused unless `--replace-tokens` is given
+("... holds N token(s) of this server's own: a follower holds its primary's
+instead. Give --replace-tokens to replace them (they are kept as
+tokens.json.pre-follow), or give the follower its own --state <dir>").
 
 **What it copies.** Every revision with its objects, principal and chain,
 the epochs, the board's provenance row, and the admin rows: the primary's
-device tokens, held in the follower's `tokens.json` in place of its own.
-So a token the primary revokes is refused by the follower from its next
-batch, and a device uses its one token on either server.
+tokens, of either kind. So a token the primary revokes is refused by the
+follower from its next batch, and a device uses its one token on either
+server. Each copied row is checked as it is taken, an allowlist: a native
+object's id is made again from its content, an imported original's git id
+from its raw bytes (SHA-1 or SHA-256, by its width) and a tree's entries
+from its raw tree; the provenance row must name the follower's board (an
+unbound follower takes its primary's binding, and a binding is never
+overwritten, nor with none); an epoch held must be the primary's as held,
+and a new one the next after those held.
 
 **Catching up.** The follower asks `replicate?after=<its last
 revision>&objects=<its last object>&limit=500` (above) until no more
@@ -524,14 +542,19 @@ minute), which copies the tokens and epochs (they make no revision).
 stream reopened after its `retry:`, a busy primary tried again with a
 backoff doubling to 8 s for at most 75 s, 5 failed opens in a row ending
 it. Ended, or past a batch it could not have or apply, the follower is
-`stalled` (why is in its status), waits 30 s and starts again from its
-place. No loop goes round without a pause.
+`stalled` (why is in its status), waits and starts again from its place:
+30 s, doubling while it stays stalled, to at most 10 min, and 30 s again
+once it has caught up. No loop goes round without a pause. A follower that
+stops while its server runs is shown `stalled` ("the follower stopped
+following its primary").
 
 **A fork.** If the follower's chain at its last revision is not the
 primary's there (or the primary has no such revision: the follower is
 ahead of it), the follower refuses to go on and marks itself `diverged`,
-with why. It never rewrites what it holds: move its board file aside and
-start it again to follow that primary.
+with why. The mark is kept beside the board, `board.sqlite3.diverged`, so
+a restart is diverged too and asks its primary nothing. It never rewrites
+what it holds: stop it, move its board file and the mark aside, and start
+it again to follow that primary.
 
 **Writes.** Every write is `409 standby`, `{"error": "this server is a
 standby: write to its primary", "code": "standby", "primary": "<url>"}`:
@@ -547,8 +570,10 @@ newest as last heard, or null>, "state": "catching_up" | "following" |
 <url>`.
 
 **Limits.** A batch reply passes the client's 64 MiB bound only if its
-largest object does (an imported blob over about 40 MiB cannot be copied;
-the follower is stalled, saying so). Promotion, demotion and the clients'
+largest object does: an imported blob over about 40 MiB cannot be copied,
+and the follower is stalled saying so ("the primary's batch is past the 64
+MiB a reply may hold: an object on the board is too large to copy"),
+backing off to 10 min between tries. Promotion, demotion and the clients'
 following of the highest epoch are B12.
 
 ## Error replies

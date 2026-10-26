@@ -12,6 +12,8 @@ pub struct SqliteBoardOps {
     pub(super) feed: feed::FeedHub,
     /// The board this file is bound to, once [`Self::bind`] binds it.
     board: std::sync::OnceLock<String>,
+    /// The board file's path, for a follower's diverged mark beside it.
+    pub(super) path: std::path::PathBuf,
 }
 
 /// The write lock and the write connection, held together.
@@ -48,6 +50,7 @@ impl SqliteBoardOps {
             lock: Mutex::new(published),
             feed: feed::FeedHub::default(),
             board: std::sync::OnceLock::new(),
+            path: path.to_path_buf(),
         })
     }
 

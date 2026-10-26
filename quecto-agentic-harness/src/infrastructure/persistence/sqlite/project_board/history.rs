@@ -10,7 +10,8 @@ use crate::infrastructure::persistence::project_board::{
 use std::path::PathBuf;
 #[path = "history_admission.rs"]
 mod admission;
-use admission::{admission, projection};
+use admission::admission;
+pub(super) use admission::projection;
 
 pub struct SqliteBoardHistoryStore {
     path: PathBuf,

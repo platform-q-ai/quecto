@@ -26,6 +26,16 @@ fn position_on(c: &Connection) -> Result<ReplicaPosition, BoardStoreError> {
     })
 }
 
+/// The most bytes a diverged mark holds.
+const MARK_BYTES: u64 = 4096;
+
+/// The diverged mark beside the board file at `path`.
+fn mark_of(path: &Path) -> std::path::PathBuf {
+    let mut mark = path.as_os_str().to_owned();
+    mark.push(".diverged");
+    std::path::PathBuf::from(mark)
+}
+
 fn store_failed(error: BoardStoreError) -> ReplicaError {
     ReplicaError::Unavailable(format!("{error:?}"))
 }
@@ -40,6 +50,43 @@ impl ReplicaStore for SqliteBoardOps {
             .map_err(store_failed)?;
         let tx = storage::Scope::begin(&mut c, false).map_err(store_failed)?;
         position_on(&tx).map_err(store_failed)
+    }
+
+    fn diverged(&self) -> Result<Option<String>, ReplicaError> {
+        use std::io::Read;
+        let mark = mark_of(&self.path);
+        let failed = |error: std::io::Error| {
+            ReplicaError::Unavailable(format!("the diverged mark {}: {error}", mark.display()))
+        };
+        let file = match std::fs::File::open(&mark) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(failed(error)),
+        };
+        let mut why = String::new();
+        let read = file.take(MARK_BYTES).read_to_string(&mut why);
+        read.map_err(failed)?;
+        Ok(Some(why.trim_end().to_string()))
+    }
+
+    fn mark_diverged(&self, why: &str) -> Result<(), ReplicaError> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mark = mark_of(&self.path);
+        let failed = |error: std::io::Error| {
+            ReplicaError::Unavailable(format!("the diverged mark {}: {error}", mark.display()))
+        };
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&mark)
+            .map_err(failed)?;
+        let why: String = why.chars().take(MARK_BYTES as usize / 4).collect();
+        file.write_all(format!("{why}\n").as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(failed)
     }
 
     fn apply(&self, batch: &ReplicaBatch) -> Result<ReplicaPosition, ReplicaError> {
@@ -103,18 +150,18 @@ fn put_object(
         )));
     }
     let place = i64::try_from(place).map_err(|error| invalid(error.to_string()))?;
+    if !as_its_id_says(object) {
+        let kind = match object.content {
+            ReplicaContent::Blob(_) => "blob",
+            ReplicaContent::Tree { .. } => "tree",
+        };
+        return Err(invalid(format!(
+            "{kind} {} is not as its id says",
+            object.oid
+        )));
+    }
     match &object.content {
         ReplicaContent::Blob(bytes) => {
-            // A native object's id is its content's: one made here must match.
-            match (&object.original, storage::blob_id(bytes) == object.oid) {
-                (Some(None), _) | (None, true) => {}
-                (Some(Some(_)) | None, _) => {
-                    return Err(invalid(format!(
-                        "blob {} is not as its id says",
-                        object.oid
-                    )));
-                }
-            }
             writer
                 .insert(
                     "INSERT INTO objects (rowid,oid,kind,bytes,tree_size) VALUES (?1,?2,'blob',?3,NULL)",
@@ -123,24 +170,7 @@ fn put_object(
                 .map_err(store_failed)?;
         }
         ReplicaContent::Tree { size, entries } => {
-            let rows: Vec<_> = entries
-                .iter()
-                .map(|entry| storage::entry(&entry.mode, &entry.raw_name, entry.oid.clone()))
-                .collect();
-            let (native, native_size) = storage::tree_digest(&rows).map_err(store_failed)?;
             let size = i64::try_from(*size).map_err(|error| invalid(error.to_string()))?;
-            match (
-                &object.original,
-                native == object.oid && native_size == size,
-            ) {
-                (Some(Some(_)), _) | (None, true) => {}
-                (Some(None) | None, _) => {
-                    return Err(invalid(format!(
-                        "tree {} is not as its id says",
-                        object.oid
-                    )));
-                }
-            }
             writer
                 .insert(
                     "INSERT INTO objects (rowid,oid,kind,bytes,tree_size) VALUES (?1,?2,'tree',NULL,?3)",
@@ -172,6 +202,58 @@ fn put_object(
             .map_err(store_failed)?;
     }
     Ok(())
+}
+
+/// Whether `object` is as its id says, an allowlist: a native object's id
+/// made again here from its content; an imported original's git id made
+/// from its raw bytes by its board's algorithm (an id of 40 hex digits is
+/// SHA-1's, of 64 SHA-256's), a tree's entries read from its raw tree and
+/// its size theirs.
+fn as_its_id_says(object: &ReplicaObject) -> bool {
+    use crate::application::project_board::ports::history::{
+        HistoryEntry, HistoryKind, HistoryObject,
+    };
+    use crate::infrastructure::persistence::project_board::board_tree::raw_entry_bytes;
+    use crate::infrastructure::persistence::project_board::history::verify_raw;
+    let width = object.oid.len();
+    let git = [40, 64].contains(&width);
+    let original = |kind, bytes: &[u8], entries: &[ReplicaEntry]| HistoryObject {
+        oid: object.oid.clone(),
+        kind,
+        bytes: bytes.to_vec(),
+        entries: entries
+            .iter()
+            .map(|entry| HistoryEntry {
+                mode: entry.mode.clone(),
+                name: entry.raw_name.clone(),
+                oid: entry.oid.clone(),
+            })
+            .collect(),
+    };
+    match (&object.content, &object.original) {
+        (ReplicaContent::Blob(bytes), None) => storage::blob_id(bytes) == object.oid,
+        (ReplicaContent::Tree { size, entries }, None) => {
+            let rows: Vec<_> = entries
+                .iter()
+                .map(|entry| storage::entry(&entry.mode, &entry.raw_name, entry.oid.clone()))
+                .collect();
+            let native = storage::tree_digest(&rows).ok();
+            native.is_some_and(|(oid, made)| oid == object.oid && u64::try_from(made) == Ok(*size))
+        }
+        (ReplicaContent::Blob(bytes), Some(None)) if git => {
+            verify_raw(&original(HistoryKind::Blob, bytes, &[]), width).is_ok()
+        }
+        (ReplicaContent::Tree { size, entries }, Some(Some(raw))) if git => {
+            let tree = original(HistoryKind::Tree, raw, entries);
+            let made = entries.iter().try_fold(0usize, |sum, entry| {
+                sum.checked_add(raw_entry_bytes(&entry.mode, &entry.raw_name, &entry.oid))
+            });
+            verify_raw(&tree, width).is_ok()
+                && super::history::projection(&tree, width).is_ok()
+                && made.and_then(|made| u64::try_from(made).ok()) == Some(*size)
+        }
+        (_, _) => false,
+    }
 }
 
 /// Puts `revision` after revision `last`, its chain made again here.
@@ -238,51 +320,76 @@ fn put_revision(
     }
 }
 
-/// Holds `epochs`: each new one added, each held one the same.
+/// Holds `epochs`, an allowlist: an epoch held is the primary's row as it
+/// is held; one not held is the next after those held (1 with none). An
+/// epoch held otherwise is a fork; one past a gap is refused.
 fn put_epochs(
     c: &Connection,
     writer: &mut storage::ObjectWriter<'_>,
     epochs: &[ReplicaEpoch],
 ) -> Result<(), ReplicaError> {
+    let read = |error: &dyn std::fmt::Display| store_failed(unavailable(error));
     for epoch in epochs {
-        let (number, from) = (epoch.epoch as i64, epoch.from_revision as i64);
-        let row = params![number, from, epoch.reason, epoch.at];
-        writer
-            .insert(
-                "INSERT INTO epochs VALUES (?1,?2,?3,?4) ON CONFLICT(epoch) DO NOTHING",
-                row,
-            )
-            .map_err(store_failed)?;
-        let same: bool = c
+        let number = i64::try_from(epoch.epoch).map_err(|e| read(&e))?;
+        let from = i64::try_from(epoch.from_revision).map_err(|e| read(&e))?;
+        let held: Option<(i64, String, i64)> = c
             .query_row(
-                "SELECT count(*)=1 FROM epochs WHERE epoch=?1 AND from_revision=?2 AND reason=?3 AND at=?4",
-                params![number, from, epoch.reason, epoch.at],
-                |r| r.get(0),
+                "SELECT from_revision,reason,at FROM epochs WHERE epoch=?1",
+                [number],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
-            .map_err(|error| store_failed(unavailable(error)))?;
-        if !same {
-            return Err(ReplicaError::Diverged(format!(
-                "epoch {} differs from the primary's",
-                epoch.epoch
-            )));
+            .optional()
+            .map_err(|e| read(&e))?;
+        let last: i64 = c
+            .query_row("SELECT coalesce(max(epoch),0) FROM epochs", [], |r| {
+                r.get(0)
+            })
+            .map_err(|e| read(&e))?;
+        match held {
+            Some(row) if row == (from, epoch.reason.clone(), epoch.at) => {}
+            Some(_) => {
+                return Err(ReplicaError::Diverged(format!(
+                    "epoch {} differs from the primary's",
+                    epoch.epoch
+                )));
+            }
+            None if Some(number) == last.checked_add(1) => {
+                let row = params![number, from, epoch.reason, epoch.at];
+                (writer.insert("INSERT INTO epochs VALUES (?1,?2,?3,?4)", row))
+                    .map_err(store_failed)?;
+            }
+            None => {
+                return Err(ReplicaError::Invalid(format!(
+                    "epoch {} does not follow epoch {last}",
+                    epoch.epoch
+                )));
+            }
         }
     }
     Ok(())
 }
 
-/// Holds the primary's provenance row, which must name this board.
+/// Holds the primary's provenance row, an allowlist: it names this
+/// server's board, or it names a board and this server is bound to none.
+/// A binding is never overwritten, and never with none.
 fn put_meta(
     writer: &mut storage::ObjectWriter<'_>,
     meta: &ReplicaMeta,
     bound: Option<&str>,
 ) -> Result<(), ReplicaError> {
     match (meta.board_id.as_deref(), bound) {
-        (Some(primary), Some(here)) if primary != here => {
+        (Some(primary), Some(here)) if primary == here => {}
+        (Some(_), None) => {}
+        (Some(primary), Some(here)) => {
             return Err(ReplicaError::Invalid(format!(
                 "the primary serves board {primary}, not this server's board {here}"
             )));
         }
-        (_, _) => {}
+        (None, _) => {
+            return Err(ReplicaError::Invalid(
+                "the primary's board names no board id: it is not copied".into(),
+            ));
+        }
     }
     let count = i64::try_from(meta.imported_count)
         .map_err(|error| ReplicaError::Invalid(error.to_string()))?;
@@ -304,3 +411,7 @@ fn put_meta(
         .map_err(store_failed)?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "replica_store_tests.rs"]
+mod tests;

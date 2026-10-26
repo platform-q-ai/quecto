@@ -1,0 +1,59 @@
+//! A follower's token file (epic #2705 B11 review): read when it is this
+//! user's alone; a FIFO, a link or a readable file is refused at once and
+//! unquoted.
+use std::os::unix::fs::PermissionsExt;
+
+use super::*;
+
+const TOKEN: &str = "A-SECRET-TOKEN-OF-SIXTEEN-OR-MORE";
+
+fn written(dir: &Path, mode: u32) -> std::path::PathBuf {
+    let path = dir.join("primary.token");
+    std::fs::write(&path, format!("{TOKEN}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    path
+}
+
+#[test]
+fn a_private_file_gives_its_token() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(
+        read_token_file(&written(dir.path(), 0o600)),
+        Ok(TOKEN.into())
+    );
+    assert_eq!(
+        read_token_file(&written(dir.path(), 0o400)),
+        Ok(TOKEN.into())
+    );
+}
+
+#[test]
+fn a_file_others_may_read_is_refused_unquoted() {
+    let dir = tempfile::tempdir().unwrap();
+    let refused = read_token_file(&written(dir.path(), 0o644)).unwrap_err();
+    assert!(refused.contains("no one else may read"), "{refused}");
+    assert!(!refused.contains(TOKEN), "{refused}");
+}
+
+#[test]
+fn a_fifo_is_refused_at_once_never_waited_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let fifo = dir.path().join("primary.token");
+    let name = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    // SAFETY: a NUL-ended path; mkfifo only makes the node.
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    let (sent, read) = std::sync::mpsc::channel();
+    std::thread::spawn(move || sent.send(read_token_file(&fifo)));
+    let answer = read.recv_timeout(std::time::Duration::from_secs(5));
+    let refused = answer.expect("a FIFO never hangs the read").unwrap_err();
+    assert!(refused.contains("regular file"), "{refused}");
+}
+
+#[test]
+fn a_link_to_a_private_file_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = written(dir.path(), 0o600);
+    let link = dir.path().join("link.token");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    assert!(read_token_file(&link).unwrap_err().contains("regular file"));
+}

@@ -38,10 +38,10 @@ use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::http::board_remote::endpoint_of;
 use crate::infrastructure::http::board_replica::RemoteReplicationSource;
-use crate::infrastructure::http::board_service::client::BearerToken;
 use crate::infrastructure::http::board_service::listener::{SocketPeerCredentials, this_uid};
 use crate::infrastructure::http::board_watch::ThreadPauses;
 use crate::infrastructure::persistence::file::board_tokens::FileBoardTokens;
+use crate::infrastructure::persistence::file::token_file::read_token_file;
 use crate::infrastructure::persistence::project_board::board_tree::told;
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
 use crate::infrastructure::persistence::project_board::remote_revisions::GitRemoteRevisions;
@@ -140,6 +140,11 @@ pub fn build_board_server_with(
     );
     let follower = match &environment.follow {
         Some(follow) => {
+            // A follower holds its primary's tokens: its own are kept, and
+            // replaced only when asked (B11).
+            tokens
+                .prepare_follow(follow.replace_tokens)
+                .map_err(|why| refused(&why))?;
             let source = replication_source(follow, &board).map_err(|why| refused(&why))?;
             let primary = source.primary();
             let replicate = ReplicateBoard::new(
@@ -182,9 +187,6 @@ pub fn build_board_server_with(
     })
 }
 
-/// The most bytes a token file may hold.
-const TOKEN_FILE_BYTES: u64 = 4096;
-
 /// A follower's primary (B11): `follow`'s URL, reached with the token in
 /// its token file. The file must be this user's alone (no group or other
 /// bits) and hold one token on one line; no error quotes it.
@@ -194,46 +196,11 @@ fn replication_source(
 ) -> Result<RemoteReplicationSource, String> {
     let token = match &follow.token_file {
         None => None,
-        Some(path) => Some(token_from(path)?),
+        Some(path) => Some(read_token_file(path)?),
     };
     let client = endpoint_of(&follow.url, token.as_deref())
         .map_err(|why| format!("--follow {}: {why}", follow.url))?;
     Ok(RemoteReplicationSource::new(client, board.clone()))
-}
-
-/// The token in the file at `path`, its line end trimmed.
-fn token_from(path: &Path) -> Result<String, String> {
-    use std::io::Read;
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-    let shown = path.display();
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|error| format!("the token file {shown}: {error}"))?;
-    let meta = file
-        .metadata()
-        .map_err(|error| format!("the token file {shown}: {error}"))?;
-    let private = meta.is_file() && meta.uid() == this_uid() && meta.mode() & 0o077 == 0;
-    match (private, meta.len() <= TOKEN_FILE_BYTES) {
-        (true, true) => {}
-        (false, _) => {
-            return Err(format!(
-                "the token file {shown} must be a file of this user's that no one else may read (mode 0600 or 0400)"
-            ));
-        }
-        (true, false) => return Err(format!("the token file {shown} is past 4 KiB")),
-    }
-    let mut text = String::new();
-    file.take(TOKEN_FILE_BYTES)
-        .read_to_string(&mut text)
-        .map_err(|_| format!("the token file {shown} is not one line of text"))?;
-    let token = text.strip_suffix('\n').unwrap_or(&text);
-    let token = token.strip_suffix('\r').unwrap_or(token);
-    match BearerToken::parse(token) {
-        Some(_) => Ok(token.to_string()),
-        None => Err(format!("the token file {shown} does not hold a token")),
-    }
 }
 
 /// The board's file in the state directory.

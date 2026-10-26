@@ -7,7 +7,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 
-use super::board_service::client::{BoardServiceClient, ClientError, READ_REPLY};
+use super::board_service::client::{BoardServiceClient, ClientError, MAX_REPLY_BYTES, READ_REPLY};
 use super::board_service::limits::Method;
 use super::board_watch::RemoteBoardStreams;
 use crate::application::project_board::ports::TokenKind;
@@ -330,6 +330,13 @@ impl ReplicationSource for RemoteReplicationSource {
             Ok(reply) => reply,
             Err(error) if error.transport() || matches!(error, ClientError::NoReply) => {
                 return Err(OpenRefused::Unreachable(format!("{endpoint}: {error}")));
+            }
+            Err(ClientError::TooLarge) => {
+                return Err(OpenRefused::Refused(format!(
+                    "{endpoint}: the primary's batch is past the {} MiB a reply may hold: \
+                     an object on the board is too large to copy",
+                    MAX_REPLY_BYTES / (1024 * 1024)
+                )));
             }
             Err(error) => return Err(OpenRefused::Refused(format!("{endpoint}: {error}"))),
         };

@@ -23,17 +23,20 @@ use crate::application::project_board::ports::replication::{
 };
 
 /// A follower's times: the feed's watch, and the pause before it starts
-/// again once stalled.
+/// again once stalled: `restart`, doubling while it stays stalled, to at
+/// most `max_restart`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReplicaTiming {
     pub watch: WatchTiming,
     pub restart: Duration,
+    pub max_restart: Duration,
 }
 
 impl ReplicaTiming {
     pub const PRODUCTION: Self = Self {
         watch: WatchTiming::PRODUCTION,
         restart: Duration::from_secs(30),
+        max_restart: Duration::from_secs(600),
     };
 }
 
@@ -67,12 +70,21 @@ impl ReplicateBoard {
         pauses: Arc<dyn WatchPauses>,
         timing: ReplicaTiming,
     ) -> Self {
-        assert!(timing.restart > Duration::ZERO, "a restart never spins");
+        assert!(
+            timing.restart > Duration::ZERO && timing.restart <= timing.max_restart,
+            "a restart never spins, and its backoff has a ceiling"
+        );
+        // A follower found diverged stays so across restarts.
+        let state = match store.diverged() {
+            Ok(Some(why)) => ReplicaState::Diverged(why),
+            Ok(None) => ReplicaState::CatchingUp,
+            Err(error) => ReplicaState::Stalled(error.to_string()),
+        };
         let status = ReplicaStatus {
             primary: source.primary(),
             applied: store.position().map_or(0, |at| at.revision),
             primary_head: None,
-            state: ReplicaState::CatchingUp,
+            state,
         };
         Self {
             source,
@@ -109,6 +121,9 @@ impl ReplicateBoard {
     /// A fork ([`ReplicaError::Diverged`], marked in status: the follower
     /// must not go on), or why a batch was not had or applied.
     pub fn catch_up(&self) -> Result<CaughtUp, ReplicaError> {
+        if let ReplicaState::Diverged(why) = self.status().state {
+            return Err(ReplicaError::Diverged(why));
+        }
         let mut batches = 0;
         loop {
             let at = self.store.position()?;
@@ -159,18 +174,39 @@ impl ReplicateBoard {
     /// Follows the primary until `running` says stop, or the follower
     /// diverges (it then stops for good, marked so).
     pub fn run(&self, running: &dyn Fn() -> bool) {
+        /// Marks the follower stalled if it stops (or its thread unwinds)
+        /// while its server still runs: its status never says it follows
+        /// when nothing does.
+        struct Ending<'a>(&'a ReplicateBoard, &'a dyn Fn() -> bool);
+        impl Drop for Ending<'_> {
+            fn drop(&mut self) {
+                if (self.1)() {
+                    let why = "the follower stopped following its primary".to_string();
+                    self.0.record_state(ReplicaState::Stalled(why));
+                }
+            }
+        }
+        let _ending = Ending(self, running);
+        let mut restart = self.timing.restart;
         while running() {
-            let halted = match self.catch_up() {
-                Ok(caught) => self.follow(caught.applied, running),
-                Err(error) => Some(error),
+            let (halted, caught) = match self.catch_up() {
+                Ok(caught) => (self.follow(caught.applied, running), true),
+                Err(error) => (Some(error), false),
             };
             match halted {
                 Some(ReplicaError::Diverged(_)) => return,
                 Some(error) => self.record_state(ReplicaState::Stalled(error.to_string())),
                 None => {}
             }
+            // Stalled again and again (a primary down, a batch too large),
+            // it backs off, doubling to its ceiling; caught up, it starts over.
+            restart = match caught {
+                true => self.timing.restart,
+                false => restart,
+            };
             if running() {
-                self.pauses.pause(self.timing.restart);
+                self.pauses.pause(restart);
+                restart = restart.saturating_mul(2).min(self.timing.max_restart);
             }
         }
     }
@@ -237,8 +273,13 @@ impl ReplicateBoard {
         }
     }
 
-    /// Marks the follower diverged: why.
+    /// Marks the follower diverged, and keeps the mark (so a restart is
+    /// diverged too): why.
     fn diverged(&self, why: String) -> ReplicaError {
+        let why = match self.store.mark_diverged(&why) {
+            Ok(()) => why,
+            Err(error) => format!("{why} (the mark was not kept: {error})"),
+        };
         self.record_state(ReplicaState::Diverged(why.clone()));
         ReplicaError::Diverged(why)
     }

@@ -136,6 +136,7 @@ fn a_follower_over_tcp_catches_up_refuses_writes_and_copies_a_revoke() {
     let follow = FollowPrimary {
         url: format!("http://{}", primary.tcp),
         token_file: Some(token),
+        replace_tokens: false,
     };
     let mut following = environment(&dir, &work, "origin");
     following.state = Some(dir.path().join("follower"));
@@ -214,10 +215,39 @@ fn a_token_file_another_user_may_read_is_refused_unquoted() {
     following.follow = Some(FollowPrimary {
         url: "http://127.0.0.1:9".into(),
         token_file: Some(token_file(dir.path(), secret, 0o644)),
+        replace_tokens: false,
     });
     let Err(refused) = build_board_server_with(&following, Arc::new(Synced)) else {
         panic!("a readable token file is refused");
     };
     assert!(refused.contains("no one else may read"), "{refused}");
     assert!(!refused.contains(secret), "{refused}");
+}
+
+/// B11 review: a server whose state holds tokens of its own is not made a
+/// follower unless `--replace-tokens` says so; then its own are kept beside.
+#[test]
+fn a_follower_replaces_its_own_tokens_only_when_asked() {
+    let (dir, work) = seeded();
+    let mut own = environment(&dir, &work, "origin");
+    own.state = Some(dir.path().join("eccup"));
+    let handles = build_board_server_with(&own, Arc::new(Synced)).unwrap();
+    handles.access.add("laptop").unwrap();
+    drop(handles);
+    let follow = |replace_tokens| FollowPrimary {
+        url: format!("unix://{}", dir.path().join("p.sock").display()),
+        token_file: None,
+        replace_tokens,
+    };
+    let mut following = own.clone();
+    following.follow = Some(follow(false));
+    let Err(refused) = build_board_server_with(&following, Arc::new(Synced)) else {
+        panic!("a state with tokens of its own is refused");
+    };
+    assert!(refused.contains("--replace-tokens"), "{refused}");
+    following.follow = Some(follow(true));
+    let handles = build_board_server_with(&following, Arc::new(Synced)).unwrap();
+    assert!(handles.follower.is_some());
+    let kept = dir.path().join("eccup").join("tokens.json.pre-follow");
+    assert!(std::fs::read_to_string(kept).unwrap().contains("laptop"));
 }

@@ -40,11 +40,27 @@ fn scripted(
     RemoteReplicationSource,
     mpsc::Receiver<String>,
 ) {
+    let mut reply = format!(
+        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    reply.extend(body);
+    scripted_raw(reply)
+}
+
+/// A server on a temp socket answering one request with `reply` as it is.
+fn scripted_raw(
+    reply: Vec<u8>,
+) -> (
+    tempfile::TempDir,
+    RemoteReplicationSource,
+    mpsc::Receiver<String>,
+) {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("primary.sock");
     let listener = UnixListener::bind(&socket).unwrap();
     let (asked, lines) = mpsc::channel();
-    let status = status.to_string();
     std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         let mut head = Vec::new();
@@ -58,17 +74,28 @@ fn scripted(
             .unwrap_or_default()
             .to_string();
         let _ = asked.send(line);
-        let reply = format!(
-            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-            body.len()
-        );
-        stream.write_all(reply.as_bytes()).unwrap();
-        stream.write_all(&body).unwrap();
+        stream.write_all(&reply).unwrap();
     });
     let source = RemoteReplicationSource::new(
         BoardServiceClient::unix(&socket),
         BoardId::of_hex(BOARD).unwrap(),
     );
+    (dir, source, lines)
+}
+
+/// A server answering one request with `status`, a head declaring
+/// `length` bytes, and no body.
+fn scripted_head(
+    status: &str,
+    length: usize,
+) -> (
+    tempfile::TempDir,
+    RemoteReplicationSource,
+    mpsc::Receiver<String>,
+) {
+    let (dir, source, lines) = scripted_raw(format!(
+        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {length}\r\nconnection: close\r\n\r\n"
+    ).into_bytes());
     (dir, source, lines)
 }
 
@@ -107,6 +134,13 @@ fn refusals_are_busy_refused_or_unreachable() {
     assert!(
         matches!(&malformed, Err(OpenRefused::Refused(why)) if why.contains("malformed")),
         "{malformed:?}"
+    );
+    // A batch past the reply bound names its cause.
+    let (_dir, source, _) = scripted_head("200 OK", 65 * 1024 * 1024);
+    let large = source.batch(0, 0, BatchLimit::MOST);
+    assert!(
+        matches!(&large, Err(OpenRefused::Refused(why)) if why.contains("too large to copy")),
+        "{large:?}"
     );
     let dir = tempfile::tempdir().unwrap();
     let absent = RemoteReplicationSource::new(

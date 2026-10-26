@@ -158,6 +158,16 @@ fn a_follower_whose_last_chain_differs_is_refused_and_marked_diverged() {
     );
     assert_eq!(replicate.status().state.as_str(), "diverged");
     assert!(dump(&follower.file) == before, "a fork is never rewritten");
+    // The mark is kept beside the board: a restart is diverged too.
+    let why = follower.ops.diverged().unwrap();
+    assert!(why.is_some_and(|why| why.contains("chain differs")));
+    let (local, restarted) = following(&primary, &follower);
+    assert_eq!(restarted.status().state.as_str(), "diverged");
+    assert!(matches!(
+        restarted.catch_up(),
+        Err(ReplicaError::Diverged(_))
+    ));
+    assert_eq!(local.batches.load(Ordering::SeqCst), 0, "it asks nothing");
 }
 
 #[test]

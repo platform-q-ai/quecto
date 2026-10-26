@@ -30,6 +30,10 @@ use crate::infrastructure::persistence::file::state_dir::{
 pub const TOKENS_FILE: &str = "tokens.json";
 const TOKENS_NAME: &CStr = c"tokens.json";
 
+/// A follower's own tokens, kept as it first follows (B11).
+pub const PRE_FOLLOW_FILE: &str = "tokens.json.pre-follow";
+const PRE_FOLLOW_NAME: &CStr = c"tokens.json.pre-follow";
+
 /// A file's (inode, mtime, mtime ns, size), to tell a hand edit.
 type Stamp = (u64, i64, i64, u64);
 
@@ -164,15 +168,21 @@ impl FileBoardTokens {
         });
         let text = serde_json::to_vec_pretty(&tokens.collect::<Vec<_>>());
         let text = text.map_err(|e| self.unavailable(e))?;
+        self.write_through(TOKENS_NAME, &text)
+    }
+
+    /// Writes `text` as the file `name` in the locked directory: a
+    /// temporary file renamed over it.
+    fn write_through(&self, name: &CStr, text: &[u8]) -> Result<(), TokenError> {
         let temp = CString::new(format!(".{TOKENS_FILE}.{}.tmp", uuid::Uuid::new_v4()));
         let temp = temp.map_err(|error| self.unavailable(error))?;
         let dir = self.lock.as_raw_fd();
         let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL;
         let written = self.open_at(&temp, flags).and_then(|mut file| {
-            file.write_all(&text)?;
+            file.write_all(text)?;
             file.sync_all()?;
             // SAFETY: names in the directory this adapter holds open.
-            match unsafe { libc::renameat(dir, temp.as_ptr(), dir, TOKENS_NAME.as_ptr()) } {
+            match unsafe { libc::renameat(dir, temp.as_ptr(), dir, name.as_ptr()) } {
                 0 => Ok(()),
                 _ => Err(io::Error::last_os_error()),
             }
@@ -186,6 +196,49 @@ impl FileBoardTokens {
                 Err(self.unavailable(error))
             }
         }
+    }
+
+    /// Readies this state directory to hold its primary's tokens (B11).
+    /// The first time, its own tokens are kept as `tokens.json.pre-follow`,
+    /// which also marks the directory a follower's; holding tokens of its
+    /// own, it is refused unless `replace` says to replace them. A
+    /// directory already a follower's is left as it is.
+    ///
+    /// # Errors
+    /// Its own tokens and no `replace`, or the files could not be read or
+    /// written.
+    pub fn prepare_follow(&self, replace: bool) -> Result<(), String> {
+        let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        self.still_locked().map_err(|error| error.to_string())?;
+        match self.open_at(PRE_FOLLOW_NAME, libc::O_RDONLY) {
+            Ok(_) => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(self.unavailable(error).to_string()),
+        }
+        let own = self.held().len();
+        match (own == 0, replace) {
+            (true, _) | (false, true) => {}
+            (false, false) => {
+                return Err(format!(
+                    "the state directory {} holds {own} token(s) of this server's own: a \
+                     follower holds its primary's instead. Give --replace-tokens to replace \
+                     them (they are kept as {PRE_FOLLOW_FILE}), or give the follower its own \
+                     --state <dir>",
+                    self.state.display()
+                ));
+            }
+        }
+        let mut kept = Vec::new();
+        if let Some((file, _)) = self.opened().map_err(|error| error.to_string())? {
+            (file.take(MAX_FILE_BYTES).read_to_end(&mut kept))
+                .map_err(|error| self.unavailable(error).to_string())?;
+        }
+        let kept = match kept.is_empty() {
+            true => b"[]\n".to_vec(),
+            false => kept,
+        };
+        self.write_through(PRE_FOLLOW_NAME, &kept)
+            .map_err(|error| error.to_string())
     }
 
     /// Whether the directory at the state path is still the one locked
