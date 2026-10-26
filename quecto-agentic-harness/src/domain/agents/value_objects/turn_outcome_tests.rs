@@ -14,6 +14,19 @@ fn record() -> TurnOutcomeRecord {
     }
 }
 
+/// Review #2762 (8) and (B): the operator-approved wording, verbatim.
+#[test]
+fn issue_2708_parent_runtime_the_approved_wording_is_exact() {
+    assert_eq!(
+        CORRECTION_NOTE,
+        "Nothing is running. Launch the next step, or call declare_turn_outcome to say you're blocked or done."
+    );
+    assert_eq!(
+        DECLARE_GUIDANCE,
+        "End every turn by calling declare_turn_outcome: done when you've answered or finished, asking when you need the user's answer, blocked when you can't proceed, waiting only while work you launched is running."
+    );
+}
+
 #[test]
 fn issue_2708_output_projection_event_is_exactly_eight_keys() {
     let event = serde_json::to_value(TurnOutcomeEvent::TurnOutcome(record())).unwrap();

@@ -44,6 +44,27 @@ fn issue_2708_liveness_retained_idle_and_dead_rows_are_empty() {
     assert_eq!(registry_liveness(None), WorkLiveness::Empty);
 }
 
+/// Review #2762 (A): a coordinator the parent launched keeps its swarm run
+/// live while it is up, idle or not; once it exited it does not.
+#[test]
+fn issue_2708_liveness_a_launched_coordinator_is_live_until_it_exits() {
+    for (status, live) in [
+        (SubagentStatus::Idle, WorkLiveness::Live),
+        (SubagentStatus::Error, WorkLiveness::Live),
+        (SubagentStatus::Exited, WorkLiveness::Empty),
+    ] {
+        let registry = with(&[("coordinator", None, status.clone())]);
+        registry
+            .lock()
+            .unwrap()
+            .get_mut("coordinator")
+            .unwrap()
+            .coordinator_wake
+            .launched = true;
+        assert_eq!(registry_liveness(Some(&registry)), live, "{status:?}");
+    }
+}
+
 #[test]
 fn issue_2708_liveness_a_poisoned_registry_is_unknown_never_empty() {
     let registry = with(&[("c", None, SubagentStatus::Idle)]);

@@ -146,6 +146,15 @@ fn flags(max_time: Option<&str>) -> AgentFlags {
 /// Run one one-shot session: guarded unless `legacy`, with `notes` queued
 /// on the run's note channel before it starts.
 fn run(replies: Vec<Reply>, legacy: bool, notes: Vec<&str>, max_time: Option<&str>) -> Run {
+    run_quiet(replies, (legacy, notes, max_time), None)
+}
+
+/// [`run`], with the quiet bound of a wait for notes set to `quiet`.
+fn run_quiet(
+    replies: Vec<Reply>,
+    (legacy, notes, max_time): (bool, Vec<&str>, Option<&str>),
+    quiet: Option<std::time::Duration>,
+) -> Run {
     let provider = Arc::new(Scripted {
         replies: Mutex::new(replies.into()),
         seen: Mutex::new(Vec::new()),
@@ -193,7 +202,13 @@ fn run(replies: Vec<Reply>, legacy: bool, notes: Vec<&str>, max_time: Option<&st
     let tmp = tempfile::TempDir::new().unwrap();
     let retention = crate::composition::sessions::build_retention_handles(tmp.path());
     let mut handles = RunHandles::without_children(&retention);
-    handles.parent = ParentRun::of((!legacy).then_some(runtime), Some(registry), Some(rx));
+    handles.parent =
+        ParentRun::of((!legacy).then_some(runtime), Some(registry), Some(rx)).map(|parent| {
+            match quiet {
+                Some(quiet) => parent.quiet_for(quiet),
+                None => parent,
+            }
+        });
     let (mut stdout, mut stderr) = (String::new(), String::new());
     let mut out = AgentOutput {
         stdout: &mut stdout,
@@ -324,6 +339,27 @@ fn issue_2708_cli_parent_waiting_shares_the_one_deadline() {
     );
     assert_eq!(run.code, 2, "max-time stops the wait: {}", run.stderr);
     assert!(run.stderr.contains("max-time exceeded"));
+}
+
+/// Review #2762 (5): with no --max-time, a wait in which no note arrives
+/// for the quiet bound ends needs_user with the diagnostic, not forever.
+#[test]
+fn review_2762_a_wait_with_no_deadline_ends_after_the_quiet_bound() {
+    let started = std::time::Instant::now();
+    let run = run_quiet(
+        vec![Reply::Call("launch", json!({})), Reply::Text("Launched.")],
+        (false, vec![], None),
+        Some(std::time::Duration::from_millis(300)),
+    );
+    assert_eq!(run.code, 1, "{}", run.stderr);
+    assert_eq!(
+        run.stderr,
+        format!(
+            "{}\n",
+            crate::domain::agents::value_objects::turn_outcome::UNKNOWN_REASON
+        )
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(20));
 }
 
 #[test]

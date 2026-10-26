@@ -60,18 +60,9 @@ impl ParentOutcomeRuntime {
                 active: None,
                 next_nonce: 0,
             }),
-            declarations: TurnDeclarationService::new(Self::no_turn()),
+            // Between turns the declarations hold no turn's identity.
+            declarations: TurnDeclarationService::new(TurnIdentity::default()),
             mint,
-        }
-    }
-
-    /// The identity no admitted turn has: what the declarations hold
-    /// between turns, so nothing declares outside one.
-    fn no_turn() -> TurnIdentity {
-        TurnIdentity {
-            session_key: String::new(),
-            outcome_epoch: String::new(),
-            turn_id: String::new(),
         }
     }
 
@@ -147,7 +138,7 @@ impl ParentOutcomeRuntime {
         let declared = self.declarations.snapshot();
         let _ = self
             .declarations
-            .enter(TurnBoundary::OuterRun, &Self::no_turn());
+            .enter(TurnBoundary::OuterRun, &TurnIdentity::default());
         let TurnEnd::Completed(liveness) = end else {
             return ParentVerdict::Unsettled;
         };
@@ -199,7 +190,7 @@ impl ParentOutcomeRuntime {
         state.active = None;
         let _ = self
             .declarations
-            .enter(TurnBoundary::OuterRun, &Self::no_turn());
+            .enter(TurnBoundary::OuterRun, &TurnIdentity::default());
     }
 
     /// The epoch and latest outcome a state snapshot carries.

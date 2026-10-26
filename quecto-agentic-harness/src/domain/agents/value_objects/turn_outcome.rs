@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 pub const TURN_OUTCOME_VERSION: u8 = 1;
 
 /// The one system note that wakes a parent that ended with nothing running.
-pub const CORRECTION_NOTE: &str =
-    "Nothing is running. Launch the next step, or say you're blocked or done.";
+pub const CORRECTION_NOTE: &str = "Nothing is running. Launch the next step, or call declare_turn_outcome to say you're blocked or done.";
+/// The line a guarded root's system prompt carries (#2708).
+pub const DECLARE_GUIDANCE: &str = "End every turn by calling declare_turn_outcome: done when you've answered or finished, asking when you need the user's answer, blocked when you can't proceed, waiting only while work you launched is running.";
 /// The reason a parent stalls on: still nothing running after the correction.
 pub const STALLED_REASON: &str = "Nothing is running after one correction.";
 /// The reason a parent waits on when it declared nothing but work runs.

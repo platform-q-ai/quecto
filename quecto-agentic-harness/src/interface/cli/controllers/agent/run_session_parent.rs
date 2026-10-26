@@ -17,7 +17,7 @@ use crate::application::agent_turn::use_cases::parent_outcome::{
 };
 use crate::domain::agents::value_objects::agent::AgentResult;
 use crate::domain::agents::value_objects::turn_outcome::{
-    CORRECTION_NOTE, TurnOutcome, TurnOutcomeRecord, WorkLiveness,
+    CORRECTION_NOTE, TurnOutcome, TurnOutcomeRecord, UNKNOWN_REASON, WorkLiveness,
 };
 use crate::domain::conversation::services::turn_origin;
 use crate::domain::conversation::value_objects::message::Message;
@@ -31,7 +31,13 @@ pub(crate) struct ParentRun {
     runtime: std::sync::Arc<ParentOutcomeRuntime>,
     registry: Option<SubagentRegistry>,
     notes: Option<NotificationRx>,
+    /// How long a wait without a deadline lasts with no note arriving.
+    quiet: Duration,
 }
+
+/// The quiet bound of a wait without `--max-time`: no note from the run's
+/// children for this long ends the run needs_user, as unknown work does.
+const QUIET_LIMIT: Duration = Duration::from_secs(30 * 60);
 
 impl ParentRun {
     pub(crate) fn of(
@@ -43,7 +49,13 @@ impl ParentRun {
             runtime,
             registry,
             notes,
+            quiet: QUIET_LIMIT,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn quiet_for(self, quiet: Duration) -> Self {
+        Self { quiet, ..self }
     }
 
     fn observe(&self) -> WorkLiveness {
@@ -106,6 +118,16 @@ pub(crate) fn drive(
                     Wait::Note(note) => (TurnAdmission::WorkWake, note),
                     Wait::TimedOut => return timed_out(),
                     Wait::Closed => return ended(result, Some(record)),
+                    Wait::Quiet => {
+                        let reason = UNKNOWN_REASON.to_owned();
+                        let outcome = TurnOutcome::NeedsUser;
+                        let quiet = TurnOutcomeRecord {
+                            outcome,
+                            reason,
+                            ..record
+                        };
+                        return ended(result, Some(quiet));
+                    }
                 }
             }
             ParentVerdict::Published(record) => return ended(result, Some(record)),
@@ -148,6 +170,8 @@ enum Wait {
     Note(String),
     TimedOut,
     Closed,
+    /// No note for the quiet bound, with no deadline before it.
+    Quiet,
 }
 
 /// The next note of the run's own children, within the deadline.
@@ -156,22 +180,16 @@ fn wait_for_note(
     parent: &mut ParentRun,
     deadline: Option<Instant>,
 ) -> Wait {
+    let quiet = Instant::now() + parent.quiet;
     let Some(notes) = parent.notes.as_mut() else {
         return Wait::Closed;
     };
-    let received = rt.block_on(async {
-        match deadline {
-            Some(deadline) => {
-                let deadline = tokio::time::Instant::from_std(deadline);
-                tokio::time::timeout_at(deadline, notes.recv()).await.ok()
-            }
-            None => Some(notes.recv().await),
-        }
-    });
-    match received {
+    let until = tokio::time::Instant::from_std(deadline.map_or(quiet, |at| at.min(quiet)));
+    match rt.block_on(async { tokio::time::timeout_at(until, notes.recv()).await.ok() }) {
         Some(Some(note)) => Wait::Note(note.to_message()),
         Some(None) => Wait::Closed,
-        None => Wait::TimedOut,
+        None if deadline.is_some_and(|at| at <= quiet) => Wait::TimedOut,
+        None => Wait::Quiet,
     }
 }
 

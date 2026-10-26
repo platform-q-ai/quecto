@@ -355,6 +355,8 @@ fn build_shell_command(
         // The harness's watermark marks (#2403): a command decides its own.
         "QUECTO_CONTEXT_HIGH_TOKENS",
         "QUECTO_CONTEXT_LOW_TOKENS",
+        // A launcher's turn-outcome switch is this harness's alone (#2708).
+        "QUECTO_TURN_OUTCOMES",
         "RUST_LOG",
         // A non-interactive shell sources these before the command: code
         // the command policy never saw (#2207 review).

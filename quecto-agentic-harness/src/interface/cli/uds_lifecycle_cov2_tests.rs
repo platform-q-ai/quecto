@@ -267,6 +267,7 @@ async fn single_client_socket_override_serves_get_state() {
             );
             single_client_loop(
                 SingleClientArgs {
+                    parent_outcome: None,
                     agent: make_agent(),
                     turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
                     workspace: dir.path(),
@@ -317,6 +318,78 @@ async fn single_client_socket_override_serves_get_state() {
     assert_eq!(event["command"], "get_state");
     assert_eq!(event["success"], true);
 
+    drop(write_half);
+    drop(lines);
+    let code = tokio::time::timeout(std::time::Duration::from_secs(2), async move {
+        task.join().expect("join single-client loop")
+    })
+    .await
+    .expect("single-client loop should exit after disconnect");
+    assert_eq!(code, 0);
+}
+
+/// Review #2762 (6): the single-client loop binds a trusted root's runtime,
+/// so a guarded harness there advertises what it offers.
+#[tokio::test]
+async fn review_2762_single_client_binds_the_turn_outcome_runtime() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client_std, server_std) = std::os::unix::net::UnixStream::pair().unwrap();
+    let task = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let store = crate::composition::sessions::build_session_handles(
+                crate::interface::uds::controllers::uds::dispatch_session_roster_tests::loop_inputs(
+                    dir.path(),
+                    "cli:cov",
+                ),
+            );
+            single_client_loop(
+                SingleClientArgs {
+                    agent: make_agent(),
+                    turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
+                    parent_outcome: Some(
+                        crate::composition::bootstrap::agent_turn::build_parent_outcome(),
+                    ),
+                    workspace: dir.path(),
+                    messages: Vec::new(),
+                    model: "stub".into(),
+                    admission_slots: Vec::new(),
+                    session_key: "cli:single".into(),
+                    system_prompt: "system".into(),
+                    ext_registry: None,
+                    subagent_registry: None,
+                    workflow_state: None,
+                },
+                server_std,
+                &store,
+                &crate::composition::catalogue::build_catalogue_handles(dir.path(), None),
+            )
+            .await
+        })
+    });
+    client_std.set_nonblocking(true).unwrap();
+    let client = tokio::net::UnixStream::from_std(client_std).unwrap();
+    let (read_half, mut write_half) = tokio::io::split(client);
+    let mut lines = tokio::io::BufReader::new(read_half).lines();
+    write_half
+        .write_all(b"{\"type\":\"get_state\",\"id\":\"s\"}\n")
+        .await
+        .unwrap();
+    write_half.flush().await.unwrap();
+    let mut state = serde_json::Value::Null;
+    for _ in 0..2 {
+        let line = tokio::time::timeout(std::time::Duration::from_secs(2), lines.next_line())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        state = serde_json::from_str(&line).unwrap();
+    }
+    assert_eq!(state["command"], "get_state");
+    assert_eq!(state["data"]["turnOutcomeVersion"], 1, "{state}");
     drop(write_half);
     drop(lines);
     let code = tokio::time::timeout(std::time::Duration::from_secs(2), async move {
@@ -585,6 +658,7 @@ fn the_single_client_loop_waits_for_a_launch_rollback_at_exit() {
             );
             single_client_loop(
                 SingleClientArgs {
+                    parent_outcome: None,
                     agent: make_agent(),
                     turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
                     workspace: dir.path(),

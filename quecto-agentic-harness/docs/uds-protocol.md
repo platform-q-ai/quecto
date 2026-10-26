@@ -1958,22 +1958,29 @@ harness with the environment variable `QUECTO_TURN_OUTCOMES=1` (exactly
 `1`; any other value, or none, is off). The Pocket relay sets it for the
 harness of a task. It then guards a top-level parent only (not spawned, not
 a coordinator, no parent id or parent control, not in a swarm). Every other
-harness,
-an ordinary TUI chat and a plain `quecto agent -m` run among them, is
-unchanged: no declaration tool, no correction turn, no turn-outcome events
-or `get_state` members.
+harness, an ordinary TUI chat and a plain `quecto agent -m` run among them,
+is unchanged: no declaration tool, no correction turn, no turn-outcome
+events or `get_state` members. The switch is the guarded harness's own: its
+`bash` commands and configured extensions do not inherit it.
 
 - **Declaring.** The model is given `declare_turn_outcome` (`outcome`:
   `waiting`, `blocked`, `asking` or `done`; a one-line `reason` of at most 512
   characters). It succeeds with `{"message":"Turn outcome recorded.",…}` and
-  launches nothing.
+  launches nothing. Its system prompt carries one line: `End every turn by
+  calling declare_turn_outcome: done when you've answered or finished, asking
+  when you need the user's answer, blocked when you can't proceed, waiting
+  only while work you launched is running.`
 - **Settling.** When a turn ends and was saved: a declared `blocked` or
   `asking` settles `needs_user`, `done` settles `done`, whatever runs. With
-  `waiting` or no declaration, owned work still running settles `waiting`; if
-  nothing runs, the harness runs one correction turn with the note `Nothing is
-  running. Launch the next step, or say you're blocked or done.` (same
-  episode, new `turnId`); if nothing runs after it, the turn settles
-  `stalled`. An interrupted turn (abort, steer, error, shutdown) settles
+  `waiting` or no declaration, owned work still running settles `waiting`.
+  Owned work is a sub-agent starting or running, a coordinator it launched
+  that is still up (its swarm run is open, idle or not), or a queued
+  instruction or note. If nothing runs, the harness runs one correction turn
+  with the note `Nothing is running. Launch the next step, or call
+  declare_turn_outcome to say you're blocked or done.` (same episode, new
+  `turnId`, saved before it runs); if nothing runs after it, the turn
+  settles `stalled`. The prompt's control receipt keeps the prompt's own
+  result. An interrupted turn (abort, steer, error, shutdown) settles
   nothing.
 - **Identity.** A `prompt`, `steer` or `follow_up` opens an episode: its `id`,
   1 to 512 UTF-8 bytes, kept exactly (an empty or longer one is refused with

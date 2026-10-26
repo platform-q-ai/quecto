@@ -344,6 +344,37 @@ fn test_build_agent_from_config_with_model_override() {
     assert!(result.is_some(), "stderr: {}", stderr);
 }
 
+/// Review #2762 (3): without the switch a one-shot keeps its note receiver,
+/// exactly as before; with it the guard takes it.
+#[test]
+fn review_2762_an_unguarded_one_shot_keeps_its_note_receiver() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cfg = tmp.path().join("config.json");
+    std::fs::write(&cfg, r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#).unwrap();
+    let mut flags = super::integration_tests::test_flags(Some("hi"), None, None);
+    flags.no_session = true;
+    for (switched, guarded) in [(None, false), (Some(switched_on as _), true)] {
+        flags.parent_outcome = switched;
+        let mut stderr = String::new();
+        let selection = selection_for_test(&cfg, false);
+        let mut built = build_agent_from_config(tmp.path(), &selection, &flags, &mut stderr, None)
+            .unwrap_or_else(|| panic!("build: {stderr}"));
+        assert!(built.notification_rx.is_some());
+        assert_eq!(built.take_parent_run().is_some(), guarded);
+        assert_eq!(
+            built.notification_rx.is_some(),
+            !guarded,
+            "the receiver stays alive"
+        );
+    }
+}
+
+fn switched_on() -> Option<
+    std::sync::Arc<crate::application::agent_turn::use_cases::parent_outcome::ParentOutcomeRuntime>,
+> {
+    Some(crate::composition::bootstrap::agent_turn::build_parent_outcome())
+}
+
 // ===================================================================
 // Agent with anthropic provider config
 // ===================================================================

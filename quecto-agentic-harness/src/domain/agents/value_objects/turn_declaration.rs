@@ -1,6 +1,7 @@
 //! Transport-neutral turn declaration vocabulary. Inactive until runtime composition exists.
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The default is the identity no admitted turn has (#2708).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TurnIdentity {
     pub session_key: String,
     pub outcome_epoch: String,

@@ -28,6 +28,26 @@ async fn trial_ordinary_commands_do_not_inherit_swarm_launch_identity() {
     );
 }
 
+/// Review #2762 (2): a guarded parent's commands (a `quecto` it starts by
+/// hand among them) never inherit the launcher's turn-outcome switch.
+#[tokio::test]
+async fn ordinary_commands_do_not_inherit_the_turn_outcome_switch() {
+    let env = HashMap::from([
+        ("QUECTO_TURN_OUTCOMES".into(), "1".into()),
+        ("TRIAL_SENTINEL".into(), "preserved".into()),
+    ]);
+    let output = super::build_shell_command(&PathBuf::from("/tmp"), "env", Some(&env))
+        .output()
+        .await
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("TRIAL_SENTINEL=preserved"));
+    assert!(
+        !stdout.contains("QUECTO_TURN_OUTCOMES"),
+        "commands inherit the switch: {stdout}"
+    );
+}
+
 /// #2403 final review M2: a command the agent runs (a `cargo test`, a
 /// `quecto` it starts by hand) never inherits the harness's watermark
 /// marks: its own configuration decides, as for any agent not spawned by

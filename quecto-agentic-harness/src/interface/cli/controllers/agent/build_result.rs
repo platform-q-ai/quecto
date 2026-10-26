@@ -47,9 +47,11 @@ impl AgentBuildResult {
     pub(crate) fn take_parent_run(
         &mut self,
     ) -> Option<crate::interface::cli::controllers::run_session_parent::ParentRun> {
+        // Unguarded, the receiver stays where it was: exactly as before.
+        let runtime = self.parent_outcome.take()?;
         let (registry, notes) = (self.subagent_registry.clone(), self.notification_rx.take());
         crate::interface::cli::controllers::run_session_parent::ParentRun::of(
-            self.parent_outcome.take(),
+            Some(runtime),
             registry,
             notes,
         )

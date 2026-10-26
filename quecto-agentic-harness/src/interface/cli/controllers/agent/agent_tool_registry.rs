@@ -190,6 +190,15 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         },
     )?;
 
+    // #2708: a guarded root is told, with the tools' prompt notes, to declare.
+    use crate::domain::agents::value_objects::turn_outcome::DECLARE_GUIDANCE;
+    let guidance = parent_outcome.as_ref().map(|_| DECLARE_GUIDANCE);
+    let snippets = [Some(runtime.extension_prompt_snippets.as_str()), guidance];
+    let snippets = snippets
+        .into_iter()
+        .flatten()
+        .filter(|snippet| !snippet.is_empty());
+    let extension_prompt_snippets = snippets.collect::<Vec<_>>().join("\n\n");
     let _policy_state = runtime.policy_state;
     let _catalogue_entries = runtime.catalogue_entries;
 
@@ -205,7 +214,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         session_key: runtime.session_key,
         model,
         ext_registry: runtime.ext_registry,
-        extension_prompt_snippets: runtime.extension_prompt_snippets,
+        extension_prompt_snippets,
         notification_rx: runtime.notification_rx,
         subagent_registry: runtime.subagent_registry,
         harness_lifecycle: runtime.harness_lifecycle,

@@ -135,15 +135,18 @@ fn observe(ctx: &DispatchCtx<'_>) -> WorkLiveness {
 pub(super) async fn settle(
     ctx: &mut DispatchCtx<'_>,
     mut turn: Option<ActiveTurn>,
-    mut outcome: PromptOutcome,
+    outcome: PromptOutcome,
 ) -> PromptOutcome {
+    // The prompt's own result is what its receipt reports, whatever a
+    // correction after it does.
+    let mut completed = matches!(outcome, PromptOutcome::Success);
     loop {
         let (Some(active), Some(runtime)) = (turn.take(), ctx.session.parent_outcome()) else {
             return outcome;
         };
-        let end = match outcome {
-            PromptOutcome::Success => TurnEnd::Completed(observe(ctx)),
-            PromptOutcome::Error | PromptOutcome::Cancelled => TurnEnd::Interrupted,
+        let end = match completed {
+            true => TurnEnd::Completed(observe(ctx)),
+            false => TurnEnd::Interrupted,
         };
         match runtime.complete(active, end) {
             ParentVerdict::Unsettled => return outcome,
@@ -154,29 +157,31 @@ pub(super) async fn settle(
                 return outcome;
             }
             ParentVerdict::Correct => {
-                let note = crate::domain::conversation::services::turn_origin::harness_note(
+                let mut note = crate::domain::conversation::services::turn_origin::harness_note(
                     CORRECTION_NOTE.into(),
                     ctx.messages,
                 );
                 turn = admit(ctx, Some(TurnAdmission::Correction), &note).await;
                 assert!(turn.is_some(), "the correction the policy owes is admitted");
+                // As any drained automatic turn: started as such, saved first.
+                ctx.session
+                    .automatic_turns()
+                    .start_turn(Work::Automatic, None);
+                if let Err(err) = super::persist_user_prompt_before_run(ctx, &mut note).await {
+                    tracing::warn!("failed to persist the correction before its turn: {err}");
+                }
                 let armed = crate::interface::uds::controllers::uds_cancel::arm_swarm_cancel(
                     &ctx.cancel_handle,
                     &ctx.turn_control,
                 )
                 .await;
-                outcome = match armed {
-                    Some(cancel_rx) => {
-                        super::run_turn(
-                            ctx,
-                            note,
-                            cancel_rx,
-                            super::TurnAdmissionGuard::None,
-                            &turn,
-                        )
-                        .await
-                    }
-                    None => PromptOutcome::Cancelled,
+                let guard = super::TurnAdmissionGuard::None;
+                completed = match armed {
+                    Some(cancel_rx) => matches!(
+                        super::run_turn(ctx, note, cancel_rx, guard, &turn).await,
+                        PromptOutcome::Success
+                    ),
+                    None => false,
                 };
             }
         }

@@ -9,7 +9,7 @@ mod workflow_poison_tests;
 
 pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
     let _busy = crate::interface::uds::framing::uds_multi::BusyGuard::new(&ctx.busy); // #828
-    loop {
+    'drain: loop {
         // Coalesce a burst of buffered sub-agent completion notes into ONE
         // informational note at the idle flush (#894) — K separate notes would
         // send the parent into a catch-up loop. Per-agent dedup already happened
@@ -42,13 +42,17 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         while let Some(pending_msg) = remaining.next() {
             // The domain decides which work a suspended member admits.
             let work = work_of(&pending_msg);
-            if ctx.turn_control.is_steer_pending()
-                || !ctx.session.automatic_turns().admits(work)
-                || !super::parent_turn::admits(ctx, work)
-            {
+            if ctx.turn_control.is_steer_pending() || !ctx.session.automatic_turns().admits(work) {
                 ctx.session
                     .restore_pending(std::iter::once(pending_msg).chain(remaining));
                 return;
+            }
+            // #2708: a terminal outcome fences the notes, never an
+            // instruction queued behind them: drain again, explicit only.
+            if !super::parent_turn::admits(ctx, work) {
+                ctx.session
+                    .restore_pending(std::iter::once(pending_msg).chain(remaining));
+                continue 'drain;
             }
             if let Some(control) = &ctx.turn_control.swarm_control {
                 use crate::domain::inference::services::turn_suspension::Work;

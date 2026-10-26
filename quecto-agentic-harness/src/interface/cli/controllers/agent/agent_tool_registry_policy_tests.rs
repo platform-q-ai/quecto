@@ -96,6 +96,12 @@ fn issue_2708_cli_parent_a_root_without_the_switch_is_unguarded() {
         assert!(built.parent_outcome.is_none(), "{name}: switch off");
         assert!(
             !built
+                .extension_prompt_snippets
+                .contains("declare_turn_outcome"),
+            "{name}: no declare guidance without the switch"
+        );
+        assert!(
+            !built
                 .registry
                 .catalogue_entries()
                 .iter()
@@ -312,22 +318,54 @@ fn issue_2708_cli_parent_only_a_switched_on_root_is_guarded() {
         let (built, stderr) = build(&root, &config);
         assert!(built.parent_outcome.is_some(), "{name} root: {stderr}");
 
-        let mut child = cli_flags();
-        child.uds_mode = uds;
-        child.spawned = true;
-        child.parent_id = Some("parent".into());
-        let (built, _) = build(&child, &config);
         assert!(
-            built.parent_outcome.is_none(),
-            "{name}: a child is delegated"
+            built
+                .extension_prompt_snippets
+                .contains(crate::domain::agents::value_objects::turn_outcome::DECLARE_GUIDANCE),
+            "{name}: a guarded root is told to declare"
         );
-        assert!(
-            !built
-                .registry
-                .catalogue_entries()
-                .iter()
-                .any(|entry| entry.name == "declare_turn_outcome"),
-            "{name}: a child is never offered the declaration"
-        );
+    }
+}
+
+/// Review #2762 (9): each launch fact alone excludes a root from the guard
+/// even with the switch on, on both entrypoints.
+#[test]
+fn review_2762_each_launch_fact_alone_leaves_a_launch_unguarded() {
+    type Fact = fn(&mut AgentFlags);
+    let facts: [(&str, Fact); 5] = [
+        ("spawned", |flags| flags.spawned = true),
+        ("parent_id", |flags| flags.parent_id = Some("parent".into())),
+        ("coordinator", |flags| flags.coordinator = true),
+        ("parent_control", |flags| {
+            flags.parent_control = Some("/nonexistent/control".into())
+        }),
+        ("swarm_member", |flags| {
+            flags.swarm_participation =
+                crate::infrastructure::tools::swarm::swarm_bridge::Participation::Fixed(true)
+        }),
+    ];
+    let config = Config::default();
+    for uds in [false, true] {
+        for (fact, apply) in facts {
+            let mut flags = cli_flags();
+            flags.uds_mode = uds;
+            apply(&mut flags);
+            let (built, _) = build(&flags, &config);
+            assert!(built.parent_outcome.is_none(), "{fact} (uds {uds})");
+            assert!(
+                !built
+                    .registry
+                    .catalogue_entries()
+                    .iter()
+                    .any(|entry| entry.name == "declare_turn_outcome"),
+                "{fact} (uds {uds}): never offered the declaration"
+            );
+            assert!(
+                !built
+                    .extension_prompt_snippets
+                    .contains("declare_turn_outcome"),
+                "{fact} (uds {uds}): never told to declare"
+            );
+        }
     }
 }
