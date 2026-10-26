@@ -78,7 +78,7 @@ fn following(primary: &Server, follower: &Server) -> (Arc<Local>, ReplicateBoard
         Arc::clone(&follower.tokens) as Arc<dyn AdminRows>,
         Arc::new(NoPause),
         ReplicaTiming::PRODUCTION,
-        Arc::new(quecto::infrastructure::time::replica_clock::MonotonicReplicaClock::default()),
+        Arc::new(quecto::infrastructure::time::replica_clock::MonotonicReplicaClock),
     );
     (local, replicate)
 }

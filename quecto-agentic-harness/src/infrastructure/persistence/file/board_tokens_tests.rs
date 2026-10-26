@@ -415,6 +415,25 @@ fn a_followers_tokens_are_its_primarys_set_until_its_own_are_issued() {
     assert_eq!((own.held, own.copied), (2, false), "its own again");
 }
 
+/// B11 review 5: a set aside is created new, never through a name taken
+/// meanwhile (a dangling link included): it goes to the next free name.
+#[test]
+fn a_set_aside_set_never_goes_through_a_link_named_as_one() {
+    let (dir, tokens) = opened();
+    tokens.add(&name("laptop"), &at()).unwrap();
+    let own = std::fs::read(tokens_path(&tokens)).unwrap();
+    let link = tokens.state.join(PRE_FOLLOW_FILE);
+    std::os::unix::fs::symlink(dir.path().join("nowhere"), &link).unwrap();
+    tokens.set_aside().unwrap();
+    assert!(std::fs::read_link(&link).is_ok(), "the link is left");
+    assert!(
+        !dir.path().join("nowhere").exists(),
+        "nothing written through it"
+    );
+    let next = tokens.state.join(format!("{PRE_FOLLOW_FILE}-1"));
+    assert_eq!(std::fs::read(next).unwrap(), own);
+}
+
 /// B11 review 4: a set set aside never replaces one kept before it.
 #[test]
 fn a_set_aside_set_never_overwrites_one_kept_before() {

@@ -433,16 +433,33 @@ impl FollowTokens for FileBoardTokens {
             true => b"[]\n".to_vec(),
             false => kept,
         };
-        let names = (0..100).map(|n| match n {
-            0 => PRE_FOLLOW_FILE.to_owned(),
-            n => format!("{PRE_FOLLOW_FILE}-{n}"),
-        });
-        let mut free = names.filter(|name| !self.state.join(name).exists());
-        let name = free.next().ok_or_else(|| {
+        self.still_locked()?;
+        // Created new (never through a name taken, a link included): the
+        // first free of `.pre-follow`, `-1` .. `-99`.
+        let mut file = None;
+        for n in 0..100 {
+            let name = match n {
+                0 => PRE_FOLLOW_FILE.to_owned(),
+                n => format!("{PRE_FOLLOW_FILE}-{n}"),
+            };
+            let name = CString::new(name).map_err(|error| self.unavailable(error))?;
+            match self.open_at(&name, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL) {
+                Ok(created) => {
+                    file = Some(created);
+                    break;
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(self.unavailable(error)),
+            }
+        }
+        let mut file = file.ok_or_else(|| {
             self.unavailable(format!("100 {PRE_FOLLOW_FILE} files are kept: move them"))
         })?;
-        let name = CString::new(name).map_err(|error| self.unavailable(error))?;
-        self.write_through(&name, &kept)?;
+        (file.write_all(&kept).and_then(|()| file.sync_all()))
+            .map_err(|error| self.unavailable(error))?;
+        self.lock
+            .sync_all()
+            .map_err(|error| self.unavailable(error))?;
         self.changing(|held| {
             held.clear();
             Ok(())

@@ -154,7 +154,7 @@ pub fn build_board_server_with(
                 Arc::clone(&tokens) as Arc<dyn AdminRows>,
                 Arc::new(ThreadPauses),
                 ReplicaTiming::PRODUCTION,
-                Arc::new(MonotonicReplicaClock::default()),
+                Arc::new(MonotonicReplicaClock),
             );
             Some((Arc::new(replicate), primary))
         }

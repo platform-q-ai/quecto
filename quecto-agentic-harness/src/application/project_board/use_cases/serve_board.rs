@@ -88,10 +88,14 @@ impl ServeBoard {
         }
     }
 
-    /// Whether it serves devices (TCP) reads: a primary always; a follower
-    /// while its copy is kept current.
+    /// Whether it serves devices (TCP) reads, an allowlist: a primary
+    /// always; a follower while its copy is kept current; none ungated.
     pub fn serves_devices(&self) -> bool {
-        self.devices.as_ref().is_none_or(|serves| serves())
+        match (&self.following, &self.devices) {
+            (None, None) => true,
+            (Some(_), Some(serves)) => serves(),
+            (Some(_), None) | (None, Some(_)) => false,
+        }
     }
 
     /// What time it is, by the server's clock: the clock authority.

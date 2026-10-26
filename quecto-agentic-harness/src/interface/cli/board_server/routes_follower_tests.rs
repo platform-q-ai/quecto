@@ -53,9 +53,10 @@ fn sent(routes: &BoardRoutes, method: ServiceMethod, path: &str, body: Value) ->
     (reply.status, serde_json::from_slice(&reply.body).unwrap())
 }
 
-/// A device's read of the status over TCP: its status and code.
+/// A device's read of the board's revisions over TCP: its status and code.
 fn device_reads(routes: &BoardRoutes) -> (u16, Value) {
-    let reply = routes.answer(&device(ServiceMethod::Get, "/v1/status", vec![]));
+    let revisions = format!("/v1/boards/{BOARD}/revisions");
+    let reply = routes.answer(&device(ServiceMethod::Get, &revisions, vec![]));
     let body: Value = serde_json::from_slice(&reply.body).unwrap();
     (reply.status, body["code"].clone())
 }
@@ -80,7 +81,7 @@ fn device(method: ServiceMethod, path: &str, body: Vec<u8>) -> ServiceRequest {
 fn a_stale_follower_refuses_devices_reads_and_serves_the_socket() {
     let stalled = || ReplicaState::Stalled("no primary".into());
     let short = follower_in(stalled(), true);
-    assert_eq!(device_reads(&short).0, 200, "stalled briefly, it serves");
+    assert_ne!(device_reads(&short).1, "standby_stale", "stalled briefly");
     let refusal = (503, json!("standby_stale"));
     for stale in [
         follower_in(stalled(), false),
@@ -121,6 +122,47 @@ fn a_stale_followers_feed_and_writes_are_refused_naming_its_primary() {
     ));
     let body: Value = serde_json::from_slice(&reply.body).unwrap();
     assert_eq!(body["primary"], PRIMARY, "{body}");
+}
+
+/// B11 review 5: a stale follower's status and time are served to devices
+/// (its status says why it is stale); its board routes, replication
+/// batches included, are not, so a follower chained to it stalls too.
+#[test]
+fn a_stale_followers_status_and_time_are_served_its_batches_are_not() {
+    let stale = follower_in(ReplicaState::Stalled("no primary".into()), false);
+    for path in ["/v1/status", "/v1/time"] {
+        let reply = stale.answer(&device(ServiceMethod::Get, path, vec![]));
+        assert_eq!(reply.status, 200, "{path}");
+    }
+    let status = stale.answer(&device(ServiceMethod::Get, "/v1/status", vec![]));
+    let status: Value = serde_json::from_slice(&status.body).unwrap();
+    assert!(status.to_string().contains("no primary"), "{status}");
+    let replicate = format!("/v1/boards/{BOARD}/replicate");
+    let mut batches = device(ServiceMethod::Get, &replicate, vec![]);
+    batches.principal = Some("replica:eccup".into());
+    batches.query = Some("after=0&objects=0".into());
+    let reply = stale.answer(&batches);
+    let body: Value = serde_json::from_slice(&reply.body).unwrap();
+    assert_eq!(
+        (reply.status, &body["code"]),
+        (503, &json!("standby_stale"))
+    );
+}
+
+/// B11 review 5: a follower not told whether it serves devices serves
+/// none (an allowlist); a primary serves them.
+#[test]
+fn a_follower_not_told_whether_it_serves_devices_serves_none() {
+    let (store, _) = written();
+    let status = ReplicaStatus {
+        primary: PRIMARY.into(),
+        applied: 2,
+        primary_head: Some(5),
+        state: ReplicaState::Following,
+    };
+    assert!(serving(&store).serves_devices(), "a primary");
+    let follower = serving(&store).following(Arc::new(move || status.clone()));
+    assert!(!follower.serves_devices(), "a follower, ungated");
 }
 
 fn op(routes: &BoardRoutes, request: Value) -> (u16, Value) {

@@ -513,10 +513,11 @@ server's own (any set it did not take from a primary: before it first
 follows, or any issued after it is promoted) make a follow refused unless
 `--replace-tokens` is given ("this server holds N token(s) of its own: a
 follower holds its primary's instead. Give --replace-tokens to replace them
-(they are kept as tokens.json.pre-follow and refused at once), or give the
-follower its own --state <dir>"). Given it, they are kept as
-`tokens.json.pre-follow` (never over an earlier one: then as
-`tokens.json.pre-follow-1`, `-2` and on) and the server holds none, so they are refused at
+(they are kept as tokens.json.pre-follow, or -1, -2 and on beside an earlier
+one, and refused at once), or give the follower its own --state <dir>").
+Given it, they are kept as `tokens.json.pre-follow`, created new (never
+over an earlier one, nor through a link: then as `tokens.json.pre-follow-1`,
+`-2` and on, to `-99`) and the server holds none, so they are refused at
 once, before its primary's are copied. A start refused for any other reason
 (its token file, its primary's URL) sets nothing aside. A follower's own
 operations write nothing: its store refuses every write, whatever the op.
@@ -528,11 +529,14 @@ follower from the batch after the revoke (with the next revision, or within
 about a minute, at the next reopen of the feed), and a device uses its one
 token on either server. A follower that cannot take batches cannot learn of
 a revoke: until its first catch-up since it started, while it is
-diverged, or once stalled for 10 min (by the monotonic clock, from the
-moment it stalled), it refuses every request over TCP, the change feed
-included, 503 `standby_stale` with its primary as `primary` ("this
-standby's copy is not kept current (it is stalled, diverged, or not yet
-caught up): read its primary"); the Unix socket is served still. Each copied row is checked as it is taken, an allowlist: a native
+diverged, or once stalled for 10 min (by boot time, which counts a
+suspend, from the moment it first stalled), it refuses every request over
+TCP, the change feed and replication batches included, 503 `standby_stale`
+with its primary as `primary` ("this standby's copy is not kept current
+(it is stalled, diverged, or not yet caught up): read its primary"). Its
+`/v1/status` (which says why) and `/v1/time`, and the Unix socket, are
+served still. A follower chained to a stale one is refused its batches, so
+it stalls and turns stale in turn, never serving a set it cannot renew. Each copied row is checked as it is taken, an allowlist: a native
 object's id is made again from its content, an imported original's git id
 from its raw bytes (SHA-1 or SHA-256, by its width) and a tree's entries
 from its raw tree; the provenance row must name the follower's board (an
@@ -607,7 +611,7 @@ Every error reply the server makes is JSON, `{"error": "<why>", "code":
 | 403 | `local_only` | an admin route asked over TCP, or the op `bootstrap` or `clear_set_aside` over TCP |
 | 403 | `replica_only` | `replicate` asked with a device token (B11) |
 | 403 | `replica_reads` | a write asked with a replica token (B11) |
-| 503 | `standby_stale` | over TCP, a request to a follower not yet caught up since it started, diverged, or stalled for 10 min (B11); names its `primary` |
+| 503 | `standby_stale` | over TCP, a request (but `/v1/status` and `/v1/time`) to a follower not yet caught up since it started, diverged, or stalled for 10 min (B11); names its `primary` |
 | 404 | `board` | an op for a board id this server does not serve |
 | 409 | `write_id_reused` | a `write_id` this principal used for another write |
 | 409 | `standby` | a write to a follower (B11), with its `primary` |

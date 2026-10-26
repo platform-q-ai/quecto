@@ -459,6 +459,51 @@ fn a_stalled_follower_serves_devices_for_ten_minutes_by_the_clock() {
     assert!(serves(), "stalled 30 s since it last caught up");
 }
 
+/// Pauses that move the fake clock on by each pause.
+struct Ticking(Arc<FakeClock>);
+
+impl WatchPauses for Ticking {
+    fn pause(&self, how_long: Duration) {
+        self.0.set(self.0.now() + how_long);
+    }
+}
+
+/// B11 review 5: run, stalled round after round with the clock moving by
+/// its pauses, a follower is timed from its FIRST stall: it serves devices
+/// for 10 min from then and none after, though each round stalls afresh.
+#[test]
+fn a_follower_stalled_round_after_round_is_timed_from_its_first_stall() {
+    let clock = Arc::new(FakeClock::default());
+    let primary = Arc::new(Flaky(std::sync::atomic::AtomicBool::new(true)));
+    let follower = ReplicateBoard::new(
+        Arc::clone(&primary) as _,
+        Arc::new(Replica::default()),
+        Arc::new(Admin::default()),
+        Arc::new(Ticking(Arc::clone(&clock))),
+        ReplicaTiming::PRODUCTION,
+        Arc::clone(&clock) as _,
+    );
+    let serves = follower.devices_reader();
+    follower.catch_up().unwrap();
+    primary.0.store(false, Ordering::SeqCst);
+    let start = Duration::from_secs(100);
+    clock.set(start);
+    // Seen at each check, and judged once run returns (a panic in `running`
+    // would panic again as the follower's end is marked).
+    let seen = Mutex::new(Vec::new());
+    follower.run(&|| {
+        let stalled = clock.now() - start;
+        seen.lock().unwrap().push((stalled, serves()));
+        stalled < STALE_AFTER * 3
+    });
+    let seen = seen.into_inner().unwrap();
+    for &(stalled, served) in &seen {
+        assert_eq!(served, stalled < STALE_AFTER, "stalled {stalled:?}");
+    }
+    let refused = seen.iter().filter(|(_, served)| !served).count();
+    assert!(refused >= 2, "refused round after round: {seen:?}");
+}
+
 /// B11 review 4: a restart clears no stall into serving: a follower
 /// started again serves no device until it has caught up.
 #[test]

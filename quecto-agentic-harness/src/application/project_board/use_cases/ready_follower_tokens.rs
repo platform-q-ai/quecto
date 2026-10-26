@@ -33,8 +33,8 @@ impl ReadyFollowerTokens {
             (false, false) => Err(format!(
                 "this server holds {} token(s) of its own: a follower holds its primary's \
                  instead. Give --replace-tokens to replace them (they are kept as \
-                 tokens.json.pre-follow and refused at once), or give the follower its own \
-                 --state <dir>",
+                 tokens.json.pre-follow, or -1, -2 and on beside an earlier one, and refused \
+                 at once), or give the follower its own --state <dir>",
                 followed.held
             )),
         }

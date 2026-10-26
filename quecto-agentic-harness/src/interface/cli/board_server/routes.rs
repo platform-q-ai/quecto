@@ -156,13 +156,14 @@ impl BoardRoutes {
         }
     }
 
-    /// A follower's refusal of a device's read while its copy is not kept
-    /// current (stalled past its bound, or diverged): 503 `standby_stale`.
-    /// The Unix socket is served still.
-    fn stale(&self, transport: Transport) -> Option<ServiceReply> {
-        match (transport, self.serve.serves_devices()) {
-            (Transport::Local, _) | (Transport::Tcp, true) => None,
-            (Transport::Tcp, false) => {
+    /// A follower's refusal of a device's request while its copy is not
+    /// kept current: 503 `standby_stale`. Its status (which says why) and
+    /// time, and the Unix socket, are served still; its batches are not, so
+    /// a follower chained to it stalls too.
+    fn stale(&self, route: Route, transport: Transport) -> Option<ServiceReply> {
+        match (route, transport, self.serve.serves_devices()) {
+            (Route::Status | Route::Time, _, _) | (_, Transport::Local, _) | (_, _, true) => None,
+            (_, Transport::Tcp, false) => {
                 let primary = self.standby.as_deref().unwrap_or_default();
                 let primary = redact_secrets(&redact_url_userinfo(primary));
                 let why = "this standby's copy is not kept current (it is stalled, diverged, or \
@@ -320,7 +321,7 @@ impl BoardRoutes {
         if let (Some(primary), false) = (&self.standby, read_only) {
             return Self::refused_standby(primary);
         }
-        if let Some(stale) = self.stale(request.transport) {
+        if let Some(stale) = self.stale(route, request.transport) {
             return stale;
         }
         match (route, request.method) {
@@ -449,7 +450,7 @@ impl ServiceHandler for BoardRoutes {
         wake: StreamWake,
     ) -> Result<Box<dyn ServiceStream>, ServiceReply> {
         let admitted = self.admitted(request)?;
-        if let Some(stale) = self.stale(request.transport) {
+        if let Some(stale) = self.stale(admitted.0, request.transport) {
             return Err(stale);
         }
         match admitted {
