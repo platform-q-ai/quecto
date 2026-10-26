@@ -185,8 +185,6 @@ fn root_agent(dir: &Path, config: &Path, extra: &[&str]) -> Proc {
         "-m",
         "hello",
         "--no-session",
-        "--disable-tool",
-        "declare_turn_outcome",
     ];
     args.extend_from_slice(extra);
     Proc::new(quecto(dir, &args).spawn().expect("spawn agent"))
@@ -477,8 +475,6 @@ async fn sigkilled_authority_restarts_with_orphans_and_does_not_kill_clients() {
                 "--mode",
                 "uds",
                 "--no-session",
-                "--disable-tool",
-                "declare_turn_outcome",
                 "--socket",
                 socket.to_str().unwrap(),
             ],

@@ -53,7 +53,7 @@ pub(super) fn cli_flags() -> AgentFlags {
     flags.project_board = Some(unbuilt_board);
     // The turn-outcome runtime is composed too (#2708): a root builds
     // `declare_turn_outcome` on both entrypoints.
-    flags.parent_outcome = Some(crate::composition::bootstrap::agent_turn::build_parent_outcome);
+    flags.parent_outcome = Some(switched_on);
     flags
 }
 
@@ -68,6 +68,41 @@ fn unbuilt_board(
             "not built in this test".into(),
         ),
     )
+}
+
+type Runtime =
+    std::sync::Arc<crate::application::agent_turn::use_cases::parent_outcome::ParentOutcomeRuntime>;
+
+/// Composition's turn-outcome builder as a launch that set the switch sees it.
+pub(super) fn switched_on() -> Option<Runtime> {
+    Some(crate::composition::bootstrap::agent_turn::build_parent_outcome())
+}
+
+/// ... and as every other launch sees it.
+fn switched_off() -> Option<Runtime> {
+    None
+}
+
+/// #2708: without the launcher's switch a root is exactly legacy: no
+/// declaration tool and no guard, on either entrypoint.
+#[test]
+fn issue_2708_cli_parent_a_root_without_the_switch_is_unguarded() {
+    let config = Config::default();
+    for (name, uds) in [("cli", false), ("uds", true)] {
+        let mut root = cli_flags();
+        root.uds_mode = uds;
+        root.parent_outcome = Some(switched_off);
+        let (built, _) = build(&root, &config);
+        assert!(built.parent_outcome.is_none(), "{name}: switch off");
+        assert!(
+            !built
+                .registry
+                .catalogue_entries()
+                .iter()
+                .any(|entry| entry.name == "declare_turn_outcome"),
+            "{name}: the declaration is offered only with the switch on"
+        );
+    }
 }
 
 fn uds_workflow_flags() -> AgentFlags {

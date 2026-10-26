@@ -156,7 +156,6 @@ fn start_real_agent(world: &QuectoWorld, session: &str, prompt: &str) -> std::pr
     std::process::Command::new(&binary)
         .args(["agent", "-m", prompt, "-s", session, "--config"])
         .arg(&config_path)
-        .args(["--disable-tool", "declare_turn_outcome"])
         .current_dir(world.cli_context.cwd.clone().expect("cwd"))
         .env("QUECTO_BASE_DIR", base_path(world))
         .env("QUECTO_CHILD_BINARY", &binary)

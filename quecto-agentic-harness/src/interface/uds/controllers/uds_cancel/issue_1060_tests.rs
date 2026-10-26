@@ -369,6 +369,7 @@ async fn run_turn(
     let outcome = {
         let mut sink = EventSink::writer(&mut writer_bytes);
         run_agent_message(PromptRun {
+            admitted: None,
             execution_state: None,
             agent: &mut agent,
             messages: &mut messages,
@@ -426,6 +427,7 @@ async fn run_streaming_turn(deltas: Vec<&str>, response: &str, prompt: &str) -> 
     let outcome = {
         let mut sink = EventSink::writer(&mut writer_bytes);
         run_agent_message(PromptRun {
+            admitted: None,
             execution_state: None,
             agent: &mut agent,
             messages: &mut messages,

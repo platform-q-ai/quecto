@@ -217,6 +217,25 @@ impl Root {
         dispatch_command(command, &mut ctx).await;
     }
 
+    /// Dispatch one command line on the per-connection (writer) path and
+    /// return the frames written to that connection.
+    pub(super) async fn send_on_connection(&mut self, line: &str) -> Vec<Value> {
+        let command = protocol::parse_command_line(line).expect("valid command");
+        let mut written: Vec<u8> = Vec::new();
+        {
+            let mut ctx = self.env.ctx();
+            ctx.broadcast_tx = None;
+            ctx.stdout = Some(&mut written);
+            dispatch_command(command, &mut ctx).await;
+        }
+        String::from_utf8(written)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("JSON frame"))
+            .collect()
+    }
+
     /// Every frame emitted so far, in order.
     pub(super) fn frames(&mut self) -> Vec<Value> {
         let mut frames = Vec::new();
@@ -304,6 +323,23 @@ async fn issue_2708_uds_parent_original_promise_2648_is_corrected_once_then_stal
 #[tokio::test]
 async fn issue_2708_uds_parent_original_split_reader_promise_is_corrected_once_then_stalls() {
     assert_promise_is_corrected_once_then_stalls(PROMISE_SPLIT_READER).await;
+}
+
+#[tokio::test]
+async fn issue_2708_uds_parent_the_per_connection_path_is_guarded_the_same_way() {
+    let mut root = Root::new(vec![Reply::Text(PROMISE_2648), Reply::Text(PROMISE_2648)]);
+    let frames = root
+        .send_on_connection(r#"{"type":"prompt","id":"ep-1","message":"Carry on"}"#)
+        .await;
+    assert_eq!(root.provider.requests().len(), 2, "one correction");
+    let admitted = of_type(&frames, "turn_admitted");
+    assert_eq!(admitted.len(), 2, "{frames:?}");
+    let first = position(&frames, |f| f["type"] == "turn_admitted");
+    let start = position(&frames, |f| f["type"] == "agent_start");
+    assert!(first < start, "admitted before the turn starts: {frames:?}");
+    let outcome = of_type(&frames, "turn_outcome");
+    assert_eq!(outcome.len(), 1);
+    assert_eq!(outcome[0]["outcome"], "stalled");
 }
 
 #[tokio::test]

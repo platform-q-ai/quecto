@@ -145,7 +145,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
     let parent_outcome = trusted_root(flags, swarm_context.is_some())
         .then_some(flags.parent_outcome)
         .flatten()
-        .map(|build| build());
+        .and_then(|build| build());
     let runtime = crate::interface::cli::controllers::tool_runtime::build_tool_runtime(
         crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuildArgs {
             swarm_context,

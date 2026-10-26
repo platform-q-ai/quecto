@@ -3,6 +3,21 @@
 
 use super::EventSink;
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
+use crate::interface::uds::presenters::uds_execution_state::{
+    ExecutionState, ExecutionStateHandle,
+};
+
+/// Update the live execution view, when the run has one.
+pub(crate) fn update_execution(
+    handle: &Option<ExecutionStateHandle>,
+    update: impl FnOnce(&mut ExecutionState),
+) {
+    if let Some(handle) = handle {
+        if let Ok(mut state) = handle.lock() {
+            update(&mut state);
+        }
+    }
+}
 
 /// Publish the messages of a just-completed INNER turn into the shared
 /// conversation snapshot, and emit the resulting `ledger_advanced` hints.

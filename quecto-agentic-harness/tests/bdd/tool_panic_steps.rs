@@ -153,7 +153,6 @@ fn one_shot(world: &mut QuectoWorld, place: &str) {
         .env("RUST_BACKTRACE", "0")
         .args(["agent", "-s", "probe", "-m"])
         .arg(format!("Run the probe. PROBE:{place}"))
-        .args(["--disable-tool", "declare_turn_outcome"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

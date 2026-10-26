@@ -72,6 +72,11 @@ pub fn is_trusted_root(facts: LaunchFacts) -> bool {
     )
 }
 
+/// Whether the launcher switched the guard on: exactly `1`, nothing else.
+pub fn turn_outcomes_switched_on(value: Option<&str>) -> bool {
+    matches!(value, Some("1"))
+}
+
 /// Whether an external instruction's identity may open an episode.
 /// Bytes, not scalars, and never trimmed: the identity is echoed exactly.
 pub fn admissible_episode_id(episode_id: &str) -> bool {

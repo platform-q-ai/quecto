@@ -1,5 +1,8 @@
-use super::*;
+use crate::domain::conversation::services::conversation_view::{
+    inject_system_prompt, remove_injected_system_prompt,
+};
 use crate::domain::conversation::value_objects::message::Message;
+use crate::domain::conversation::value_objects::message::Role;
 
 #[test]
 fn inject_system_prompt_inserts_when_history_has_no_system_message() {

@@ -209,6 +209,7 @@ async fn an_aborted_turn_puts_a_cancelled_request_on_the_socket() {
     let outcome = {
         let mut sink = EventSink::writer(&mut buf);
         run_agent_message(PromptRun {
+            admitted: None,
             execution_state: None,
             agent: &mut agent,
             messages: &mut messages,

@@ -26,9 +26,9 @@ use futures::FutureExt;
 type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
 >;
-pub(crate) use crate::interface::cli::uds_lifecycle::inject_system_prompt;
+pub(crate) use crate::domain::conversation::services::conversation_view::inject_system_prompt;
 #[cfg(test)]
-pub(crate) use crate::interface::cli::uds_lifecycle::remove_injected_system_prompt;
+pub(crate) use crate::domain::conversation::services::conversation_view::remove_injected_system_prompt;
 pub use crate::interface::cli::uds_lifecycle::{UdsLoopArgs, run_uds_loop};
 // `pub` (not `pub(crate)`) solely so the out-of-crate BDD suite can drive the
 // real reaper; hidden because it is not a supported library API.
@@ -590,8 +590,8 @@ async fn run_drained_message_guarded(
     parent_turn::settle(ctx, turn, outcome).await
 }
 
-/// Run one admitted message: polled once to commit its opener (announced
-/// then, when guarded), then to its end; disarm and refresh after.
+/// Run one admitted message (announced once its opener is committed, when
+/// guarded) to its end; disarm and refresh after.
 async fn run_turn(
     ctx: &mut DispatchCtx<'_>,
     msg: Message,
@@ -615,6 +615,9 @@ async fn run_turn(
             notification_rx: &mut ctx.notification_rx,
             subagent_registry: &ctx.subagent_registry,
             turn_save: Some(TurnSave(ctx.save_session.clone())),
+            admitted: turn
+                .as_ref()
+                .map(|turn| AgentEvent::TurnAdmitted(turn.admission())),
         });
         tokio::pin!(run);
 
@@ -644,10 +647,7 @@ async fn run_turn(
         };
         match admitted {
             Some(outcome) => outcome,
-            None => {
-                parent_turn::announce(&ctx.broadcast_tx, turn).await;
-                run.as_mut().await
-            }
+            None => run.as_mut().await,
         }
     };
     disarm_cancel(&ctx.cancel_handle);

@@ -193,6 +193,22 @@ fn issue_2708_cli_parent_only_the_exact_root_launch_is_trusted() {
 }
 
 #[test]
+fn issue_2708_cli_parent_the_switch_is_on_only_for_exactly_one() {
+    assert!(turn_outcomes_switched_on(Some("1")));
+    for off in [
+        None,
+        Some(""),
+        Some("0"),
+        Some("true"),
+        Some("yes"),
+        Some(" 1"),
+        Some("1 "),
+    ] {
+        assert!(!turn_outcomes_switched_on(off), "{off:?} is not the switch");
+    }
+}
+
+#[test]
 fn issue_2708_protocol_episode_ids_are_one_to_512_bytes_untrimmed() {
     assert!(admissible_episode_id("e"));
     assert!(admissible_episode_id(" \t"));

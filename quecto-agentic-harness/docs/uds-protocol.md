@@ -570,7 +570,7 @@ conversation never hides the latest outcome.
 
 | Field | Type | Description |
 |---|---|---|
-| `turnOutcomeVersion` | integer | `1`: this harness emits `turn_admitted` and `turn_outcome`. Absent from every other harness (children, coordinators, swarm members); a peer without it is legacy |
+| `turnOutcomeVersion` | integer | `1`: this harness emits `turn_admitted` and `turn_outcome`. Present only when its launcher switched the guard on (`QUECTO_TURN_OUTCOMES=1`) for a top-level parent; absent from every other harness; a peer without it is legacy |
 | `outcomeEpoch` | string | The incarnation the outcomes belong to; a new one is minted when the history is replaced |
 | `latestTurnOutcome` | object or `null` | The last `turn_outcome` event of this epoch, byte-for-byte the event that was emitted, with its original `sequence`; an explicit `null` before the first, never omitted |
 
@@ -1953,11 +1953,15 @@ Sent when a client falls behind on the broadcast channel (buffer overflow). The 
 
 ## Turn outcomes (trusted root parents)
 
-A top-level parent harness (not spawned, not a coordinator, no parent id or
-parent control, not in a swarm) guards its turns (#2708), while its startup
-tool policy offers `declare_turn_outcome` (`--disable-tool
-declare_turn_outcome` or a `tools.policy` entry withholding it leaves the
-root unguarded). Every other harness is unchanged and advertises nothing.
+The guard is opt-in (#2708): its launcher switches it on by starting the
+harness with the environment variable `QUECTO_TURN_OUTCOMES=1` (exactly
+`1`; any other value, or none, is off). The Pocket relay sets it for the
+harness of a task. It then guards a top-level parent only (not spawned, not
+a coordinator, no parent id or parent control, not in a swarm) whose startup
+tool policy does not withhold `declare_turn_outcome`. Every other harness,
+an ordinary TUI chat and a plain `quecto agent -m` run among them, is
+unchanged: no declaration tool, no correction turn, no turn-outcome events
+or `get_state` members.
 
 - **Declaring.** The model is given `declare_turn_outcome` (`outcome`:
   `waiting`, `blocked`, `asking` or `done`; a one-line `reason` of at most 512

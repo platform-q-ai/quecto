@@ -5,8 +5,8 @@
 use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::conversation::value_objects::message::Message;
+use crate::interface::cli::controllers::shared::WorkflowStateHandle;
 use crate::interface::cli::uds_session::history_session_stats;
-use crate::interface::cli::{controllers::shared::WorkflowStateHandle, uds_lifecycle};
 use crate::interface::uds::controllers::uds::{DispatchCtx, run_command_loop};
 use crate::interface::uds::controllers::uds_session_handles::SessionHandles;
 use crate::interface::uds::controllers::{uds_cancel, uds_ext_protocol, uds_extensions};
@@ -60,7 +60,7 @@ pub(in crate::interface) async fn single_client_loop(
     let line = workspace_event.to_json_line() + "\n";
     let _ = super::uds_wire::write_event_line(&mut writer, &line, &wire_mode).await;
 
-    uds_lifecycle::inject_system_prompt(&mut messages, &system_prompt);
+    super::super::controllers::uds::inject_system_prompt(&mut messages, &system_prompt);
 
     let mut agent_session = turn_session(model);
     agent_session.set_admission_warnings(&admission_slots);

@@ -5,8 +5,8 @@
 //! saved, and settled by the application runtime: `turn_outcome` after its
 //! `agent_end`, or the one correction run as a turn of its own. A terminal
 //! outcome fences every automatic turn until a fresh external instruction.
-//! An unguarded session (no runtime) is unchanged, and so is the writer
-//! path, whose frames cannot be ordered against a running turn.
+//! An unguarded session (no runtime: the launcher did not switch the guard
+//! on) is unchanged.
 use super::{AgentEvent, DispatchCtx, PromptOutcome};
 use crate::application::agent_turn::use_cases::parent_outcome::{
     ActiveTurn, ParentVerdict, TurnAdmission, TurnEnd,
@@ -21,7 +21,7 @@ use crate::interface::cli::uds_session::PendingMessage;
 use crate::interface::uds::wire::protocol::ControlStatus;
 
 fn guarded(ctx: &DispatchCtx<'_>) -> bool {
-    ctx.broadcast_tx.is_some() && ctx.session.parent_outcome().is_some()
+    ctx.session.parent_outcome().is_some()
 }
 
 /// The identity of an external instruction: unchanged when the session is
@@ -116,17 +116,6 @@ pub(super) async fn admit(
     let runtime = ctx.session.parent_outcome()?;
     let session_key = ctx.sessions.current_session_key().await;
     runtime.admit(&session_key, admission, &opener.id().to_string())
-}
-
-/// Announce an admitted turn whose opener was just committed.
-pub(super) async fn announce(
-    broadcast_tx: &Option<tokio::sync::broadcast::Sender<String>>,
-    turn: &Option<ActiveTurn>,
-) {
-    if let (Some(tx), Some(turn)) = (broadcast_tx, turn) {
-        let event = AgentEvent::TurnAdmitted(turn.admission());
-        super::EventSink::Broadcast(tx.clone()).emit(&event).await;
-    }
 }
 
 /// Whether anything this root owns still runs: its sub-agents, a queued

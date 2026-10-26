@@ -38,7 +38,6 @@ pub(super) fn command(base: &Path, cwd: &Path) -> Command {
 pub(super) fn save(base: &Path, cwd: &Path, name: &str, title: &str) {
     let mut child = command(base, cwd)
         .args(["agent", "-s", name, "-m", title])
-        .args(["--disable-tool", "declare_turn_outcome"])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()

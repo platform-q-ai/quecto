@@ -195,8 +195,6 @@ fn start_agent(world: &mut QuectoWorld, name: &str, extra: &[&str]) {
     let mut args = vec!["agent", "--mode", "uds", "--no-session", "--socket"];
     args.push(socket.to_str().unwrap());
     args.extend_from_slice(extra);
-    // #2708: these agents are about admission, not the turn-outcome guard.
-    args.extend(["--disable-tool", "declare_turn_outcome"]);
     let mut child = qcmd(&base_path, &args)
         .stdout(Stdio::null())
         .stderr(stderr)

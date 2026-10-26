@@ -308,6 +308,8 @@ pub(crate) struct PromptRun<'a, 's> {
     /// The loop's routine save, run before the turn reports its end
     /// (#2218); `None` on rigs that persist nothing.
     pub turn_save: Option<super::uds::TurnSave>,
+    /// A guarded turn's `turn_admitted` (#2708), sent once its opener is committed.
+    pub admitted: Option<AgentEvent>,
 }
 
 /// Run a single agent prompt, emitting UDS events (including streamed tokens)
@@ -332,6 +334,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
         notification_rx,
         subagent_registry,
         turn_save,
+        admitted,
     } = args;
 
     agent_session.set_streaming(true);
@@ -351,7 +354,9 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     // guarantees the admission poll returns before event I/O, provider work, or
     // tools can run while the subagent registry mutex is held.
     tokio::task::yield_now().await;
-
+    if let Some(frame) = &admitted {
+        sink.emit(frame).await;
+    }
     sink.emit(&AgentEvent::AgentStart).await;
     sink.emit(&AgentEvent::TurnStart).await;
     update_execution(&execution_state, |state| {
@@ -623,7 +628,7 @@ async fn run_with_token_drain(
 }
 
 mod uds_turn_progress;
-pub(crate) use uds_turn_progress::publish_turn_progress;
+pub(crate) use uds_turn_progress::{publish_turn_progress, update_execution};
 
 /// Handle one subagent notification received mid-turn: broadcast it to clients
 /// when the sink is `Broadcast`, and collect it for LLM injection unless the
@@ -719,17 +724,6 @@ fn install_progress_callback(
         // the synchronous callback. Dropped presentation events are acceptable.
         let _ = progress_tx.try_send(ev);
     })));
-}
-
-fn update_execution(
-    handle: &Option<crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle>,
-    update: impl FnOnce(&mut crate::interface::uds::presenters::uds_execution_state::ExecutionState),
-) {
-    if let Some(handle) = handle {
-        if let Ok(mut state) = handle.lock() {
-            update(&mut state);
-        }
-    }
 }
 
 mod interrupted;

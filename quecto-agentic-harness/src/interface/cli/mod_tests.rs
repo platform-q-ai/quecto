@@ -40,7 +40,7 @@ fn test_composition() -> CliComposition {
         kill_tool: crate::composition::subagent_termination::install_termination_owners,
         sessions: crate::composition::sessions::build_session_handles,
         turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
-        parent_outcome: crate::composition::bootstrap::agent_turn::build_parent_outcome,
+        parent_outcome: crate::composition::bootstrap::agent_turn::build_requested_parent_outcome,
         retention: crate::composition::sessions::build_retention_handles,
         fresh_session_identity: crate::composition::sessions::build_fresh_session_identity,
         configuration: crate::composition::configuration::build_configuration_handles,

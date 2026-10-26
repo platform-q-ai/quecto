@@ -1048,8 +1048,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // the moved lines are ratcheted at their new home.
     // #1909 hands both loops composition's automatic-turns builder (the
     // resume-after-a-provider-failure use case; was 193 and 127).
-    // #2708 threads a trusted root's turn-outcome runtime to the loop (was 197).
-    ("src/interface/cli/uds_lifecycle.rs", 200),
+    ("src/interface/cli/uds_lifecycle.rs", 197),
     ("src/interface/uds/framing/uds_single_client.rs", 129),
     // #2446 moved the client-disconnect bookkeeping to `uds_multi/clients.rs`.
     ("src/interface/uds/framing/uds_multi.rs", 599),
