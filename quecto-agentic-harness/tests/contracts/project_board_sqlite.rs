@@ -116,7 +116,19 @@ fn object_at_resolves_a_revision_across_an_opened_epoch() {
     let held = at("1:2");
     assert!(held.is_some(), "revision 2 names a's file");
     assert_eq!(at("2:2"), held, "the head names the same revision");
-    for outside in ["2:1", "1:3", "3:2", "0:2", "2:02"] {
+    // #2705 B9 review round 3: a revision written after the epoch opened
+    // lies in the new epoch alone, past the old one's interval.
+    let renamed = store
+        .write_tasks(&promoted, &[store::task("a", "Renamed")], "board: rename a")
+        .unwrap();
+    assert_eq!(renamed, BoardWrite::Written(BoardHead("2:3".into())));
+    let now = at("2:3");
+    assert!(
+        now.is_some() && now != held,
+        "revision 3 names a's new file"
+    );
+    assert_eq!(at("1:3"), None, "revision 3 lies past epoch 1");
+    for outside in ["2:1", "3:2", "0:2", "2:02", "2:4"] {
         assert_eq!(at(outside), None, "{outside}");
     }
 }

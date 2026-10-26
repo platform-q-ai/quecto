@@ -1,5 +1,5 @@
 //! A claim runs by the caller's clock, never a stamp (#2705 B9 review
-//! rounds 1 and 2).
+//! rounds 1 to 3).
 use super::*;
 use crate::domain::project_board::services::fixtures_tests::{at, last_written, person, task};
 
@@ -48,36 +48,60 @@ fn created_at(created: &str) -> Task {
     Task::new(fields).unwrap()
 }
 
-/// #2705 B9 review round 2 (F3): a task a fast clock created at 09:30 and
-/// claimed at 09:00 is claimed from 09:30 (as the schema holds a claim
-/// within its task's life) yet only until 11:00, two hours by the
-/// caller's clock: at 11:00 anyone takes it over. A task created far
-/// ahead holds its claim no longer than the schema's least, a second.
+/// #2705 B9 review rounds 2 and 3 (F3): a task a fast clock created
+/// 30 s ahead and claimed at 09:00 is claimed from 09:00:30 (as the schema
+/// holds a claim within its task's life) only until 11:00, two hours by
+/// the caller's clock: at 11:00 anyone takes it over.
 #[test]
-fn a_task_created_ahead_never_stretches_a_claim_past_the_callers_two_hours() {
-    let claimed = |created: &str| {
-        let ready = created_at(created);
-        let ada = person("Ada");
-        let claimed = move_task(&ready, Claimed, &ada, (&[], &[]), &[], &at("09:00:00")).unwrap();
-        claimed
-            .fields()
-            .claim
-            .clone()
-            .map(|claim| (claimed, claim))
-            .unwrap()
-    };
-    let (near, claim) = claimed("09:30:00");
+fn a_task_created_within_the_clock_bound_is_claimed_for_the_callers_two_hours() {
+    let ready = created_at("09:00:30");
+    let near = move_task(
+        &ready,
+        Claimed,
+        &person("Ada"),
+        (&[], &[]),
+        &[],
+        &at("09:00:00"),
+    )
+    .unwrap();
+    let claim = near.fields().claim.clone().unwrap();
     assert_eq!(
         (&claim.since, &claim.expires),
-        (&at("09:30:00"), &at("11:00:00"))
+        (&at("09:00:30"), &at("11:00:00"))
     );
     let taken = super::super::claims::take_over(&near, &person("Bob"), &at("11:00:00"));
     assert!(taken.is_ok(), "{taken:?}");
-    let (_, claim) = claimed("23:00:00");
-    assert_eq!(
-        (&claim.since, &claim.expires),
-        (&at("23:00:00"), &at("23:00:01"))
-    );
+}
+
+/// #2705 B9 review round 3 (F3): a task created more than
+/// [`CLOCK_AHEAD_SECONDS`] ahead of the caller's clock is never claimed,
+/// taken over or renewed (a start renews or claims): its claim could only
+/// start at its creation and so outlast the caller's two hours. The
+/// refusal names the clock skew, `task_clock_ahead`, and a task created
+/// at the bound is claimed.
+#[test]
+fn a_task_created_past_the_clock_bound_is_refused_a_claim_as_task_clock_ahead() {
+    use super::super::claims::{CLOCK_AHEAD_SECONDS, renew, take_over};
+    let skewed = BoardRuleError::TaskClockAhead {
+        created: at("23:00:00"),
+    };
+    let ada = person("Ada");
+    let nine = at("09:00:00");
+    let ready = created_at("23:00:00");
+    let claimed = move_task(&ready, Claimed, &ada, (&[], &[]), &[], &nine);
+    assert_eq!(claimed, Err(skewed.clone()));
+    let mut held = task(InProgress).into_fields();
+    held.created = at("23:00:00");
+    held.updated = at("23:00:00");
+    held.claim.as_mut().map(|claim| {
+        (claim.since, claim.expires) = (at("23:00:00"), at("23:00:01"));
+    });
+    let held = Task::new(held).unwrap();
+    assert_eq!(renew(&held, &ada, &nine), Err(skewed.clone()));
+    assert_eq!(take_over(&held, &person("Bob"), &nine), Err(skewed));
+    assert_eq!(nine.plus_seconds(CLOCK_AHEAD_SECONDS), Ok(at("09:01:00")));
+    let at_bound = created_at("09:01:00");
+    assert!(move_task(&at_bound, Claimed, &ada, (&[], &[]), &[], &nine).is_ok());
 }
 
 /// #2705 B9 review round 2: a renewal from a clock slower than the one
