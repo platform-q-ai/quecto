@@ -74,7 +74,7 @@ pub(super) fn seeded() -> (tempfile::TempDir, std::path::PathBuf) {
     assert_eq!(created["ok"], json!(true), "{created}");
     let proposed = ops(
         json!({"op": "propose_plan", "task": "a", "approach": "Build it.",
-                              "items": [{"id": "schema", "title": "Schema"}]}),
+                              "items": [{"id": "schema", "title": "Schema", "criteria": ["It migrates."]}]}),
     );
     assert_eq!(proposed["ok"], json!(true), "{proposed}");
     (dir, work)

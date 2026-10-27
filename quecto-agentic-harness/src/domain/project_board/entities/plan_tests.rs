@@ -214,3 +214,103 @@ fn a_deadline_is_seconds_from_start_within_its_bounds() {
         assert_eq!(made.map(|_| ()), want, "{seconds}");
     }
 }
+
+/// A task item `title`d, with `criteria`.
+fn step(title: &str, criteria: Vec<String>) -> PlanItem {
+    PlanItem {
+        id: slug("step"),
+        title: title.into(),
+        criteria,
+        depends_on: vec![],
+    }
+}
+
+/// `count` distinct criteria of `chars` characters each.
+fn criteria(count: usize, chars: usize) -> Vec<String> {
+    (0..count)
+        .map(|n| {
+            let number = format!("{n} ");
+            format!("{number}{}", "é".repeat(chars - number.chars().count()))
+        })
+        .collect()
+}
+
+/// The field and the problem `item` is refused with, entering capped.
+fn refused(item: &PlanItem) -> (String, String) {
+    let error = PlanEntry::Capped
+        .item("items/3", item)
+        .expect_err("refused on entry");
+    (error.field, error.problem)
+}
+
+/// The owner-approved step rules (#2705): a capped task item's title is
+/// one line of at most 70 characters, and it has 1 to 4 criteria of at
+/// most 150 each; past them, the refusal names the field and sends the
+/// detail to the handoff.
+#[test]
+fn a_capped_item_enters_with_a_short_title_and_one_to_four_short_criteria() {
+    let rules = &PLAN_ENTRY_RULES;
+    assert_eq!(
+        (
+            rules.max_item_title_chars,
+            rules.item_criteria.clone(),
+            rules.max_criterion_chars
+        ),
+        (70, 1..=4, 150)
+    );
+    let widest = step(&"é".repeat(70), criteria(4, 150));
+    assert_eq!(PlanEntry::Capped.item("items/3", &widest), Ok(()));
+    let narrowest = step("Done", criteria(1, 2));
+    assert_eq!(PlanEntry::Capped.item("items/3", &narrowest), Ok(()));
+
+    let long_title = step(&"é".repeat(71), criteria(1, 10));
+    assert_eq!(
+        refused(&long_title),
+        (
+            "items/3/title".to_string(),
+            format!("is 71 characters; the most is 70: {STATE_THE_OUTCOME}")
+        )
+    );
+    for count in [0, 5] {
+        assert_eq!(
+            refused(&step("Done", criteria(count, 10))),
+            (
+                "items/3/criteria".to_string(),
+                format!("has {count} criteria; it takes 1 to 4: {MOVE_STEP_DETAIL}")
+            ),
+            "{count} criteria"
+        );
+    }
+    let mut long_criterion = criteria(3, 150);
+    long_criterion[2].push('x');
+    assert_eq!(
+        refused(&step("Done", long_criterion)),
+        (
+            "items/3/criteria/2".to_string(),
+            format!("is 151 characters; the most is 150: {MOVE_STEP_DETAIL}")
+        )
+    );
+}
+
+/// A plan entered before the step rules, or legacy entry, is held to the
+/// schema alone: a long title and 16 criteria of 500 build a plan, and
+/// enter legacy.
+#[test]
+fn a_legacy_item_keeps_the_schemas_limits() {
+    let legacy = step(
+        &"t".repeat(MAX_LINE_CHARS),
+        criteria(MAX_PER_ITEM, MAX_LINE_CHARS),
+    );
+    assert_eq!(PlanEntry::Legacy.item("items/0", &legacy), Ok(()));
+    let mut stored = fields();
+    stored.items = vec![legacy.clone()];
+    let built = Plan::new(stored).expect("a legacy plan builds");
+    assert_eq!(built.fields().items, vec![legacy.clone()]);
+    assert_eq!(
+        PlanEntry::Capped
+            .item("items/0", &legacy)
+            .unwrap_err()
+            .field,
+        "items/0/title"
+    );
+}

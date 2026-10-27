@@ -5,7 +5,8 @@
 //! from 1 per task, a draft is edited, and an accepted version is never
 //! edited again: a change is a new version. Its handoff (#2705 T3), when
 //! it has one, holds the detail an agent is briefed with, so the approach
-//! stays an outline, short on entry ([`PLAN_ENTRY_RULES`]).
+//! stays an outline, short on entry ([`PLAN_ENTRY_RULES`]), and so do
+//! its task items: a short title and a few short criteria each.
 use super::super::value_objects::schema_error::{SchemaError, distinct, line, markdown};
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
@@ -14,6 +15,7 @@ use super::claim::Identity;
 use super::task_parts::{Entry, EntryPolicy, MAX_ITEMS, MAX_LINE_CHARS, MAX_PER_ITEM, lines};
 use super::team::Team;
 use std::collections::BTreeMap;
+use std::ops::RangeInclusive;
 
 /// The most characters of a plan's approach as it reads back (GitHub's
 /// issue body limit): what earlier builds let in. One entering capped is
@@ -23,25 +25,40 @@ pub const MAX_APPROACH_CHARS: usize = 65_536;
 /// approach had before its detail moved there.
 pub const MAX_HANDOFF_CHARS: usize = 65_536;
 
-/// What a plan's text enters the board by (#2705 T3): one table, as a
-/// task's [`ENTRY_RULES`](super::task_parts::ENTRY_RULES) is, so a rule
-/// change is a data edit. Reading stays lenient: what is stored reads by
-/// the plan's own schema.
+/// What a plan's text enters the board by (#2705 T3, and its task items'
+/// step rules): one table, as a task's
+/// [`ENTRY_RULES`](super::task_parts::ENTRY_RULES) is, so a rule change is
+/// a data edit. Reading stays lenient: what is stored reads by the plan's
+/// own schema ([`MAX_LINE_CHARS`] a line, [`MAX_PER_ITEM`] criteria).
 pub struct PlanEntryRules {
     /// Characters of an approach entering capped ([`PlanEntry::Capped`]).
     pub max_approach_chars: usize,
     /// Characters of a handoff, however it enters.
     pub max_handoff_chars: usize,
+    /// Characters of a task item's title (one line, its outcome) entering
+    /// capped.
+    pub max_item_title_chars: usize,
+    /// Criteria of a task item entering capped.
+    pub item_criteria: RangeInclusive<usize>,
+    /// Characters of each criterion (one line) entering capped.
+    pub max_criterion_chars: usize,
 }
 
 pub const PLAN_ENTRY_RULES: PlanEntryRules = PlanEntryRules {
     max_approach_chars: 600,
     max_handoff_chars: MAX_HANDOFF_CHARS,
+    max_item_title_chars: 70,
+    item_criteria: 1..=4,
+    max_criterion_chars: 150,
 };
 
 /// Where a refused approach sends its detail.
 pub const MOVE_TO_HANDOFF: &str =
     "keep the approach to an outline and move the detail into handoff";
+/// Where a refused task item's criteria send their detail.
+pub const MOVE_STEP_DETAIL: &str = "move the detail into handoff";
+/// Why a task item's title past its cap is refused.
+pub const STATE_THE_OUTCOME: &str = "state the outcome and move the detail into handoff";
 /// Why a handoff given empty is refused: none is no handoff.
 const HANDOFF_EMPTY: &str = "is empty: write it, or leave it out";
 
@@ -74,15 +91,81 @@ impl PlanEntry {
     /// # Errors
     /// A capped approach past [`PlanEntryRules::max_approach_chars`].
     pub fn approach(self, approach: &str) -> Result<(), SchemaError> {
-        let chars = approach.chars().count();
         let max = PLAN_ENTRY_RULES.max_approach_chars;
-        match (self, chars <= max) {
-            (Self::Legacy, _) | (Self::Capped, true) => Ok(()),
-            (Self::Capped, false) => Err(SchemaError::new(
-                "approach",
-                format!("is {chars} characters; the most is {max}: {MOVE_TO_HANDOFF}"),
-            )),
+        match self {
+            Self::Capped => within("approach", approach, max, MOVE_TO_HANDOFF),
+            Self::Legacy => Ok(()),
         }
+    }
+
+    /// `item`, its title and criteria normalised lines, as it enters
+    /// under this entry, refusals named under `field` (`items/{i}`).
+    ///
+    /// # Errors
+    /// A capped item's title past [`PlanEntryRules::max_item_title_chars`],
+    /// criteria outside [`PlanEntryRules::item_criteria`], or a criterion
+    /// past [`PlanEntryRules::max_criterion_chars`].
+    pub fn item(self, field: &str, item: &PlanItem) -> Result<(), SchemaError> {
+        match self {
+            Self::Capped => capped_item(field, item),
+            Self::Legacy => Ok(()),
+        }
+    }
+}
+
+/// `item` within the step rules of [`PLAN_ENTRY_RULES`]: its title, how
+/// many criteria it has, then each criterion, so the first broken field is
+/// named.
+fn capped_item(field: &str, item: &PlanItem) -> Result<(), SchemaError> {
+    let rules = &PLAN_ENTRY_RULES;
+    assert!(
+        !rules.item_criteria.is_empty() && *rules.item_criteria.end() <= MAX_PER_ITEM,
+        "the step rules let in criteria the schema keeps"
+    );
+    let title = format!("{field}/title");
+    within(
+        &title,
+        &item.title,
+        rules.max_item_title_chars,
+        STATE_THE_OUTCOME,
+    )?;
+    let count = item.criteria.len();
+    let range = &rules.item_criteria;
+    match range.contains(&count) {
+        true => {}
+        false => {
+            return Err(SchemaError::new(
+                format!("{field}/criteria"),
+                format!(
+                    "has {count} criteria; it takes {} to {}: {MOVE_STEP_DETAIL}",
+                    range.start(),
+                    range.end()
+                ),
+            ));
+        }
+    }
+    let mut criteria = item.criteria.iter().enumerate();
+    criteria.try_for_each(|(at, criterion)| {
+        let max = rules.max_criterion_chars;
+        within(
+            &format!("{field}/criteria/{at}"),
+            criterion,
+            max,
+            MOVE_STEP_DETAIL,
+        )
+    })
+}
+
+/// `text` is at most `max` characters (Unicode scalar values), or refused
+/// as `field`, saying `why`.
+fn within(field: &str, text: &str, max: usize, why: &str) -> Result<(), SchemaError> {
+    let chars = text.chars().count();
+    match chars <= max {
+        true => Ok(()),
+        false => Err(SchemaError::new(
+            field,
+            format!("is {chars} characters; the most is {max}: {why}"),
+        )),
     }
 }
 

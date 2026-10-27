@@ -55,7 +55,7 @@ fn started(work: &std::path::Path, session: Option<&str>) -> ProjectBoardHandles
     assert_eq!(created["ok"], json!(true), "{created}");
     let proposed = ops(
         json!({"op": "propose_plan", "task": "a", "approach": "Build it.",
-                              "items": [{"id": "schema", "title": "Schema"}]}),
+                              "items": [{"id": "schema", "title": "Schema", "criteria": ["It migrates."]}]}),
     );
     let accepted = ops(json!({"op": "accept_plan", "task": "a", "version": 1,
                               "expected_updated": proposed["plan"]["updated"],

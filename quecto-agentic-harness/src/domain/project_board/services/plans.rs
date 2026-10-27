@@ -33,8 +33,8 @@ pub struct PlanContent {
     pub handoff: Option<String>,
     pub items: Vec<PlanItem>,
     pub team: Option<Team>,
-    /// How a new approach enters: one an edit leaves as the draft holds
-    /// it enters nothing.
+    /// How a new approach and new task items enter: what an edit leaves
+    /// as the draft holds it enters nothing.
     pub entry: PlanEntry,
 }
 
@@ -185,7 +185,7 @@ pub fn edit_draft<'r>(
     as_read(plan, expected.into())?;
     when.may_build_on(plan)?;
     let fields = plan.fields();
-    entered(&content, Some(&fields.approach))?;
+    entered(&content, Some(fields))?;
     let changes = fields.approach != content.approach
         || fields.handoff != content.handoff
         || fields.items != content.items
@@ -210,22 +210,30 @@ pub fn edit_draft<'r>(
 
 /// `content`'s text is as it enters the board, normalised: its approach
 /// and handoff as markdown, each task item's title and criteria as lines;
-/// and its approach within its entry's cap (#2705 T3) unless it is the
-/// approach `held` (an edit's draft holds it already: a legacy approach
-/// is kept, never forced to be rewritten).
-fn entered(content: &PlanContent, held: Option<&str>) -> Result<(), BoardRuleError> {
+/// and its approach and task items within its entry's caps (#2705 T3, and
+/// the step rules) unless the draft `held` holds them as they are (an
+/// edit's draft holds them already: legacy text is kept, never forced to
+/// be rewritten).
+fn entered(content: &PlanContent, held: Option<&PlanFields>) -> Result<(), BoardRuleError> {
     let invalid = BoardRuleError::InvalidPlan;
     entered_text("approach", &content.approach).map_err(invalid)?;
-    if held != Some(content.approach.as_str()) {
-        content.entry.approach(&content.approach).map_err(invalid)?;
+    let held_approach = held.map(|draft| draft.approach.as_str());
+    match held_approach == Some(content.approach.as_str()) {
+        true => {}
+        false => content.entry.approach(&content.approach).map_err(invalid)?,
     }
     if let Some(handoff) = &content.handoff {
         entered_text("handoff", handoff).map_err(invalid)?;
     }
     for (index, item) in content.items.iter().enumerate() {
-        entered_line(&format!("items/{index}/title"), &item.title).map_err(invalid)?;
+        let field = format!("items/{index}");
+        entered_line(&format!("{field}/title"), &item.title).map_err(invalid)?;
         for (at, criterion) in item.criteria.iter().enumerate() {
-            entered_line(&format!("items/{index}/criteria/{at}"), criterion).map_err(invalid)?;
+            entered_line(&format!("{field}/criteria/{at}"), criterion).map_err(invalid)?;
+        }
+        match held.is_some_and(|draft| draft.items.contains(item)) {
+            true => {}
+            false => content.entry.item(&field, item).map_err(invalid)?,
         }
     }
     Ok(())

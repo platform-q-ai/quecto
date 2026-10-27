@@ -389,7 +389,8 @@ fn begun(
         json!({"op": "bootstrap"}),
         json!({"op": "create", "task": "a", "title": "A", "status": "ready"}),
         json!({"op": "propose_plan", "task": "a", "approach": "Build it.",
-               "items": [{"id": "schema", "title": "Schema"}]}),
+               "items": [{"id": "schema", "title": "Schema",
+                          "criteria": ["It migrates."]}]}),
     ] {
         let answer = serve_run(&operations, value.clone(), &plain);
         assert_eq!(answer["ok"], json!(true), "{value}: {answer}");
