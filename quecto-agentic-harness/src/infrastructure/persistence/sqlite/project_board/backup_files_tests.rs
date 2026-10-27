@@ -1,4 +1,7 @@
 use super::*;
+use std::time::{Duration, Instant};
+/// Long enough to outwait a forked test child's brief copy of a lock fd.
+const PATIENT: Duration = Duration::from_secs(5);
 use std::{
     io::Write,
     os::unix::fs::{MetadataExt, PermissionsExt},
@@ -119,11 +122,13 @@ fn backup_lock_refuses_an_inode_its_name_no_longer_names() {
     std::fs::rename(&lock, temp.path().join("aside")).unwrap();
     let current = anchored::open_lock(&directory, board).unwrap();
     assert_eq!(
-        anchored::hold(&directory, board, stale).unwrap_err().kind(),
+        anchored::hold(&directory, board, stale, PATIENT)
+            .unwrap_err()
+            .kind(),
         io::ErrorKind::InvalidInput,
         "the renamed-aside inode is not the board lock"
     );
-    let held = anchored::hold(&directory, board, current).unwrap();
+    let held = anchored::hold(&directory, board, current, PATIENT).unwrap();
     let named = std::fs::symlink_metadata(&lock).unwrap();
     assert_eq!(
         (
@@ -141,7 +146,7 @@ fn backup_lock_refuses_an_unlinked_inode() {
     let board = "0123456789abcdef";
     let stale = anchored::open_lock(&directory, board).unwrap();
     std::fs::remove_file(temp.path().join(anchored::lock_name(board))).unwrap();
-    assert!(anchored::hold(&directory, board, stale).is_err());
+    assert!(anchored::hold(&directory, board, stale, PATIENT).is_err());
 }
 /// Once the old holder is gone, the next run locks the file the name now names.
 #[test]
@@ -150,10 +155,10 @@ fn backup_lock_after_a_rename_aside_takes_the_newly_named_file() {
     let directory = anchored::directory(temp.path()).unwrap();
     let board = "0123456789abcdef";
     let lock = temp.path().join(anchored::lock_name(board));
-    let first = anchored::lock(&directory, board).unwrap();
+    let first = anchored::lock(&directory, board, PATIENT).unwrap();
     std::fs::rename(&lock, temp.path().join("aside")).unwrap();
     drop(first);
-    let next = anchored::lock(&directory, board).unwrap();
+    let next = anchored::lock(&directory, board, PATIENT).unwrap();
     let named = std::fs::symlink_metadata(&lock).unwrap();
     assert_eq!(next.metadata().unwrap().ino(), named.ino());
     assert_ne!(
@@ -176,9 +181,96 @@ fn backup_lock_refuses_a_name_swapped_inside_its_own_window() {
         std::fs::write(&swap_lock, b"").unwrap();
     });
     assert_eq!(
-        anchored::lock(&directory, board).unwrap_err().kind(),
+        anchored::lock(&directory, board, PATIENT)
+            .unwrap_err()
+            .kind(),
         io::ErrorKind::InvalidInput,
         "the flocked inode is no longer the board lock"
     );
     assert!(lock.exists(), "the swapped-in name is left alone");
+}
+/// Holds the board lock on its own fd until told to let go: `release(linger)`
+/// makes it drop the lock `linger` after the signal, never on a timer alone.
+struct Holder {
+    release: std::sync::mpsc::Sender<Duration>,
+    thread: std::thread::JoinHandle<()>,
+}
+impl Holder {
+    fn new(temp: &std::path::Path, board: &'static str) -> Self {
+        let directory = anchored::directory(temp).unwrap();
+        let held = anchored::lock(&directory, board, PATIENT).unwrap();
+        let (release, signal) = std::sync::mpsc::channel::<Duration>();
+        let thread = std::thread::spawn(move || {
+            let linger = signal.recv().unwrap_or(Duration::ZERO);
+            std::thread::sleep(linger);
+            drop(held);
+        });
+        Self { release, thread }
+    }
+    fn release(self, linger: Duration) {
+        self.release.send(linger).unwrap();
+        self.thread.join().unwrap();
+    }
+    /// Signals without waiting, so the caller can contend meanwhile.
+    fn release_later(&self, linger: Duration) {
+        self.release.send(linger).unwrap();
+    }
+    fn join(self) {
+        self.thread.join().unwrap();
+    }
+}
+/// #2773: a brief hold (e.g. a forked child's inherited fd copy) is waited
+/// out within the busy budget instead of being reported busy at once.
+#[test]
+fn backup_lock_waits_out_a_hold_shorter_than_busy() {
+    let temp = tempfile::tempdir().unwrap();
+    let board = "0123456789abcdef";
+    let directory = anchored::directory(temp.path()).unwrap();
+    let holder = Holder::new(temp.path(), board);
+    // The lock is held until the signal below, so this probe cannot race.
+    assert_eq!(
+        anchored::lock(&directory, board, Duration::ZERO)
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::WouldBlock
+    );
+    holder.release_later(Duration::from_millis(100));
+    let held = anchored::lock(&directory, board, PATIENT).unwrap();
+    let named = std::fs::symlink_metadata(temp.path().join(anchored::lock_name(board))).unwrap();
+    assert_eq!(held.metadata().unwrap().ino(), named.ino());
+    holder.join();
+}
+#[test]
+fn backup_lock_with_no_busy_reports_would_block_at_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let board = "0123456789abcdef";
+    let directory = anchored::directory(temp.path()).unwrap();
+    let holder = Holder::new(temp.path(), board);
+    assert_eq!(
+        anchored::lock(&directory, board, Duration::ZERO)
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::WouldBlock
+    );
+    holder.release(Duration::ZERO);
+}
+#[test]
+fn backup_lock_held_longer_than_busy_reports_would_block_after_busy() {
+    let temp = tempfile::tempdir().unwrap();
+    let board = "0123456789abcdef";
+    let directory = anchored::directory(temp.path()).unwrap();
+    let holder = Holder::new(temp.path(), board);
+    let began = Instant::now();
+    assert_eq!(
+        anchored::lock(&directory, board, Duration::from_millis(100))
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::WouldBlock
+    );
+    let waited = began.elapsed();
+    holder.release(Duration::ZERO);
+    assert!(
+        waited >= Duration::from_millis(90) && waited < Duration::from_secs(2),
+        "waited the busy budget, then gave up: {waited:?}"
+    );
 }
