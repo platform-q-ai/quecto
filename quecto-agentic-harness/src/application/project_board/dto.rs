@@ -654,10 +654,7 @@ pub enum ProjectBoardError {
     /// This session may not spawn, so it has no launcher: nothing is
     /// started (S4c).
     NoLauncher,
-    /// The coordinator's container would be refused (`reason`, the
-    /// launch's own words: swarm-container-matches-repo, a container that
-    /// does not clone the project's own repository): nothing is written
-    /// or started.
+    /// The coordinator's container would be refused: nothing is started.
     ContainerRefused(String),
     /// The board server stayed busy (#2705 B7): try again shortly.
     Busy(String),

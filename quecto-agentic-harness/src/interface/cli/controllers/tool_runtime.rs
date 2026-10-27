@@ -355,11 +355,8 @@ pub(crate) fn build_tool_runtime(
     // Agent-control tools are supplied through the same bundled-native provider
     // for every entrypoint. REPL's current public surface is preserved below by
     // policy-disabling the tools after registration.
-    // The selection `spawn` makes is also how a board start judges its
-    // coordinator's container before writing (swarm-container-matches-repo).
-    let coordinator_containers = container_configs
-        .as_ref()
-        .map(|handles| handles.selection.clone());
+    // A board start judges its coordinator's container by spawn's selection.
+    let coordinator_containers = container_configs.as_ref().map(|h| h.selection.clone());
     let agent_control = build_agent_control_tool_extensions(AgentControlToolDeps {
         swarm_participation: swarm_participation.clone(),
         swarm_context,

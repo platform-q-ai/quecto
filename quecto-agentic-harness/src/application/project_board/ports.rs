@@ -689,12 +689,9 @@ pub trait CoordinatorLaunch: Send + Sync {
     /// A start asks before it writes anything; the launch asks again.
     fn may_launch(&self) -> bool;
 
-    /// Why a coordinator launched now would be refused its container,
-    /// judged as its launch judges it (swarm-container-matches-repo: the
-    /// container must clone the project's own repository), or `None`. A
-    /// start asks before it writes anything, so a container that would be
-    /// refused leaves the board untouched; the launch judges it again. An
-    /// adapter that launches no container (a test double) refuses none.
+    /// Why a coordinator launched now would be refused its container, as
+    /// its launch judges it (swarm-container-matches-repo), or `None`:
+    /// asked before a start writes anything. A double refuses none.
     fn container_refusal(&self) -> Option<String> {
         None
     }
