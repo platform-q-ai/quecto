@@ -38,6 +38,7 @@ pub(super) fn make_args(
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(16);
     let busy_flag: BusyFlag = Arc::new(std::sync::atomic::AtomicBool::new(busy));
     let args = AcceptLoopArgs {
+        guarded: false,
         extensions: Default::default(),
         swarm_boards: None,
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
@@ -54,6 +55,7 @@ pub(super) fn make_args(
         ),
         runtime_store: Default::default(),
         state_snapshot: Arc::new(tokio::sync::RwLock::new(SessionState {
+            turn_outcome: None,
             admission_warnings: Vec::new(),
             startup_warnings: Vec::new(),
             control_receipts: Vec::new(),

@@ -3,6 +3,8 @@
 //! `test-support` feature.
 mod uds_busy_test_support;
 mod uds_test_support;
+#[cfg(test)]
+pub(crate) use uds_busy_test_support::SIMULATED_SIGNAL;
 pub use uds_busy_test_support::{busy_reader_intercept, busy_reader_intercept_with_fleet};
 pub use uds_test_support::{
     AdmissionStateProbe, admission_broadcast_hook, busy_reader_dispatch,

@@ -24,6 +24,7 @@ pub const BUNDLED_TOOLS: &[(&str, &str)] = &[
     ("quecto:official-tools", "swarm"),
     ("quecto:official-tools", "write"),
     ("quecto:session-tools", "recall"),
+    ("quecto:turn-outcome", "declare_turn_outcome"),
     ("quecto:agent-control", "agent_cmd"),
     ("quecto:agent-control", "spawn"),
     ("quecto:workflow", "workflow"),

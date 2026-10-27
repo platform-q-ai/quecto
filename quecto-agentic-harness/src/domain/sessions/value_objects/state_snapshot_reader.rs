@@ -101,9 +101,13 @@ pub(super) const STATE: Shape = Shape {
         "startupWarnings",
         "modelTurn",
         "agentRequests",
+        "turnOutcomeVersion",
+        "outcomeEpoch",
+        "latestTurnOutcome",
     ],
     objects: &[
         ("progress", &PROGRESS),
+        ("latestTurnOutcome", &TURN_OUTCOME),
         ("workflow", &WORKFLOW),
         ("admission", &ADMISSION),
         ("modelTurn", &MODEL_TURN),
@@ -114,9 +118,30 @@ pub(super) const STATE: Shape = Shape {
         ("admissionWarnings", &WARNING),
     ],
 };
+pub(super) const TURN_OUTCOME: Shape = leaf(&[
+    "type",
+    "sessionKey",
+    "outcomeEpoch",
+    "episodeId",
+    "turnId",
+    "sequence",
+    "outcome",
+    "reason",
+]);
 pub(super) const UNCHANGED: Shape = Shape {
-    members: &["unchanged", "generation", "modelTurn"],
-    objects: &[("modelTurn", &MODEL_TURN)],
+    members: &[
+        "unchanged",
+        "generation",
+        "modelTurn",
+        "sessionKey",
+        "turnOutcomeVersion",
+        "outcomeEpoch",
+        "latestTurnOutcome",
+    ],
+    objects: &[
+        ("modelTurn", &MODEL_TURN),
+        ("latestTurnOutcome", &TURN_OUTCOME),
+    ],
     arrays: &[],
 };
 

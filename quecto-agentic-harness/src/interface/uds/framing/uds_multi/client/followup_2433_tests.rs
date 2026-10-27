@@ -124,6 +124,7 @@ fn streaming_agent(provider: Arc<HeldReply>) -> AgentLoopImpl {
 
 fn loop_args(base: &std::path::Path, agent: AgentLoopImpl) -> MultiClientArgs<'_> {
     MultiClientArgs {
+        parent_outcome: None,
         extensions: Default::default(),
         agent,
         workspace: base,

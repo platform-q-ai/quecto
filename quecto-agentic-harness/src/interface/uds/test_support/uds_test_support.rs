@@ -38,6 +38,7 @@ impl AdmissionStateProbe {
         Self {
             execution,
             session: protocol::SessionState {
+                turn_outcome: None,
                 admission_warnings: Vec::new(),
                 startup_warnings: Vec::new(),
                 model: "probe".into(),

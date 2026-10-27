@@ -63,6 +63,9 @@ pub(crate) struct AgentFlags {
     /// Composition's retained-context handles builder (D9 #1978), from
     /// CliContext; the tool registry and the agent loop consume its handles.
     pub(crate) retention: Option<crate::interface::cli::RetentionHandlesBuilder>,
+    /// Composition's turn-outcome runtime builder (#2708), from CliContext;
+    /// used only when this launch is a trusted root parent.
+    pub(crate) parent_outcome: Option<crate::interface::cli::ParentOutcomeBuilder>,
     /// Composition's catalogue handles builder (#1845, #1848), from
     /// CliContext; startup effort admission and the spawn tool consume the
     /// change-reasoning-effort use case it builds.
@@ -112,6 +115,7 @@ impl AgentFlags {
         self.kill_tool = ctx.kill_tool;
         self.project_board = ctx.project_board;
         self.retention = ctx.retention;
+        self.parent_outcome = ctx.parent_outcome;
         self.catalogue = ctx.catalogue;
         self.provider_runtime = ctx.provider_runtime;
         self.tool_policy_persistence = ctx.tool_policy_persistence;

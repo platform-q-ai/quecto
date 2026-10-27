@@ -166,6 +166,7 @@ async fn run_limited(
     let outcome = {
         let mut sink = EventSink::writer(&mut bytes);
         run_agent_message(PromptRun {
+            admitted: None,
             execution_state: None,
             agent: &mut agent,
             messages: &mut messages,

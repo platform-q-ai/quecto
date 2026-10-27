@@ -342,6 +342,7 @@ fn install_busy_state_snapshot_entry(
             std::thread::spawn(move || {
                 use std::io::Write;
                 let mut state = quecto::interface::uds::wire::protocol::SessionState {
+                    turn_outcome: None,
                     admission_warnings: vec![],
                     startup_warnings: Vec::new(),
                     control_receipts: vec![],

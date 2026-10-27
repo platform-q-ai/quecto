@@ -60,6 +60,7 @@ fn test_build_agent_from_config_no_config_file() {
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
+        parent_outcome: None,
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(build_tool_policy_persistence),
@@ -120,6 +121,7 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
+        parent_outcome: None,
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(build_tool_policy_persistence),
@@ -183,6 +185,7 @@ fn test_build_agent_from_config_invalid_json() {
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
+        parent_outcome: None,
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(build_tool_policy_persistence),
@@ -248,6 +251,7 @@ fn test_build_agent_from_config_no_providers() {
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
+        parent_outcome: None,
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(build_tool_policy_persistence),
@@ -313,6 +317,7 @@ fn test_build_agent_from_config_with_model_override() {
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
+        parent_outcome: None,
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(build_tool_policy_persistence),
@@ -337,6 +342,31 @@ fn test_build_agent_from_config_with_model_override() {
         None,
     );
     assert!(result.is_some(), "stderr: {}", stderr);
+}
+
+/// Review #2762 (3): a one-shot is never guarded yet (the CLI guard is a
+/// stacked follow-up): even with the switch on it keeps its note receiver
+/// and builds no runtime.
+#[test]
+fn review_2762_a_one_shot_is_unguarded_and_keeps_its_note_receiver() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cfg = tmp.path().join("config.json");
+    std::fs::write(&cfg, r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#).unwrap();
+    let mut flags = super::integration_tests::test_flags(Some("hi"), None, None);
+    flags.no_session = true;
+    flags.parent_outcome = Some(switched_on);
+    let mut stderr = String::new();
+    let selection = selection_for_test(&cfg, false);
+    let built = build_agent_from_config(tmp.path(), &selection, &flags, &mut stderr, None)
+        .unwrap_or_else(|| panic!("build: {stderr}"));
+    assert!(built.parent_outcome.is_none());
+    assert!(built.notification_rx.is_some(), "the receiver stays alive");
+}
+
+fn switched_on() -> Option<
+    std::sync::Arc<crate::application::agent_turn::use_cases::parent_outcome::ParentOutcomeRuntime>,
+> {
+    Some(crate::composition::bootstrap::agent_turn::build_parent_outcome())
 }
 
 // ===================================================================
@@ -407,6 +437,7 @@ fn admission_flags() -> AgentFlags {
         web_fetch_tool_factory: None,
         kill_tool: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
+        parent_outcome: None,
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),
         tool_policy_persistence: Some(

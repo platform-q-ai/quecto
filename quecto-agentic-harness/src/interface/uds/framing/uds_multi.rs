@@ -89,7 +89,8 @@ pub(in crate::interface) struct MultiClientArgs<'a> {
     pub turn_session: cli::TurnSessionBuilder,
     /// The environment control slot (#2070): an owner exit ends retained boxes through it.
     pub environment_control: Option<EnvironmentControlSlot>,
-    pub extensions: controllers::uds_extensions::Extensions, // #2446: see `clients`
+    pub parent_outcome: Option<cli::uds_session::ParentOutcome>, // #2708
+    pub extensions: controllers::uds_extensions::Extensions,     // #2446: see `clients`
 }
 
 /// A command line from a client.
@@ -175,6 +176,7 @@ pub(in crate::interface) async fn multi_client_loop(
         teardown_graph,
         turn_session,
         environment_control,
+        parent_outcome,
         extensions,
     } = args;
 
@@ -193,6 +195,7 @@ pub(in crate::interface) async fn multi_client_loop(
         .publish(&messages);
 
     let mut agent_session = turn_session(model);
+    agent_session.bind_parent_outcome(parent_outcome);
     agent_session.set_admission_warnings(&admission_slots);
     agent_session.set_startup_warnings(&catalogue.startup_warnings);
     agent_session.observe_runtime(catalogue.runtime_store.clone());
@@ -330,6 +333,7 @@ pub(in crate::interface) async fn multi_client_loop(
         teardown: connections,
         extensions: extensions.clone(),
         swarm_boards,
+        guarded: agent_session.parent_outcome().is_some(), // #2708: busy get_state
     });
 
     // Drop our clone so cmd_rx closes when all client senders (accept loop)
@@ -422,6 +426,7 @@ async fn run_dispatch_loop(
     live_clients: &std::sync::atomic::AtomicU32,
 ) {
     let mut hold = clients::StartupHold::new(ctx, args.extensions.clone());
+    let mut busy = None; // #2708: a guarded loop's back-to-back instructions
     loop {
         let Some(msg) = hold.next(ctx, &mut args).await else {
             break;
@@ -439,6 +444,7 @@ async fn run_dispatch_loop(
                 break;
             }
             DispatchMsg::Client(client_msg) => {
+                controllers::uds::busy_for(ctx, &client_msg, &mut busy);
                 if handle_client_msg(ctx, client_msg, args.lifetime, live_clients).await {
                     // The last client of a lifetime that ends with it left:
                     // the same common shutdown runs to completion — fleet
@@ -503,6 +509,7 @@ async fn run_dispatch_loop(
         refresh_state_snapshot(ctx).await;
         refresh_session_stats_snapshot(ctx).await;
         refresh_tool_catalogue_snapshot(ctx).await;
+        busy.take_if(|_| args.cmd_rx.is_empty());
     }
 }
 

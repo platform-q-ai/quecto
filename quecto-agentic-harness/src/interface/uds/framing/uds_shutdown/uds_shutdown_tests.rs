@@ -224,6 +224,10 @@ async fn without_a_controller_the_signal_cancels_and_requests_exit() {
 /// The simulated signal drives the installed watcher exactly like SIGTERM.
 #[tokio::test]
 async fn a_simulated_termination_signal_reaches_the_installed_watcher() {
+    // Every installed watcher hears it: no other test's loop may be running.
+    let _alone = crate::interface::uds::test_support::SIMULATED_SIGNAL
+        .write()
+        .await;
     let cancel: CancelHandle = Arc::new(Mutex::new(CancelSlot::Idle));
     let notify = Arc::new(tokio::sync::Notify::new());
     let request = super::ShutdownRequest::install(
@@ -247,6 +251,10 @@ async fn a_simulated_termination_signal_reaches_the_installed_watcher() {
 /// through the controller, to completion, before the loop returns.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_last_client_disconnect_runs_the_common_shutdown_to_completion() {
+    // Its watcher must not hear the simulated signal another test sends.
+    let _signal = crate::interface::uds::test_support::SIMULATED_SIGNAL
+        .read()
+        .await;
     let dir = tempfile::tempdir().unwrap();
     let rig = rig(dir.path());
     let request = super::ShutdownRequest::install(

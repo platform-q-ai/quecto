@@ -1,9 +1,4 @@
 use crate::application::agent_turn::agent_loop::AgentLoopImpl;
-pub(crate) use crate::domain::conversation::services::conversation_view::inject_system_prompt;
-#[cfg(test)]
-pub(crate) use crate::domain::conversation::services::conversation_view::remove_injected_system_prompt;
-#[cfg(test)]
-use crate::domain::conversation::value_objects::message::Role;
 use crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot;
 use crate::interface::uds::controllers::{uds_extensions, uds_parent_control, uds_session_handles};
 use crate::interface::uds::framing::{uds_multi, uds_single_client, uds_wire};
@@ -61,6 +56,7 @@ pub struct UdsLoopArgs<'a> {
     /// the teardown edge (unit rigs) and is refused for a launched child.
     pub teardown_graph: Option<super::TeardownHandlesBuilder>,
     pub turn_session: super::TurnSessionBuilder, // #1909, #1855: composition's builder
+    pub parent_outcome: Option<super::uds_session::ParentOutcome>, // #2708: a trusted root's guard
     pub extensions: crate::domain::agents::entities::configured_extensions::AgentExtensions, // #2446
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
@@ -103,6 +99,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         parent_control,
         teardown_graph,
         turn_session,
+        parent_outcome,
         extensions,
     } = args;
     let session_key = identity.runtime_key().to_string(); // presenters, owner uuid
@@ -134,7 +131,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         crate::domain::workflow::lock_engine(ws).restore_run(persisted);
     }
     if let Some(std_stream) = socket_override {
-        // Single-client path: backward-compatible with existing tests.
+        // Single-client path (tests only; never given a guard runtime).
+        assert!(parent_outcome.is_none(), "single-client is unguarded");
         uds_single_client::single_client_loop(
             uds_single_client::SingleClientArgs {
                 agent,
@@ -186,6 +184,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 parent_control,
                 teardown_graph,
                 environment_control,
+                parent_outcome,
                 extensions: uds_extensions::launch(&extensions, &guard.0, base_dir),
             },
             listener,

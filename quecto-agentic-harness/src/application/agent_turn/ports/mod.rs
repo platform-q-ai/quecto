@@ -35,3 +35,9 @@ pub trait DeclareTurnOutcome: Send + Sync {
         reason: &str,
     ) -> Result<crate::domain::turn_declaration::TurnDeclaration, DomainError>;
 }
+
+/// Inbound port of the active declaration adapter (#2708): the identity of
+/// the parent turn admitted now, if any, read when the tool runs.
+pub trait BoundTurnDeclaration: DeclareTurnOutcome {
+    fn capture(&self) -> Option<crate::domain::turn_declaration::TurnIdentity>;
+}

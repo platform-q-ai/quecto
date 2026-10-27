@@ -220,6 +220,15 @@ pub(crate) fn build_connect_get_state_line(
     execution_state: &crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle,
     is_busy: bool,
 ) -> String {
+    let live = connect_state(state, workflow_state, execution_state);
+    build_get_state_line_live(&live, &None, is_busy)
+}
+/// The snapshot with the live workflow and execution overlaid (out-of-loop `get_state`).
+pub(crate) fn connect_state(
+    state: &SessionState,
+    workflow_state: &Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
+    execution_state: &crate::interface::uds::presenters::uds_execution_state::ExecutionStateHandle,
+) -> SessionState {
     let mut live = state.clone();
     let workflow_revision = if let Some(workflow) = workflow_state {
         let engine = crate::domain::workflow::lock_engine(workflow);
@@ -237,7 +246,7 @@ pub(crate) fn build_connect_get_state_line(
     live.message_count = execution.message_count();
     live.execution = Some(execution.snapshot());
     drop(execution);
-    build_get_state_line_live(&live, &None, is_busy)
+    live
 }
 
 #[path = "uds_snapshot_state.rs"]

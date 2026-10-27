@@ -13,6 +13,27 @@ fn a_bundled_tool_is_bundled_elsewhere() {
     }
 }
 
+// Original #2708 catalogue case, kept verbatim. The active runtime registers
+// the tool for trusted roots only; this pins catalogue membership, not absence.
+#[test]
+fn issue_2708_declaration_is_known_to_policy_while_unregistered() {
+    // Discover the provider from the catalogue: C1 fixes the tool name, not
+    // a provider id. This does not prescribe a new construction API.
+    let (provider_id, name) = BUNDLED_TOOLS
+        .iter()
+        .find(|(_, name)| *name == "declare_turn_outcome")
+        .expect(
+            "C1 requires policy catalogue coverage for the inactive declare_turn_outcome adapter",
+        );
+
+    let stable_id = bundled_stable_id(provider_id, name);
+    assert_eq!(
+        classify_unmatched_policy_entry(&stable_id),
+        UnmatchedPolicyEntry::BundledElsewhere,
+        "an inactive declaration adapter is a known bundled tool, not a policy typo"
+    );
+}
+
 #[test]
 fn python_lab_is_retired_by_1684() {
     assert_eq!(

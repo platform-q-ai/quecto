@@ -308,6 +308,8 @@ pub(crate) struct PromptRun<'a, 's> {
     /// The loop's routine save, run before the turn reports its end
     /// (#2218); `None` on rigs that persist nothing.
     pub turn_save: Option<super::uds::TurnSave>,
+    /// A guarded turn's `turn_admitted` (#2708), sent once its opener is committed.
+    pub admitted: Option<AgentEvent>,
 }
 
 /// Run a single agent prompt, emitting UDS events (including streamed tokens)
@@ -332,6 +334,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
         notification_rx,
         subagent_registry,
         turn_save,
+        admitted,
     } = args;
 
     agent_session.set_streaming(true);
@@ -352,8 +355,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
     // tools can run while the subagent registry mutex is held.
     tokio::task::yield_now().await;
 
-    sink.emit(&AgentEvent::AgentStart).await;
-    sink.emit(&AgentEvent::TurnStart).await;
+    uds_turn_progress::open_turn(sink, admitted).await;
     update_execution(&execution_state, |state| {
         let visible_count = user_visible_messages(messages, system_prompt).len();
         state.set_hidden_message_count(messages.len().saturating_sub(visible_count));

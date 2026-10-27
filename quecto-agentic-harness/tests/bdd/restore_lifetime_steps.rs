@@ -323,6 +323,7 @@ fn start_restoring_harness(world: &mut QuectoWorld, lifetime: HarnessLifetime) {
             catalogue,
         } = ctx;
         run_uds_loop(UdsLoopArgs {
+            parent_outcome: None,
             extensions: Default::default(),
             agent,
             retention: None,

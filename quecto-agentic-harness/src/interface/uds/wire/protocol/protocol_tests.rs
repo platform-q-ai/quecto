@@ -554,6 +554,7 @@ fn session_state(
     workflow: Option<serde_json::Value>,
 ) -> SessionState {
     SessionState {
+        turn_outcome: None,
         admission_warnings: Vec::new(),
         startup_warnings: Vec::new(),
         control_receipts: Vec::new(),

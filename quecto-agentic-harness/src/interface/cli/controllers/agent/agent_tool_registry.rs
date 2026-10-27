@@ -23,6 +23,8 @@ pub(super) struct ToolRegistryBuild {
     pub(super) workflow_state:
         Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>, // #562
     pub(super) workspace: std::path::PathBuf,
+    /// The turn-outcome runtime of a trusted root parent (#2708).
+    pub(super) parent_outcome: Option<super::ParentOutcome>,
 }
 
 pub(super) struct ToolRegistryArgs<'a> {
@@ -138,9 +140,16 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
     let environment_registry = flags
         .environment_registry
         .map(|build| build(base_dir, &session_key, !flags.spawned));
+    let swarm_context = crate::interface::cli::controllers::tool_runtime::swarm_context();
+    // The one-shot CLI guard is a stacked follow-up: only a UDS root is guarded.
+    let parent_outcome = (trusted_root(flags, swarm_context.is_some()) && flags.uds_mode)
+        .then_some(flags.parent_outcome)
+        .flatten()
+        .and_then(|build| build());
     let runtime = crate::interface::cli::controllers::tool_runtime::build_tool_runtime(
         crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuildArgs {
-            swarm_context: crate::interface::cli::controllers::tool_runtime::swarm_context(),
+            swarm_context,
+            parent_outcome: parent_outcome.clone().map(|runtime| runtime as _),
             swarm_participation: flags.swarm_participation.clone(),
             entrypoint,
             profile_context:
@@ -182,6 +191,22 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         },
     )?;
 
+    // A startup policy that withholds the declaration leaves the root
+    // unguarded: it could never declare, so every turn would stall.
+    let parent_context =
+        crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent;
+    let mut offered = runtime.registry.definitions_for(parent_context).iter();
+    let offered = offered.any(|definition| definition.name == "declare_turn_outcome");
+    let parent_outcome = parent_outcome.filter(|_| offered);
+    // #2708: a guarded root is told, with the tools' prompt notes, to declare.
+    use crate::domain::agents::value_objects::turn_outcome::DECLARE_GUIDANCE;
+    let guidance = parent_outcome.as_ref().map(|_| DECLARE_GUIDANCE);
+    let snippets = [Some(runtime.extension_prompt_snippets.as_str()), guidance];
+    let snippets = snippets
+        .into_iter()
+        .flatten()
+        .filter(|snippet| !snippet.is_empty());
+    let extension_prompt_snippets = snippets.collect::<Vec<_>>().join("\n\n");
     let _policy_state = runtime.policy_state;
     let _catalogue_entries = runtime.catalogue_entries;
 
@@ -197,7 +222,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         session_key: runtime.session_key,
         model,
         ext_registry: runtime.ext_registry,
-        extension_prompt_snippets: runtime.extension_prompt_snippets,
+        extension_prompt_snippets,
         notification_rx: runtime.notification_rx,
         subagent_registry: runtime.subagent_registry,
         harness_lifecycle: runtime.harness_lifecycle,
@@ -205,6 +230,37 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         environment_control: runtime.environment_control,
         workflow_state: runtime.workflow_state,
         workspace,
+        parent_outcome,
+    })
+}
+
+/// Whether this launch is a trusted root parent (#2708): the domain's
+/// affirmative allowlist over its launch facts.
+fn trusted_root(flags: &AgentFlags, in_swarm_container: bool) -> bool {
+    use crate::domain::agents::services::turn_outcome_policy::{LaunchFacts, is_trusted_root};
+    is_trusted_root(LaunchFacts {
+        spawned: flags.spawned,
+        coordinator: flags.coordinator,
+        has_parent_id: flags.parent_id.is_some(),
+        has_parent_control: flags.parent_control.is_some(),
+        swarm_member: in_swarm_container || flags.swarm_participation.participating(),
+    })
+}
+
+/// The web-fetch tool `config` enables, from the executable's factory.
+pub(super) fn web_fetch_tool(
+    config: &Config,
+    flags: &AgentFlags,
+) -> Option<Arc<dyn crate::application::tools::ports::Tool>> {
+    config.tools.web.fetch.enabled.then(|| {
+        assert!(
+            flags.web_fetch_tool_factory.is_some(),
+            "web-fetch factory missing"
+        );
+        flags.web_fetch_tool_factory.expect("checked")(
+            super::super::shared::web_fetch_client_recipe(),
+            config.tools.web.fetch.max_response_kb,
+        )
     })
 }
 

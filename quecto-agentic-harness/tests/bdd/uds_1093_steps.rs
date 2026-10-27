@@ -349,6 +349,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
     let ext_reg = Arc::new(std::sync::Mutex::new(ext_registry));
     let handle = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
+            parent_outcome: None,
             extensions: Default::default(),
             agent,
             retention: Some(retention),

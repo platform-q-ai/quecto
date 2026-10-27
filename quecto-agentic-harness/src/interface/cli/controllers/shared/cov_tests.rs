@@ -435,6 +435,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
         let mut stderr = String::new();
         crate::interface::cli::controllers::tool_runtime::build_tool_runtime(
             crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuildArgs {
+                parent_outcome: None,
                 child_extensions: Vec::new(),
                 swarm_context: None,
                 swarm_participation:

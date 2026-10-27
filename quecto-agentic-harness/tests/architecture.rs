@@ -6542,6 +6542,7 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
         "build_official_tool_registry_with_context",
         "build_project_board_tool_extension",
         "build_session_tool_extensions",
+        "build_turn_outcome_tool_extension",
         "build_workflow_tool_extension",
         "build_native_extensions",
         "register_bundled_native_tools",

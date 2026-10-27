@@ -9,7 +9,7 @@ mod workflow_poison_tests;
 
 pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
     let _busy = crate::interface::uds::framing::uds_multi::BusyGuard::new(&ctx.busy); // #828
-    loop {
+    'drain: loop {
         // Coalesce a burst of buffered sub-agent completion notes into ONE
         // informational note at the idle flush (#894) — K separate notes would
         // send the parent into a catch-up loop. Per-agent dedup already happened
@@ -22,7 +22,9 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         // #2531: a recoverable failure is re-armed by the next automatic
         // note (bounded), so the domain decides, not the allowed flag.
         let automatic = crate::domain::inference::services::turn_suspension::Work::Automatic;
-        let pending = if ctx.session.automatic_turns().admits(automatic) {
+        let pending = if ctx.session.automatic_turns().admits(automatic)
+            && super::parent_turn::admits(ctx, automatic)
+        {
             crate::interface::cli::uds_session::coalesce_pending(ctx.session.drain_pending())
         } else {
             // #1712: a suspended member still obeys explicit instructions
@@ -44,6 +46,13 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                 ctx.session
                     .restore_pending(std::iter::once(pending_msg).chain(remaining));
                 return;
+            }
+            // #2708: a terminal outcome fences the notes, never an
+            // instruction queued behind them: drain again, explicit only.
+            if !super::parent_turn::admits(ctx, work) {
+                ctx.session
+                    .restore_pending(std::iter::once(pending_msg).chain(remaining));
+                continue 'drain;
             }
             if let Some(control) = &ctx.turn_control.swarm_control {
                 use crate::domain::inference::services::turn_suspension::Work;
@@ -110,7 +119,9 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                     crate::interface::uds::wire::protocol::ControlStatus::Started,
                 );
             }
-            let outcome = run_drained_message(ctx, pending_msg.into_message(ctx.messages)).await;
+            let admission = super::parent_turn::pending_admission(&pending_msg);
+            let message = pending_msg.into_message(ctx.messages);
+            let outcome = run_drained_message(ctx, message, Some(admission)).await;
             if let Some((id, command)) = &correlation {
                 ctx.session
                     .record_control(Some(id), command, super::control_status(&outcome));
@@ -194,7 +205,8 @@ pub(super) async fn queue_prompt(
         },
     );
     let event = if retained {
-        super::AgentEvent::ok(id, type_name, Some(serde_json::json!({"status":"queued"})))
+        let data = super::ack_data(ctx, serde_json::json!({"status":"queued"}), id);
+        super::AgentEvent::ok(id, type_name, Some(data))
     } else {
         super::AgentEvent::err(
             id,

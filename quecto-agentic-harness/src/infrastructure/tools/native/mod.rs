@@ -1,5 +1,6 @@
 pub mod bash;
 pub mod command_match;
+pub mod declare_turn_outcome;
 pub mod docs;
 pub mod filesystem;
 pub mod find_fd;

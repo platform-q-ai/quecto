@@ -49,6 +49,9 @@ pub(crate) fn slim_state_projection(state: &SessionState) -> serde_json::Value {
 fn slim_state_snapshot(
     state: &SessionState,
 ) -> crate::domain::sessions::value_objects::state_snapshot::StateSnapshot {
+    use crate::domain::agents::value_objects::turn_outcome::{
+        TURN_OUTCOME_VERSION, TurnOutcomeEvent,
+    };
     use crate::domain::sessions::value_objects::state_snapshot::{SnapshotProgress, StateSnapshot};
     let progress = slim_progress(state);
     StateSnapshot {
@@ -100,6 +103,12 @@ fn slim_state_snapshot(
                 .map(|e| e.agent_requests)
                 .unwrap_or_default(),
         ),
+        turn_outcome_version: state.turn_outcome.as_ref().map(|_| TURN_OUTCOME_VERSION),
+        outcome_epoch: state.turn_outcome.as_ref().map(|view| view.epoch.clone()),
+        latest_turn_outcome: state
+            .turn_outcome
+            .as_ref()
+            .map(|view| view.latest.clone().map(TurnOutcomeEvent::TurnOutcome)),
     }
 }
 

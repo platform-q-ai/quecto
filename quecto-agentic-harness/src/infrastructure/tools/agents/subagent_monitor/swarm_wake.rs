@@ -12,6 +12,7 @@ use super::super::subagent_registry::{
     NotificationTx, SequencedSubagentNotification, SubagentNotification, SubagentRegistry,
     SubagentStatus, SwarmNoteState,
 };
+use crate::domain::agents::value_objects::turn_outcome::WorkLiveness;
 use crate::domain::swarm::services::parent_wake::{
     HeldNote, StretchEnd, WakeKind, settle_held_note,
 };
@@ -33,6 +34,8 @@ pub struct CoordinatorWake {
     pub launched: bool,
     /// It has sent a `swarm_state`: its turn ends wait for the next one.
     reporting: bool,
+    /// Its last `swarm_state`'s kind (#2708).
+    last: Option<WakeKind>,
     /// The held turn end's sequence, until a state settles it.
     deferred: Option<u64>,
     /// A turn failed since the last state: the next one reports it once.
@@ -73,6 +76,23 @@ impl CoordinatorWake {
         self.deferred = None;
         self.cancel_timer();
         self.worker.turn_failed();
+    }
+
+    /// Its run's share of its parent's work (#2708): `Live` after a hold,
+    /// `Unknown` after an unknown report or a failed turn, else `Empty`.
+    pub fn work(&self) -> WorkLiveness {
+        match (self.launched, self.failed, self.last) {
+            (true, true, _) | (true, false, Some(WakeKind::Unknown)) => WorkLiveness::Unknown,
+            (true, false, Some(WakeKind::Hold)) => WorkLiveness::Live,
+            _ => WorkLiveness::Empty,
+        }
+    }
+
+    /// Record a report of `kind`, as the monitor does on a `swarm_state`.
+    #[cfg(test)]
+    pub(crate) fn report_for_test(&mut self, kind: WakeKind) {
+        self.reporting = true;
+        self.last = Some(kind);
     }
 
     fn cancel_timer(&mut self) {
@@ -140,6 +160,7 @@ pub(super) fn classify_swarm_state(
             false => return,
         }
         wake.reporting = true;
+        wake.last = Some(kind);
         let errored = std::mem::take(&mut wake.failed);
         wake.cancel_timer();
         if kind == WakeKind::Hold {

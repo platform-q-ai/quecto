@@ -174,6 +174,8 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 ### interface/ — CLI (composition root)
 Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 
+**Turn outcomes** (#2708, opt-in): when its launcher sets `QUECTO_TURN_OUTCOMES=1` (the Pocket relay does, for a task's harness), a top-level parent (not spawned, not a coordinator, no parent, not in a swarm) declares how each turn ends with the `declare_turn_outcome` tool (`waiting`, `blocked`, `asking` or `done`, with a one-line reason). A turn that ends with nothing running and no `blocked`, `asking` or `done` gets one system note, `Nothing is running. If your reply says you'll start something you haven't launched, you're not done: launch it now, or call declare_turn_outcome with blocked or asking. Otherwise call declare_turn_outcome: asking if you asked the user something, blocked if you can't proceed, done if you've finished.`, and if nothing runs after it the turn is `stalled`, never done. The guard is the UDS harness's (a one-shot `quecto agent -m` run is not guarded yet). Over UDS the outcome is the `turn_outcome` event and `get_state.latestTurnOutcome` (a guarded harness answers its own `get_state` mid-turn from its refreshed snapshot, so a long turn doesn't hold it); see [docs/uds-protocol.md](docs/uds-protocol.md#turn-outcomes-trusted-root-parents). Without the switch nothing changes: an ordinary TUI chat or `quecto agent -m` run gets no declaration tool, no correction and no new exit codes. Children, coordinators and swarm members are never guarded.
+
 | Command | Description |
 |---|---|
 | `quecto` | Interactive login, setup, and configuration shell |

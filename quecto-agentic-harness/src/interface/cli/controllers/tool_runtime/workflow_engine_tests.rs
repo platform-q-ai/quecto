@@ -22,6 +22,7 @@ fn build(root: &std::path::Path, launch: Launch<'_>) -> Result<ToolRuntimeBuild,
     let mut stderr = String::new();
     let config = Config::default();
     build_tool_runtime(ToolRuntimeBuildArgs {
+        parent_outcome: None,
         child_extensions: Vec::new(),
         swarm_context: launch.swarm_context,
         swarm_participation:

@@ -61,6 +61,7 @@ fn make_agent() -> AgentLoopImpl {
 
 fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> UdsLoopArgs<'a> {
     UdsLoopArgs {
+        parent_outcome: None,
         extensions: Default::default(),
         agent: make_agent(),
         retention: None,
@@ -326,9 +327,98 @@ async fn single_client_socket_override_serves_get_state() {
     assert_eq!(code, 0);
 }
 
+/// Review #2762 (6): the single-client loop is a test rig production never
+/// takes (`cmd_agent_uds` passes no `socket_override`), so no runtime is
+/// built for it and it stays legacy: it advertises no capability.
+#[tokio::test]
+async fn review_2762_single_client_path_stays_legacy() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client_std, server_std) = std::os::unix::net::UnixStream::pair().unwrap();
+    let task = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let store = crate::composition::sessions::build_session_handles(
+                crate::interface::uds::controllers::uds::dispatch_session_roster_tests::loop_inputs(
+                    dir.path(),
+                    "cli:cov",
+                ),
+            );
+            single_client_loop(
+                SingleClientArgs {
+                    agent: make_agent(),
+                    turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
+                    workspace: dir.path(),
+                    messages: Vec::new(),
+                    model: "stub".into(),
+                    admission_slots: Vec::new(),
+                    session_key: "cli:single".into(),
+                    system_prompt: "system".into(),
+                    ext_registry: None,
+                    subagent_registry: None,
+                    workflow_state: None,
+                },
+                server_std,
+                &store,
+                &crate::composition::catalogue::build_catalogue_handles(dir.path(), None),
+            )
+            .await
+        })
+    });
+    client_std.set_nonblocking(true).unwrap();
+    let client = tokio::net::UnixStream::from_std(client_std).unwrap();
+    let (read_half, mut write_half) = tokio::io::split(client);
+    let mut lines = tokio::io::BufReader::new(read_half).lines();
+    write_half
+        .write_all(b"{\"type\":\"get_state\",\"id\":\"s\"}\n")
+        .await
+        .unwrap();
+    write_half.flush().await.unwrap();
+    let mut state = serde_json::Value::Null;
+    for _ in 0..2 {
+        let line = tokio::time::timeout(std::time::Duration::from_secs(2), lines.next_line())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        state = serde_json::from_str(&line).unwrap();
+    }
+    assert_eq!(state["command"], "get_state");
+    assert!(state["data"].get("turnOutcomeVersion").is_none(), "{state}");
+    drop(write_half);
+    drop(lines);
+    let code = tokio::time::timeout(std::time::Duration::from_secs(2), async move {
+        task.join().expect("join single-client loop")
+    })
+    .await
+    .expect("single-client loop should exit after disconnect");
+    assert_eq!(code, 0);
+}
+
 // A published runtime, not a hand-wired AgentSession or accept-loop rig, is
 // the source of these warnings. The composed catalogue handles must carry its
 // store through lifecycle, dispatch and (for multi-client) the accept push.
+/// Review #2762 round 2 (LOW 2): the single-client loop refuses a guard
+/// runtime outright rather than silently running unguarded with one.
+#[test]
+#[should_panic(expected = "single-client is unguarded")]
+fn review_2762_the_single_client_path_is_never_given_a_runtime() {
+    let dir = tempfile::tempdir().unwrap();
+    // Its client already gone, an unguarded loop would just end.
+    let (client, server_std) = std::os::unix::net::UnixStream::pair().unwrap();
+    drop(client);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut args = loop_args(dir.path(), dir.path().join("unused.sock"));
+    args.socket_override = Some(server_std);
+    args.parent_outcome = Some(crate::composition::bootstrap::agent_turn::build_parent_outcome());
+    rt.block_on(uds_loop_async(args));
+}
+
 fn publish_admission_slots(base: &std::path::Path, slots: &[&str]) {
     use crate::application::catalogue::{
         ports::catalogue_source::{CatalogueSource, SourceEntries},

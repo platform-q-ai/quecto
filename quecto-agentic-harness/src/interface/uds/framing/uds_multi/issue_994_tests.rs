@@ -412,6 +412,7 @@ async fn run_stub_turn_event_types_with_sink(
     let subagent_registry = None;
 
     let outcome = run_agent_message(PromptRun {
+        admitted: None,
         execution_state: None,
         agent: &mut agent,
         messages: &mut messages,

@@ -1,6 +1,7 @@
 //! Transport-neutral turn declaration vocabulary. Inactive until runtime composition exists.
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The default is the identity no admitted turn has (#2708).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TurnIdentity {
     pub session_key: String,
     pub outcome_epoch: String,
@@ -14,7 +15,8 @@ pub enum LaunchAuthority {
     ChildCoordinator,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TurnIntent {
     Waiting,
     Blocked,

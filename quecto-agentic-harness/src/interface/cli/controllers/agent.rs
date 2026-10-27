@@ -7,6 +7,8 @@ use crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecy
 use crate::infrastructure::tools::agents::subagent_registry::{NotificationRx, SubagentRegistry};
 use crate::interface::{cli::CliContext, uds::controllers::uds};
 use std::sync::Arc;
+type ParentOutcome =
+    Arc<crate::application::agent_turn::use_cases::parent_outcome::ParentOutcomeRuntime>;
 /// Max byte length for `--socket` paths (the portable macOS/Linux limit).
 const MAX_SOCKET_PATH_BYTES: usize = 104;
 pub(crate) struct AgentOutput<'a> {
@@ -203,6 +205,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         project_board: None,
         kill_tool: None,
         retention: None,
+        parent_outcome: None,
         catalogue: None,
         provider_runtime: None,
         tool_policy_persistence: None,
@@ -405,16 +408,7 @@ pub(crate) fn build_agent_from_config_in(
     // Workflow templates resolve against CWD and home.
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let home_dir = crate::infrastructure::tools::native::path_utils::home_dir();
-    let web_fetch_tool = config.tools.web.fetch.enabled.then(|| {
-        assert!(
-            flags.web_fetch_tool_factory.is_some(),
-            "web-fetch factory missing"
-        );
-        flags.web_fetch_tool_factory.expect("checked")(
-            super::shared::web_fetch_client_recipe(),
-            config.tools.web.fetch.max_response_kb,
-        )
-    });
+    let web_fetch_tool = agent_tool_registry::web_fetch_tool(&config, flags);
     // The run's reloadable configuration (#1849): the reload use case is
     // seeded now, after the startup composition read the same files.
     let runtime_inputs = super::catalogue_handles::RuntimeConfigurationInputs {
@@ -446,6 +440,7 @@ pub(crate) fn build_agent_from_config_in(
         environment_control,
         workflow_state,
         workspace,
+        parent_outcome,
     } = match build_tool_registry(ToolRegistryArgs {
         base_dir,
         config_path: selection.path(),
@@ -541,6 +536,7 @@ pub(crate) fn build_agent_from_config_in(
         workspace,
         event_log: event_log::switched_on(config.telemetry.event_log.enabled, base_dir),
         extensions: build_result::agent_extensions(&config, flags),
+        parent_outcome,
     })
 }
 mod agent_tool_registry;
@@ -687,6 +683,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         parent_control,
         teardown_graph: ctx.teardown_graph,
         turn_session,
+        parent_outcome: build.parent_outcome,
         environment_control: build.environment_control,
         extensions: build.extensions,
     });

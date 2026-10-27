@@ -26,6 +26,7 @@ fn runtime_with_board(
     let mut stderr = String::new();
 
     build_tool_runtime(ToolRuntimeBuildArgs {
+        parent_outcome: None,
         child_extensions: Vec::new(),
         swarm_context: None,
         swarm_participation:
@@ -299,6 +300,7 @@ fn runtime_in_container(
     let sandbox = crate::infrastructure::security::sandbox::Sandbox::new(Some(tmp.to_path_buf()));
     let mut stderr = String::new();
     build_tool_runtime(ToolRuntimeBuildArgs {
+        parent_outcome: None,
         child_extensions: Vec::new(),
         swarm_context: Some(context),
         swarm_participation: participation,

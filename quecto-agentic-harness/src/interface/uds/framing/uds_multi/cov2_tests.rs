@@ -102,6 +102,7 @@ fn make_agent() -> AgentLoopImpl {
 
 fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
     MultiClientArgs {
+        parent_outcome: None,
         extensions: Default::default(),
         agent: make_agent(),
         workspace: base,

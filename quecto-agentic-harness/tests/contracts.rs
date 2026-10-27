@@ -434,6 +434,8 @@ mod workspace_origin;
 #[path = "contracts/project_board_reader.rs"]
 mod project_board_reader;
 
+#[path = "contracts/bound_turn_declaration.rs"]
+mod bound_turn_declaration;
 #[path = "contracts/declare_turn_outcome.rs"]
 mod declare_turn_outcome;
 #[cfg(feature = "test-support")]

@@ -45,7 +45,12 @@ pub struct AgentSession {
     /// appended by [`Self::drain_pending`], so supervision-critical notes
     /// survive a saturated queue end-to-end instead of being dropped.
     overflow_notifications: std::collections::VecDeque<PendingMessage>,
+    /// A trusted root parent's turn-outcome runtime (#2708); `None` for
+    /// every other harness, whose turns stay unguarded.
+    parent_outcome: Option<ParentOutcome>,
 }
+pub(crate) type ParentOutcome =
+    std::sync::Arc<crate::application::agent_turn::use_cases::parent_outcome::ParentOutcomeRuntime>;
 #[path = "uds_session_admission.rs"]
 mod admission_warnings;
 use crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure;
@@ -242,6 +247,7 @@ impl AgentSession {
             last_failure_notifications: std::collections::HashMap::new(),
             repeated_failure_notifications: 0,
             overflow_notifications: std::collections::VecDeque::new(),
+            parent_outcome: None,
         }
     }
     pub fn model(&self) -> &str {
@@ -382,6 +388,20 @@ impl AgentSession {
         }
     }
 
+    /// Guard this session's turns with a trusted root's runtime (#2708).
+    pub(crate) fn bind_parent_outcome(&mut self, runtime: Option<ParentOutcome>) {
+        self.parent_outcome = runtime;
+    }
+
+    pub(crate) fn parent_outcome(&self) -> Option<ParentOutcome> {
+        self.parent_outcome.clone()
+    }
+
+    /// Whether queued work (an instruction or a note) waits to run.
+    pub(crate) fn holds_pending_work(&self) -> bool {
+        !(self.pending.is_empty() && self.overflow_notifications.is_empty())
+    }
+
     pub(crate) fn discard_pending(&mut self) {
         for message in self.drain_pending() {
             if let PendingMessage::Control { id, command, .. } = message {
@@ -443,6 +463,7 @@ impl AgentSession {
             sync: 1,
             automatic_turns_suspended: !self.automatic_turns.allowed(),
             repeated_failure_notifications: self.repeated_failure_notifications,
+            turn_outcome: self.parent_outcome.as_ref().map(|runtime| runtime.view()),
         }
     }
 }

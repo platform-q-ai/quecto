@@ -51,6 +51,9 @@ pub(super) fn cli_flags() -> AgentFlags {
     // The project board is composed, as `main` composes it, so the board
     // tool is built.
     flags.project_board = Some(unbuilt_board);
+    // The turn-outcome runtime is composed too (#2708): a root builds
+    // `declare_turn_outcome` on both entrypoints.
+    flags.parent_outcome = Some(switched_on);
     flags
 }
 
@@ -65,6 +68,47 @@ fn unbuilt_board(
             "not built in this test".into(),
         ),
     )
+}
+
+type Runtime =
+    std::sync::Arc<crate::application::agent_turn::use_cases::parent_outcome::ParentOutcomeRuntime>;
+
+/// Composition's turn-outcome builder as a launch that set the switch sees it.
+pub(super) fn switched_on() -> Option<Runtime> {
+    Some(crate::composition::bootstrap::agent_turn::build_parent_outcome())
+}
+
+/// ... and as every other launch sees it.
+fn switched_off() -> Option<Runtime> {
+    None
+}
+
+/// #2708: without the launcher's switch a root is exactly legacy: no
+/// declaration tool and no guard, on either entrypoint.
+#[test]
+fn issue_2708_cli_parent_a_root_without_the_switch_is_unguarded() {
+    let config = Config::default();
+    for (name, uds) in [("cli", false), ("uds", true)] {
+        let mut root = cli_flags();
+        root.uds_mode = uds;
+        root.parent_outcome = Some(switched_off);
+        let (built, _) = build(&root, &config);
+        assert!(built.parent_outcome.is_none(), "{name}: switch off");
+        assert!(
+            !built
+                .extension_prompt_snippets
+                .contains("declare_turn_outcome"),
+            "{name}: no declare guidance without the switch"
+        );
+        assert!(
+            !built
+                .registry
+                .catalogue_entries()
+                .iter()
+                .any(|entry| entry.name == "declare_turn_outcome"),
+            "{name}: the declaration is offered only with the switch on"
+        );
+    }
 }
 
 fn uds_workflow_flags() -> AgentFlags {
@@ -261,4 +305,126 @@ fn a_non_stable_id_is_warned_about() {
         stderr,
         "WARNING: tools.policy: no tool has stable id 'tool.v1:uds:3:uds:client-a:weather', so its entry never applies; fix or remove it under tools.policy.entries\n"
     );
+}
+
+/// #2708: with the switch on only a trusted root is guarded; a child is
+/// never offered the declaration nor guarded.
+#[test]
+fn issue_2708_cli_parent_only_a_switched_on_root_is_guarded() {
+    let config = Config::default();
+    // The one-shot CLI guard is a stacked follow-up: only a UDS root yet.
+    for (name, uds) in [("cli", false), ("uds", true)] {
+        let mut root = cli_flags();
+        root.uds_mode = uds;
+        let (built, stderr) = build(&root, &config);
+        assert_eq!(built.parent_outcome.is_some(), uds, "{name} root: {stderr}");
+        assert_eq!(
+            built
+                .extension_prompt_snippets
+                .contains(crate::domain::agents::value_objects::turn_outcome::DECLARE_GUIDANCE),
+            uds,
+            "{name}: a guarded root is told to declare"
+        );
+    }
+}
+
+/// Review #2762 round 2 (MEDIUM): a root whose startup policy withholds the
+/// declaration is not guarded even with the switch on: it could never
+/// declare, so every turn would end stalled.
+#[test]
+fn review_2762_a_root_that_withholds_the_declaration_is_unguarded() {
+    let config = Config::default();
+    let mut root = cli_flags();
+    root.uds_mode = true;
+    root.disabled_tools = vec!["declare_turn_outcome".into()];
+    let (built, _) = build(&root, &config);
+    assert!(built.parent_outcome.is_none());
+    assert!(
+        !built
+            .extension_prompt_snippets
+            .contains("declare_turn_outcome"),
+        "no guidance naming a withheld tool"
+    );
+}
+
+/// Review #2762 round 2 (LOW 3): the swarm-container fact the launch reads
+/// from `swarm_context()` (a process-wide board a lib test cannot set
+/// without leaking into every other test) excludes a root on its own.
+#[test]
+fn review_2762_a_root_in_a_swarm_container_is_not_trusted() {
+    let mut flags = cli_flags();
+    flags.uds_mode = true;
+    assert!(super::trusted_root(&flags, false));
+    assert!(!super::trusted_root(&flags, true));
+}
+
+/// Review #2762 round 2 (LOW 3): with the switch off the system prompt's
+/// notes are exactly what they were; with it on they gain the one line.
+#[test]
+fn review_2762_the_prompt_notes_are_unchanged_without_the_switch() {
+    use crate::domain::agents::value_objects::turn_outcome::DECLARE_GUIDANCE;
+    let config = Config::default();
+    let mut legacy = cli_flags();
+    legacy.uds_mode = true;
+    legacy.parent_outcome = None;
+    let (legacy, _) = build(&legacy, &config);
+    let mut off = cli_flags();
+    off.uds_mode = true;
+    off.parent_outcome = Some(switched_off);
+    let (off, _) = build(&off, &config);
+    assert_eq!(
+        off.extension_prompt_snippets,
+        legacy.extension_prompt_snippets
+    );
+    let mut on = cli_flags();
+    on.uds_mode = true;
+    let (on, _) = build(&on, &config);
+    let expected = match legacy.extension_prompt_snippets.as_str() {
+        "" => DECLARE_GUIDANCE.to_owned(),
+        notes => format!("{notes}\n\n{DECLARE_GUIDANCE}"),
+    };
+    assert_eq!(on.extension_prompt_snippets, expected);
+}
+
+/// Review #2762 (9): each launch fact alone excludes a root from the guard
+/// even with the switch on, on both entrypoints.
+#[test]
+fn review_2762_each_launch_fact_alone_leaves_a_launch_unguarded() {
+    type Fact = fn(&mut AgentFlags);
+    let facts: [(&str, Fact); 5] = [
+        ("spawned", |flags| flags.spawned = true),
+        ("parent_id", |flags| flags.parent_id = Some("parent".into())),
+        ("coordinator", |flags| flags.coordinator = true),
+        ("parent_control", |flags| {
+            flags.parent_control = Some("/nonexistent/control".into())
+        }),
+        ("swarm_member", |flags| {
+            flags.swarm_participation =
+                crate::infrastructure::tools::swarm::swarm_bridge::Participation::Fixed(true)
+        }),
+    ];
+    let config = Config::default();
+    for uds in [false, true] {
+        for (fact, apply) in facts {
+            let mut flags = cli_flags();
+            flags.uds_mode = uds;
+            apply(&mut flags);
+            let (built, _) = build(&flags, &config);
+            assert!(built.parent_outcome.is_none(), "{fact} (uds {uds})");
+            assert!(
+                !built
+                    .registry
+                    .catalogue_entries()
+                    .iter()
+                    .any(|entry| entry.name == "declare_turn_outcome"),
+                "{fact} (uds {uds}): never offered the declaration"
+            );
+            assert!(
+                !built
+                    .extension_prompt_snippets
+                    .contains("declare_turn_outcome"),
+                "{fact} (uds {uds}): never told to declare"
+            );
+        }
+    }
 }

@@ -3,6 +3,18 @@
 
 use super::EventSink;
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
+use crate::interface::uds::wire::protocol::AgentEvent;
+
+/// Open a turn on its sink: its `turn_admitted` when it is guarded (#2708),
+/// then `agent_start` and `turn_start`.
+pub(super) async fn open_turn(sink: &mut EventSink<'_>, admitted: Option<AgentEvent>) {
+    for event in admitted
+        .into_iter()
+        .chain([AgentEvent::AgentStart, AgentEvent::TurnStart])
+    {
+        sink.emit(&event).await;
+    }
+}
 
 /// Publish the messages of a just-completed INNER turn into the shared
 /// conversation snapshot, and emit the resulting `ledger_advanced` hints.

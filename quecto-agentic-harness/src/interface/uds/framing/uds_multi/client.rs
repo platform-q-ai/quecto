@@ -52,6 +52,9 @@ pub(crate) struct ClientHandlerArgs {
     /// this reader.
     pub(crate) swarm_boards:
         Option<crate::interface::uds::controllers::uds_swarm_board::SwarmBoards>,
+    /// A guarded harness's busy `get_state` source (#2708); `None` leaves
+    /// every `get_state` to the dispatch loop.
+    pub(crate) busy_state: Option<crate::interface::uds::presenters::uds_busy_state::BusyState>,
     /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
     pub(crate) _guard: ClientGuard,
 }
@@ -70,6 +73,7 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
         subagent_registry,
         teardown,
         swarm_boards,
+        busy_state,
         _guard,
     } = args;
     use tokio::io::BufReader;
@@ -88,6 +92,9 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
     let wire_mode = super::super::uds_wire::ConnectionWireMode::default();
     let wire_mode_for_writer = wire_mode.clone();
     let writer_for_task = Arc::clone(&writer);
+    // A busy `get_state` (#2708) is answered by the writer, once it is due.
+    let (answers_tx, mut answers_rx) = tokio::sync::mpsc::channel(8);
+    let answering = busy_state.clone();
 
     // Writer task: multiplex shared broadcast events AND per-client
     // targeted events (currently just `execute_tool` from forwarder
@@ -126,6 +133,24 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
                         // may still be delivering.
                     }
                 },
+                // A busy `get_state` (#2708), never behind earlier broadcasts.
+                Some(asked) = answers_rx.recv() => {
+                    let source = answering.as_ref().expect("only a guarded connection asks");
+                    loop {
+                        use tokio::sync::broadcast::error::TryRecvError::Lagged;
+                        let line = match broadcast_rx.try_recv() {
+                            Ok(line) => line,
+                            Err(Lagged(n)) => format!("{{\"type\":\"error\",\"message\":\"dropped {n} events — use get_messages to re-sync\"}}\n"),
+                            Err(_) => break,
+                        };
+                        if write_line(&writer_for_task, &line, &mode).await.is_err() {
+                            return;
+                        }
+                    }
+                    if write_line(&writer_for_task, &source.answer(asked).await, &mode).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -187,6 +212,11 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
                 in_flight: &board_requests,
             },
         ) {
+            continue;
+        }
+        let asked = crate::interface::uds::presenters::uds_busy_state::asked;
+        if let Some(asked) = asked(&line, busy_state.as_ref()) {
+            let _ = answers_tx.send(asked).await;
             continue;
         }
         if !crate::interface::uds::controllers::uds_reader_dispatch::dispatch(
@@ -309,4 +339,8 @@ async fn write_line(
 
 // #2433: driven through the whole loop, which this connection serves.
 #[cfg(test)]
+mod busy_state_2708_tests;
+#[cfg(test)]
 mod followup_2433_tests;
+#[cfg(test)]
+mod writer_order_2708_tests;

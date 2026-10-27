@@ -553,11 +553,33 @@ When no workflow template is selected, the `workflow` field is omitted entirely.
 ```
 
 While a model request is in flight the marker also carries `modelTurn`
-(see [Model turn](#get_state) below).
+(see [Model turn](#get_state) below). A turn-outcome producer's marker also
+carries its session and turn-outcome members (see
+[Turn outcomes](#turn-outcomes-trusted-root-parents)): an unchanged
+conversation never hides the latest outcome.
+
+**Turn-outcome members (trusted root parents only, #2708):**
+
+```json
+{
+  "turnOutcomeVersion": 1,
+  "outcomeEpoch": "5b0d6c1e-8f0e-4f7c-9a52-2f4d1c0b9e11",
+  "latestTurnOutcome": null
+}
+```
 
 | Field | Type | Description |
 |---|---|---|
-| `state` | string | Current model/execution state such as `idle`, `streaming`, `thinking`, `runningTool`, or `finalizing` |
+| `turnOutcomeVersion` | integer | `1`: this harness emits `turn_admitted` and `turn_outcome`. Present only when its launcher switched the guard on (`QUECTO_TURN_OUTCOMES=1`) for a top-level parent; absent from every other harness; a peer without it is legacy |
+| `outcomeEpoch` | string | The incarnation the outcomes belong to; a new one is minted when the history is replaced |
+| `latestTurnOutcome` | object or `null` | The last `turn_outcome` event of this epoch, byte-for-byte the event that was emitted, with its original `sequence`; an explicit `null` before the first, never omitted |
+
+All three are present on the full reply, the busy snapshot, the connect-time
+snapshot and the unchanged marker alike.
+
+| Field | Type | Description |
+|---|---|---|
+| `state` | string | Current model/execution state: exactly one of `idle`, `thinking`, `runningTool` or `finalizing` |
 | `effort` | string \| null | Effective session effort (`null` means provider default / unset) |
 | `model` | string | Active model (qualified `provider/model` or bare name) |
 | `progress` | object | Evidence-based progress verdict with only `state` and `reason` |
@@ -1570,6 +1592,37 @@ Emitted when the agent finishes processing a prompt run. After #1060 / ADR-0008 
 
 If the model answers tool results with nothing at all (no text, no tool call), the run ends at once with `agent_end`, not `agent_error` (#2434). The run then has no final reply: `messageRefs` ends with the tool results, and `contentLength` is 0 on `turn_end` and `agent_end`. A run stopped at the tool iteration limit also records no reply, so it reports `contentLength` 0 too. A client has no reply to rebuild for either. An empty reply to a prompt, steer or follow-up is still an `agent_error` (`empty_stream`). See `empty-stream-diagnostics.md`.
 
+### `turn_admitted`
+
+Emitted by a trusted root parent (#2708) for each turn it runs: once the
+turn's opener is committed, before that turn's `agent_start`. Exactly five
+keys; `turnId` is the opener message's id.
+
+```json
+{"type":"turn_admitted","sessionKey":"cli:default","outcomeEpoch":"5b0d…","episodeId":"ep-1","turnId":"0f9c…"}
+```
+
+### `turn_outcome`
+
+Emitted by a trusted root parent (#2708) when a turn settles: after that
+turn's `agent_end` (the turn is saved first), before any later turn's
+`turn_admitted`. Exactly eight keys. `sequence` advances by one per outcome
+and never goes back, across epochs too; a replay (`get_state`,
+`latestTurnOutcome`) carries the original `sequence`.
+
+```json
+{"type":"turn_outcome","sessionKey":"cli:default","outcomeEpoch":"5b0d…","episodeId":"ep-1","turnId":"0f9c…","sequence":3,"outcome":"stalled","reason":"Nothing is running after one correction."}
+```
+
+| `outcome` | Meaning |
+|---|---|
+| `waiting` | Work the parent owns still runs (a sub-agent, a queued instruction or note); `reason` is the declared one or `Work is already running.` |
+| `needs_user` | The parent declared `blocked` or `asking` (`reason` is its exact line), or its work could not be read (`Unable to determine whether work is running. Inspect the harness state before continuing.`) |
+| `stalled` | The turn ended with nothing running after its one correction: `Nothing is running after one correction.` |
+| `done` | The parent declared `done`; `reason` is its exact line |
+
+`needs_user`, `stalled` and `done` are terminal (see below).
+
 ### `workflow_idle`
 
 Emitted after the post-turn drain finds no further workflow continuation runnable. Optional `reason` distinguishes intervention-worthy exhaustion from deliberate stops so supervisors do not alert on an abort they requested:
@@ -1897,6 +1950,107 @@ Sent when a client falls behind on the broadcast channel (buffer overflow). The 
 - **Unroutable model:** If `set_model` was set to a provider that doesn't exist, the next `prompt` returns an `agent_error` with `"no configured provider matches model prefix 'X'"`. Use `set_model` to switch to a valid model and retry
 
 ---
+
+## Turn outcomes (trusted root parents)
+
+The guard is opt-in (#2708): its launcher switches it on by starting the
+harness with the environment variable `QUECTO_TURN_OUTCOMES=1` (exactly
+`1`; any other value, or none, is off). The Pocket relay sets it for the
+harness of a task. It then guards a top-level parent only (not spawned, not
+a coordinator, no parent id or parent control, not in a swarm). Every other
+harness, an ordinary TUI chat and a plain `quecto agent -m` run among them,
+is unchanged: no declaration tool, no correction turn, no turn-outcome
+events or `get_state` members. The switch is the guarded harness's own: its
+`bash` commands and configured extensions do not inherit it. A root whose
+tool policy withholds `declare_turn_outcome` at startup is not guarded
+either (it could never declare). The guard runs on the multi-client socket
+loop; the single-client loop is a test rig that is never given it.
+
+- **Declaring.** The model is given `declare_turn_outcome` (`outcome`:
+  `waiting`, `blocked`, `asking` or `done`; a one-line `reason` of at most 512
+  characters). It succeeds with `{"message":"Turn outcome recorded.",…}` and
+  launches nothing. Its system prompt carries one line: `End every turn by
+  calling declare_turn_outcome: done when you've answered or finished, asking
+  when you need the user's answer, blocked when you can't proceed, waiting
+  only while work you launched is running.`
+- **Settling.** When a turn ends and was saved: a declared `blocked` or
+  `asking` settles `needs_user`, `done` settles `done`, whatever runs. With
+  `waiting` or no declaration, owned work still running settles `waiting`.
+  Owned work is a sub-agent starting or running, an idle coordinator it
+  launched whose last `swarm_state` was a `hold` (not one that never sent
+  one, as a coordinator without a board doesn't, nor once it reported
+  `finished`, `idle` or `paused`), or a queued instruction or note (a
+  child's turn-end note counts while it waits). A coordinator whose last
+  report was `unknown`, or whose turn failed since it last reported, may
+  still have workers running: that turn settles `needs_user` with the
+  diagnostic below, with no correction. If
+  nothing runs, the harness runs one correction turn with the note
+  `Nothing is running. If your reply says you'll start something you
+  haven't launched, you're not done: launch it now, or call
+  declare_turn_outcome with blocked or asking. Otherwise call
+  declare_turn_outcome: asking if you asked the user something, blocked if
+  you can't proceed, done if you've finished.` (same episode, new
+  `turnId`, saved before it runs); if nothing runs after it, the turn
+  settles `stalled`. The prompt's control receipt keeps the prompt's own
+  result. An interrupted turn (abort, steer, error, shutdown) settles
+  nothing.
+- **Identity.** A `prompt`, `steer` or `follow_up` opens an episode: its `id`,
+  1 to 512 UTF-8 bytes, kept exactly (an empty or longer one is refused with
+  `Turn identity metadata must be nonempty and at most 512 bytes.` before
+  anything is committed); a `prompt` without an `id` gets a minted one.
+  A guarded `prompt` is acknowledged when it is admitted, not when its turn
+  ends, with `data.episodeId`; a queued or accepted `steer`/`follow_up` that
+  named an `id` carries it as `episodeId` too (one without an `id` gets its
+  episode minted when it runs). Corrections and notes of owned work
+  continue the episode under new `turnId`s.
+- **Order.** For a turn: `response` (prompt acknowledgement) → `turn_admitted`
+  → `agent_start` … `agent_end` → `turn_outcome` (or the correction's
+  `turn_admitted`) → `workflow_idle`. A `turn_outcome` always follows its own
+  turn's `agent_end`.
+- **Terminal fence.** After a terminal outcome no automatic turn runs (a
+  sub-agent note, a swarm wake, a workflow nudge): notes stay queued. A queued
+  or new external instruction is admitted as soon as the harness is idle:
+  right after the previous turn's `turn_outcome`, with nothing run between,
+  and it opens a fresh episode in which automatic turns run again.
+- **State.** `get_state` carries `turnOutcomeVersion`, `outcomeEpoch` and
+  `latestTurnOutcome` on every reply: the full one, the busy and connect-time
+  snapshots, and the `since` unchanged marker, which then also carries the
+  session key: `{"unchanged":true,"generation":27,"sessionKey":"cli:default","turnOutcomeVersion":1,"outcomeEpoch":"5b0d…","latestTurnOutcome":null}`.
+  A replayed `latestTurnOutcome` keeps its original `sequence`.
+- **`get_state` mid-turn.** While it is busy, a guarded harness answers
+  its own `get_state` (no `agent_id`) at once instead of after the turn:
+  - It is busy from taking a `prompt`, `steer` or `follow_up` until no
+    command is queued behind it, so through the turn, its correction, what
+    it left queued and the instructions sent meanwhile, and the gaps
+    between those back-to-back turns.
+  - The answer comes from the state snapshot, which is refreshed at each
+    turn boundary and before each `turn_outcome` is sent (a client reacting
+    to outcome N reads latest N), with the live `state` (`thinking`,
+    `runningTool`, …), `generation` and workflow overlaid; `since` gets the
+    unchanged marker as on the loop. Its members are the loop's, with no
+    marker of its own.
+  - It goes to the requester only, and is computed when the connection
+    sends it, after every event frame broadcast before: it is never behind
+    the frames the client already has, and it may be ahead (a frame
+    broadcast while it was computed comes after it). While busy,
+    `state` is never `idle`: a phase already idle (between a run's end and
+    its `agent_end`, or between turns) reads `finalizing`.
+  - Staleness: a mid-turn answer is as of the last refresh, and doesn't
+    reflect a command sent before it that the loop hasn't run yet (one
+    queued behind the turn). Once a command's response has arrived, a
+    later `get_state` reflects it: a state change (`new_session`,
+    `clear_history`, …) ends the busy span, so the loop answers in order.
+  - It still waits for a turn when it reaches the loop first: a `get_state`
+    sent in the instant between the loop going idle and its taking an
+    instruction that had just arrived; one sent while the loop runs another
+    command (a state change) with an instruction queued behind it; and one
+    with an `agent_id` (a child's state, forwarded as before).
+  - Idle, the loop answers as before. An unguarded harness still answers
+    it when the turn ends.
+- **Epochs.** `new_session`, `resume_session`, `clear_history` and `rewind_to`
+  mint a new `outcomeEpoch` and reset `latestTurnOutcome` to `null` once the
+  history is replaced (even if the save after it fails); a refused one, a
+  model or effort change, `reload`, a save or a reconnect keep both.
 
 ## Event sequence diagrams
 
