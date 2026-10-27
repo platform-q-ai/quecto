@@ -188,6 +188,12 @@ fn a_capped_edit_keeps_the_items_a_legacy_draft_holds() {
     relinked.depends_on = vec![first.id.clone()];
     let answer = edit(vec![first.clone(), relinked.clone()], None);
     assert_eq!(answer.expect("relinked").fields().items[1], relinked);
+    // A held item exempts one copy only: a second, under a new id, is a
+    // new task item and is checked (review round 2).
+    match edit(vec![legacy.clone(), relinked.clone()], None) {
+        Err(BoardRuleError::InvalidPlan(error)) => assert_eq!(error.field, "items/1/title"),
+        other => panic!("a copy of a held item enters anew: {other:?}"),
+    }
     // A changed title or criterion enters anew.
     let mut retitled = legacy.clone();
     retitled.title.pop();
@@ -201,4 +207,51 @@ fn a_capped_edit_keeps_the_items_a_legacy_draft_holds() {
         Err(BoardRuleError::InvalidPlan(error)) => assert_eq!(error.field, "items/0/title"),
         other => panic!("a changed item enters anew: {other:?}"),
     }
+}
+
+/// Each task item a draft holds exempts one item an edit gives, matched by
+/// its text: a short-titled legacy item whose criterion changed is held to
+/// the rules at that criterion, and one copy too many is checked.
+#[test]
+fn a_held_item_exempts_one_given_item_by_its_text() {
+    use crate::domain::project_board::entities::plan::PlanEntry::Capped;
+    let legacy = sized_item("legacy", 10, 2, 500);
+    let mut fields = crate::domain::project_board::services::fixtures_tests::plan(
+        2,
+        crate::domain::project_board::value_objects::vocabulary::PlanState::Draft,
+    )
+    .into_fields();
+    fields.items = vec![legacy.clone()];
+    let draft = Plan::new(fields).unwrap();
+    let held = task(InProgress);
+    let edit = |items: Vec<PlanItem>| {
+        let content = PlanContent {
+            handoff: None,
+            entry: Capped,
+            approach: draft.fields().approach.clone(),
+            items,
+            team: None,
+        };
+        let of = DraftOf {
+            task: &held,
+            versions: std::slice::from_ref(&draft),
+            plan: &draft,
+        };
+        let now = Moment {
+            now: at("10:00:00"),
+            latest: None,
+        };
+        edit_draft(of, content, None, &person("Ada"), &now)
+    };
+    let field = |answer: Result<Plan, BoardRuleError>| match answer {
+        Err(BoardRuleError::InvalidPlan(error)) => error.field,
+        other => panic!("{other:?}"),
+    };
+    assert!(edit(vec![legacy.clone()]).is_ok(), "held as it is");
+    let mut changed = legacy.clone();
+    changed.criteria[1].push('!');
+    assert_eq!(field(edit(vec![changed])), "items/0/criteria/0");
+    let mut copy = legacy.clone();
+    copy.id = Slug::parse("copy").unwrap();
+    assert_eq!(field(edit(vec![copy, legacy])), "items/1/criteria/0");
 }

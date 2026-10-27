@@ -212,8 +212,9 @@ pub fn edit_draft<'r>(
 /// and handoff as markdown, each task item's title and criteria as lines;
 /// and its approach and task items within its entry's caps (#2705 T3, and
 /// the step rules) unless the draft `held` holds that text already (an
-/// approach as it is, a task item's title and criteria at any index):
-/// legacy text is kept, never forced to be rewritten.
+/// approach as it is; a task item's title and criteria at any index, each
+/// held item matched at most once, in the order the items are given):
+/// legacy text is kept, never forced to be rewritten nor multiplied.
 fn entered(content: &PlanContent, held: Option<&PlanFields>) -> Result<(), BoardRuleError> {
     let invalid = BoardRuleError::InvalidPlan;
     entered_text("approach", &content.approach).map_err(invalid)?;
@@ -225,13 +226,15 @@ fn entered(content: &PlanContent, held: Option<&PlanFields>) -> Result<(), Board
     if let Some(handoff) = &content.handoff {
         entered_text("handoff", handoff).map_err(invalid)?;
     }
+    let held_items = held.map_or(&[][..], |draft| draft.items.as_slice());
+    let mut unmatched = HeldText::new(held_items);
     for (index, item) in content.items.iter().enumerate() {
         let field = format!("items/{index}");
         entered_line(&format!("{field}/title"), &item.title).map_err(invalid)?;
         for (at, criterion) in item.criteria.iter().enumerate() {
             entered_line(&format!("{field}/criteria/{at}"), criterion).map_err(invalid)?;
         }
-        match held.is_some_and(|draft| holds_text_of(draft, item)) {
+        match unmatched.take(item) {
             true => {}
             false => content.entry.item(&field, item).map_err(invalid)?,
         }
@@ -239,14 +242,38 @@ fn entered(content: &PlanContent, held: Option<&PlanFields>) -> Result<(), Board
     Ok(())
 }
 
-/// Whether `draft` holds a task item with `item`'s text, its title and
-/// criteria, at any index: one whose id or dependencies alone changed is
-/// legacy text kept, never forced to be rewritten.
-fn holds_text_of(draft: &PlanFields, item: &PlanItem) -> bool {
-    draft
-        .items
-        .iter()
-        .any(|held| held.title == item.title && held.criteria == item.criteria)
+/// The task items a draft holds, each matched by its text (title and
+/// criteria) at most once (#2705 step rules, review round 2): a held item
+/// exempts one item an edit gives, at any index and whatever its id or
+/// dependencies, so legacy text is kept but never multiplied.
+struct HeldText<'a> {
+    held: &'a [PlanItem],
+    /// Per held item: whether it is still free to match.
+    free: Vec<bool>,
+}
+
+impl<'a> HeldText<'a> {
+    fn new(held: &'a [PlanItem]) -> Self {
+        Self {
+            held,
+            free: vec![true; held.len()],
+        }
+    }
+
+    /// Whether a free held item has `item`'s text; if so, it is taken.
+    fn take(&mut self, item: &PlanItem) -> bool {
+        let found = self.held.iter().enumerate().position(|(at, held)| {
+            self.free[at] && held.title == item.title && held.criteria == item.criteria
+        });
+        match found {
+            Some(at) => {
+                assert!(self.free[at], "a held item is matched at most once");
+                self.free[at] = false;
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 /// Version `version` of the `board` task's plan accepted by `actor` at

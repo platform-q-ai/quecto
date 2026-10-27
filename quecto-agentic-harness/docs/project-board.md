@@ -532,10 +532,12 @@ policy, as it resolves a task description's:
 
 Only text that enters is checked: an edit that leaves the approach as the
 draft holds it (an items-only edit of a plan written before T3, say) keeps it,
-however long, and a task item whose title and criteria the draft already holds
-(at any index, its id or `depends_on` changed or not) keeps them, however long
-or many. A new task item, or one whose title or a criterion changed, is
-checked. Reading never checks the caps.
+however long. Each task item the draft holds exempts at most one given task
+item with the same title and criteria (at any index, its id or `depends_on`
+changed or not), matched in the order the items are given, so that text is
+kept however long or many its criteria. Every other given task item is
+checked: a new one, one whose title or a criterion changed, and any further
+copy of a held item's text. Reading never checks the caps.
 
 `show` gives `handoff` after `approach`, and its length in characters as
 `handoff_chars` (the whole handoff's, even when the agent tool cuts it), only
