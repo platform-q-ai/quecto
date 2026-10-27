@@ -21,6 +21,10 @@ fn checkout(root: &Path, origin: &str) -> PathBuf {
             .args(args)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_COMMON_DIR")
             .status()
             .unwrap();
         assert!(status.success(), "git {args:?}");

@@ -14,6 +14,10 @@ fn git(dir: &Path, args: &[&str]) {
         .args(args)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
         .status()
         .expect("git runs");
     assert!(status.success(), "git {args:?}");
