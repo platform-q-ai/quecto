@@ -1664,8 +1664,14 @@ Design properties:
   container and works only with the `crun` OCI runtime — under any other
   (`podman info --format '{{.Host.OCIRuntime.Name}}'`) the check fails
   (`… and podman's OCI runtime is runc, not crun: the container would not
-  keep that group`, remedy: install crun or make the device 0666). Access
-  through an ACL or a capability does not survive and is refused.
+  keep that group`, remedy: install crun or make the device 0666; a podman
+  that cannot answer is a runtime failure, exit 3). The family is the
+  CLI's basename, so `QUECTO_CONTAINER_CLI=/usr/bin/podman` or
+  `podman-remote` is podman (for `--userns=keep-id` too); any other CLI
+  cannot be judged for a group-only device (`cannot judge whether <cli>
+  keeps group kvm (gid <n>); make /dev/kvm 0666 or use podman/docker`,
+  exit 9). Access through an ACL or a capability does not survive and is
+  refused.
   `quecto container init --device /dev/kvm` writes the flag into the
   standard entry (never hand-edit the trusted overlay).
 - **Rollback and containment.** `create.sh` installs an ERR trap that removes

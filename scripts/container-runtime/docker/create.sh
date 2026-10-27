@@ -177,6 +177,15 @@ else
   fi
 fi
 
+# The runtime family, by the CLI's basename (QUECTO_CONTAINER_CLI may name
+# it by path, or as podman-remote): `podman`, `docker`, or `other` — whose
+# behaviour this script does not assume.
+cli_kind=other
+case "${cli##*/}" in
+podman | podman-remote) cli_kind=podman ;;
+docker) cli_kind=docker ;;
+esac
+
 if jq_path="$(command -v jq 2>/dev/null)"; then
   report ok jq "jq at $jq_path" ""
 else
@@ -230,7 +239,7 @@ last_line() { printf '%s' "$1" | tr -d '\r' | tail -n 1; }
 # missing image.
 if [ -n "$cli" ]; then
   image_rc=0
-  case "$cli" in
+  case "$cli_kind" in
   podman) image_error="$(bounded "$cli" image exists "$image" 2>&1 >/dev/null)" || image_rc=$? ;;
   *) image_error="$(bounded "$cli" image inspect "$image" 2>&1 >/dev/null)" || image_rc=$? ;;
   esac
@@ -426,7 +435,8 @@ fi
 #     cannot map a host group id into its user namespace and instead keeps
 #     ALL of this user's supplementary groups inside (`--group-add
 #     keep-groups`), which only the crun OCI runtime supports — anything
-#     else is refused here.
+#     else is refused here, and a podman that cannot name its runtime is a
+#     runtime failure. Any other CLI cannot be judged: refused.
 #   - Anything else (an ACL, a capability) does not survive: refused.
 # The check always judges the real path it forwards.
 # device_access <path>: prints `direct`, `group <gid> <group name>` or
@@ -435,7 +445,7 @@ device_access() {
   local stat_out mode uid gid name my_uid bits
   stat_out="$(stat -L -c '%a %u %g %G' -- "$1" 2>/dev/null)" || stat_out=""
   read -r mode uid gid name <<<"$stat_out"
-  if ! [[ "$mode" =~ ^[0-7]{3,4}$ && "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ ]]; then
+  if ! [[ "$mode" =~ ^[0-7]{1,4}$ && "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ ]]; then
     echo other
     return 0
   fi
@@ -444,7 +454,7 @@ device_access() {
   if [ $((bits & 8#006)) = $((8#006)) ] || { [ "$uid" = "$my_uid" ] && [ $((bits & 8#600)) = $((8#600)) ]; }; then
     echo direct
   elif [ $((bits & 8#060)) = $((8#060)) ] && [[ " $(id -G) " == *" $gid "* ]]; then
-    echo "group $gid ${name:-$gid}"
+    echo "group $gid ${name:-UNKNOWN}"
   else
     echo other
   fi
@@ -463,28 +473,39 @@ else
       case "$access" in
       direct) report ok device "$usable" "" ;;
       group)
-        through="through group $access_group (gid $access_gid)"
-        case "$cli" in
-        podman)
-          oci_runtime="$(bounded "$cli" info --format '{{.Host.OCIRuntime.Name}}' 2>/dev/null)" || oci_runtime=""
-          oci_runtime="$(last_line "$oci_runtime")"
-          if [ "$oci_runtime" = crun ]; then
-            report ok device "$usable $through; podman keeps the user's groups (--group-add keep-groups, crun)" ""
-            device_keep_groups=1
-          else
-            report fail device "device $dev is readable and writable only $through, and podman's OCI runtime is ${oci_runtime:-unknown}, not crun: the container would not keep that group" \
-              "install crun and set runtime = \"crun\" under [engine] in containers.conf, or make $dev read-write for everyone (0666), or remove --device $dev from the container config" "$EXIT_NO_DEVICE"
-          fi
-          ;;
-        "")
+        # A group without a name (stat's UNKNOWN) is shown by its id alone.
+        case "$access_group" in
+        UNKNOWN) group_label="gid $access_gid" ;;
+        *) group_label="group $access_group (gid $access_gid)" ;;
+        esac
+        through="through $group_label"
+        if [ -z "$cli" ]; then
           report warn device "$usable $through; whether the container keeps that group was not checked: no container runtime" \
             "fix the runtime-cli check first"
-          ;;
-        *)
+        elif [ "$cli_kind" = docker ]; then
           report ok device "$usable $through; $cli runs the container with --group-add $access_gid" ""
           device_group_ids+=("$access_gid")
-          ;;
-        esac
+        elif [ "$cli_kind" = podman ]; then
+          oci_rc=0
+          oci_runtime="$(bounded "$cli" info --format '{{.Host.OCIRuntime.Name}}' 2>/dev/null)" || oci_rc=$?
+          oci_runtime="$(last_line "$oci_runtime")"
+          if [ "$oci_rc" = 0 ] && [ "$oci_runtime" = crun ]; then
+            report ok device "$usable $through; podman keeps the user's groups (--group-add keep-groups, crun)" ""
+            device_keep_groups=1
+          elif [ "$oci_rc" = 0 ] && [ -n "$oci_runtime" ]; then
+            report fail device "device $dev is readable and writable only $through, and podman's OCI runtime is $oci_runtime, not crun: the container would not keep that group" \
+              "install crun and set runtime = \"crun\" under [engine] in containers.conf, or make $dev read-write for everyone (0666), or remove --device $dev from the container config" "$EXIT_NO_DEVICE"
+          elif [ "$oci_rc" = 124 ]; then
+            report fail device "$cli did not answer within ${probe_timeout}s while reporting its OCI runtime" \
+              "check that the $cli daemon/service is running and reachable (${cli} info); QUECTO_REPO_CHECK_TIMEOUT raises the bound" "$EXIT_NO_RUNTIME"
+          else
+            report fail device "$cli could not report its OCI runtime (exit $oci_rc)" \
+              "check that the $cli daemon/service is running and that this user may use it (${cli} info)" "$EXIT_NO_RUNTIME"
+          fi
+        else
+          report fail device "cannot judge whether $cli keeps $group_label" \
+            "make $dev 0666 or use podman/docker" "$EXIT_NO_DEVICE"
+        fi
         ;;
       *)
         report fail device "device $dev is readable and writable here only through an ACL or a capability, which the container does not keep" \
@@ -740,7 +761,7 @@ envs=(-e "RUST_LOG=${RUST_LOG:-info}" -e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER
 # to a subuid and every mounted file would look foreign); Docker already maps
 # container uids 1:1 to the host.
 run_as=(--user "$(id -u):$(id -g)")
-if [ "$cli" = podman ]; then
+if [ "$cli_kind" = podman ]; then
   run_as+=(--userns=keep-id)
 fi
 # --init puts a minimal init (catatonit under Podman, tini under Docker) at
