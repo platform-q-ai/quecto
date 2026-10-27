@@ -61,6 +61,8 @@ pub(crate) const RUN_END_NOTICE: std::time::Duration = std::time::Duration::from
 pub(crate) struct RunHandles<'a> {
     pub retention: &'a super::retention_handles::RetentionHandles,
     pub run_end: RunEnd,
+    /// A trusted root's turn-outcome guard (#2708); `None` leaves the run as it was.
+    pub parent: Option<super::run_session_parent::ParentRun>,
 }
 
 impl<'a> RunHandles<'a> {
@@ -72,6 +74,7 @@ impl<'a> RunHandles<'a> {
         Self {
             retention,
             run_end: RunEnd::none(),
+            parent: None,
         }
     }
 }
