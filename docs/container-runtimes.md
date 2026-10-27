@@ -1266,7 +1266,9 @@ is written, so a refused init leaves the project untouched):
    different tag, so another build unless the layer cache is warm): pass
    `--image` to tell same-named repos apart or to make a worktree share the
    main checkout's image. An existing entry keeps the tag it has (one with
-   no `--image` keeps the adapter's default); `kill`/`cleanup`
+   no `--image` keeps the adapter's default); `--device /dev/kvm` follows
+   when given (`quecto container init --device /dev/kvm`, see "Host
+   devices" below); `kill`/`cleanup`
    carry `--op kill`/`--op cleanup`; no argv ends with `--` (the launcher
    appends it before the child command).
 5. Materialises the missing files (the scripts byte-identical to
@@ -1290,8 +1292,9 @@ is written, so a refused init leaves the project untouched):
    drive whichever runtime the doctor's `runtime-cli` line names).
 
 Running `init` twice changes nothing (no files, byte-identical overlay).
-A re-init keeps the existing entry's `--repo` and `--image` unless the
-flag is given — the origin remote is not re-derived over a `--repo` you
+A re-init keeps the existing entry's `--repo`, `--image` and `--device`
+list unless the flag is given (`--device` replaces the list, `--no-device`
+empties it) — the origin remote is not re-derived over a `--repo` you
 chose — and prints `kept:` / `rewrote:` / `added:` lines for each so nothing changes
 silently.
 
@@ -1317,7 +1320,7 @@ compares them:
   argv, before it runs.
 
 The arguments after the program (`--state-dir`, `--repo`, `--image`,
-`--op`) are the overlay's, covered by its trust record; a path that
+`--device`, `--op`) are the overlay's, covered by its trust record; a path that
 reaches the bundle through `..` is refused outright rather than treated
 as a script of the entry's own. A program that differs, is missing, or is
 a symbolic link refuses the operation naming the file and the way back:
@@ -1445,7 +1448,7 @@ line from the first of these three checks that failed, so it never says
 `ready` for an image the doctor refuses.
 
 `quecto container status` reports, one line each and exit 1 while anything
-is missing: the assets (`present (5 of 5, version 6)`, or which differ or
+is missing: the assets (`present (5 of 5, version 7)`, or which differ or
 are missing), the `standard` entry of the effective set (`default` with a
 `this repo's default` line when the overlay declares it labelled; `default
 by rule` plus a `note:` with the remedy — `quecto container init --refresh`
@@ -1627,10 +1630,12 @@ Design properties:
   `QUECTO_REPO_CHECK_TIMEOUT`, default 15 s, no credential prompt), and the
   state dir writable and owned by the current user (or, when it does not
   exist yet, creatable under a writable parent) — before the environment
-  directory is created. A normal create dies at the first
+  directory is created. Every `--device` must be a character device the
+  invoking user can read and write (`device`; `not requested` without
+  one). A normal create dies at the first
   failure with a message that names the remedy and a distinct exit code
   (2 usage, 3 no runtime, 4 no jq, 5 no git, 6 image missing, 7 `--repo`
-  unreachable, 8 state dir); `--preflight-only` evaluates every check and
+  unreachable, 8 state dir, 9 device); `--preflight-only` evaluates every check and
   prints the tab-separated report `quecto container doctor` presents,
   leaving no trace (not even the state dir). A runtime that cannot answer
   the image lookup (daemon down, socket permission, `QUECTO_REPO_CHECK_TIMEOUT`
@@ -1638,6 +1643,24 @@ Design properties:
   empty repository (no `HEAD`) is a warning, since the clone accepts it.
   The host-local reference `create.sh` implements the same mode with its
   own subset (jq, git, `--repo`, state dir).
+- **Host devices (`--device`).** `create.sh --device /dev/kvm` (repeatable;
+  a repeat is one device) hands the container the host's KVM device, so a
+  member can run a headless Android emulator. The flag is an allowlist —
+  `/dev/kvm` alone, spelled exactly; anything else is refused with
+  `--device: only /dev/kvm is supported` (exit 2) before any check runs.
+  The preflight's `device` check proves the device is present (`device
+  /dev/kvm is not present on this host`) and that the invoking user can
+  read and write it (`device /dev/kvm is present but this user cannot read
+  and write it`, remedy: add the user to the `kvm` group); the `run` passes
+  `--device /dev/kvm` and the create result lists `metadata.devices`
+  (`[]` without one). The container runs as the invoking user, so the
+  user's access is the container's: a world read-write `/dev/kvm` (0666)
+  needs nothing more; a group-only one (0660 `root:kvm`) gets
+  `--group-add keep-groups` under rootless Podman, which needs the `crun`
+  OCI runtime (Podman refuses it under `runc`). Docker does not keep the
+  user's supplementary groups: there the device must be world read-write.
+  `quecto container init --device /dev/kvm` writes the flag into the
+  standard entry (never hand-edit the trusted overlay).
 - **Rollback and containment.** `create.sh` installs an ERR trap that removes
   partial state and `docker rm -f`s any container it managed to start; every
   destructive operation proves the environment id contains no path
@@ -1759,6 +1782,7 @@ container config "quecto" (create: /…/docker/create.sh --state-dir /var/tmp/en
   ✗ required-tools  the tools image quecto-dev:local declares were not checked
     remedy: fix the image-base check first
   ✓ repo            --repo https://github.com/you/project is reachable
+  ✓ device          not requested
   ✓ state-dir       state dir /var/tmp/envs is writable and owned by the current user
 3 checks failed, 0 warnings
 ```
@@ -1775,6 +1799,8 @@ container config "quecto" (create: /…/docker/create.sh --state-dir /var/tmp/en
 | `… status exit status: 3: … could not read the ai.quecto.required-tools label of image <img>` / `… could not run image <img>` / `… did not answer within 15s while running image <img>` | `✗ required-tools` / `✗ image-base` | The runtime failed, not the image: check the daemon/service (`podman info`); `QUECTO_REPO_CHECK_TIMEOUT` raises the bound. |
 | `… status exit status: 7: … --repo <url> is unreachable: fatal: …` | `✗ repo` | Check the URL and your credentials (`ssh` key or `gh auth login`); fix `--repo` in the config's create argv. |
 | `… status exit status: 8: … state dir <dir> is not owned by the current user` / `cannot be created` | `✗ state-dir` | Point `--state-dir` at a directory you own. |
+| `… status exit status: 9: … device /dev/kvm is not present on this host` / `… is present but this user cannot read and write it` | `✗ device` | Enable KVM (virtualisation on in the firmware, the `kvm` module loaded), or add the user to the `kvm` group (`sudo usermod -aG kvm "$USER"`, then log in again); or drop the device: `quecto container init --no-device`. |
+| `… status exit status: 2: … --device: only /dev/kvm is supported` | — (exit 1) | The create argv names a device off the allowlist; `quecto container init --device /dev/kvm` writes the only one supported. |
 | `unknown container config '<name>' (available container configs: …)` | (doctor refuses too) | Pick a listed name, or bind the repository: `quecto config set --local container_configs.<name> '{…,"default":true}'`. |
 | `container: true refused: the checkout's repo-local config overlay was not applied` | `container doctor refused: …` (exit 1, before any check) | Review `.quecto/config.json`, then `quecto config trust` in that directory; or `--name` a global entry. |
 | `… status exit status: 3: … podman could not look up image …` / `did not answer within 15s` | `✗ image` (runtime cause quoted) | The runtime is installed but cannot answer: start the daemon/service (`podman info`, `systemctl --user start podman.socket`, docker group membership). |

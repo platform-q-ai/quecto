@@ -4,18 +4,21 @@
 # docs/container-runtimes.md for the contract). Verified manually against a
 # local Docker daemon; the CI-exercised default remains the host-local set.
 #
-#   create.sh --state-dir <dir> [--image <img>] -- <child-binary> <child-args...>
-#   create.sh --state-dir <dir> [--image <img>] [--repo <url>] --preflight-only
+#   create.sh --state-dir <dir> [--image <img>] [--device /dev/kvm]... -- <child-binary> <child-args...>
+#   create.sh --state-dir <dir> [--image <img>] [--repo <url>] [--device /dev/kvm]... --preflight-only
 # The repository is BAKED INTO the container config's own argv via --repo
 # (#1410): Quecto passes no source information. No --repo → sandbox config
-# (empty workspace, no clone).
+# (empty workspace, no clone). --device hands the container a host device
+# from an allowlist (`/dev/kvm` alone: a headless Android emulator needs
+# it); any other spelling is refused before anything else happens.
 # Environment: QUECTO_CONTAINER_CONFIG,
 #              QUECTO_CONTAINER_ENVIRONMENT_REF
 #
 # Preflight (#2024 S4b): one list of checks — container runtime, jq, git,
-# gh, image present (never pulled implicitly), --repo reachable, state dir
-# writable — runs before any environment state exists. A normal create dies
-# at the first failure with a distinct message and exit code (see the
+# gh, image present (never pulled implicitly), --repo reachable, every
+# --device present and read-write for this user, state dir writable —
+# runs before any environment state exists. A normal create dies at the
+# first failure with a distinct message and exit code (see the
 # EXIT_* table); `--preflight-only` evaluates every check, prints one
 # `status<TAB>check<TAB>detail<TAB>remedy` line per check on stdout
 # (status ok|warn|fail) and exits non-zero when any failed. `quecto
@@ -48,6 +51,7 @@ EXIT_NO_GIT=5
 EXIT_NO_IMAGE=6
 EXIT_REPO_UNREACHABLE=7
 EXIT_STATE_DIR=8
+EXIT_NO_DEVICE=9
 die() {
   log "$@"
   exit 1
@@ -61,6 +65,24 @@ state_dir=""
 repo=""
 image="${QUECTO_DOCKER_IMAGE:-quecto-dev:local}"
 preflight_only=0
+# The host devices a config may hand its container: an allowlist, matched
+# exactly (no other spelling of the same path).
+allowed_devices=(/dev/kvm)
+devices=()
+is_allowed_device() {
+  local allowed
+  for allowed in "${allowed_devices[@]}"; do
+    if [ "$1" = "$allowed" ]; then return 0; fi
+  done
+  return 1
+}
+is_requested_device() {
+  local requested
+  for requested in ${devices[@]+"${devices[@]}"}; do
+    if [ "$1" = "$requested" ]; then return 0; fi
+  done
+  return 1
+}
 while [ "$#" -gt 0 ]; do
   case "$1" in
   --state-dir)
@@ -76,6 +98,12 @@ while [ "$#" -gt 0 ]; do
   --image)
     [ "$#" -ge 2 ] || usage "--image needs a value"
     image="$2"
+    shift 2
+    ;;
+  --device)
+    [ "$#" -ge 2 ] || usage "--device needs a value"
+    is_allowed_device "$2" || usage "--device: only /dev/kvm is supported"
+    is_requested_device "$2" || devices+=("$2")
     shift 2
     ;;
   --preflight-only)
@@ -387,6 +415,39 @@ else
   report ok repo "not needed: sandbox config (no --repo)" ""
 fi
 
+# Every requested device must be a character device the invoking user can
+# read and write: the container runs as this user, so a device closed to
+# the user is closed to the container too. A device the user reaches only
+# through a group (a 0660 root:kvm /dev/kvm) needs that group kept inside
+# the container: rootless Podman drops supplementary groups unless asked
+# (`--group-add keep-groups`, crun only); Docker does not keep them either.
+# QUECTO_CONTAINER_DEVICE_ROOT is a test seam: it moves where this check
+# looks, never what is forwarded (always the allowlisted path itself).
+device_root="${QUECTO_CONTAINER_DEVICE_ROOT:-}"
+device_via_group=0
+if [ "${#devices[@]}" = 0 ]; then
+  report ok device "not requested" ""
+else
+  for dev in "${devices[@]}"; do
+    is_allowed_device "$dev" || die "device $dev escaped the allowlist"
+    probe_path="$device_root$dev"
+    if [ -c "$probe_path" ] && [ -r "$probe_path" ] && [ -w "$probe_path" ]; then
+      report ok device "device $dev is present and this user can read and write it" ""
+      device_mode="$(stat -L -c %a -- "$probe_path" 2>/dev/null)" || device_mode=""
+      case "$device_mode" in
+      *[67]) ;;
+      *) device_via_group=1 ;;
+      esac
+    elif [ -c "$probe_path" ]; then
+      report fail device "device $dev is present but this user cannot read and write it" \
+        "add the user to the kvm group (sudo usermod -aG kvm \"\$USER\", then log in again), or remove --device $dev from the container config" "$EXIT_NO_DEVICE"
+    else
+      report fail device "device $dev is not present on this host" \
+        "enable KVM on this host (virtualisation on in the firmware, the kvm module loaded), or remove --device $dev from the container config" "$EXIT_NO_DEVICE"
+    fi
+  done
+fi
+
 # The state root is created owner-only by a real create; the preflight
 # only judges it (an existing root must be ours and writable, a missing
 # one needs a writable parent) so `--preflight-only` leaves no trace.
@@ -652,6 +713,13 @@ case "$pids_limit" in
   ''|0|*[!0-9]*) die "QUECTO_CONTAINER_PIDS_LIMIT must be -1 or a positive integer" ;;
 esac
 run_as+=(--pids-limit "$pids_limit")
+# The allowlisted devices the preflight proved usable, at the same path.
+for dev in ${devices[@]+"${devices[@]}"}; do
+  run_as+=(--device "$dev")
+done
+if [ "$device_via_group" = 1 ] && [ "$cli" = podman ]; then
+  run_as+=(--group-add keep-groups)
+fi
 # SECURITY (PR #1401 review): provider API keys must NOT be passed with
 # `run -e KEY=value` — that bakes them into the container config,
 # readable for the container's whole lifetime via `inspect` and
@@ -748,4 +816,5 @@ jq -cn \
   --arg source "$source" \
   --arg repository "$repo_shown" \
   --arg admission "$admission_capability" \
-  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source, checkout: $checkout} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'
+  --argjson devices "$(jq -cn '$ARGS.positional' --args ${devices[@]+"${devices[@]}"})" \
+  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source, checkout: $checkout, devices: $devices} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'

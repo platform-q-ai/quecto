@@ -17,8 +17,12 @@ use crate::infrastructure::processes::containers::standard::assets::{
 };
 
 /// Every previously shipped script (`bundle path`, the old bytes).
-fn shipped() -> [(&'static str, &'static [u8]); 4] {
+fn shipped() -> [(&'static str, &'static [u8]); 5] {
     [
+        (
+            "scripts/create.sh",
+            include_bytes!("../../../../../tests/fixtures/standard-bundle-v6/create.sh"),
+        ),
         (
             "scripts/create.sh",
             include_bytes!(
@@ -63,9 +67,9 @@ fn embedded(relative: &str) -> Vec<u8> {
 }
 
 #[test]
-fn the_bundle_is_version_6() {
-    assert_eq!(STANDARD_ASSET_VERSION, 6);
-    assert_eq!(EmbeddedStandardAssets.catalogue().version, 6);
+fn the_bundle_is_version_7() {
+    assert_eq!(STANDARD_ASSET_VERSION, 7);
+    assert_eq!(EmbeddedStandardAssets.catalogue().version, 7);
 }
 
 #[test]
@@ -139,7 +143,7 @@ fn unknown_bytes_are_refused_by_the_launch_and_the_teardown_alike() {
         "an edit is never replaced"
     );
     // An old version of one script is not a valid version of another.
-    let old_kill = shipped()[3].1;
+    let old_kill = shipped()[4].1;
     let (_project, script) = project_with("scripts/inspect.sh", old_kill);
     assert_eq!(
         RefreshingScriptIntegrity.verify(&script),
@@ -174,7 +178,7 @@ fn outdated_bytes_are_observed_outdated_and_init_refreshes_them() {
 fn a_script_outside_the_bundle_directory_runs_as_it_is() {
     let elsewhere = tempfile::tempdir().unwrap();
     let script = elsewhere.path().join("kill.sh");
-    std::fs::write(&script, shipped()[3].1).unwrap();
+    std::fs::write(&script, shipped()[4].1).unwrap();
     assert_eq!(
         RefreshingScriptIntegrity.verify(Path::new(&script)),
         StandardScriptVerdict::NotStandard
@@ -183,9 +187,9 @@ fn a_script_outside_the_bundle_directory_runs_as_it_is() {
 }
 
 /// `quecto container status` refreshes a script an earlier quecto wrote,
-/// says so, reports it `ok`, and names version 6.
+/// says so, reports it `ok`, and names version 7.
 #[test]
-fn status_refreshes_an_outdated_script_and_reports_version_6() {
+fn status_refreshes_an_outdated_script_and_reports_version_7() {
     use crate::application::environments::dto::{
         ContainerRuntimeTarget, DiagnosableContainerConfig, PreflightCheck,
     };
@@ -214,7 +218,7 @@ fn status_refreshes_an_outdated_script_and_reports_version_6() {
             Err("no entry".into())
         }
     }
-    let (project, script) = project_with("scripts/kill.sh", shipped()[3].1);
+    let (project, script) = project_with("scripts/kill.sh", shipped()[4].1);
     let status = ContainerStatus::new(
         std::sync::Arc::new(EmbeddedStandardAssets),
         std::sync::Arc::new(NoRoster),
@@ -222,7 +226,7 @@ fn status_refreshes_an_outdated_script_and_reports_version_6() {
         std::sync::Arc::new(NoLookup),
     )
     .execute(project.path());
-    assert_eq!(status.version, 6);
+    assert_eq!(status.version, 7);
     assert!(
         status
             .assets
@@ -276,7 +280,7 @@ fn the_launch_refuses_outdated_bytes_and_never_rewrites_them() {
 fn the_doctor_lookup_refreshes_and_the_launch_lookup_refuses() {
     use crate::application::configuration::dto::ConfigSelection;
     use crate::application::environments::dto::ContainerRuntimeTarget;
-    let (project, script) = project_with("scripts/kill.sh", shipped()[3].1);
+    let (project, script) = project_with("scripts/kill.sh", shipped()[4].1);
     let scripts = project.path().join(".quecto/containers/standard/scripts");
     let argv = |name: &str| vec![scripts.join(name).display().to_string()];
     let config = project.path().join("config.json");
@@ -307,7 +311,7 @@ fn the_doctor_lookup_refreshes_and_the_launch_lookup_refuses() {
         refused.contains("was written by an earlier quecto"),
         "{refused}"
     );
-    assert_eq!(std::fs::read(&script).unwrap(), shipped()[3].1, "untouched");
+    assert_eq!(std::fs::read(&script).unwrap(), shipped()[4].1, "untouched");
     let doctor = crate::composition::environments::build_refreshing_container_config_lookup(
         &base,
         Some(ConfigSelection::Explicit(config)),
@@ -323,7 +327,7 @@ fn the_doctor_lookup_refreshes_and_the_launch_lookup_refuses() {
 fn the_composed_doctor_refreshes_an_outdated_script() {
     use crate::application::configuration::dto::ConfigSelection;
     use crate::application::environments::dto::ContainerRuntimeTarget;
-    let (project, script) = project_with("scripts/kill.sh", shipped()[3].1);
+    let (project, script) = project_with("scripts/kill.sh", shipped()[4].1);
     let scripts = project.path().join(".quecto/containers/standard/scripts");
     let config = project.path().join("config.json");
     std::fs::write(
@@ -434,7 +438,7 @@ fn an_edit_in_any_window_of_a_refresh_is_never_overwritten() {
                 .unwrap();
             let dir = super::test_support::materialise_bundle(project.path());
             let script = dir.join("scripts/kill.sh");
-            std::fs::write(&script, shipped()[3].1).unwrap();
+            std::fs::write(&script, shipped()[4].1).unwrap();
             let asset = EmbeddedStandardAssets
                 .catalogue()
                 .assets

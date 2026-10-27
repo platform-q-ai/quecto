@@ -200,6 +200,7 @@ fn the_composed_status_and_init_share_the_layers_over_a_checkout_without_git() {
             image: None,
             dry_run: false,
             refresh: false,
+            devices: None,
         })
         .unwrap();
     assert_eq!(report.written.len(), 5);

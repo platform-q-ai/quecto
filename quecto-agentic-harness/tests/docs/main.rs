@@ -9,6 +9,7 @@
 mod common;
 
 mod board_docs;
+mod container_device;
 mod container_runtime_docs;
 mod repo_docs;
 mod repository_file_reader;

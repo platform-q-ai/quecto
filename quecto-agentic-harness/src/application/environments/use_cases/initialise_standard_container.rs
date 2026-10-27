@@ -23,7 +23,8 @@ use crate::application::environments::dto::{
     AssetOutcome, AssetOwnership, AssetState, ContainerAsset, ContainerConfigDocument,
     ContainerConfigLayer, EntryValueChange, InitialiseStandardContainerError, RepositoryOrigin,
     STANDARD_CONTAINER_CONFIG, STANDARD_CONTAINER_DIR, STANDARD_CONTAINER_IMAGE,
-    StandardContainerReport, StandardContainerRequest, StandardEntryOutcome, standard_image_for,
+    StandardContainerReport, StandardContainerRequest, StandardEntryOutcome,
+    is_allowed_container_device, standard_image_for,
 };
 use crate::application::environments::ports::{
     container::ContainerAssetStore, container::ContainerConfigPersistence,
@@ -143,6 +144,37 @@ impl InitialiseStandardContainer {
         };
         let repository_change = change(previous_repository.as_ref(), repository.as_ref());
         let image_change = change(previous_image.as_ref(), Some(&image));
+        // Devices: the flag's list replaces the entry's (an empty one
+        // removes them); no flag keeps the entry's. Either way every device
+        // is judged against the allowlist before anything is written.
+        let previous_devices: Vec<String> = existing
+            .as_ref()
+            .map(|entry| {
+                entry
+                    .create_values("--device")
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut devices: Vec<String> = Vec::new();
+        for device in request.devices.as_ref().unwrap_or(&previous_devices) {
+            if !is_allowed_container_device(device) {
+                return Err(InitialiseStandardContainerError::DeviceNotAllowed(
+                    device.clone(),
+                ));
+            }
+            if !devices.contains(device) {
+                devices.push(device.clone());
+            }
+        }
+        let joined = |devices: &[String]| Some(devices.join(" ")).filter(|list| !list.is_empty());
+        // An entry that neither had nor has a device has nothing to report.
+        let (previous_list, current_list) = (joined(&previous_devices), joined(&devices));
+        let devices_change = match (&previous_list, &current_list) {
+            (None, None) => None,
+            (Some(_), _) | (_, Some(_)) => change(previous_list.as_ref(), current_list.as_ref()),
+        };
         if let Some(url) = repository
             .as_deref()
             .filter(|url| url_carries_credential(url))
@@ -183,7 +215,7 @@ impl InitialiseStandardContainer {
         };
         let displaced_default = labelled_other(ContainerConfigLayer::Overlay);
         let overridden_global_default = labelled_other(ContainerConfigLayer::Global);
-        let entry = self.entry(&assets_dir, repository.as_deref(), &image);
+        let entry = self.entry(&assets_dir, repository.as_deref(), &image, &devices);
 
         // Every destination is judged before anything is written: a
         // symbolic link on the way, a directory in a file's place, is a
@@ -293,6 +325,8 @@ impl InitialiseStandardContainer {
             repository_origin,
             repository_change,
             image_change,
+            devices,
+            devices_change,
             build_command,
             image,
             entry: StandardEntryOutcome {
@@ -325,13 +359,14 @@ impl InitialiseStandardContainer {
     /// The entry: the default label (#2035), every argv naming the
     /// materialised script by absolute path, `--state-dir` under the base
     /// directory, the repository baked into `create` (#1410), the image
-    /// explicit, no trailing `--` (the launcher appends it before the
-    /// child command).
+    /// explicit, each allowlisted `--device` last, no trailing `--` (the
+    /// launcher appends it before the child command).
     fn entry(
         &self,
         assets_dir: &Path,
         repository: Option<&str>,
         image: &str,
+        devices: &[String],
     ) -> ContainerConfigDocument {
         let script = |name: &str| assets_dir.join(name).to_string_lossy().into_owned();
         let state_dir = self
@@ -348,6 +383,14 @@ impl InitialiseStandardContainer {
         }
         create.push("--image".into());
         create.push(image.to_string());
+        for device in devices {
+            assert!(
+                is_allowed_container_device(device),
+                "a device off the allowlist reached the entry: {device}"
+            );
+            create.push("--device".into());
+            create.push(device.clone());
+        }
         let mut kill = with_state(KILL_SCRIPT);
         kill.extend(["--op".to_string(), "kill".to_string()]);
         let mut cleanup = with_state(KILL_SCRIPT);
@@ -407,6 +450,9 @@ impl std::fmt::Debug for InitialiseStandardContainer {
     }
 }
 
+#[cfg(test)]
+#[path = "initialise_standard_container_device_tests.rs"]
+mod device_tests;
 #[cfg(test)]
 #[path = "initialise_standard_container_ownership_tests.rs"]
 mod ownership_tests;

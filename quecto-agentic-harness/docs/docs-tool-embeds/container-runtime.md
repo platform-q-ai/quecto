@@ -23,11 +23,12 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
    quecto container init                      # --repo from origin; --image quecto-<folder>:local (here /repo → quecto-repo:local)
    quecto container init --repo <url>         # explicit repository
    quecto container init --image <tag>        # another image tag
+   quecto container init --device /dev/kvm    # hand containers the host's KVM (an Android emulator); --no-device removes it
    quecto container init --dry-run            # print what would be written
    ```
    Expected (`wrote` per file on a first run, `kept` on a re-run):
    ```
-   standard container bundle (version 6) at /repo/.quecto/containers/standard
+   standard container bundle (version 7) at /repo/.quecto/containers/standard
      wrote  /repo/.quecto/containers/standard/Containerfile
      wrote  /repo/.quecto/containers/standard/scripts/create.sh
      wrote  … exec.sh, inspect.sh, kill.sh
@@ -41,7 +42,7 @@ operating runbook; `docs {"name": "subagents"}` covers how to spawn.
      2. quecto container doctor   — every check ✓
      3. spawn {"agent_id":"probe","task":"run pwd","container":true} …
    ```
-   **`standard` is always this repo's default.** A global default (`the global default <name> does not apply in this repo`) is overridden here only — the global file is untouched, other repos keep it. Another overlay entry carrying `"default": true` loses the label in the same write (`displaced default: <name>`; select it by name). Launch policy applies the rule, not just the label: a repo-bound `standard` is what `container: true` selects even after `quecto config unset --local container_configs.standard.default` removed its label (possible only while another entry is labelled; a raw edit un-trusts the overlay instead) or the global file was re-labelled — `status` then says `default by rule` with the remedy (`init --refresh` or `quecto config set --local container_configs.standard.default true`). Init names what it displaced from the *effective* set: an overlay entry's label (`displaced default:`), else the global label it overrides. A re-init keeps the entry's `--repo`/`--image` unless the flag is given (`kept:`/`rewrote:`/`added:` lines).
+   **`standard` is always this repo's default.** A global default (`the global default <name> does not apply in this repo`) is overridden here only — the global file is untouched, other repos keep it. Another overlay entry carrying `"default": true` loses the label in the same write (`displaced default: <name>`; select it by name). Launch policy applies the rule, not just the label: a repo-bound `standard` is what `container: true` selects even after `quecto config unset --local container_configs.standard.default` removed its label (possible only while another entry is labelled; a raw edit un-trusts the overlay instead) or the global file was re-labelled — `status` then says `default by rule` with the remedy (`init --refresh` or `quecto config set --local container_configs.standard.default true`). Init names what it displaced from the *effective* set: an overlay entry's label (`displaced default:`), else the global label it overrides. A re-init keeps the entry's `--repo`/`--image`/`--device` unless the flag is given (`kept:`/`rewrote:`/`added:` lines). `--device` accepts `/dev/kvm` alone (`--device: only /dev/kvm is supported`).
    The `first:` line is printed for as long as the Containerfile is byte-for-byte the starter, whichever run wrote it; it goes once the project has made the file its own.
 2. **Make the Containerfile this repo's** — skip only when the Containerfile already carries this repo's toolchain (an uncommented toolchain section or an uncommented `LABEL ai.quecto.required-tools` line — the starter's example is a comment); then *read* it, since its `RUN` steps execute in your build. An untouched starter is not that, whoever wrote it and whenever: the container is only useful once it holds what this repo builds and tests with:
    - Read the repo's manifests (`Cargo.toml`, `pyproject.toml`, `package.json`, `go.mod`, …) and its CI configuration: languages, the tools CI runs, the versions the repo pins.
@@ -66,7 +67,7 @@ Expected (exit 0; exit 1 — last line `not ready: …` — while a script diffe
 
 ```
 standard container at /repo/.quecto/containers/standard
-  assets:  present (5 of 5, version 6)
+  assets:  present (5 of 5, version 7)
   config:  standard (default, overlay) in the effective configuration; --repo https://github.com/org/app.git
            this repo's default: `spawn container: true` selects it whatever the global file labels
   trust:   trusted (the repo-local overlay is applied)
@@ -90,6 +91,7 @@ container config "standard" (create: /repo/.quecto/containers/standard/scripts/c
   ✓ image-base      image quecto-repo:local provides a shell and git
   ✓ required-tools  image quecto-repo:local declares no required tools (ai.quecto.required-tools is not set)   (or: provides the tools it declares: …)
   ✓ repo            --repo https://github.com/org/app.git is reachable
+  ✓ device          not requested   (with --device: device /dev/kvm is present and this user can read and write it)
   ✓ state-dir       state dir /home/me/.quecto/container-environments is writable and owned by the current user   (or: will be created under writable /home/me/.quecto)
 0 checks failed, 0 warnings
 ```
@@ -117,6 +119,7 @@ Running environments are unaffected until killed (`kill_container`, or `quecto c
 | doctor `✗ image  image quecto-repo:local is not present …` | step 3 skipped (create never pulls) | run the printed `podman build …` |
 | doctor `✗ image-base  … missing git` | the image lacks a shell or `git` | add them to the Containerfile, rebuild |
 | doctor `✗ required-tools  … missing <tool>` / `… is not a tool name` | the image lacks a tool its `ai.quecto.required-tools` label declares, or the label is not a list of bare names | rebuild from the Containerfile, or correct the label |
+| doctor `✗ device  device /dev/kvm is not present on this host` / `… cannot read and write it` | no KVM, or the user is not in the `kvm` group (a group-only `/dev/kvm` also needs podman with `crun`) | enable KVM, or `sudo usermod -aG kvm "$USER"` and log in again; or `quecto container init --no-device` |
 | doctor `✗ repo  --repo <url> is unreachable: …` | wrong URL, no network, or missing credentials (`repository … not found` for a private repo) | `gh auth login` / ssh key, or `quecto container init --repo <url>` with the right URL |
 | doctor `! gh  gh is not on PATH …` (warning) | children get no GitHub token | install `gh`, `gh auth login`; harmless if children never push |
 | doctor `✗ state-dir` | `<base_dir>/container-environments` not writable | fix ownership/permissions of the base dir |

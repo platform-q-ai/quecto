@@ -261,6 +261,7 @@ pub(super) fn request(project: &str) -> StandardContainerRequest {
         image: None,
         dry_run: false,
         refresh: false,
+        devices: None,
     }
 }
 

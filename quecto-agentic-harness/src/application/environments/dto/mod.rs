@@ -354,9 +354,11 @@ pub const STANDARD_CONTAINER_IMAGE: &str = "quecto-dev:local";
 pub const STANDARD_CONTAINER_DIR: &str = ".quecto/containers/standard";
 
 mod assets;
+mod devices;
 mod gc;
 mod standard_image;
 pub use assets::{AssetOutcome, AssetOwnership, AssetState, ContainerAsset};
+pub use devices::{ALLOWED_CONTAINER_DEVICES, is_allowed_container_device};
 pub use gc::{AbandonedRuns, GcCandidate, GcKept, GcRefused, GcRemoval, GcReport, GcRequest};
 pub use standard_image::standard_image_for;
 
@@ -413,6 +415,10 @@ pub struct StandardContainerRequest {
     /// `--refresh`: replace a materialised asset whose bytes differ from
     /// the embedded ones (an edit, an older bundle) instead of keeping it.
     pub refresh: bool,
+    /// `--device <path>` (repeatable) replaces the entry's host devices;
+    /// `--no-device` is an empty list; `None` keeps an existing entry's.
+    /// Each must be on [`ALLOWED_CONTAINER_DEVICES`].
+    pub devices: Option<Vec<String>>,
 }
 
 /// Where the repository the entry bakes in came from.
@@ -454,6 +460,16 @@ pub struct ContainerConfigDocument {
 }
 
 impl ContainerConfigDocument {
+    /// Every value after `flag` in the create argv, before any `--`, in
+    /// order (`--device <path>` repeats).
+    pub fn create_values(&self, flag: &str) -> Vec<&str> {
+        let args: Vec<&String> = self.create.iter().take_while(|arg| *arg != "--").collect();
+        args.windows(2)
+            .filter(|pair| pair[0] == flag)
+            .map(|pair| pair[1].as_str())
+            .collect()
+    }
+
     /// The value after `flag` in the create argv, before any `--`
     /// (the shipped scripts' convention: `--repo <url>`, `--image <tag>`).
     pub fn create_value(&self, flag: &str) -> Option<&str> {
@@ -521,6 +537,12 @@ pub struct StandardContainerReport {
     /// values; `None` when there was no entry to keep from.
     pub repository_change: Option<EntryValueChange>,
     pub image_change: Option<EntryValueChange>,
+    /// The host devices the entry hands its container (`--device`), and
+    /// how they relate to an existing entry's (`previous` is the old list,
+    /// space-separated; `None` when it had none). The change is `None`
+    /// with no existing entry, or when neither list names a device.
+    pub devices: Vec<String>,
+    pub devices_change: Option<EntryValueChange>,
     /// The exact command that builds `image` from the materialised
     /// bundle: the one step init leaves to the operator.
     pub build_command: String,
@@ -561,6 +583,9 @@ pub enum InitialiseStandardContainerError {
         project: std::path::PathBuf,
         toplevel: std::path::PathBuf,
     },
+    /// A `--device` (given, or kept from the existing entry) is not on
+    /// [`ALLOWED_CONTAINER_DEVICES`].
+    DeviceNotAllowed(String),
     /// The effective container-config set could not be read, or the
     /// checkout's overlay is withheld (untrusted): init never trusts an
     /// overlay it did not write.
@@ -611,6 +636,11 @@ impl std::fmt::Display for InitialiseStandardContainerError {
                 project.display(),
                 toplevel.display(),
                 toplevel.display()
+            ),
+            Self::DeviceNotAllowed(_) => write!(
+                f,
+                "--device: only {} is supported",
+                ALLOWED_CONTAINER_DEVICES.join(", ")
             ),
             Self::Configuration(reason) => write!(f, "{reason}"),
             Self::Persist(reason) => write!(f, "{reason}"),
