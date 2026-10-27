@@ -18,7 +18,7 @@ use crate::application::environments::dto::{
 use crate::domain::shared::redaction::redact_url_userinfo;
 use crate::interface::cli::CliContext;
 
-const INIT_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\n";
+const INIT_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--device /dev/kvm]... [--no-device] [--refresh] [--dry-run]\n";
 const STATUS_USAGE: &str = "usage: quecto container status [--project <abs dir>]\n";
 
 struct InitArgs {
@@ -27,6 +27,9 @@ struct InitArgs {
     image: Option<String>,
     dry_run: bool,
     refresh: bool,
+    /// `--device` values in order; `None` without the flag.
+    devices: Option<Vec<String>>,
+    no_device: bool,
 }
 
 fn parse_init(args: &[String]) -> Result<InitArgs, String> {
@@ -36,6 +39,8 @@ fn parse_init(args: &[String]) -> Result<InitArgs, String> {
         image: None,
         dry_run: false,
         refresh: false,
+        devices: None,
+        no_device: false,
     };
     let mut rest = args.iter();
     let value = |flag: &str, rest: &mut std::slice::Iter<String>| {
@@ -60,10 +65,26 @@ fn parse_init(args: &[String]) -> Result<InitArgs, String> {
             "--image" => parsed.image = Some(value("--image", &mut rest)?),
             "--dry-run" => parsed.dry_run = true,
             "--refresh" => parsed.refresh = true,
+            "--device" => {
+                let device = value("--device", &mut rest)?;
+                parsed.devices.get_or_insert_with(Vec::new).push(device);
+            }
+            "--no-device" => parsed.no_device = true,
             other => return Err(format!("unknown argument {other}\n{INIT_USAGE}")),
         }
     }
-    Ok(parsed)
+    // The allowlist itself is the use case's to judge; the parser only
+    // refuses a contradiction.
+    match (&parsed.devices, parsed.no_device) {
+        (Some(_), true) => Err(format!(
+            "--device and --no-device cannot be combined\n{INIT_USAGE}"
+        )),
+        (None, true) => {
+            parsed.devices = Some(Vec::new());
+            Ok(parsed)
+        }
+        (_, false) => Ok(parsed),
+    }
 }
 
 fn parse_status(args: &[String]) -> Result<Option<PathBuf>, String> {
@@ -147,6 +168,7 @@ pub(crate) fn cmd_init(
                 image: parsed.image,
                 dry_run: parsed.dry_run,
                 refresh: parsed.refresh,
+                devices: parsed.devices,
             })
             .map_err(|error| error.to_string())
     });
@@ -271,6 +293,12 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
         "  --state-dir under the quecto base directory; --image {}\n",
         report.image
     ));
+    for device in &report.devices {
+        out.push_str(&format!(
+            "  --device {device}: the container gets this host device (`quecto container doctor` checks this user can read and write it)\n"
+        ));
+    }
+    let devices = Some(report.devices.join(" ")).filter(|list| !list.is_empty());
     let value = |value: Option<&String>| {
         value
             .map(|value| redact_url_userinfo(value))
@@ -283,6 +311,7 @@ fn present_init(report: &StandardContainerReport, out: &mut String) {
             report.repository.as_ref(),
         ),
         ("--image", &report.image_change, Some(&report.image)),
+        ("--device", &report.devices_change, devices.as_ref()),
     ] {
         match change {
             None => {}
@@ -470,6 +499,9 @@ fn present_status(status: &StandardContainerStatus, out: &mut String) {
     });
 }
 
+#[cfg(test)]
+#[path = "container_setup_device_tests.rs"]
+mod device_tests;
 #[cfg(test)]
 #[path = "container_setup_e2e_tests.rs"]
 mod e2e_tests;

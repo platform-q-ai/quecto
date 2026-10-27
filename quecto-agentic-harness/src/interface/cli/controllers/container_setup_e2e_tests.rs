@@ -29,9 +29,18 @@ pub(super) struct Rig {
 }
 
 pub(super) fn git(dir: &Path, args: &[&str]) {
+    // Never the surrounding repository's git: a hook (or any caller) may
+    // export GIT_DIR and friends, which would point these writes at it.
     let status = std::process::Command::new("git")
         .args(args)
         .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
