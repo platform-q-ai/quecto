@@ -15,7 +15,8 @@ fn approach(chars: usize) -> String {
 
 fn propose(approach: &str, handoff: Option<&str>) -> Value {
     let mut request = json!({"op": "propose_plan", "task": "a", "approach": approach,
-                             "items": [{"id": "store", "title": "The store"}]});
+                             "items": [{"id": "store", "title": "The store",
+                                        "criteria": ["It stores."]}]});
     if let Some(handoff) = handoff {
         request["handoff"] = json!(handoff);
     }
@@ -115,7 +116,8 @@ fn a_tool_edit_keeps_a_long_approach_it_does_not_give() {
     let proposed = as_cli(&*operations, &propose(&long, None));
     assert_eq!(proposed["ok"], json!(true), "{proposed}");
     let edit = json!({"op": "edit_plan", "task": "a", "version": 1,
-                      "items": [{"id": "cli", "title": "The CLI"}]});
+                      "items": [{"id": "cli", "title": "The CLI",
+                                 "criteria": ["It runs."]}]});
     let answer = run(&*operations, &edit.to_string());
     assert_eq!(answer["ok"], json!(true), "{answer}");
     let edit =
@@ -154,4 +156,134 @@ fn a_handoff_is_shown_and_taken_away_by_an_empty_one() {
     assert_eq!(answer["ok"], json!(true), "{answer}");
     let shown = run(&*operations, r#"{"op": "show", "task": "a", "version": 1}"#);
     assert_eq!(shown["plan"].get("handoff"), None, "{shown}");
+}
+
+/// A task item `id` whose title is `title_chars` long, with `count`
+/// distinct criteria of `chars` characters each.
+fn sized_item(id: &str, title_chars: usize, count: usize, chars: usize) -> Value {
+    let criteria: Vec<String> = (0..count)
+        .map(|n| format!("{n:>chars$}").replace(' ', "c"))
+        .collect();
+    json!({"id": id, "title": "t".repeat(title_chars), "criteria": criteria, "depends_on": []})
+}
+
+/// `items` proposed with a short approach and, when given, a handoff.
+fn propose_items(items: &[Value], handoff: Option<&str>) -> Value {
+    let mut request = propose("Outline.", handoff);
+    request["items"] = json!(items);
+    request
+}
+
+/// The field and problem of a refused `answer`.
+fn refusal(answer: &Value) -> (&Value, &Value) {
+    let rule = &answer["error"]["rule"];
+    assert_eq!(rule["code"], json!("invalid_plan"), "{answer}");
+    (&rule["field"], &rule["problem"])
+}
+
+/// The step rules (#2705), as the agent tool enters a plan: a task
+/// item's title is at most 70 characters and it has 1 to 4 criteria of at
+/// most 150; a refusal names the field and points the detail to the
+/// handoff.
+#[test]
+fn a_tool_plans_items_enter_short() {
+    use crate::domain::project_board::entities::plan::{
+        GIVE_THE_CHECKS, MOVE_STEP_DETAIL, STATE_THE_OUTCOME,
+    };
+    let rules = &PLAN_ENTRY_RULES;
+    let (title, most) = (rules.max_item_title_chars, rules.max_criterion_chars);
+    let operations = board();
+    let widest = sized_item("widest", title, 4, most);
+    let answer = run(&*operations, &propose_items(&[widest], None).to_string());
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    let long_title = [
+        sized_item("ok", 10, 1, 10),
+        sized_item("long", title + 1, 1, 10),
+    ];
+    let answer = run(&*operations, &propose_items(&long_title, None).to_string());
+    assert_eq!(
+        refusal(&answer),
+        (
+            &json!("items/1/title"),
+            &json!(format!(
+                "is 71 characters; the most is 70: {STATE_THE_OUTCOME}"
+            ))
+        )
+    );
+    for (count, why) in [(0, GIVE_THE_CHECKS), (5, MOVE_STEP_DETAIL)] {
+        let answer = run(
+            &*operations,
+            &propose_items(&[sized_item("i", 10, count, 10)], None).to_string(),
+        );
+        assert_eq!(
+            refusal(&answer),
+            (
+                &json!("items/0/criteria"),
+                &json!(format!("has {count} criteria; it takes 1 to 4: {why}"))
+            ),
+            "{count} criteria"
+        );
+    }
+    let mut wide = sized_item("wide", 10, 2, most);
+    wide["criteria"][1] = json!("c".repeat(most + 1));
+    let answer = run(&*operations, &propose_items(&[wide], None).to_string());
+    assert_eq!(
+        refusal(&answer),
+        (
+            &json!("items/0/criteria/1"),
+            &json!(format!(
+                "is 151 characters; the most is 150: {MOVE_STEP_DETAIL}"
+            ))
+        )
+    );
+}
+
+/// The CLI enters a plan given without a handoff as before the step
+/// rules, and holds its items to them once a request gives one, as it
+/// does the approach (its [`EntryPolicy`]).
+#[test]
+fn a_cli_plans_items_enter_per_its_entry_policy() {
+    let operations = board();
+    let legacy = [sized_item("legacy", 500, 16, 500)];
+    let answer = as_cli(&*operations, &propose_items(&legacy, None));
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    let shown = as_cli(
+        &*operations,
+        &json!({"op": "show", "task": "a", "version": 1}),
+    );
+    assert_eq!(shown["plan"]["items"][0]["criteria"], legacy[0]["criteria"]);
+    let answer = as_cli(&*operations, &propose_items(&legacy, Some("Detail.")));
+    assert_eq!(refusal(&answer).0, &json!("items/0/title"));
+    let short = [sized_item("short", 70, 4, 150)];
+    let answer = as_cli(&*operations, &propose_items(&short, Some("Detail.")));
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+}
+
+/// `edit_plan` holds the items it gives to the same rules; a draft's items
+/// entered before them are kept as they are, never forced to be rewritten.
+#[test]
+fn a_tool_edit_holds_its_items_to_the_step_rules() {
+    let operations = board();
+    let legacy = sized_item("legacy", 500, 16, 500);
+    let answer = as_cli(
+        &*operations,
+        &propose_items(std::slice::from_ref(&legacy), None),
+    );
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    let edit = |items: Value| {
+        let request = json!({"op": "edit_plan", "task": "a", "version": 1, "items": items});
+        run(&*operations, &request.to_string())
+    };
+    let answer = edit(json!([legacy.clone(), sized_item("five", 10, 5, 10)]));
+    assert_eq!(refusal(&answer).0, &json!("items/1/criteria"));
+    let answer = edit(json!([legacy.clone(), sized_item("long", 71, 1, 10)]));
+    assert_eq!(refusal(&answer).0, &json!("items/1/title"));
+    let answer = edit(json!([legacy.clone(), sized_item("short", 70, 4, 150)]));
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    let shown = run(&*operations, r#"{"op": "show", "task": "a", "version": 1}"#);
+    assert_eq!(shown["plan"]["items"][0], legacy, "{shown}");
+    let mut changed = legacy.clone();
+    changed["title"] = json!("t".repeat(499));
+    let answer = edit(json!([changed]));
+    assert_eq!(refusal(&answer).0, &json!("items/0/title"), "given anew");
 }

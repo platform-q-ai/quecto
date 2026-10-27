@@ -672,7 +672,7 @@ fn a_composed_start_asks_whether_its_coordinator_still_runs() {
     assert_eq!(created["ok"], json!(true), "{created}");
     let proposed = ops(
         json!({"op": "propose_plan", "task": "a", "approach": "Build it.",
-                              "items": [{"id": "schema", "title": "Schema"}]}),
+                              "items": [{"id": "schema", "title": "Schema", "criteria": ["It migrates."]}]}),
     );
     let updated = proposed["plan"]["updated"].clone();
     let accepted = ops(json!({"op": "accept_plan", "task": "a", "version": 1,

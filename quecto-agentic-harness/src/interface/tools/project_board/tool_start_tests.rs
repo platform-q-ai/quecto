@@ -23,9 +23,42 @@ use crate::interface::tools::project_board::recording::tests::Records;
 fn launching_board(
     environment: &ProjectBoardEnvironment,
 ) -> Result<ProjectBoardHandles, BuildError> {
+    let schema = crate::domain::project_board::entities::plan::PlanItem {
+        id: slug_of("schema"),
+        title: "Schema".into(),
+        criteria: vec!["migrates".into()],
+        depends_on: vec![],
+    };
+    board_planned(environment, vec![schema])
+}
+
+/// A plan stored before the step rules (#2705): one task item with a
+/// title of 500 characters and 16 criteria of 500, the schema's most.
+fn legacy_items() -> Vec<crate::domain::project_board::entities::plan::PlanItem> {
+    use crate::domain::project_board::entities::task_parts::{MAX_LINE_CHARS, MAX_PER_ITEM};
+    vec![crate::domain::project_board::entities::plan::PlanItem {
+        id: slug_of("legacy"),
+        title: "t".repeat(MAX_LINE_CHARS),
+        criteria: (0..MAX_PER_ITEM)
+            .map(|n| format!("{n:>MAX_LINE_CHARS$}").replace(' ', "c"))
+            .collect(),
+        depends_on: vec![],
+    }]
+}
+
+/// [`launching_board`] with the legacy plan of [`legacy_items`] accepted.
+fn legacy_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
+    board_planned(environment, legacy_items())
+}
+
+/// The board of [`launching_board`], its accepted plan holding `items`.
+fn board_planned(
+    environment: &ProjectBoardEnvironment,
+    items: Vec<crate::domain::project_board::entities::plan::PlanItem>,
+) -> Result<ProjectBoardHandles, BuildError> {
     use crate::application::project_board::ports::BoardArtifact;
     use crate::composition::bootstrap::project_board_operations::fixtures::assembled_launching;
-    use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
+    use crate::domain::project_board::entities::plan::{Plan, PlanFields};
     use crate::domain::project_board::entities::task::{Task, TaskFields};
     use crate::domain::project_board::entities::team::{Role, RoleLimits, Team};
     use crate::domain::project_board::value_objects::slug::Slug;
@@ -57,12 +90,7 @@ fn launching_board(
         version: 1,
         state: PlanState::Accepted,
         approach: "Build it.".into(),
-        items: vec![PlanItem {
-            id: slug("schema"),
-            title: "Schema".into(),
-            criteria: vec!["migrates".into()],
-            depends_on: vec![],
-        }],
+        items,
         team: Some(Team {
             roles: vec![role("coordinator", 1), role("builder", 2)],
             deadline_seconds: None,
@@ -255,6 +283,40 @@ async fn the_tool_starts_a_task_with_its_sessions_launcher() {
 
 fn slug_of(text: &str) -> crate::domain::project_board::value_objects::slug::Slug {
     crate::domain::project_board::value_objects::slug::Slug::parse(text).unwrap()
+}
+
+/// A plan stored before the step rules (#2705), its task item past them
+/// (a title of 500 characters, 16 criteria of 500), is read whole and
+/// started unchanged: the rules are entry's alone.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_legacy_plan_past_the_step_rules_reads_and_starts_unchanged() {
+    let launching = BoardSite {
+        launcher: Some(Arc::new(Launching)),
+        ..site(Some(legacy_board))
+    };
+    let tool = tool(launching);
+    let shown = tool
+        .execute(r#"{"op": "show", "task": "a"}"#)
+        .await
+        .unwrap();
+    let answer: Value = serde_json::from_str(&shown.content).unwrap();
+    assert!(!shown.is_error, "{answer}");
+    let legacy = &legacy_items()[0];
+    let item = &answer["plan"]["items"][0];
+    assert_eq!(
+        (&item["title"], &item["criteria"]),
+        (&json!(legacy.title), &json!(legacy.criteria)),
+        "{answer}"
+    );
+    let request = json!({"op": "start", "task": "a", "plan_version": 1});
+    let started = tool.execute(&request.to_string()).await.unwrap();
+    let answer: Value = serde_json::from_str(&started.content).unwrap();
+    assert!(!started.is_error, "{answer}");
+    assert_eq!(
+        (&answer["task"]["status"], &answer["run"]["state"]),
+        (&json!("in_progress"), &json!("running")),
+        "{answer}"
+    );
 }
 
 /// A start refused before the board answers carries the stop too; no

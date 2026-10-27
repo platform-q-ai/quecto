@@ -138,22 +138,57 @@ fn a_page_after_an_edit_names_the_new_rev() {
     assert_eq!(next["plan"]["items"], json!([item("other")]));
 }
 
+/// `count` task items as wide as the step rules let in (#2705): a title
+/// of 70 characters and 4 criteria of 150, each of 4-byte characters, so
+/// they reach the most a plan holds as the agent tool enters them.
+fn widest_items(count: usize) -> Vec<Value> {
+    use crate::domain::project_board::entities::plan::PLAN_ENTRY_RULES as RULES;
+    let wide = |chars: usize| "\u{1f600}".repeat(chars);
+    let criteria: Vec<String> = (b'a'..=b'd')
+        .map(|letter| {
+            format!(
+                "{}{}",
+                char::from(letter),
+                wide(RULES.max_criterion_chars - 1)
+            )
+        })
+        .collect();
+    assert_eq!(criteria.len(), *RULES.item_criteria.end());
+    (0..count)
+        .map(|index| {
+            json!({"id": format!("i{index}"), "title": wide(RULES.max_item_title_chars),
+                            "criteria": criteria})
+        })
+        .collect()
+}
+
+/// The UTF-8 bytes of `items`' titles and criteria.
+fn item_bytes(items: &[Value]) -> usize {
+    let lines = |item: &Value| -> usize {
+        let criteria = item["criteria"].as_array().unwrap();
+        criteria
+            .iter()
+            .map(|line| line.as_str().unwrap().len())
+            .sum()
+    };
+    let title = |item: &Value| item["title"].as_str().unwrap().len();
+    items.iter().map(|item| title(item) + lines(item)).sum()
+}
+
 /// Review round 2: a plan's text past the most a plan holds is the
 /// domain's one refusal, `invalid_plan` naming `text`, with the count.
 #[test]
 fn plan_text_past_the_most_reaches_the_agent_as_invalid_plan_text() {
     let (store, ada, _bob) = drafted();
     let writes = store.writes();
-    let criteria: Vec<String> = (b'a'..b'q')
-        .map(|letter| char::from(letter).to_string().repeat(500))
-        .collect();
-    let items: Vec<Value> = (0..8)
-        .map(|index| json!({"id": format!("i{index}"), "title": "t".repeat(500), "criteria": criteria}))
-        .collect();
+    let items = widest_items(25);
+    let handoff = "\u{1f600}".repeat(65_536);
+    let bytes = handoff.len() + item_bytes(&items);
+    assert!(bytes > 327_680, "{bytes}");
     let refused = call(
         &ada,
         json!({"op": "propose_plan", "task": "a", "approach": "",
-               "handoff": "\u{1f600}".repeat(65_536), "items": items}),
+               "handoff": handoff, "items": items}),
     );
     let rule = &refused["error"]["rule"];
     assert_eq!(
@@ -161,7 +196,9 @@ fn plan_text_past_the_most_reaches_the_agent_as_invalid_plan_text() {
         (
             &json!("invalid_plan"),
             &json!("text"),
-            &json!("the plan's text is 330144 bytes; the most is 327680")
+            &json!(format!(
+                "the plan's text is {bytes} bytes; the most is 327680"
+            ))
         ),
         "{refused}"
     );
@@ -203,7 +240,7 @@ fn a_plans_schema_refusal_says_plan() {
     let refused = call(
         &ada,
         json!({"op": "edit_plan", "task": "a", "version": 2,
-               "items": [{"id": "x", "title": "Two\nlines"}]}),
+               "items": [{"id": "x", "title": "Two\nlines", "criteria": ["x"]}]}),
     );
     let error = &refused["error"];
     assert_eq!(
@@ -247,12 +284,7 @@ fn an_items_only_edit_past_the_most_beside_a_kept_approach_is_refused() {
     let proposed = run_recorded(&ada, &long.to_string(), &mut cli);
     assert_eq!(proposed["ok"], json!(true), "{proposed}");
     let writes = store.writes();
-    let criteria: Vec<String> = (b'a'..b'q')
-        .map(|letter| char::from(letter).to_string().repeat(500))
-        .collect();
-    let items: Vec<Value> = (0..8)
-        .map(|index| json!({"id": format!("i{index}"), "title": "t".repeat(500), "criteria": criteria}))
-        .collect();
+    let items = widest_items(25);
     let edit = json!({"op": "edit_plan", "task": "a", "version": 3, "items": items});
     let records = Arc::new(Records::default());
     let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Tool, Client::Agent);

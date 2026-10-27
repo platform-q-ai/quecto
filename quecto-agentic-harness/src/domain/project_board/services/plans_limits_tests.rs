@@ -75,3 +75,183 @@ fn a_plans_text_is_held_to_the_most_a_plan_holds_exactly() {
         other => panic!("{other:?}"),
     }
 }
+
+/// A task item `id`, its title `title_chars` long, with `count` criteria
+/// of `chars` characters each.
+fn sized_item(id: &str, title_chars: usize, count: usize, chars: usize) -> PlanItem {
+    PlanItem {
+        id: Slug::parse(id).unwrap(),
+        title: "t".repeat(title_chars),
+        criteria: (0..count)
+            .map(|n| format!("{n:>chars$}").replace(' ', "c"))
+            .collect(),
+        depends_on: vec![],
+    }
+}
+
+/// The step rules (#2705) on entry: a capped proposal's task items are
+/// held to them; a legacy one keeps the schema's limits.
+#[test]
+fn a_capped_proposal_holds_its_items_to_the_step_rules() {
+    use crate::domain::project_board::entities::plan::PlanEntry::{Capped, Legacy};
+    let mut fields = task(InProgress).into_fields();
+    fields.accepted_plan = None;
+    let held = Task::new(fields).unwrap();
+    let propose = |entry, items| {
+        let content = PlanContent {
+            handoff: Some("The detail.".into()),
+            entry,
+            approach: "Outline.".into(),
+            items,
+            team: None,
+        };
+        let now = Moment {
+            now: at("10:00:00"),
+            latest: None,
+        };
+        propose_at(&held, &[], content, &person("Ada"), &now)
+    };
+    let field = |answer: Result<Plan, BoardRuleError>| match answer {
+        Err(BoardRuleError::InvalidPlan(error)) => error.field,
+        other => panic!("{other:?}"),
+    };
+    let short = sized_item("short", 70, 4, 150);
+    assert!(propose(Capped, vec![short.clone()]).is_ok());
+    let long_title = sized_item("long", 71, 1, 10);
+    let fields = [
+        (vec![short.clone(), long_title.clone()], "items/1/title"),
+        (vec![sized_item("none", 10, 0, 1)], "items/0/criteria"),
+        (vec![sized_item("five", 10, 5, 10)], "items/0/criteria"),
+        (vec![sized_item("wide", 10, 2, 151)], "items/0/criteria/0"),
+    ];
+    for (items, want) in fields {
+        assert_eq!(field(propose(Capped, items.clone())), want);
+        assert!(propose(Legacy, items).is_ok(), "{want} enters legacy");
+    }
+    let legacy = sized_item("legacy", 500, 16, 500);
+    assert!(propose(Legacy, vec![legacy]).is_ok());
+}
+
+/// A draft entered before the step rules is edited capped (the agent
+/// tool) without being rewritten: each task item it holds as it is
+/// enters nothing, and a task item given anew is held to the rules.
+#[test]
+fn a_capped_edit_keeps_the_items_a_legacy_draft_holds() {
+    use crate::domain::project_board::entities::plan::PlanEntry::Capped;
+    let legacy = sized_item("legacy", 500, 16, 500);
+    let mut fields = crate::domain::project_board::services::fixtures_tests::plan(
+        2,
+        crate::domain::project_board::value_objects::vocabulary::PlanState::Draft,
+    )
+    .into_fields();
+    fields.items = vec![legacy.clone()];
+    let draft = Plan::new(fields).unwrap();
+    let held = task(InProgress);
+    let edit = |items: Vec<PlanItem>, team| {
+        let content = PlanContent {
+            handoff: None,
+            entry: Capped,
+            approach: draft.fields().approach.clone(),
+            items,
+            team,
+        };
+        edit_draft(
+            DraftOf {
+                task: &held,
+                versions: std::slice::from_ref(&draft),
+                plan: &draft,
+            },
+            content,
+            None,
+            &person("Ada"),
+            &Moment {
+                now: at("10:00:00"),
+                latest: None,
+            },
+        )
+    };
+    let kept = edit(vec![legacy.clone()], None).expect("its items kept");
+    assert_eq!(kept.fields().items, vec![legacy.clone()]);
+    let short = sized_item("short", 70, 1, 150);
+    let added = edit(vec![legacy.clone(), short], draft.fields().team.clone());
+    assert_eq!(added.expect("a short item added").fields().items.len(), 2);
+    // Held at another index, after a new item: kept by its content.
+    let first = sized_item("first", 70, 1, 150);
+    let moved = edit(vec![first.clone(), legacy.clone()], None);
+    assert_eq!(
+        moved.expect("a held item moved").fields().items,
+        vec![first.clone(), legacy.clone()]
+    );
+    // Its id and dependencies changed, its text as held: kept.
+    let mut relinked = legacy.clone();
+    relinked.id = Slug::parse("renamed").unwrap();
+    relinked.depends_on = vec![first.id.clone()];
+    let answer = edit(vec![first.clone(), relinked.clone()], None);
+    assert_eq!(answer.expect("relinked").fields().items[1], relinked);
+    // A held item exempts one copy only: a second, under a new id, is a
+    // new task item and is checked (review round 2).
+    match edit(vec![legacy.clone(), relinked.clone()], None) {
+        Err(BoardRuleError::InvalidPlan(error)) => assert_eq!(error.field, "items/1/title"),
+        other => panic!("a copy of a held item enters anew: {other:?}"),
+    }
+    // A changed title or criterion enters anew.
+    let mut retitled = legacy.clone();
+    retitled.title.pop();
+    match edit(vec![retitled], None) {
+        Err(BoardRuleError::InvalidPlan(error)) => assert_eq!(error.field, "items/0/title"),
+        other => panic!("a changed title enters anew: {other:?}"),
+    }
+    let mut changed = legacy.clone();
+    changed.criteria.pop();
+    match edit(vec![changed], draft.fields().team.clone()) {
+        Err(BoardRuleError::InvalidPlan(error)) => assert_eq!(error.field, "items/0/title"),
+        other => panic!("a changed item enters anew: {other:?}"),
+    }
+}
+
+/// Each task item a draft holds exempts one item an edit gives, matched by
+/// its text: a short-titled legacy item whose criterion changed is held to
+/// the rules at that criterion, and one copy too many is checked.
+#[test]
+fn a_held_item_exempts_one_given_item_by_its_text() {
+    use crate::domain::project_board::entities::plan::PlanEntry::Capped;
+    let legacy = sized_item("legacy", 10, 2, 500);
+    let mut fields = crate::domain::project_board::services::fixtures_tests::plan(
+        2,
+        crate::domain::project_board::value_objects::vocabulary::PlanState::Draft,
+    )
+    .into_fields();
+    fields.items = vec![legacy.clone()];
+    let draft = Plan::new(fields).unwrap();
+    let held = task(InProgress);
+    let edit = |items: Vec<PlanItem>| {
+        let content = PlanContent {
+            handoff: None,
+            entry: Capped,
+            approach: draft.fields().approach.clone(),
+            items,
+            team: None,
+        };
+        let of = DraftOf {
+            task: &held,
+            versions: std::slice::from_ref(&draft),
+            plan: &draft,
+        };
+        let now = Moment {
+            now: at("10:00:00"),
+            latest: None,
+        };
+        edit_draft(of, content, None, &person("Ada"), &now)
+    };
+    let field = |answer: Result<Plan, BoardRuleError>| match answer {
+        Err(BoardRuleError::InvalidPlan(error)) => error.field,
+        other => panic!("{other:?}"),
+    };
+    assert!(edit(vec![legacy.clone()]).is_ok(), "held as it is");
+    let mut changed = legacy.clone();
+    changed.criteria[1].push('!');
+    assert_eq!(field(edit(vec![changed])), "items/0/criteria/0");
+    let mut copy = legacy.clone();
+    copy.id = Slug::parse("copy").unwrap();
+    assert_eq!(field(edit(vec![copy, legacy])), "items/1/criteria/0");
+}

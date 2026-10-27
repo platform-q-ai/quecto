@@ -447,7 +447,8 @@ pub fn check_starts_and_ends(fixture: Fixture, swarms: &Swarms) {
     let proposed = run(
         operations,
         json!({"op": "propose_plan", "task": "a", "approach": "Build it.",
-               "items": [{"id": "schema", "title": "Schema"}]}),
+               "items": [{"id": "schema", "title": "Schema",
+                          "criteria": ["It migrates."]}]}),
     );
     assert_eq!(proposed["ok"], json!(true), "{proposed}");
     let shown = run(operations, json!({"op": "show", "task": "a", "version": 1}));
