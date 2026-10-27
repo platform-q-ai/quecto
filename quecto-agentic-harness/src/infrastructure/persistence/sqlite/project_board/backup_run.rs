@@ -427,6 +427,30 @@ impl SqliteBoardBackup {
         budget: &Budget<'_>,
         outcome: &mut BackupOutcome,
     ) -> Result<(), BackupError> {
+        let mut swept = 0;
+        let removal = self
+            .prune(directory, canonical, candidates, budget, outcome)
+            .and_then(|()| {
+                self.sweep_sidecars(directory, canonical, budget, &outcome.board, &mut swept)
+            });
+        // Unlinks already made are made durable before any removal error is reported.
+        let synced = if outcome.deleted > 0 || swept > 0 {
+            self.files
+                .sync_directory(directory)
+                .map_err(|_| BackupError::RetentionFailed)
+        } else {
+            Ok(())
+        };
+        removal.and(synced)
+    }
+    fn prune(
+        &self,
+        directory: &File,
+        canonical: &Path,
+        candidates: Vec<(AdmittedBackupFile, Timestamp)>,
+        budget: &Budget<'_>,
+        outcome: &mut BackupOutcome,
+    ) -> Result<(), BackupError> {
         let mut dates = BTreeSet::new();
         dates.insert(outcome.taken_at.as_str()[..10].to_owned());
         outcome.retained = 1;
@@ -449,60 +473,77 @@ impl SqliteBoardBackup {
                 outcome.deleted += 1;
             }
         }
-        let swept = self.sweep_sidecars(directory, canonical, budget, &outcome.board)?;
-        if outcome.deleted > 0 || swept > 0 {
-            self.files
-                .sync_directory(directory)
-                .map_err(|_| BackupError::RetentionFailed)?;
-        }
         Ok(())
     }
     /// Removes this board's canonical sidecars whose snapshot is gone: those of
     /// the snapshots just pruned and orphans left by earlier runs (#2767).
     /// Runs under the board lock, so no publisher of this board races it.
+    /// Only single-link regular files are removed; any other entry under a
+    /// canonical name (symlink, hard link, directory, FIFO...) is left alone.
     fn sweep_sidecars(
         &self,
         directory: &File,
         canonical: &Path,
         budget: &Budget<'_>,
         board: &str,
-    ) -> Result<usize, BackupError> {
-        let names = entries(directory, budget.limits.entries)?;
+        swept: &mut usize,
+    ) -> Result<(), BackupError> {
+        // Preflight admitted at most `entries` names; publication adds one.
+        let names = entries(directory, budget.limits.entries.saturating_add(1))?;
         let present: BTreeSet<&str> = names.iter().map(String::as_str).collect();
-        let mut swept = 0;
         for name in &names {
-            let Some(snapshot) = sidecar_of(board, name) else {
-                continue;
-            };
-            if present.contains(snapshot) {
-                continue;
+            if let Some(snapshot) = sidecar_of(board, name) {
+                if present.contains(snapshot) {
+                    // A retained snapshot keeps its sidecars.
+                } else {
+                    assert!(
+                        SIDECARS.iter().any(|suffix| name.ends_with(suffix))
+                            && snapshot_at(board, snapshot).is_some(),
+                        "only canonical snapshot sidecars are swept"
+                    );
+                    budget.remaining()?;
+                    fs::stable_directory(directory, canonical)
+                        .map_err(|_| BackupError::RetentionFailed)?;
+                    if let Some(sidecar) = regular_sidecar(directory, name)? {
+                        self.files
+                            .prune_admitted(directory, &sidecar)
+                            .map_err(|_| BackupError::RetentionFailed)?;
+                        *swept += 1;
+                    }
+                }
             }
-            assert!(
-                SIDECARS.iter().any(|suffix| name.ends_with(suffix))
-                    && snapshot_at(board, snapshot).is_some(),
-                "only canonical snapshot sidecars are swept"
-            );
-            budget.remaining()?;
-            fs::stable_directory(directory, canonical).map_err(|_| BackupError::RetentionFailed)?;
-            let file = match fs::open(directory, name, libc::O_RDONLY | libc::O_NONBLOCK, 0) {
-                Ok(file) => file,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(_) => return Err(BackupError::RetentionFailed),
-            };
-            let identity = file
-                .metadata()
-                .and_then(|meta| fs::identity(&meta))
-                .map_err(|_| BackupError::RetentionFailed)?;
-            let sidecar = AdmittedBackupFile {
-                name: name.clone(),
-                identity,
-            };
-            self.files
-                .prune_admitted(directory, &sidecar)
-                .map_err(|_| BackupError::RetentionFailed)?;
-            swept += 1;
         }
-        Ok(swept)
+        Ok(())
+    }
+}
+/// Identifies a sidecar without following or opening its target: `O_PATH`
+/// never reads a FIFO or device. Admits only a single-link regular file.
+fn regular_sidecar(
+    directory: &File,
+    name: &str,
+) -> Result<Option<AdmittedBackupFile>, BackupError> {
+    match fs::open(directory, name, libc::O_PATH, 0) {
+        Ok(handle) => {
+            let meta = handle
+                .metadata()
+                .map_err(|_| BackupError::RetentionFailed)?;
+            if meta.is_file() {
+                // `identity` admits exactly one link: a hard-linked alias is skipped.
+                Ok(fs::identity(&meta).ok().map(|identity| AdmittedBackupFile {
+                    name: name.to_owned(),
+                    identity,
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+        Err(error) => {
+            if error.kind() == io::ErrorKind::NotFound {
+                Ok(None)
+            } else {
+                Err(BackupError::RetentionFailed)
+            }
+        }
     }
 }
 /// SQLite's companion files for a snapshot; nothing else is ever a sidecar.

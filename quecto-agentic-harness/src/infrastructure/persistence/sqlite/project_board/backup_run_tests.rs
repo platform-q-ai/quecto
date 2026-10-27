@@ -321,3 +321,193 @@ fn backup_retention_prunes_sidecars_of_pruned_and_orphaned_snapshots_by_canonica
     expected.sort();
     assert_eq!(listing(&to), expected);
 }
+/// Counts directory syncs; optionally refuses to unlink canonical `-wal` sidecars.
+struct CountingSyncs {
+    syncs: std::sync::atomic::AtomicUsize,
+    refuse_wal_prune: bool,
+}
+impl CountingSyncs {
+    fn new(refuse_wal_prune: bool) -> Arc<Self> {
+        Arc::new(Self {
+            syncs: std::sync::atomic::AtomicUsize::new(0),
+            refuse_wal_prune,
+        })
+    }
+    fn syncs(&self) -> usize {
+        self.syncs.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+impl BackupFileOps for CountingSyncs {
+    fn create_partial(&self, directory: &File, name: &str) -> io::Result<File> {
+        SystemBackupFileOps.create_partial(directory, name)
+    }
+    fn sync_file(&self, file: &File) -> io::Result<()> {
+        SystemBackupFileOps.sync_file(file)
+    }
+    fn publish_noreplace(
+        &self,
+        directory: &File,
+        partial: &AdmittedBackupFile,
+        name: &str,
+    ) -> io::Result<()> {
+        SystemBackupFileOps.publish_noreplace(directory, partial, name)
+    }
+    fn sync_directory(&self, directory: &File) -> io::Result<()> {
+        self.syncs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        SystemBackupFileOps.sync_directory(directory)
+    }
+    fn prune_admitted(&self, directory: &File, candidate: &AdmittedBackupFile) -> io::Result<()> {
+        if self.refuse_wal_prune && candidate.name.ends_with("-wal") {
+            Err(io::Error::other("owned test refuses the sidecar unlink"))
+        } else {
+            SystemBackupFileOps.prune_admitted(directory, candidate)
+        }
+    }
+}
+fn back_up_with(
+    root: &Path,
+    to: &Path,
+    at: &str,
+    files: Arc<dyn BackupFileOps>,
+    limits: BackupLimits,
+) -> BackupOutcome {
+    let mut report = SqliteBoardBackup::with_files(root.to_owned(), files)
+        .backup(&BackupRequest {
+            board: None,
+            to: to.to_owned(),
+            at: Timestamp::parse(at).unwrap(),
+            limits,
+        })
+        .unwrap();
+    assert_eq!(report.outcomes.len(), 1);
+    report.outcomes.remove(0)
+}
+#[test]
+fn backup_sweep_only_retention_syncs_the_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = bootstrapped_board(temp.path());
+    let to = temp.path().join("snapshots");
+    assert_eq!(back_up(&root, &to, "2026-10-20T10:00:00Z").error, None);
+    let orphan = format!("{BOARD}-20261001T120000Z.sqlite-wal");
+    std::fs::write(to.join(&orphan), b"").unwrap();
+    let files = CountingSyncs::new(false);
+    let outcome = back_up_with(
+        &root,
+        &to,
+        "2026-10-25T12:00:00Z",
+        files.clone(),
+        BackupLimits::default(),
+    );
+    assert_eq!(outcome.error, None);
+    assert_eq!((outcome.retained, outcome.deleted), (2, 0));
+    assert!(!listing(&to).contains(&orphan));
+    // One sync for the publication, one for the sweep's unlink.
+    assert_eq!(files.syncs(), 2);
+}
+#[test]
+fn backup_failed_sweep_still_syncs_pruned_snapshots_before_reporting() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = bootstrapped_board(temp.path());
+    let to = temp.path().join("snapshots");
+    assert_eq!(back_up(&root, &to, "2026-10-20T10:00:00Z").error, None);
+    let pruned = format!("{BOARD}-20261020T100000Z.sqlite");
+    std::fs::copy(
+        to.join(&pruned),
+        to.join(format!("{BOARD}-20261020T110000Z.sqlite")),
+    )
+    .unwrap();
+    std::fs::write(to.join(format!("{pruned}-wal")), b"").unwrap();
+    let files = CountingSyncs::new(true);
+    let outcome = back_up_with(
+        &root,
+        &to,
+        "2026-10-25T12:00:00Z",
+        files.clone(),
+        BackupLimits::default(),
+    );
+    assert_eq!(outcome.error, Some(BackupError::RetentionFailed));
+    assert_eq!(outcome.stage, BackupStage::Retention);
+    assert_eq!(outcome.deleted, 1);
+    assert!(!listing(&to).contains(&pruned));
+    // The prune's unlink is made durable even though the sweep failed.
+    assert_eq!(files.syncs(), 2);
+}
+#[test]
+fn backup_sweep_skips_odd_canonical_entries_and_continues() {
+    use std::os::unix::{
+        ffi::OsStringExt,
+        fs::{MetadataExt, symlink},
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let root = bootstrapped_board(temp.path());
+    let to = temp.path().join("snapshots");
+    assert_eq!(back_up(&root, &to, "2026-10-20T10:00:00Z").error, None);
+    std::fs::write(to.join("target.txt"), b"foreign").unwrap();
+    let symlinked = format!("{BOARD}-20261001T120000Z.sqlite-wal");
+    symlink(to.join("target.txt"), to.join(&symlinked)).unwrap();
+    let hardlinked = format!("{BOARD}-20261002T120000Z.sqlite-wal");
+    std::fs::write(to.join("peer.txt"), b"peer").unwrap();
+    std::fs::hard_link(to.join("peer.txt"), to.join(&hardlinked)).unwrap();
+    let directory = format!("{BOARD}-20261003T120000Z.sqlite-wal");
+    std::fs::create_dir(to.join(&directory)).unwrap();
+    let fifo = format!("{BOARD}-20261004T120000Z.sqlite-wal");
+    let fifo_path = std::ffi::CString::new(to.join(&fifo).into_os_string().into_vec()).unwrap();
+    // SAFETY: a live NUL-terminated path; mkfifo takes no other pointers.
+    assert_eq!(unsafe { libc::mkfifo(fifo_path.as_ptr(), 0o600) }, 0);
+    let orphan = format!("{BOARD}-20261009T120000Z.sqlite-wal");
+    std::fs::write(to.join(&orphan), b"").unwrap();
+    let outcome = back_up(&root, &to, "2026-10-25T12:00:00Z");
+    assert_eq!(outcome.error, None);
+    assert_eq!(outcome.stage, BackupStage::Complete);
+    let names = listing(&to);
+    for odd in [&symlinked, &hardlinked, &directory, &fifo] {
+        assert!(names.contains(odd), "{odd} is left alone");
+    }
+    assert!(
+        !names.contains(&orphan),
+        "the later genuine orphan is swept"
+    );
+    assert_eq!(std::fs::read(to.join("target.txt")).unwrap(), b"foreign");
+    assert_eq!(std::fs::metadata(to.join("peer.txt")).unwrap().nlink(), 2);
+}
+#[test]
+fn backup_sweep_runs_when_preflight_admitted_a_full_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = bootstrapped_board(temp.path());
+    let to = temp.path().join("snapshots");
+    assert_eq!(back_up(&root, &to, "2026-10-20T10:00:00Z").error, None);
+    for suffix in ["-wal", "-shm"] {
+        std::fs::write(
+            to.join(format!("{BOARD}-20261001T120000Z.sqlite{suffix}")),
+            b"",
+        )
+        .unwrap();
+    }
+    let source_entries = std::fs::read_dir(&root).unwrap().count();
+    let limit = listing(&to).len();
+    assert_eq!(
+        limit, 4,
+        "lock + snapshot + two orphans fill the limit exactly"
+    );
+    assert!(source_entries <= limit);
+    let limits = BackupLimits {
+        entries: limit,
+        ..BackupLimits::default()
+    };
+    let outcome = back_up_with(
+        &root,
+        &to,
+        "2026-10-25T12:00:00Z",
+        Arc::new(SystemBackupFileOps),
+        limits,
+    );
+    assert_eq!(outcome.error, None);
+    assert_eq!(
+        listing(&to),
+        [
+            format!(".{BOARD}.backup.lock"),
+            format!("{BOARD}-20261020T100000Z.sqlite"),
+            format!("{BOARD}-20261025T120000Z.sqlite"),
+        ]
+    );
+}

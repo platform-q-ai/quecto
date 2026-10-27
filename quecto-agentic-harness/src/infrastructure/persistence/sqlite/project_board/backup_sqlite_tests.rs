@@ -54,3 +54,19 @@ fn backup_system_copy_zero_budget_is_bounded_before_first_step() {
         Err(BackupError::BusyDeadline)
     );
 }
+#[cfg(target_os = "linux")]
+#[test]
+fn backup_rollback_journal_refuses_a_database_that_cannot_leave_its_mode() {
+    // An in-memory database answers "memory": never a rollback-journal file.
+    let memory = Connection::open_in_memory().unwrap();
+    assert_eq!(rollback_journal(&memory), Err(BackupError::PublishFailed));
+    let temp = tempfile::tempdir().unwrap();
+    let file = Connection::open(temp.path().join("copy.sqlite")).unwrap();
+    file.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE t(x)")
+        .unwrap();
+    assert_eq!(rollback_journal(&file), Ok(()));
+    let mode: String = file
+        .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(mode, "delete");
+}
