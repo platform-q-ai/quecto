@@ -16,11 +16,23 @@ fn canonical_board(name: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 fn entries(directory: &File, limit: usize) -> Result<Vec<String>, BackupError> {
+    match bounded_entries(directory, limit)? {
+        (names, Listing::Complete) => Ok(names),
+        (_, Listing::Truncated) => Err(BackupError::ResourceLimit),
+    }
+}
+enum Listing {
+    Complete,
+    Truncated,
+}
+/// At most `limit` names, sorted, and whether the directory held more.
+fn bounded_entries(directory: &File, limit: usize) -> Result<(Vec<String>, Listing), BackupError> {
     let mut result = Vec::new();
     for entry in std::fs::read_dir(fs::path(directory, "")).map_err(unsafe_io)? {
         if result.len() < limit {
         } else {
-            return Err(BackupError::ResourceLimit);
+            result.sort();
+            return Ok((result, Listing::Truncated));
         }
         result.push(
             entry
@@ -31,7 +43,7 @@ fn entries(directory: &File, limit: usize) -> Result<Vec<String>, BackupError> {
         );
     }
     result.sort();
-    Ok(result)
+    Ok((result, Listing::Complete))
 }
 fn record(directory: &File, name: &str) -> Result<(File, AdmittedBackupFile), BackupError> {
     let file =
@@ -488,12 +500,15 @@ impl SqliteBoardBackup {
         board: &str,
         swept: &mut usize,
     ) -> Result<(), BackupError> {
-        // Preflight admitted at most `entries` names; publication adds one.
-        let names = entries(directory, budget.limits.entries.saturating_add(1))?;
-        let present: BTreeSet<&str> = names.iter().map(String::as_str).collect();
+        // Bounded like every listing here. Another board's concurrent run may
+        // grow the shared directory past the bound; the sweep then works on the
+        // names it listed and the rest wait for a later run.
+        let (names, _) = bounded_entries(directory, budget.limits.entries.saturating_add(1))?;
         for name in &names {
             if let Some(snapshot) = sidecar_of(board, name) {
-                if present.contains(snapshot) {
+                // Presence is asked of the directory, not inferred from a listing
+                // that may be truncated.
+                if exists(directory, snapshot)? {
                     // A retained snapshot keeps its sidecars.
                 } else {
                     assert!(
@@ -505,15 +520,31 @@ impl SqliteBoardBackup {
                     fs::stable_directory(directory, canonical)
                         .map_err(|_| BackupError::RetentionFailed)?;
                     if let Some(sidecar) = regular_sidecar(directory, name)? {
-                        self.files
-                            .prune_admitted(directory, &sidecar)
-                            .map_err(|_| BackupError::RetentionFailed)?;
-                        *swept += 1;
+                        // An entry that cannot be unlinked as admitted (unreadable,
+                        // replaced or gone since the probe) is left alone.
+                        if self.files.prune_admitted(directory, &sidecar).is_ok() {
+                            *swept += 1;
+                        } else {
+                            // Skipped; the sweep continues.
+                        }
                     }
                 }
             }
         }
         Ok(())
+    }
+}
+/// Whether `name` exists, without following it or opening its target.
+fn exists(directory: &File, name: &str) -> Result<bool, BackupError> {
+    match fs::open(directory, name, libc::O_PATH, 0) {
+        Ok(_) => Ok(true),
+        Err(error) => {
+            if error.kind() == io::ErrorKind::NotFound {
+                Ok(false)
+            } else {
+                Err(BackupError::RetentionFailed)
+            }
+        }
     }
 }
 /// Identifies a sidecar without following or opening its target: `O_PATH`

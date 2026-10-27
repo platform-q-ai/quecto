@@ -71,8 +71,9 @@ fn copy_error(error: rusqlite::Error) -> BackupError {
     }
 }
 /// Switches a freshly copied snapshot to rollback-journal mode. The copied
-/// header carries the source's WAL flag; reading first lets the pager see it so
-/// the switch rewrites the header and checkpoints away the copy's own `-wal`.
+/// header carries the source's WAL flag. The read first is a cheap precaution
+/// so the pager has loaded that header before the switch; the switch's result
+/// is checked either way.
 #[cfg(target_os = "linux")]
 pub(super) fn rollback_journal(connection: &Connection) -> Result<(), BackupError> {
     connection
