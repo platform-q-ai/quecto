@@ -1,6 +1,6 @@
 //! Linux backup execution. FDs and transactions remain owned until cleanup/join.
 use super::super::backup_files::{AdmittedBackupFile, anchored as fs};
-use super::super::backup_sqlite::{ValidationLease, classify};
+use super::super::backup_sqlite::{ValidationLease, classify, rollback_journal};
 use super::*;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use rusqlite::{Connection, OpenFlags};
@@ -16,11 +16,23 @@ fn canonical_board(name: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 fn entries(directory: &File, limit: usize) -> Result<Vec<String>, BackupError> {
+    match bounded_entries(directory, limit)? {
+        (names, Listing::Complete) => Ok(names),
+        (_, Listing::Truncated) => Err(BackupError::ResourceLimit),
+    }
+}
+enum Listing {
+    Complete,
+    Truncated,
+}
+/// At most `limit` names, sorted, and whether the directory held more.
+fn bounded_entries(directory: &File, limit: usize) -> Result<(Vec<String>, Listing), BackupError> {
     let mut result = Vec::new();
     for entry in std::fs::read_dir(fs::path(directory, "")).map_err(unsafe_io)? {
         if result.len() < limit {
         } else {
-            return Err(BackupError::ResourceLimit);
+            result.sort();
+            return Ok((result, Listing::Truncated));
         }
         result.push(
             entry
@@ -31,7 +43,7 @@ fn entries(directory: &File, limit: usize) -> Result<Vec<String>, BackupError> {
         );
     }
     result.sort();
-    Ok(result)
+    Ok((result, Listing::Complete))
 }
 fn record(directory: &File, name: &str) -> Result<(File, AdmittedBackupFile), BackupError> {
     let file =
@@ -73,7 +85,7 @@ struct Partial<'a> {
 impl Drop for Partial<'_> {
     fn drop(&mut self) {
         // An unpredictable exclusive name makes these sidecars invocation-owned.
-        for suffix in ["-wal", "-shm", "-journal"] {
+        for suffix in SIDECARS {
             let name = format!("{}{suffix}", self.owned.name);
             if let Ok((_, file)) = record(self.directory, &name) {
                 let _ = fs::remove(self.directory, &file);
@@ -303,6 +315,9 @@ impl SqliteBoardBackup {
             &mut copy_remaining,
         )?;
         drop(connection);
+        // #2767: the copy carries the source's WAL header; a rollback-journal
+        // snapshot is validated, published and later re-read without sidecars.
+        rollback_journal(&destination)?;
         outcome.stage = BackupStage::Validation;
         self.guarded(&destination, budget, || {
             admission::admit(&destination, &outcome.board)?;
@@ -402,40 +417,45 @@ impl SqliteBoardBackup {
         board: &str,
         request: &BackupRequest,
     ) -> Result<Vec<(AdmittedBackupFile, Timestamp)>, BackupError> {
-        let prefix = format!("{board}-");
         let mut result = Vec::new();
         for name in entries(directory, request.limits.entries)? {
-            if let Some(text) = name
-                .strip_prefix(&prefix)
-                .and_then(|n| n.strip_suffix(".sqlite"))
-            {
-                if text.len() == 16 && text.is_ascii() {
-                    let spelled = format!(
-                        "{}-{}-{}T{}:{}:{}Z",
-                        &text[..4],
-                        &text[4..6],
-                        &text[6..8],
-                        &text[9..11],
-                        &text[11..13],
-                        &text[13..15]
-                    );
-                    if text.as_bytes()[8] == b'T' && text.as_bytes()[15] == b'Z' {
-                        if let Ok(at) = Timestamp::parse(&spelled) {
-                            if result.len() < request.limits.candidates {
-                            } else {
-                                return Err(BackupError::ResourceLimit);
-                            }
-                            let (_, candidate) = record(directory, &name)?;
-                            result.push((candidate, at));
-                        }
-                    }
+            if let Some(at) = snapshot_at(board, &name) {
+                if result.len() < request.limits.candidates {
+                } else {
+                    return Err(BackupError::ResourceLimit);
                 }
+                let (_, candidate) = record(directory, &name)?;
+                result.push((candidate, at));
             }
         }
         result.sort_by(|a, b| b.1.cmp(&a.1));
         Ok(result)
     }
     fn retain(
+        &self,
+        directory: &File,
+        canonical: &Path,
+        candidates: Vec<(AdmittedBackupFile, Timestamp)>,
+        budget: &Budget<'_>,
+        outcome: &mut BackupOutcome,
+    ) -> Result<(), BackupError> {
+        let mut swept = 0;
+        let removal = self
+            .prune(directory, canonical, candidates, budget, outcome)
+            .and_then(|()| {
+                self.sweep_sidecars(directory, canonical, budget, &outcome.board, &mut swept)
+            });
+        // Unlinks already made are made durable before any removal error is reported.
+        let synced = if outcome.deleted > 0 || swept > 0 {
+            self.files
+                .sync_directory(directory)
+                .map_err(|_| BackupError::RetentionFailed)
+        } else {
+            Ok(())
+        };
+        removal.and(synced)
+    }
+    fn prune(
         &self,
         directory: &File,
         canonical: &Path,
@@ -465,13 +485,171 @@ impl SqliteBoardBackup {
                 outcome.deleted += 1;
             }
         }
-        if outcome.deleted > 0 {
-            self.files
-                .sync_directory(directory)
-                .map_err(|_| BackupError::RetentionFailed)?;
+        Ok(())
+    }
+    /// Removes this board's canonical sidecars whose snapshot is gone: those of
+    /// the snapshots just pruned and orphans left by earlier runs (#2767).
+    /// Runs under the board lock, so no publisher of this board races it.
+    /// Only single-link regular files are removed; any other entry under a
+    /// canonical name (symlink, hard link, directory, FIFO...) is left alone.
+    fn sweep_sidecars(
+        &self,
+        directory: &File,
+        canonical: &Path,
+        budget: &Budget<'_>,
+        board: &str,
+        swept: &mut usize,
+    ) -> Result<(), BackupError> {
+        // Bounded like every listing here. Another board's concurrent run may
+        // grow the shared directory past the bound; the sweep then works on the
+        // names it listed and the rest wait for a later run.
+        let (names, _) = bounded_entries(directory, budget.limits.entries.saturating_add(1))
+            .map_err(|_| BackupError::RetentionFailed)?;
+        let scope = SweepScope {
+            directory,
+            canonical,
+            board,
+        };
+        self.sweep_listed(&scope, budget, &names, swept)
+    }
+    /// Decides per listed name; `names` may be any subset of the directory.
+    fn sweep_listed(
+        &self,
+        scope: &SweepScope<'_>,
+        budget: &Budget<'_>,
+        names: &[String],
+        swept: &mut usize,
+    ) -> Result<(), BackupError> {
+        let SweepScope {
+            directory,
+            canonical,
+            board,
+        } = *scope;
+        for name in names {
+            if let Some(snapshot) = sidecar_of(board, name) {
+                // Presence is asked of the directory, not inferred from a listing
+                // that may be truncated.
+                if exists(directory, snapshot)? {
+                    // A retained snapshot keeps its sidecars.
+                } else {
+                    assert!(
+                        SIDECARS.iter().any(|suffix| name.ends_with(suffix))
+                            && snapshot_at(board, snapshot).is_some(),
+                        "only canonical snapshot sidecars are swept"
+                    );
+                    budget.remaining()?;
+                    fs::stable_directory(directory, canonical)
+                        .map_err(|_| BackupError::RetentionFailed)?;
+                    if let Some(sidecar) = regular_sidecar(directory, name)? {
+                        match self.files.prune_admitted(directory, &sidecar) {
+                            Ok(()) => *swept += 1,
+                            Err(error) => {
+                                if entry_refusal(&error) {
+                                    // Left alone; the sweep continues.
+                                } else {
+                                    return Err(BackupError::RetentionFailed);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }
+}
+/// The held destination a sweep works in, and the board whose lock it holds.
+#[derive(Clone, Copy)]
+struct SweepScope<'a> {
+    directory: &'a File,
+    canonical: &'a Path,
+    board: &'a str,
+}
+/// Allowlist of refusals that concern only the entry: unreadable, gone, or
+/// replaced (identity/path refusal, now a symlink) since the probe. Anything
+/// else (EIO, EROFS...) is a directory or device fault and fails retention.
+fn entry_refusal(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::InvalidInput | io::ErrorKind::PermissionDenied
+    ) || error.raw_os_error() == Some(libc::ELOOP)
+}
+/// Whether `name` exists, without following it or opening its target.
+fn exists(directory: &File, name: &str) -> Result<bool, BackupError> {
+    match fs::open(directory, name, libc::O_PATH, 0) {
+        Ok(_) => Ok(true),
+        Err(error) => {
+            if error.kind() == io::ErrorKind::NotFound {
+                Ok(false)
+            } else {
+                Err(BackupError::RetentionFailed)
+            }
+        }
+    }
+}
+/// Identifies a sidecar without following or opening its target: `O_PATH`
+/// never reads a FIFO or device. Admits only a single-link regular file.
+fn regular_sidecar(
+    directory: &File,
+    name: &str,
+) -> Result<Option<AdmittedBackupFile>, BackupError> {
+    match fs::open(directory, name, libc::O_PATH, 0) {
+        Ok(handle) => {
+            let meta = handle
+                .metadata()
+                .map_err(|_| BackupError::RetentionFailed)?;
+            if meta.is_file() {
+                // `identity` admits exactly one link: a hard-linked alias is skipped.
+                Ok(fs::identity(&meta).ok().map(|identity| AdmittedBackupFile {
+                    name: name.to_owned(),
+                    identity,
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+        Err(error) => {
+            if error.kind() == io::ErrorKind::NotFound {
+                Ok(None)
+            } else {
+                Err(BackupError::RetentionFailed)
+            }
+        }
+    }
+}
+/// SQLite's companion files for a snapshot; nothing else is ever a sidecar.
+const SIDECARS: [&str; 3] = ["-wal", "-shm", "-journal"];
+/// Allowlist: `<board>-<YYYYMMDDTHHMMSSZ>.sqlite` exactly as this adapter
+/// spells its publications.
+fn snapshot_at(board: &str, name: &str) -> Option<Timestamp> {
+    let text = name
+        .strip_prefix(board)?
+        .strip_prefix('-')?
+        .strip_suffix(".sqlite")?;
+    let bytes = text.as_bytes();
+    if text.len() == 16 && text.is_ascii() && bytes[8] == b'T' && bytes[15] == b'Z' {
+    } else {
+        return None;
+    }
+    let spelled = format!(
+        "{}-{}-{}T{}:{}:{}Z",
+        &text[..4],
+        &text[4..6],
+        &text[6..8],
+        &text[9..11],
+        &text[11..13],
+        &text[13..15]
+    );
+    Timestamp::parse(&spelled)
+        .ok()
+        .filter(|at| snapshot_name(board, at) == name)
+}
+/// Allowlist: the snapshot name a canonical `-wal`/`-shm`/`-journal` belongs to.
+fn sidecar_of<'a>(board: &str, name: &'a str) -> Option<&'a str> {
+    SIDECARS
+        .iter()
+        .find_map(|suffix| name.strip_suffix(suffix))
+        .filter(|snapshot| snapshot_at(board, snapshot).is_some())
 }
 fn check_time(
     candidates: &[(AdmittedBackupFile, Timestamp)],
