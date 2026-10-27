@@ -209,10 +209,15 @@ fn backup_lock_waits_out_a_hold_shorter_than_busy() {
     let temp = tempfile::tempdir().unwrap();
     let board = "0123456789abcdef";
     let directory = anchored::directory(temp.path()).unwrap();
-    let holder = brief_holder(temp.path(), board, Duration::from_millis(50));
-    let began = Instant::now();
-    let held = anchored::lock(&directory, board, Duration::from_millis(250)).unwrap();
-    assert!(began.elapsed() >= Duration::from_millis(40), "it waited");
+    let holder = brief_holder(temp.path(), board, Duration::from_millis(150));
+    // Proves the lock is still held here, so the next call has to wait.
+    assert_eq!(
+        anchored::lock(&directory, board, Duration::ZERO)
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::WouldBlock
+    );
+    let held = anchored::lock(&directory, board, PATIENT).unwrap();
     let named = std::fs::symlink_metadata(temp.path().join(anchored::lock_name(board))).unwrap();
     assert_eq!(held.metadata().unwrap().ino(), named.ino());
     holder.join().unwrap();
