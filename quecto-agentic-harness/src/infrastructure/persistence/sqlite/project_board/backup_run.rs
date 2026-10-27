@@ -1,5 +1,5 @@
 //! Linux backup execution. FDs and transactions remain owned until cleanup/join.
-use super::super::backup_files::{AdmittedBackupFile, anchored as fs};
+use super::super::backup_files::{AdmittedBackupFile, BackupFileIdentity, anchored as fs};
 use super::super::backup_sqlite::{ValidationLease, classify, rollback_journal};
 use super::*;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -274,7 +274,8 @@ impl SqliteBoardBackup {
         let (directory, canonical) =
             fs::private_destination(&request.to, &self.source_root).map_err(unsafe_io)?;
         // Read-only preflight preserves inventories for immediately refused requests.
-        let preflight = self.candidates(&directory, &outcome.board, request)?;
+        let preflight =
+            self.candidates(&directory, &outcome.board, request, Interrupted::Tolerated)?;
         check_time(&preflight, request, &outcome.board)?;
         let _lock = fs::lock(&directory, &outcome.board).map_err(|e| {
             if e.kind() == io::ErrorKind::WouldBlock {
@@ -283,10 +284,14 @@ impl SqliteBoardBackup {
                 BackupError::UnsafePath
             }
         })?;
-        let candidates = self.candidates(&directory, &outcome.board, request)?;
+        // #2770: a crash between publication's link and unlink is repaired
+        // under the lock, before the locked (single-link) admission.
+        self.repair_interrupted(&directory, &canonical, &outcome.board, request)?;
+        let candidates =
+            self.candidates(&directory, &outcome.board, request, Interrupted::Refused)?;
         let final_name = snapshot_name(&outcome.board, &request.at);
         check_time(&candidates, request, &outcome.board)?;
-        let name = format!(".{}.{}.partial", outcome.board, uuid::Uuid::new_v4());
+        let name = partial_name(&outcome.board, uuid::Uuid::new_v4());
         let file = self
             .files
             .create_partial(&directory, &name)
@@ -384,7 +389,14 @@ impl SqliteBoardBackup {
             .sync_directory(&directory)
             .map_err(|_| BackupError::PublicationUncertain)?;
         outcome.stage = BackupStage::Retention;
-        self.retain(&directory, &canonical, candidates, budget, outcome)?;
+        let board = outcome.board.clone();
+        let scope = SweepScope {
+            directory: &directory,
+            canonical: &canonical,
+            board: &board,
+            own_partial: &partial.owned.name,
+        };
+        self.retain(&scope, candidates, budget, outcome)?;
         outcome.stage = BackupStage::Complete;
         Ok(())
     }
@@ -416,15 +428,26 @@ impl SqliteBoardBackup {
         directory: &File,
         board: &str,
         request: &BackupRequest,
+        interrupted: Interrupted,
     ) -> Result<Vec<(AdmittedBackupFile, Timestamp)>, BackupError> {
         let mut result = Vec::new();
-        for name in entries(directory, request.limits.entries)? {
-            if let Some(at) = snapshot_at(board, &name) {
+        let names = entries(directory, request.limits.entries)?;
+        for name in &names {
+            if let Some(at) = snapshot_at(board, name) {
                 if result.len() < request.limits.candidates {
                 } else {
                     return Err(BackupError::ResourceLimit);
                 }
-                let (_, candidate) = record(directory, &name)?;
+                let pair = match interrupted {
+                    Interrupted::Tolerated => interrupted_pair(directory, board, &names, name)?,
+                    Interrupted::Refused => None,
+                };
+                let candidate = match pair {
+                    // Admitted for the preflight's time check only; the
+                    // locked run repairs it before its own admission.
+                    Some(pair) => pair.snapshot,
+                    None => record(directory, name)?.1,
+                };
                 result.push((candidate, at));
             }
         }
@@ -433,22 +456,26 @@ impl SqliteBoardBackup {
     }
     fn retain(
         &self,
-        directory: &File,
-        canonical: &Path,
+        scope: &SweepScope<'_>,
         candidates: Vec<(AdmittedBackupFile, Timestamp)>,
         budget: &Budget<'_>,
         outcome: &mut BackupOutcome,
     ) -> Result<(), BackupError> {
+        assert_eq!(scope.board, outcome.board, "the sweep works on this board");
         let mut swept = 0;
         let removal = self
-            .prune(directory, canonical, candidates, budget, outcome)
-            .and_then(|()| {
-                self.sweep_sidecars(directory, canonical, budget, &outcome.board, &mut swept)
-            });
+            .prune(
+                scope.directory,
+                scope.canonical,
+                candidates,
+                budget,
+                outcome,
+            )
+            .and_then(|()| self.sweep_sidecars(scope, budget, &mut swept));
         // Unlinks already made are made durable before any removal error is reported.
         let synced = if outcome.deleted > 0 || swept > 0 {
             self.files
-                .sync_directory(directory)
+                .sync_directory(scope.directory)
                 .map_err(|_| BackupError::RetentionFailed)
         } else {
             Ok(())
@@ -487,135 +514,6 @@ impl SqliteBoardBackup {
         }
         Ok(())
     }
-    /// Removes this board's canonical sidecars whose snapshot is gone: those of
-    /// the snapshots just pruned and orphans left by earlier runs (#2767).
-    /// Runs under the board lock, so no publisher of this board races it.
-    /// Only single-link regular files are removed; any other entry under a
-    /// canonical name (symlink, hard link, directory, FIFO...) is left alone.
-    fn sweep_sidecars(
-        &self,
-        directory: &File,
-        canonical: &Path,
-        budget: &Budget<'_>,
-        board: &str,
-        swept: &mut usize,
-    ) -> Result<(), BackupError> {
-        // Bounded like every listing here. Another board's concurrent run may
-        // grow the shared directory past the bound; the sweep then works on the
-        // names it listed and the rest wait for a later run.
-        let (names, _) = bounded_entries(directory, budget.limits.entries.saturating_add(1))
-            .map_err(|_| BackupError::RetentionFailed)?;
-        let scope = SweepScope {
-            directory,
-            canonical,
-            board,
-        };
-        self.sweep_listed(&scope, budget, &names, swept)
-    }
-    /// Decides per listed name; `names` may be any subset of the directory.
-    fn sweep_listed(
-        &self,
-        scope: &SweepScope<'_>,
-        budget: &Budget<'_>,
-        names: &[String],
-        swept: &mut usize,
-    ) -> Result<(), BackupError> {
-        let SweepScope {
-            directory,
-            canonical,
-            board,
-        } = *scope;
-        for name in names {
-            if let Some(snapshot) = sidecar_of(board, name) {
-                // Presence is asked of the directory, not inferred from a listing
-                // that may be truncated.
-                if exists(directory, snapshot)? {
-                    // A retained snapshot keeps its sidecars.
-                } else {
-                    assert!(
-                        SIDECARS.iter().any(|suffix| name.ends_with(suffix))
-                            && snapshot_at(board, snapshot).is_some(),
-                        "only canonical snapshot sidecars are swept"
-                    );
-                    budget.remaining()?;
-                    fs::stable_directory(directory, canonical)
-                        .map_err(|_| BackupError::RetentionFailed)?;
-                    if let Some(sidecar) = regular_sidecar(directory, name)? {
-                        match self.files.prune_admitted(directory, &sidecar) {
-                            Ok(()) => *swept += 1,
-                            Err(error) => {
-                                if entry_refusal(&error) {
-                                    // Left alone; the sweep continues.
-                                } else {
-                                    return Err(BackupError::RetentionFailed);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-}
-/// The held destination a sweep works in, and the board whose lock it holds.
-#[derive(Clone, Copy)]
-struct SweepScope<'a> {
-    directory: &'a File,
-    canonical: &'a Path,
-    board: &'a str,
-}
-/// Allowlist of refusals that concern only the entry: unreadable, gone, or
-/// replaced (identity/path refusal, now a symlink) since the probe. Anything
-/// else (EIO, EROFS...) is a directory or device fault and fails retention.
-fn entry_refusal(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::NotFound | io::ErrorKind::InvalidInput | io::ErrorKind::PermissionDenied
-    ) || error.raw_os_error() == Some(libc::ELOOP)
-}
-/// Whether `name` exists, without following it or opening its target.
-fn exists(directory: &File, name: &str) -> Result<bool, BackupError> {
-    match fs::open(directory, name, libc::O_PATH, 0) {
-        Ok(_) => Ok(true),
-        Err(error) => {
-            if error.kind() == io::ErrorKind::NotFound {
-                Ok(false)
-            } else {
-                Err(BackupError::RetentionFailed)
-            }
-        }
-    }
-}
-/// Identifies a sidecar without following or opening its target: `O_PATH`
-/// never reads a FIFO or device. Admits only a single-link regular file.
-fn regular_sidecar(
-    directory: &File,
-    name: &str,
-) -> Result<Option<AdmittedBackupFile>, BackupError> {
-    match fs::open(directory, name, libc::O_PATH, 0) {
-        Ok(handle) => {
-            let meta = handle
-                .metadata()
-                .map_err(|_| BackupError::RetentionFailed)?;
-            if meta.is_file() {
-                // `identity` admits exactly one link: a hard-linked alias is skipped.
-                Ok(fs::identity(&meta).ok().map(|identity| AdmittedBackupFile {
-                    name: name.to_owned(),
-                    identity,
-                }))
-            } else {
-                Ok(None)
-            }
-        }
-        Err(error) => {
-            if error.kind() == io::ErrorKind::NotFound {
-                Ok(None)
-            } else {
-                Err(BackupError::RetentionFailed)
-            }
-        }
-    }
 }
 /// SQLite's companion files for a snapshot; nothing else is ever a sidecar.
 const SIDECARS: [&str; 3] = ["-wal", "-shm", "-journal"];
@@ -644,13 +542,6 @@ fn snapshot_at(board: &str, name: &str) -> Option<Timestamp> {
         .ok()
         .filter(|at| snapshot_name(board, at) == name)
 }
-/// Allowlist: the snapshot name a canonical `-wal`/`-shm`/`-journal` belongs to.
-fn sidecar_of<'a>(board: &str, name: &'a str) -> Option<&'a str> {
-    SIDECARS
-        .iter()
-        .find_map(|suffix| name.strip_suffix(suffix))
-        .filter(|snapshot| snapshot_at(board, snapshot).is_some())
-}
 fn check_time(
     candidates: &[(AdmittedBackupFile, Timestamp)],
     request: &BackupRequest,
@@ -667,6 +558,12 @@ fn check_time(
     }
     Ok(())
 }
+#[path = "backup_interrupted.rs"]
+mod interrupted;
+#[path = "backup_sweep.rs"]
+mod sweep;
+use interrupted::{Interrupted, interrupted_pair};
+use sweep::{SweepScope, partial_name};
 #[cfg(test)]
 #[path = "backup_run_tests.rs"]
 mod tests;

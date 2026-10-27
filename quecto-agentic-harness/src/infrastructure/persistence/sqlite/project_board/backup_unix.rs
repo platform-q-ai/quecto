@@ -180,10 +180,18 @@ pub(in super::super) fn stable_directory(file: &File, path: &Path) -> io::Result
         Err(unsafe_path())
     }
 }
+/// The board's backup lock: held only while `.{board}.backup.lock` still
+/// names the very inode this run flocked.
 pub(in super::super) fn lock(directory: &File, board: &str) -> io::Result<File> {
+    let handle = open_lock(directory, board)?;
+    #[cfg(test)]
+    between_open_and_flock::run();
+    hold(directory, board, handle)
+}
+pub(in super::super) fn open_lock(directory: &File, board: &str) -> io::Result<File> {
     let handle = open(
         directory,
-        &format!(".{board}.backup.lock"),
+        &lock_name(board),
         libc::O_RDWR | libc::O_CREAT | libc::O_NONBLOCK,
         0o600,
     )?;
@@ -194,14 +202,52 @@ pub(in super::super) fn lock(directory: &File, board: &str) -> io::Result<File> 
         && meta.uid() == unsafe { libc::geteuid() }
         && meta.mode() & 0o777 == 0o600
     {
+        Ok(handle)
     } else {
-        return Err(unsafe_path());
+        Err(unsafe_path())
     }
+}
+/// Flocks `handle`, then asks the held directory (no-follow) whether the lock
+/// name still names that inode. A name renamed or unlinked and recreated
+/// since the open refuses: this run would hold an inode no other run locks.
+/// Dropping the refused handle releases its flock.
+pub(in super::super) fn hold(directory: &File, board: &str, handle: File) -> io::Result<File> {
     // SAFETY: handle owns a live fd for flock; its File keeps the acquired lock alive on success.
     let result = unsafe { libc::flock(handle.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if result == 0 {
+    } else {
+        return Err(io::Error::last_os_error());
+    }
+    let held = handle.metadata()?;
+    let named = match open(directory, &lock_name(board), libc::O_PATH, 0) {
+        Ok(named) => named.metadata()?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Err(unsafe_path()),
+        Err(error) => return Err(error),
+    };
+    if named.is_file() && named.dev() == held.dev() && named.ino() == held.ino() {
         Ok(handle)
     } else {
-        Err(io::Error::last_os_error())
+        Err(unsafe_path())
+    }
+}
+pub(in super::super) fn lock_name(board: &str) -> String {
+    format!(".{board}.backup.lock")
+}
+/// Test seam: lets a test swap the lock name inside `lock()`'s window
+/// between its open and its flock. Thread-local, so tests stay independent.
+#[cfg(test)]
+pub(in super::super) mod between_open_and_flock {
+    use std::cell::RefCell;
+    thread_local! {
+        static HOOK: RefCell<Option<Box<dyn FnOnce()>>> = RefCell::new(None);
+    }
+    /// Runs `hook` once, on this thread's next `lock()`.
+    pub(in super::super::super) fn set(hook: impl FnOnce() + 'static) {
+        HOOK.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+    }
+    pub(super) fn run() {
+        if let Some(hook) = HOOK.with(|slot| slot.borrow_mut().take()) {
+            hook();
+        }
     }
 }
