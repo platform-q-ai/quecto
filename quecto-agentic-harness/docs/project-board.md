@@ -514,18 +514,28 @@ The entry rules are one table (`PLAN_ENTRY_RULES` in
 |---|---|
 | Approach | At most 600 characters when it enters capped; a longer one is refused (`invalid_plan`, field `approach`) with "is N characters; the most is 600: keep the approach to an outline and move the detail into handoff" |
 | Handoff | At most 65,536 characters, however it enters |
+| Task item title | One line of at most 70 characters, stating the outcome, when it enters capped; a longer one is refused (field `items/{i}/title`) with "is N characters; the most is 70: state the outcome and move the detail into handoff" |
+| Task item criteria | 1 to 4 when they enter capped (field `items/{i}/criteria`): none is refused with "has 0 criteria; it takes 1 to 4: give each check the step must pass", more than 4 with "has N criteria; it takes 1 to 4: move the detail into handoff" |
+| Task item criterion | One line of at most 150 characters when it enters capped; a longer one is refused (field `items/{i}/criteria/{j}`) with "is N characters; the most is 150: move the detail into handoff" |
 
-Each front end resolves the approach's entry from its policy, as it resolves a
-task description's:
+A plan read back keeps the schema's own limits for its task items (a line of
+500 characters, 16 criteria), so a plan stored before these rules reads and
+starts unchanged.
+
+Each front end resolves the entry of the approach and task items from its
+policy, as it resolves a task description's:
 
 | Front end | Entry |
 |---|---|
 | The agent `board` tool | Always capped |
-| `quecto board` (people, the Pocket relay) | Capped when the request gives a `handoff` that holds something once normalised (`""` is none, and caps nothing); otherwise as before T3: the schema's 65,536 characters |
+| `quecto board` (people, the Pocket relay) | Capped when the request gives a `handoff` that holds something once normalised (`""` is none, and caps nothing); otherwise as before T3: the schema's limits (an approach of 65,536 characters, task item lines of 500, 16 criteria) |
 
-Only an approach that enters is checked: an edit that leaves the approach as
-the draft holds it (an items-only edit of a plan written before T3, say)
-keeps it, however long. Reading never checks the cap.
+Only text that enters is checked: an edit that leaves the approach as the
+draft holds it (an items-only edit of a plan written before T3, say) keeps it,
+however long, and a task item whose title and criteria the draft already holds
+(at any index, its id or `depends_on` changed or not) keeps them, however long
+or many. A new task item, or one whose title or a criterion changed, is
+checked. Reading never checks the caps.
 
 `show` gives `handoff` after `approach`, and its length in characters as
 `handoff_chars` (the whole handoff's, even when the agent tool cuts it), only

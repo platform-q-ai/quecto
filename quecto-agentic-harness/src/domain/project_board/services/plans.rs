@@ -211,9 +211,9 @@ pub fn edit_draft<'r>(
 /// `content`'s text is as it enters the board, normalised: its approach
 /// and handoff as markdown, each task item's title and criteria as lines;
 /// and its approach and task items within its entry's caps (#2705 T3, and
-/// the step rules) unless the draft `held` holds them as they are (an
-/// edit's draft holds them already: legacy text is kept, never forced to
-/// be rewritten).
+/// the step rules) unless the draft `held` holds that text already (an
+/// approach as it is, a task item's title and criteria at any index):
+/// legacy text is kept, never forced to be rewritten.
 fn entered(content: &PlanContent, held: Option<&PlanFields>) -> Result<(), BoardRuleError> {
     let invalid = BoardRuleError::InvalidPlan;
     entered_text("approach", &content.approach).map_err(invalid)?;
@@ -231,12 +231,22 @@ fn entered(content: &PlanContent, held: Option<&PlanFields>) -> Result<(), Board
         for (at, criterion) in item.criteria.iter().enumerate() {
             entered_line(&format!("{field}/criteria/{at}"), criterion).map_err(invalid)?;
         }
-        match held.is_some_and(|draft| draft.items.contains(item)) {
+        match held.is_some_and(|draft| holds_text_of(draft, item)) {
             true => {}
             false => content.entry.item(&field, item).map_err(invalid)?,
         }
     }
     Ok(())
+}
+
+/// Whether `draft` holds a task item with `item`'s text, its title and
+/// criteria, at any index: one whose id or dependencies alone changed is
+/// legacy text kept, never forced to be rewritten.
+fn holds_text_of(draft: &PlanFields, item: &PlanItem) -> bool {
+    draft
+        .items
+        .iter()
+        .any(|held| held.title == item.title && held.criteria == item.criteria)
 }
 
 /// Version `version` of the `board` task's plan accepted by `actor` at

@@ -57,28 +57,33 @@ pub const MOVE_TO_HANDOFF: &str =
     "keep the approach to an outline and move the detail into handoff";
 /// Where a refused task item's criteria send their detail.
 pub const MOVE_STEP_DETAIL: &str = "move the detail into handoff";
+/// Why a task item with too few criteria is refused: what it lacks.
+pub const GIVE_THE_CHECKS: &str = "give each check the step must pass";
 /// Why a task item's title past its cap is refused.
 pub const STATE_THE_OUTCOME: &str = "state the outcome and move the detail into handoff";
 /// Why a handoff given empty is refused: none is no handoff.
 const HANDOFF_EMPTY: &str = "is empty: write it, or leave it out";
 
-/// How one write's approach enters the board (#2705 T3).
+/// How one write's approach and task items enter the board (#2705 T3,
+/// and the step rules).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PlanEntry {
-    /// Within [`PlanEntryRules::max_approach_chars`]: the detail goes in
-    /// the handoff.
+    /// Within [`PLAN_ENTRY_RULES`]: an approach of at most
+    /// [`PlanEntryRules::max_approach_chars`], and task items with short
+    /// titles and 1 to 4 short criteria; the detail goes in the handoff.
     #[default]
     Capped,
     /// As before T3, for a front end's request that gives no handoff:
-    /// normalised board text within the schema's [`MAX_APPROACH_CHARS`].
+    /// normalised board text within the schema's own limits
+    /// ([`MAX_APPROACH_CHARS`], [`MAX_LINE_CHARS`], [`MAX_PER_ITEM`]).
     Legacy,
 }
 
 impl PlanEntry {
     /// The entry its front end's `policy` gives a request that gives a
     /// handoff, or not (`handoff_given`), as a task's entry is resolved
-    /// (#2705 T2): the agent tool always caps the approach; the CLI caps
-    /// it once a request gives a handoff.
+    /// (#2705 T2): the agent tool always caps the approach and task items;
+    /// the CLI caps them once a request gives a handoff.
     pub fn of(policy: EntryPolicy, handoff_given: bool) -> Self {
         match policy.entry(handoff_given) {
             Entry::Sectioned => Self::Capped,
@@ -122,6 +127,10 @@ fn capped_item(field: &str, item: &PlanItem) -> Result<(), SchemaError> {
         !rules.item_criteria.is_empty() && *rules.item_criteria.end() <= MAX_PER_ITEM,
         "the step rules let in criteria the schema keeps"
     );
+    assert!(
+        rules.max_item_title_chars <= MAX_LINE_CHARS && rules.max_criterion_chars <= MAX_LINE_CHARS,
+        "the step rules let in lines the schema keeps"
+    );
     let title = format!("{field}/title");
     within(
         &title,
@@ -131,19 +140,24 @@ fn capped_item(field: &str, item: &PlanItem) -> Result<(), SchemaError> {
     )?;
     let count = item.criteria.len();
     let range = &rules.item_criteria;
-    match range.contains(&count) {
-        true => {}
-        false => {
-            return Err(SchemaError::new(
-                format!("{field}/criteria"),
-                format!(
-                    "has {count} criteria; it takes {} to {}: {MOVE_STEP_DETAIL}",
-                    range.start(),
-                    range.end()
-                ),
-            ));
-        }
+    // Each end says what to do: too few asks for the checks, too many
+    // sends the detail to the handoff.
+    let why = match (count < *range.start(), count > *range.end()) {
+        (false, false) => None,
+        (true, _) => Some(GIVE_THE_CHECKS),
+        (false, true) => Some(MOVE_STEP_DETAIL),
+    };
+    if let Some(why) = why {
+        return Err(SchemaError::new(
+            format!("{field}/criteria"),
+            format!(
+                "has {count} criteria; it takes {} to {}: {why}",
+                range.start(),
+                range.end()
+            ),
+        ));
     }
+    assert!(range.contains(&count), "the criteria are within the rules");
     let mut criteria = item.criteria.iter().enumerate();
     criteria.try_for_each(|(at, criterion)| {
         let max = rules.max_criterion_chars;

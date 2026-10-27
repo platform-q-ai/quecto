@@ -187,7 +187,9 @@ fn refusal(answer: &Value) -> (&Value, &Value) {
 /// handoff.
 #[test]
 fn a_tool_plans_items_enter_short() {
-    use crate::domain::project_board::entities::plan::{MOVE_STEP_DETAIL, STATE_THE_OUTCOME};
+    use crate::domain::project_board::entities::plan::{
+        GIVE_THE_CHECKS, MOVE_STEP_DETAIL, STATE_THE_OUTCOME,
+    };
     let rules = &PLAN_ENTRY_RULES;
     let (title, most) = (rules.max_item_title_chars, rules.max_criterion_chars);
     let operations = board();
@@ -208,7 +210,7 @@ fn a_tool_plans_items_enter_short() {
             ))
         )
     );
-    for count in [0, 5] {
+    for (count, why) in [(0, GIVE_THE_CHECKS), (5, MOVE_STEP_DETAIL)] {
         let answer = run(
             &*operations,
             &propose_items(&[sized_item("i", 10, count, 10)], None).to_string(),
@@ -217,9 +219,7 @@ fn a_tool_plans_items_enter_short() {
             refusal(&answer),
             (
                 &json!("items/0/criteria"),
-                &json!(format!(
-                    "has {count} criteria; it takes 1 to 4: {MOVE_STEP_DETAIL}"
-                ))
+                &json!(format!("has {count} criteria; it takes 1 to 4: {why}"))
             ),
             "{count} criteria"
         );

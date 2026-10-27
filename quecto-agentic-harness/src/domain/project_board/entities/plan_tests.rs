@@ -271,16 +271,25 @@ fn a_capped_item_enters_with_a_short_title_and_one_to_four_short_criteria() {
             format!("is 71 characters; the most is 70: {STATE_THE_OUTCOME}")
         )
     );
-    for count in [0, 5] {
+    // Too few asks for the checks; too many sends the detail away.
+    for (count, why) in [(0, GIVE_THE_CHECKS), (5, MOVE_STEP_DETAIL)] {
         assert_eq!(
             refused(&step("Done", criteria(count, 10))),
             (
                 "items/3/criteria".to_string(),
-                format!("has {count} criteria; it takes 1 to 4: {MOVE_STEP_DETAIL}")
+                format!("has {count} criteria; it takes 1 to 4: {why}")
             ),
             "{count} criteria"
         );
     }
+    assert_eq!(
+        refused(&step("Done", vec![])).1,
+        "has 0 criteria; it takes 1 to 4: give each check the step must pass"
+    );
+    assert_eq!(
+        refused(&step("Done", criteria(5, 10))).1,
+        "has 5 criteria; it takes 1 to 4: move the detail into handoff"
+    );
     let mut long_criterion = criteria(3, 150);
     long_criterion[2].push('x');
     assert_eq!(

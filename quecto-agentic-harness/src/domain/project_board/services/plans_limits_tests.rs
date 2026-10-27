@@ -175,6 +175,26 @@ fn a_capped_edit_keeps_the_items_a_legacy_draft_holds() {
     let short = sized_item("short", 70, 1, 150);
     let added = edit(vec![legacy.clone(), short], draft.fields().team.clone());
     assert_eq!(added.expect("a short item added").fields().items.len(), 2);
+    // Held at another index, after a new item: kept by its content.
+    let first = sized_item("first", 70, 1, 150);
+    let moved = edit(vec![first.clone(), legacy.clone()], None);
+    assert_eq!(
+        moved.expect("a held item moved").fields().items,
+        vec![first.clone(), legacy.clone()]
+    );
+    // Its id and dependencies changed, its text as held: kept.
+    let mut relinked = legacy.clone();
+    relinked.id = Slug::parse("renamed").unwrap();
+    relinked.depends_on = vec![first.id.clone()];
+    let answer = edit(vec![first.clone(), relinked.clone()], None);
+    assert_eq!(answer.expect("relinked").fields().items[1], relinked);
+    // A changed title or criterion enters anew.
+    let mut retitled = legacy.clone();
+    retitled.title.pop();
+    match edit(vec![retitled], None) {
+        Err(BoardRuleError::InvalidPlan(error)) => assert_eq!(error.field, "items/0/title"),
+        other => panic!("a changed title enters anew: {other:?}"),
+    }
     let mut changed = legacy.clone();
     changed.criteria.pop();
     match edit(vec![changed], draft.fields().team.clone()) {
