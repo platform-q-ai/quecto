@@ -9,6 +9,7 @@ use std::{
         unix::fs::{MetadataExt, OpenOptionsExt},
     },
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 fn unsafe_path() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "backup identity/path refused")
@@ -182,11 +183,11 @@ pub(in super::super) fn stable_directory(file: &File, path: &Path) -> io::Result
 }
 /// The board's backup lock: held only while `.{board}.backup.lock` still
 /// names the very inode this run flocked.
-pub(in super::super) fn lock(directory: &File, board: &str) -> io::Result<File> {
+pub(in super::super) fn lock(directory: &File, board: &str, busy: Duration) -> io::Result<File> {
     let handle = open_lock(directory, board)?;
     #[cfg(test)]
     between_open_and_flock::run();
-    hold(directory, board, handle)
+    hold(directory, board, handle, busy)
 }
 pub(in super::super) fn open_lock(directory: &File, board: &str) -> io::Result<File> {
     let handle = open(
@@ -207,17 +208,19 @@ pub(in super::super) fn open_lock(directory: &File, board: &str) -> io::Result<F
         Err(unsafe_path())
     }
 }
-/// Flocks `handle`, then asks the held directory (no-follow) whether the lock
-/// name still names that inode. A name renamed or unlinked and recreated
-/// since the open refuses: this run would hold an inode no other run locks.
-/// Dropping the refused handle releases its flock.
-pub(in super::super) fn hold(directory: &File, board: &str, handle: File) -> io::Result<File> {
-    // SAFETY: handle owns a live fd for flock; its File keeps the acquired lock alive on success.
-    let result = unsafe { libc::flock(handle.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-    if result == 0 {
-    } else {
-        return Err(io::Error::last_os_error());
-    }
+/// Flocks `handle`, waiting up to `busy` for a holder to let go (#2773: a
+/// forked child briefly keeps a copy of another run's lock fd until its exec).
+/// Then asks the held directory (no-follow) whether the lock name still names
+/// that inode. A name renamed or unlinked and recreated since the open
+/// refuses: this run would hold an inode no other run locks. Dropping the
+/// refused handle releases its flock.
+pub(in super::super) fn hold(
+    directory: &File,
+    board: &str,
+    handle: File,
+    busy: Duration,
+) -> io::Result<File> {
+    flock_within(&handle, busy)?;
     let held = handle.metadata()?;
     let named = match open(directory, &lock_name(board), libc::O_PATH, 0) {
         Ok(named) => named.metadata()?,
@@ -228,6 +231,32 @@ pub(in super::super) fn hold(directory: &File, board: &str, handle: File) -> io:
         Ok(handle)
     } else {
         Err(unsafe_path())
+    }
+}
+/// How often a busy lock is retried while its budget lasts.
+const LOCK_POLL: Duration = Duration::from_millis(5);
+/// `flock(LOCK_EX | LOCK_NB)` retried every `LOCK_POLL` until `busy` is
+/// spent. Only contention (`EWOULDBLOCK`) or a signal (`EINTR`) is retried;
+/// once the budget is spent, or on any other error, that error is returned.
+fn flock_within(handle: &File, busy: Duration) -> io::Result<()> {
+    let began = Instant::now();
+    loop {
+        // SAFETY: handle owns a live fd for flock; its File keeps the acquired lock alive on success.
+        let result = unsafe { libc::flock(handle.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        let spent = began.elapsed();
+        if matches!(
+            error.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+        ) && spent < busy
+        {
+            std::thread::sleep(LOCK_POLL.min(busy - spent));
+        } else {
+            return Err(error);
+        }
     }
 }
 pub(in super::super) fn lock_name(board: &str) -> String {

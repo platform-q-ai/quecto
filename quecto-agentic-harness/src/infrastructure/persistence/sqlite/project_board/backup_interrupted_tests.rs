@@ -103,10 +103,30 @@ fn backup_leaves_an_interrupted_pair_alone_while_the_board_lock_is_held() {
     let partial = format!(".{BOARD}.{}.partial", uuid::Uuid::new_v4());
     interrupted_publication(&to, &snapshot, &partial);
     let directory = fs::directory(&to).unwrap();
-    let _held = fs::lock(&directory, BOARD).unwrap();
+    // Generous: a forked test child may briefly hold a copy of a lock fd.
+    let _held = fs::lock(&directory, BOARD, Duration::from_secs(5)).unwrap();
     let outcome = back_up(&root, &to, "2026-10-25T12:00:00Z");
     assert_eq!(outcome.error, Some(BackupError::BusyDeadline));
     let names = listing(&to);
     assert!(names.contains(&snapshot) && names.contains(&partial));
     assert_eq!(std::fs::metadata(to.join(&snapshot)).unwrap().nlink(), 2);
+}
+/// #2773: a lock held briefly by someone else is waited out within
+/// `limits.busy`; the run completes instead of reporting busy.
+#[test]
+fn backup_waits_out_a_brief_hold_of_the_board_lock() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = bootstrapped_board(temp.path());
+    let to = temp.path().join("snapshots");
+    assert_eq!(back_up(&root, &to, "2026-10-20T10:00:00Z").error, None);
+    let directory = fs::directory(&to).unwrap();
+    let held = fs::lock(&directory, BOARD, Duration::from_secs(5)).unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        drop(held);
+    });
+    let outcome = back_up(&root, &to, "2026-10-25T12:00:00Z");
+    release.join().unwrap();
+    assert_eq!(outcome.error, None);
+    assert_eq!(outcome.stage, BackupStage::Complete);
 }
