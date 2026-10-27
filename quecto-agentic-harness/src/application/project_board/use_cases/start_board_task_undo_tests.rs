@@ -23,6 +23,11 @@ use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 struct EndedMeanwhile(MemoryBoardStore);
 
 impl CoordinatorLaunch for EndedMeanwhile {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         true
     }
@@ -88,6 +93,11 @@ fn a_run_another_writer_ended_is_left_as_it_ended_and_the_claim_released() {
 struct LeftRunning;
 
 impl CoordinatorLaunch for LeftRunning {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         true
     }
@@ -149,6 +159,11 @@ fn a_coordinator_that_may_still_run_leaves_the_start_as_it_is() {
 struct CancelledAsItCameUp;
 
 impl CoordinatorLaunch for CancelledAsItCameUp {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         true
     }

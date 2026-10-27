@@ -13,8 +13,10 @@ fn only_a_created_run_is_a_swarm() {
 
 #[test]
 fn a_workflow_enabled_agent_cannot_create_a_swarm() {
-    validate_swarm_creation(false).unwrap();
-    let error = validate_swarm_creation(true).unwrap_err().to_string();
+    validate_swarm_creation(false, LaunchRole::Coordinator).unwrap();
+    let error = validate_swarm_creation(true, LaunchRole::Coordinator)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("cannot create a swarm"), "{error}");
     assert!(error.contains("relaunch"), "{error}");
 }
@@ -29,4 +31,17 @@ fn workflow_is_refused_only_for_swarm_agents_that_request_it() {
             .to_string()
             .contains("workflow is unavailable for swarm agents")
     );
+}
+
+/// swarm-container-matches-repo: only a process launched as a coordinator
+/// (whose container spawn confirmed its repository) creates a swarm.
+#[test]
+fn only_an_agent_launched_as_a_coordinator_can_create_a_swarm() {
+    validate_swarm_creation(false, LaunchRole::Coordinator).unwrap();
+    for workflow_engaged in [false, true] {
+        let error = validate_swarm_creation(workflow_engaged, LaunchRole::Other)
+            .unwrap_err()
+            .to_string();
+        assert!(error.ends_with(NOT_A_COORDINATOR), "{error}");
+    }
 }

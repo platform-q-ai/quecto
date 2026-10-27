@@ -521,6 +521,11 @@ fn a_start_racing_an_acceptance_launches_nothing_unconfirmed() {
 struct FreezingLauncher(MemoryBoardStore);
 
 impl CoordinatorLaunch for FreezingLauncher {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         true
     }
@@ -620,4 +625,18 @@ fn a_start_whose_container_is_confirmed_launches_as_before() {
         .unwrap();
     assert_eq!(started.coordinator.environment_ref, "C7");
     assert_eq!(launcher.asked().len(), 1);
+}
+
+/// A container refusal's text gains the board's own sentence, a full stop
+/// first when the reason has none of its own.
+#[test]
+fn a_container_refusal_reads_as_one_sentence_whatever_its_reasons_end() {
+    assert_eq!(
+        ProjectBoardError::ContainerRefused("refused, then start again.".into()).to_string(),
+        "refused, then start again. Nothing was written to the board."
+    );
+    assert_eq!(
+        ProjectBoardError::ContainerRefused("refused with no full stop".into()).to_string(),
+        "refused with no full stop. Nothing was written to the board."
+    );
 }

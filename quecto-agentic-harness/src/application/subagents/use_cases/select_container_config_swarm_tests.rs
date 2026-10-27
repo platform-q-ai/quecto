@@ -79,7 +79,14 @@ fn entry(
         kill: vec![],
         inspect: vec![],
         repo_bound,
-        repository: repository.map(String::from),
+        repository: repository.map_or(
+            crate::application::subagents::dto::container_config::ConfigRepository::Unnamed,
+            |url| {
+                crate::application::subagents::dto::container_config::ConfigRepository::Named(
+                    url.into(),
+                )
+            },
+        ),
     }
 }
 
@@ -110,9 +117,9 @@ fn a_project_without_its_own_config_is_refused_the_global_default_of_another_rep
     let SelectContainerConfigError::Repository(refusal) = &refused else {
         panic!("a repository refusal, not {refused:?}");
     };
-    assert_eq!(refusal.config, "default");
-    assert!(matches!(refusal.container, ContainerRepository::Named(_)));
-    assert!(matches!(refusal.project, ProjectRepository::Known { .. }));
+    assert_eq!(refusal.config(), "default");
+    assert!(matches!(refusal.container(), ContainerRepository::Named(_)));
+    assert!(matches!(refusal.project(), ProjectRepository::Known { .. }));
     assert_eq!(refused.diagnostics(), &[] as &[String]);
     let text = refused.to_string();
     assert!(
@@ -179,7 +186,7 @@ fn a_config_naming_no_repository_is_refused_for_a_swarm() {
     else {
         panic!("a repository refusal");
     };
-    assert_eq!(refusal.container, ContainerRepository::Unnamed);
+    assert_eq!(*refusal.container(), ContainerRepository::Unnamed);
 }
 
 #[test]

@@ -56,7 +56,14 @@ fn config(name: &str, repository: Option<&str>) -> ContainerLaunchConfig {
         kill: vec![],
         inspect: vec![],
         repo_bound: false,
-        repository: repository.map(String::from),
+        repository: repository.map_or(
+            crate::application::subagents::dto::container_config::ConfigRepository::Unnamed,
+            |url| {
+                crate::application::subagents::dto::container_config::ConfigRepository::Named(
+                    url.into(),
+                )
+            },
+        ),
     }
 }
 
@@ -92,14 +99,15 @@ fn a_global_default_for_another_repository_is_refused_naming_both_and_the_setup(
     let refused = refusal(use_case.confirm(&config("default", Some(QUECTO))));
     assert_eq!(
         refused,
-        ContainerRepositoryRefusal {
-            config: "default".into(),
-            container: ContainerRepository::Named(identity("platform-q-ai", "quecto")),
-            project: ProjectRepository::Known {
+        ContainerRepositoryRefusal::new(
+            "default",
+            ContainerRepository::Named(identity("platform-q-ai", "quecto")),
+            ProjectRepository::Known {
                 checkout: PathBuf::from(CHECKOUT),
                 identity: identity("platform-q-ai", "quecto-pocket"),
             },
-        }
+        )
+        .unwrap()
     );
     assert_eq!(
         refused.to_string(),
@@ -137,7 +145,7 @@ fn a_global_default_naming_the_projects_repository_is_confirmed_whatever_its_cas
 fn a_config_naming_no_repository_is_refused_as_unconfirmable() {
     let (use_case, _) = confirm(Some(CHECKOUT), Ok(Some(POCKET)));
     let refused = refusal(use_case.confirm(&config("sandbox", None)));
-    assert_eq!(refused.container, ContainerRepository::Unnamed);
+    assert_eq!(*refused.container(), ContainerRepository::Unnamed);
     assert_eq!(
         refused.to_string(),
         "swarm launch refused before anything was created: this project (/work/quecto-pocket) is repository platform-q-ai/quecto-pocket, but container config 'sandbox' names no repository (its create command has no --repo). quecto cannot confirm that container clones this repository: set this repository's container up with `quecto container init --project /work/quecto-pocket --repo https://github.com/platform-q-ai/quecto-pocket`, then start again."
@@ -150,7 +158,7 @@ fn a_config_whose_repository_cannot_be_read_is_refused_its_credential_redacted()
     let url = "https://ghp_secret@example.test/a/b/c";
     let refused = refusal(use_case.confirm(&config("odd", Some(url))));
     assert_eq!(
-        refused.container,
+        *refused.container(),
         ContainerRepository::Unreadable(url.into())
     );
     let text = refused.to_string();
@@ -166,7 +174,7 @@ fn a_project_with_no_origin_is_refused_as_unconfirmable() {
     let (use_case, _) = confirm(Some(CHECKOUT), Ok(None));
     let refused = refusal(use_case.confirm(&config("default", Some(QUECTO))));
     assert_eq!(
-        refused.project,
+        *refused.project(),
         ProjectRepository::NoOrigin {
             checkout: PathBuf::from(CHECKOUT)
         }
@@ -182,7 +190,7 @@ fn a_project_whose_origin_cannot_be_read_as_a_repository_is_refused() {
     let (use_case, _) = confirm(Some(CHECKOUT), Ok(Some("/srv/git/pocket.git")));
     let refused = refusal(use_case.confirm(&config("default", Some(POCKET))));
     assert_eq!(
-        refused.project,
+        *refused.project(),
         ProjectRepository::Unreadable {
             checkout: PathBuf::from(CHECKOUT),
             origin: "/srv/git/pocket.git".into(),
@@ -195,7 +203,7 @@ fn a_project_whose_origin_git_cannot_read_is_refused() {
     let (use_case, _) = confirm(Some(CHECKOUT), Err("cannot run git: not found"));
     let refused = refusal(use_case.confirm(&config("default", Some(POCKET))));
     assert_eq!(
-        refused.project,
+        *refused.project(),
         ProjectRepository::OriginUnavailable {
             checkout: PathBuf::from(CHECKOUT),
             reason: "cannot run git: not found".into(),
@@ -212,7 +220,7 @@ fn a_project_whose_origin_git_cannot_read_is_refused() {
 fn a_launcher_with_no_project_checkout_is_refused_without_asking_git() {
     let (use_case, origins) = confirm(None, Ok(Some(POCKET)));
     let refused = refusal(use_case.confirm(&config("default", Some(POCKET))));
-    assert_eq!(refused.project, ProjectRepository::NoCheckout);
+    assert_eq!(*refused.project(), ProjectRepository::NoCheckout);
     assert!(origins.asked.lock().unwrap().is_empty());
 }
 
@@ -223,4 +231,58 @@ fn the_debug_form_shows_the_checkout_only() {
         format!("{use_case:?}"),
         "ConfirmContainerRepository { checkout: Some(\"/work/quecto-pocket\"), .. }"
     );
+}
+
+/// More than one `--repo`: the shipped script takes the last, an earlier
+/// reader took the first, so neither is trusted and the launch is refused.
+#[test]
+fn a_config_naming_more_than_one_repository_is_refused_as_unconfirmable() {
+    let (use_case, _) = confirm(Some(CHECKOUT), Ok(Some(POCKET)));
+    let mut repeated = config("twice", Some(POCKET));
+    repeated.repository =
+        crate::application::subagents::dto::container_config::ConfigRepository::Repeated(vec![
+            POCKET.into(),
+            QUECTO.into(),
+        ]);
+    let refused = refusal(use_case.confirm(&repeated));
+    assert_eq!(
+        *refused.container(),
+        ContainerRepository::Repeated(vec![POCKET.into(), QUECTO.into()])
+    );
+    assert!(
+        refused.to_string().contains(
+            "container config 'twice' names --repo more than once (https://github.com/platform-q-ai/quecto-pocket, https://github.com/platform-q-ai/quecto), so which repository it clones cannot be told. quecto cannot confirm that container clones this repository"
+        ),
+        "{refused}"
+    );
+}
+
+/// The checked constructor never makes a refusal of a matching pair, and
+/// makes one of every other.
+#[test]
+fn a_matching_pair_is_never_a_refusal() {
+    let known = || ProjectRepository::Known {
+        checkout: PathBuf::from(CHECKOUT),
+        identity: identity("platform-q-ai", "quecto-pocket"),
+    };
+    let matching = ContainerRepository::Named(identity("Platform-Q-AI", "Quecto-Pocket"));
+    assert_eq!(
+        ContainerRepositoryRefusal::new("c", matching.clone(), known()),
+        None
+    );
+    let refused = ContainerRepositoryRefusal::new("c", matching, ProjectRepository::NoCheckout)
+        .expect("an unknown project is refused");
+    assert_eq!(refused.config(), "c");
+    assert_eq!(*refused.project(), ProjectRepository::NoCheckout);
+    for container in [
+        ContainerRepository::Named(identity("platform-q-ai", "quecto")),
+        ContainerRepository::Unnamed,
+        ContainerRepository::Unreadable("/srv/git/x".into()),
+        ContainerRepository::Repeated(vec![POCKET.into(), POCKET.into()]),
+    ] {
+        assert!(
+            ContainerRepositoryRefusal::new("c", container.clone(), known()).is_some(),
+            "{container:?}"
+        );
+    }
 }

@@ -636,24 +636,24 @@ impl crate::application::project_board::ports::RunLiveness for FailedButRunning 
     }
 }
 
+use crate::application::project_board::ports::LaunchedCoordinator;
+use crate::application::project_board::ports::{CoordinatorRequest as Req, LaunchRefused};
+
 impl crate::application::project_board::ports::CoordinatorLaunch for FailedButRunning {
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
     fn may_launch(&self) -> bool {
         true
     }
-
     fn launch(
         &self,
-        _: &crate::application::project_board::ports::CoordinatorRequest,
+        _: &Req,
         _: &std::sync::atomic::AtomicBool,
-    ) -> Result<
-        crate::application::project_board::ports::LaunchedCoordinator,
-        crate::application::project_board::ports::LaunchRefused,
-    > {
-        Err(
-            crate::application::project_board::ports::LaunchRefused::because(
-                "the call was cancelled while the coordinator launched: the launch was dropped",
-            ),
-        )
+    ) -> Result<LaunchedCoordinator, LaunchRefused> {
+        Err(LaunchRefused::because(
+            "the call was cancelled while the coordinator launched: the launch was dropped",
+        ))
     }
 }
 

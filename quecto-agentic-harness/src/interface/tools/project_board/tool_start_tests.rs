@@ -162,6 +162,11 @@ impl crate::application::project_board::ports::RunLiveness for Launching {
 }
 
 impl crate::application::project_board::ports::CoordinatorLaunch for Launching {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         true
     }
@@ -388,6 +393,11 @@ impl crate::application::project_board::ports::RunLiveness for Failing {
 }
 
 impl crate::application::project_board::ports::CoordinatorLaunch for Failing {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         true
     }
@@ -478,6 +488,11 @@ impl crate::application::project_board::ports::RunLiveness for StillRunning {
 }
 
 impl crate::application::project_board::ports::CoordinatorLaunch for StillRunning {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         true
     }

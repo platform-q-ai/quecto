@@ -4,33 +4,9 @@
 //! unchanged.
 use super::tests::{base_config, test_supervisor};
 use super::*;
+use crate::infrastructure::test_support::isolated_git::checkout_with_origin as checkout;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
-
-/// A project checkout whose `origin` is `origin`.
-fn checkout(root: &Path, origin: &str) -> PathBuf {
-    let project = root.join("project");
-    std::fs::create_dir_all(&project).unwrap();
-    for args in [
-        &["init", "-q"][..],
-        &["remote", "add", "origin", origin][..],
-    ] {
-        let status = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&project)
-            .args(args)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_COMMON_DIR")
-            .status()
-            .unwrap();
-        assert!(status.success(), "git {args:?}");
-    }
-    project
-}
 
 /// A config file whose one default entry clones `repository` with a create
 /// script that leaves `marker` behind when it runs.
@@ -93,12 +69,12 @@ async fn a_swarm_is_refused_a_container_of_another_repository_before_its_create_
     let root = TempDir::new().unwrap();
     let project = checkout(
         root.path(),
-        "git@github.com:platform-q-ai/quecto-pocket.git",
+        "git@git.example.test:platform-q-ai/quecto-pocket.git",
     );
     let marker = root.path().join("created");
     let config = config_file(
         root.path(),
-        "https://github.com/platform-q-ai/quecto",
+        "https://git.example.test/platform-q-ai/quecto",
         &marker,
     );
     let Err(error) = spawn(root.path(), &project, config, true).await else {
@@ -112,12 +88,12 @@ async fn a_swarm_is_refused_a_container_of_another_repository_before_its_create_
         "{text}"
     );
     assert!(
-        text.contains("is repository platform-q-ai/quecto-pocket, but container config 'default' clones platform-q-ai/quecto."),
+        text.contains("is repository git.example.test/platform-q-ai/quecto-pocket, but container config 'default' clones git.example.test/platform-q-ai/quecto."),
         "{text}"
     );
     assert!(
         text.contains(&format!(
-            "`quecto container init --project {} --repo https://github.com/platform-q-ai/quecto-pocket`",
+            "`quecto container init --project {} --repo https://git.example.test/platform-q-ai/quecto-pocket`",
             project.display()
         )),
         "{text}"
@@ -130,7 +106,7 @@ async fn a_swarm_is_refused_a_container_naming_no_repository() {
     let root = TempDir::new().unwrap();
     let project = checkout(
         root.path(),
-        "https://github.com/platform-q-ai/quecto-pocket",
+        "https://git.example.test/platform-q-ai/quecto-pocket",
     );
     let marker = root.path().join("created");
     let config = config_file(root.path(), "/srv/git/somewhere", &marker);
@@ -151,12 +127,12 @@ async fn a_swarm_in_a_container_of_its_own_repository_creates_as_before() {
     let root = TempDir::new().unwrap();
     let project = checkout(
         root.path(),
-        "git@github.com:platform-q-ai/quecto-pocket.git",
+        "git@git.example.test:platform-q-ai/quecto-pocket.git",
     );
     let marker = root.path().join("created");
     let config = config_file(
         root.path(),
-        "https://github.com/Platform-Q-AI/quecto-pocket.git",
+        "https://git.example.test/Platform-Q-AI/quecto-pocket.git",
         &marker,
     );
     let Err(error) = spawn(root.path(), &project, config, true).await else {
@@ -174,12 +150,12 @@ async fn an_ordinary_container_child_is_not_held_to_the_swarm_rule() {
     let root = TempDir::new().unwrap();
     let project = checkout(
         root.path(),
-        "git@github.com:platform-q-ai/quecto-pocket.git",
+        "git@git.example.test:platform-q-ai/quecto-pocket.git",
     );
     let marker = root.path().join("created");
     let config = config_file(
         root.path(),
-        "https://github.com/platform-q-ai/quecto",
+        "https://git.example.test/platform-q-ai/quecto",
         &marker,
     );
     let Err(error) = spawn(root.path(), &project, config, false).await else {

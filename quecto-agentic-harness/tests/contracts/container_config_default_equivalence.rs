@@ -41,7 +41,8 @@ fn config(name: &str, default: bool, create: &[&str]) -> ContainerLaunchConfig {
         kill: vec![],
         inspect: vec![],
         repo_bound: false,
-        repository: None,
+        repository:
+            quecto::application::subagents::dto::container_config::ConfigRepository::Unnamed,
     }
 }
 
@@ -162,7 +163,9 @@ fn an_empty_set_has_no_default_and_no_launch() {
 fn repo_standard(default: bool) -> ContainerLaunchConfig {
     ContainerLaunchConfig {
         repo_bound: true,
-        repository: Some("https://example.test/repo".into()),
+        repository: quecto::application::subagents::dto::container_config::ConfigRepository::Named(
+            "https://example.test/repo".into(),
+        ),
         ..config("standard", default, &["/bin/create"])
     }
 }

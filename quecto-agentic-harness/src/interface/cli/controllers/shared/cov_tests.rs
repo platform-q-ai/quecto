@@ -457,6 +457,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
                 session_key: "shared-runtime".into(),
                 recall: crate::composition::sessions::build_retention_handles(tmp.path()).recall,
                 spawned: false,
+                coordinator: false,
                 parent_session_name: Some("parent".into()),
                 parent_config_path: None,
                 effort_control: None,

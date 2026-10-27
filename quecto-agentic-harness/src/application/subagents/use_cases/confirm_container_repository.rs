@@ -16,7 +16,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::application::subagents::dto::container_config::ContainerLaunchConfig;
+use crate::application::subagents::dto::container_config::{
+    ConfigRepository, ContainerLaunchConfig,
+};
 use crate::application::subagents::dto::container_repository::{
     ContainerRepository, ContainerRepositoryRefusal, ProjectRepository,
 };
@@ -56,17 +58,17 @@ impl ConfirmContainerRepository {
     ) -> Result<RepositoryIdentity, Box<ContainerRepositoryRefusal>> {
         let project = self.project();
         let container = self.container(config);
-        match (&project, &container) {
+        let confirmed = match (&project, &container) {
             (ProjectRepository::Known { identity, .. }, ContainerRepository::Named(cloned))
                 if identity == cloned =>
             {
-                Ok(identity.clone())
+                Some(identity.clone())
             }
-            _ => Err(Box::new(ContainerRepositoryRefusal {
-                config: config.name.clone(),
-                container,
-                project,
-            })),
+            _ => None,
+        };
+        match ContainerRepositoryRefusal::new(config.name.clone(), container, project) {
+            None => Ok(confirmed.expect("only a confirmed pair is no refusal")),
+            Some(refusal) => Err(Box::new(refusal)),
         }
     }
 
@@ -85,12 +87,13 @@ impl ConfirmContainerRepository {
     }
 
     fn container(&self, config: &ContainerLaunchConfig) -> ContainerRepository {
-        match config.repository.as_deref() {
-            Some(url) => match self.urls.identity(url) {
+        match &config.repository {
+            ConfigRepository::Named(url) => match self.urls.identity(url) {
                 Some(identity) => ContainerRepository::Named(identity),
-                None => ContainerRepository::Unreadable(url.to_string()),
+                None => ContainerRepository::Unreadable(url.clone()),
             },
-            None => ContainerRepository::Unnamed,
+            ConfigRepository::Repeated(urls) => ContainerRepository::Repeated(urls.clone()),
+            ConfigRepository::Unnamed => ContainerRepository::Unnamed,
         }
     }
 }

@@ -241,6 +241,10 @@ impl Runtime {
                 "--persist",
                 "--session",
                 "swarm-supervision",
+                // Launched as a coordinator, as spawn launches one: only a
+                // coordinator creates a run (swarm-container-matches-repo).
+                "--spawned",
+                "--coordinator",
             ])
             .arg("--socket")
             .arg(&socket)

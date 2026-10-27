@@ -23,6 +23,9 @@ pub enum ContainerRepository {
     /// No `--repo` at all: a sandbox, or a script that clones some other
     /// way. Which repository it holds cannot be told.
     Unnamed,
+    /// `--repo` more than once, each URL as written: which one the script
+    /// clones cannot be told.
+    Repeated(Vec<String>),
 }
 
 /// The launching project's repository, as launch policy read it.
@@ -46,13 +49,14 @@ pub enum ProjectRepository {
 
 /// A swarm launch refused because its container config is not confirmed
 /// to clone the launching project's own repository: the two do not match,
-/// or either cannot be determined. Raised before anything is created.
+/// or either cannot be determined. Raised before anything is created. Only
+/// [`Self::new`] makes one, so a matching pair is never a refusal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerRepositoryRefusal {
     /// The selected container config's name.
-    pub config: String,
-    pub container: ContainerRepository,
-    pub project: ProjectRepository,
+    config: String,
+    container: ContainerRepository,
+    project: ProjectRepository,
 }
 
 /// The opening every refusal shares.
@@ -69,6 +73,43 @@ fn shown_url(url: &str) -> String {
 }
 
 impl ContainerRepositoryRefusal {
+    /// The refusal of a swarm launch from `project` into container config
+    /// `config`, which clones `container`; `None` when the two are known
+    /// and the same repository, which is no refusal.
+    pub fn new(
+        config: impl Into<String>,
+        container: ContainerRepository,
+        project: ProjectRepository,
+    ) -> Option<Self> {
+        match (&project, &container) {
+            (ProjectRepository::Known { identity, .. }, ContainerRepository::Named(cloned))
+                if identity == cloned =>
+            {
+                None
+            }
+            _ => Some(Self {
+                config: config.into(),
+                container,
+                project,
+            }),
+        }
+    }
+
+    /// The selected container config's name.
+    pub fn config(&self) -> &str {
+        &self.config
+    }
+
+    /// The repository the container config clones, as read.
+    pub fn container(&self) -> &ContainerRepository {
+        &self.container
+    }
+
+    /// The launching project's repository, as read.
+    pub fn project(&self) -> &ProjectRepository {
+        &self.project
+    }
+
     fn project_clause(&self) -> String {
         match &self.project {
             ProjectRepository::Known { checkout, identity } => format!(
@@ -109,6 +150,13 @@ impl ContainerRepositoryRefusal {
             ContainerRepository::Unnamed => format!(
                 "container config '{config}' names no repository (its create command has no --repo)"
             ),
+            ContainerRepository::Repeated(urls) => format!(
+                "container config '{config}' names --repo more than once ({}), so which repository it clones cannot be told",
+                urls.iter()
+                    .map(|url| shown_url(url))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         }
     }
 
@@ -118,7 +166,7 @@ impl ContainerRepositoryRefusal {
                 ProjectRepository::Known { checkout, identity },
                 ContainerRepository::Named(container),
             ) => {
-                assert_ne!(identity, container, "a matching container is never refused");
+                debug_assert_ne!(identity, container, "Self::new never refuses a match");
                 format!(
                     "A swarm runs only in a container of its own repository: set this repository's container up with `quecto container init --project {} --repo {}`, then start again.",
                     checkout.display(),
@@ -127,7 +175,9 @@ impl ContainerRepositoryRefusal {
             }
             (
                 ProjectRepository::Known { checkout, identity },
-                ContainerRepository::Unreadable(_) | ContainerRepository::Unnamed,
+                ContainerRepository::Unreadable(_)
+                | ContainerRepository::Unnamed
+                | ContainerRepository::Repeated(_),
             ) => format!(
                 "quecto cannot confirm that container clones this repository: set this repository's container up with `quecto container init --project {} --repo {}`, then start again.",
                 checkout.display(),

@@ -308,6 +308,7 @@ fn build_official_tool_extensions_lists_core_workspace_tools() {
         ),
         swarm_participation: Participation::none(),
         workflow_engine: Default::default(),
+        launch: crate::infrastructure::tools::swarm::swarm_control::LaunchRole::Other,
         swarm_context: None,
         workspace: tmp.path().to_path_buf(),
         sandbox,
@@ -450,6 +451,7 @@ fn register_bundled_native_tools_marks_official_not_extension_tracked() {
             swarm_participation:
                 crate::infrastructure::tools::swarm::swarm_bridge::Participation::none(),
             workflow_engine: Default::default(),
+            launch: crate::infrastructure::tools::swarm::swarm_control::LaunchRole::Other,
             swarm_context: None,
             workspace: tmp.path().to_path_buf(),
             sandbox,

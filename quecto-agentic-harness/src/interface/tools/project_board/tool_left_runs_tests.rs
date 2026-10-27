@@ -69,6 +69,11 @@ fn board() -> &'static MemoryBoardStore {
 struct LeftBehind;
 
 impl CoordinatorLaunch for LeftBehind {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         false
     }
@@ -257,6 +262,11 @@ fn a_refused_end_says_so_naming_its_rule() {
 struct StillRunning;
 
 impl CoordinatorLaunch for StillRunning {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         false
     }
@@ -327,6 +337,11 @@ fn a_board_that_cannot_be_read_says_so() {
 struct NeverStarted;
 
 impl CoordinatorLaunch for NeverStarted {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         false
     }

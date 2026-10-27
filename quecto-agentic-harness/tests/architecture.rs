@@ -1770,7 +1770,9 @@ fn application_path_allowed(path: &str) -> bool {
             "subagents",
             "dto",
             "container_config",
-            "ContainerConfigSource"
+            // The `--repo` a create argv names (swarm-container-matches-repo).
+            "ConfigRepository"
+            | "ContainerConfigSource"
             | "ContainerConfigsError"
             | "ContainerLaunchConfig"
             | "EffectiveContainerConfigSet"

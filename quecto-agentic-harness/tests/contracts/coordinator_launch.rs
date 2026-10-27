@@ -93,20 +93,54 @@ pub(super) fn launcher(
 }
 
 /// A launcher over any `spawn`, its policy allowing it, stopping with
-/// `agent_cmd`.
+/// `agent_cmd`, judging containers with a selection whose default clones
+/// its project's own repository (swarm-container-matches-repo); the
+/// project lives as long as the returned directory.
 fn launcher_over(
     spawn: Arc<dyn Tool>,
     agent_cmd: Arc<Spawn>,
-) -> (SpawnCoordinatorLauncher, ToolRegistryImpl) {
+) -> (
+    SpawnCoordinatorLauncher,
+    ToolRegistryImpl,
+    tempfile::TempDir,
+) {
     let permit = SpawnPermit::default();
     let mut registry = ToolRegistryImpl::new();
     registry.register(Arc::clone(&spawn));
     registry.observe_policy(Arc::new(permit.clone()));
     let subagents = quecto::infrastructure::tools::agents::subagent_registry::new_registry();
+    let (project, selection) = confirmed_selection();
     (
-        SpawnCoordinatorLauncher::new(spawn, agent_cmd, permit, subagents),
+        SpawnCoordinatorLauncher::new(spawn, agent_cmd, permit, subagents)
+            .judging_containers(Some(selection)),
         registry,
+        project,
     )
+}
+
+/// A project whose `origin` is the repository its config's default
+/// container clones, and the selection over it, as composition builds one.
+fn confirmed_selection() -> (
+    tempfile::TempDir,
+    Arc<quecto::application::subagents::use_cases::SelectContainerConfig>,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let repository = "https://git.example.test/o/project";
+    let project = quecto::infrastructure::test_support::isolated_git::checkout_with_origin(
+        root.path(),
+        repository,
+    );
+    let config = root.path().join("config.json");
+    let entry = serde_json::json!({"container_configs": {"default": {"default": true,
+        "create": ["/bin/true", "--repo", repository], "cleanup": ["/bin/true"]}}});
+    std::fs::write(&config, entry.to_string()).unwrap();
+    let selection = quecto::composition::container_configs::build_project_container_config_handles(
+        root.path(),
+        Some(quecto::application::configuration::dto::ConfigSelection::Explicit(config)),
+        &project,
+    )
+    .selection;
+    (root, selection)
 }
 
 pub(super) fn launcher_stopping_with(

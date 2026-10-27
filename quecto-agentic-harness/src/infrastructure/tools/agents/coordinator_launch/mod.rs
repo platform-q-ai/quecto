@@ -36,7 +36,7 @@ use crate::application::project_board::ports::{
     StartedRuns,
 };
 use crate::application::subagents::dto::container_config::{
-    ContainerConfigSource, SelectContainerConfigRequest,
+    ContainerConfigSource, SelectContainerConfigError, SelectContainerConfigRequest,
 };
 use crate::application::subagents::use_cases::SelectContainerConfig;
 use crate::application::tools::ports::Tool;
@@ -209,6 +209,9 @@ pub fn session_launcher(
 /// Why a launch was refused before spawn answered.
 const NOT_ALLOWED: &str = "this session's policy does not allow spawn";
 const NO_RUNTIME: &str = "no runtime to launch the coordinator on";
+/// Why a launcher composed with no container selection refuses a start
+/// before its write (swarm-container-matches-repo).
+pub const NO_SELECTION: &str = "swarm launch refused before anything was created: this session has no container-config selection, so quecto cannot confirm that the coordinator's container clones this project's repository";
 const CANCELLED: &str =
     "the call was cancelled while the coordinator launched: the launch was dropped";
 
@@ -226,18 +229,34 @@ impl CoordinatorLaunch for SpawnCoordinatorLauncher {
 
     /// The selection the coordinator's spawn makes (`container: true`, no
     /// `config` file: the launching agent's own layers), as a swarm's: its
-    /// refusal, a container of another repository's above all, in spawn's
-    /// own words.
+    /// repository refusal, in spawn's own words. Any other selection fault
+    /// is left to the launch, which refuses it as before (`launch_failed`).
+    /// A launcher with no selection cannot confirm the repository, so it
+    /// refuses.
     fn container_refusal(&self) -> Option<String> {
-        let containers = self.containers.as_deref()?;
+        let Some(containers) = self.containers.as_deref() else {
+            return Some(NO_SELECTION.into());
+        };
         let request = SelectContainerConfigRequest {
             source: ContainerConfigSource::LaunchingAgent,
             name: None,
         };
-        containers
-            .select_for_swarm(&request)
-            .err()
-            .map(|refusal| refusal.to_string())
+        match containers.select_for_swarm(&request) {
+            Ok(_) => None,
+            Err(
+                refusal @ (SelectContainerConfigError::Repository(_)
+                | SelectContainerConfigError::NoRepositoryCheck { .. }),
+            ) => Some(refusal.to_string()),
+            Err(
+                SelectContainerConfigError::RelativeConfigPath(_)
+                | SelectContainerConfigError::Unavailable(_)
+                | SelectContainerConfigError::OverlayWithheld { .. }
+                | SelectContainerConfigError::NoDefault { .. }
+                | SelectContainerConfigError::Unknown { .. }
+                | SelectContainerConfigError::InvalidArgv { .. }
+                | SelectContainerConfigError::StandardScriptAltered { .. },
+            ) => None,
+        }
     }
 
     fn launch(

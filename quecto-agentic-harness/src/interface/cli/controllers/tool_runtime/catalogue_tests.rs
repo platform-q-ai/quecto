@@ -63,6 +63,7 @@ fn build_runtime_guarded(
         session_key: "catalogue-test".to_string(),
         recall: crate::composition::sessions::build_retention_handles(tmp.path()).recall,
         spawned,
+        coordinator: false,
         parent_session_name: None,
         parent_config_path: None,
         effort_control: None,

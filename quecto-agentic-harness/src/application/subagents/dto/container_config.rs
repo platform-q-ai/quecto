@@ -33,9 +33,42 @@ pub struct ContainerLaunchConfig {
     /// `.quecto/config.json` overlay (repo-bound), not by the global file.
     pub repo_bound: bool,
     /// The repository the create argv bakes in (`--repo <url>` for the
-    /// shipped scripts); `None` for a sandbox config or an adapter whose
-    /// argv names none in that form.
-    pub repository: Option<String>,
+    /// shipped scripts).
+    pub repository: ConfigRepository,
+}
+
+/// The `--repo` a create argv names, before the `--` that starts the child
+/// command (swarm-container-matches-repo).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigRepository {
+    /// None in that form: a sandbox, or an adapter that clones some other
+    /// way.
+    Unnamed,
+    /// Exactly one non-empty `--repo <url>`.
+    Named(String),
+    /// More than one `--repo`: which the script clones depends on how it
+    /// reads its arguments, so none is taken as the repository.
+    Repeated(Vec<String>),
+}
+
+impl ConfigRepository {
+    /// The one repository named, when exactly one is.
+    pub fn named(&self) -> Option<&str> {
+        match self {
+            Self::Named(url) => Some(url),
+            Self::Unnamed | Self::Repeated(_) => None,
+        }
+    }
+
+    /// As a listing shows it: the one URL, or every URL of a repeated
+    /// `--repo` joined by ", ".
+    pub fn shown(&self) -> Option<String> {
+        match self {
+            Self::Unnamed => None,
+            Self::Named(url) => Some(url.clone()),
+            Self::Repeated(urls) => Some(urls.join(", ")),
+        }
+    }
 }
 
 impl ContainerLaunchConfig {

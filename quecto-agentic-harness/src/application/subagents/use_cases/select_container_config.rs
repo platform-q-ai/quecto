@@ -94,7 +94,7 @@ impl SelectContainerConfig {
             .confirm(&selected.config)
             .map_err(SelectContainerConfigError::Repository)?;
         debug_assert!(
-            selected.config.repository.is_some(),
+            selected.config.repository.named().is_some(),
             "a confirmed container names the repository {confirmed}"
         );
         Ok(selected)

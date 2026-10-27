@@ -670,11 +670,19 @@ and the answer lists them as `not_applied`.
   the same repository as the checkout's `origin` (host, owner and name,
   case-insensitive; `https`, `ssh` and scp forms, `.git` and trailing
   slashes alike). A global default serves only the repository it names. A
-  config that names no repository, or one either side of which cannot be
-  read, is refused too: quecto cannot confirm it. The reason names both
-  repositories and the fix, `quecto container init --project <dir> --repo
-  <url>`. `spawn` with `coordinator: true` applies the same rule, so an
-  ad-hoc swarm is held to it as well.
+  config that names no repository or more than one, or one either side of
+  which cannot be read, is refused too: quecto cannot confirm it. The
+  reason names both repositories and the fix, `quecto container init
+  --project <dir> --repo <url>`. A session with no container-config
+  selection is refused the same way. Any other fault in selecting the
+  config (no default, an unknown or altered entry, a withheld overlay) is
+  not judged here: the launch refuses it as `launch_failed`, as before.
+- `spawn` with `coordinator: true` applies the same repository rule before
+  its create script runs, and only a process launched as a coordinator
+  (`--coordinator`, as that spawn launches one) may `swarm` `create`: any
+  other agent, a plain container child included, is refused. So every
+  swarm, a board start's or an ad-hoc one, runs in a container whose
+  repository was confirmed.
 - If the coordinator does not launch, the call is cancelled (after the write,
   then nothing is launched; or during the launch, then the launch is dropped
   and a coordinator that came up anyway is stopped), or the launch fails

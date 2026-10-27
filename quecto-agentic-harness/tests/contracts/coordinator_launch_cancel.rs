@@ -82,7 +82,7 @@ fn cancel_after(cancelled: &Arc<AtomicBool>, after: Duration) {
 async fn a_cancel_during_the_launch_drops_spawns_work() {
     let dropped = Arc::new(AtomicBool::new(false));
     let spawn = Arc::new(Stalling(Arc::clone(&dropped)));
-    let (launching, _registry) = launcher_over(spawn, agent_cmd());
+    let (launching, _registry, _project) = launcher_over(spawn, agent_cmd());
     let cancelled = Arc::new(AtomicBool::new(false));
     cancel_after(&cancelled, Duration::from_millis(300));
     let began = Instant::now();
@@ -130,7 +130,7 @@ async fn a_coordinator_that_came_up_as_the_call_was_cancelled_is_stopped() {
     let cancelled = Arc::new(AtomicBool::new(false));
     let spawn = Arc::new(CameUpAsCancelled(Arc::clone(&cancelled)));
     let stopper = agent_cmd();
-    let (launching, _registry) = launcher_over(spawn, stopper.clone());
+    let (launching, _registry, _project) = launcher_over(spawn, stopper.clone());
     let flag = Arc::clone(&cancelled);
     let refused = tokio::task::spawn_blocking(move || launching.launch(&request(), &flag))
         .await
@@ -231,7 +231,7 @@ async fn a_start_cancelled_during_its_launch_drops_it_and_is_undone() {
     ready_board(&store.client_as(ada.clone()));
     let dropped = Arc::new(AtomicBool::new(false));
     let spawn = Arc::new(Stalling(Arc::clone(&dropped)));
-    let (launching, _registry) = launcher_over(spawn, agent_cmd());
+    let (launching, _registry, _project) = launcher_over(spawn, agent_cmd());
     let launching: Arc<dyn CoordinatorLaunch> = Arc::new(launching);
     let cancelled = Arc::new(AtomicBool::new(false));
     let starting = StartBoardTask::new(

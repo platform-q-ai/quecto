@@ -90,6 +90,7 @@ fn workflow_agent_creates(world: &mut QuectoWorld) {
                 "member_limit":2,"deadline":deadline}),
             quecto::infrastructure::tools::swarm::swarm_bridge::Participation::shared(),
             engaged_workflow(),
+            quecto::infrastructure::tools::swarm::swarm_control::LaunchRole::Coordinator,
         ),
     );
     let is_error = outcome.is_err();

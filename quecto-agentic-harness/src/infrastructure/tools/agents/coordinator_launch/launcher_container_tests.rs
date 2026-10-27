@@ -85,7 +85,9 @@ fn default_config(repository: &str) -> ContainerLaunchConfig {
         kill: vec![],
         inspect: vec![],
         repo_bound: false,
-        repository: Some(repository.into()),
+        repository: crate::application::subagents::dto::container_config::ConfigRepository::Named(
+            repository.into(),
+        ),
     }
 }
 
@@ -136,7 +138,41 @@ fn a_default_of_the_projects_repository_in_another_spelling_is_not_refused() {
     assert_eq!(launcher.container_refusal(), None);
 }
 
+/// No selection: the repository cannot be confirmed, so it refuses.
 #[test]
-fn a_launcher_with_no_selection_leaves_the_judgement_to_spawn() {
-    assert_eq!(launcher(None).container_refusal(), None);
+fn a_launcher_with_no_selection_refuses() {
+    assert_eq!(
+        launcher(None).container_refusal(),
+        Some(super::NO_SELECTION.to_string())
+    );
+}
+
+/// A selection fault that is not the repository's (here: no default at
+/// all) is left to the launch, which refuses it as `launch_failed` as
+/// before.
+#[test]
+fn a_selection_fault_other_than_the_repository_is_left_to_the_launch() {
+    let confirm = ConfirmContainerRepository::new(
+        Some(PathBuf::from("/work/quecto-pocket")),
+        Arc::new(Origin("https://github.com/platform-q-ai/quecto-pocket")),
+        Arc::new(RemoteRepositoryUrls),
+    );
+    let empty = SelectContainerConfig::new(Arc::new(Configs(vec![])), Arc::new(NotStandard))
+        .confirming(Arc::new(confirm));
+    assert_eq!(launcher(Some(Arc::new(empty))).container_refusal(), None);
+}
+
+/// A selection with no repository check is a repository refusal.
+#[test]
+fn a_selection_without_a_repository_check_refuses() {
+    let unchecked = SelectContainerConfig::new(
+        Arc::new(Configs(vec![default_config(
+            "https://github.com/platform-q-ai/quecto-pocket",
+        )])),
+        Arc::new(NotStandard),
+    );
+    let refusal = launcher(Some(Arc::new(unchecked)))
+        .container_refusal()
+        .expect("refused");
+    assert!(refusal.contains("has no repository check"), "{refusal}");
 }
