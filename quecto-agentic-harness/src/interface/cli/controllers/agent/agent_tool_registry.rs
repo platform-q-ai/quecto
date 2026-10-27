@@ -141,8 +141,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         .environment_registry
         .map(|build| build(base_dir, &session_key, !flags.spawned));
     let swarm_context = crate::interface::cli::controllers::tool_runtime::swarm_context();
-    // The one-shot CLI guard is a stacked follow-up: only a UDS root is guarded.
-    let parent_outcome = (trusted_root(flags, swarm_context.is_some()) && flags.uds_mode)
+    let parent_outcome = trusted_root(flags, swarm_context.is_some())
         .then_some(flags.parent_outcome)
         .flatten()
         .and_then(|build| build());

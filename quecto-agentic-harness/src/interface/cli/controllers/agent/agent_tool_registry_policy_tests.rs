@@ -312,17 +312,16 @@ fn a_non_stable_id_is_warned_about() {
 #[test]
 fn issue_2708_cli_parent_only_a_switched_on_root_is_guarded() {
     let config = Config::default();
-    // The one-shot CLI guard is a stacked follow-up: only a UDS root yet.
     for (name, uds) in [("cli", false), ("uds", true)] {
         let mut root = cli_flags();
         root.uds_mode = uds;
         let (built, stderr) = build(&root, &config);
-        assert_eq!(built.parent_outcome.is_some(), uds, "{name} root: {stderr}");
-        assert_eq!(
+        assert!(built.parent_outcome.is_some(), "{name} root: {stderr}");
+
+        assert!(
             built
                 .extension_prompt_snippets
                 .contains(crate::domain::agents::value_objects::turn_outcome::DECLARE_GUIDANCE),
-            uds,
             "{name}: a guarded root is told to declare"
         );
     }
