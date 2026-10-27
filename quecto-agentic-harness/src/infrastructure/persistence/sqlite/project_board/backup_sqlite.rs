@@ -70,6 +70,25 @@ fn copy_error(error: rusqlite::Error) -> BackupError {
         _ => BackupError::PublishFailed,
     }
 }
+/// Switches a freshly copied snapshot to rollback-journal mode. The copied
+/// header carries the source's WAL flag; reading first lets the pager see it so
+/// the switch rewrites the header and checkpoints away the copy's own `-wal`.
+#[cfg(target_os = "linux")]
+pub(super) fn rollback_journal(connection: &Connection) -> Result<(), BackupError> {
+    connection
+        .query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(copy_error)?;
+    let mode: String = connection
+        .query_row("PRAGMA journal_mode=DELETE", [], |row| row.get(0))
+        .map_err(copy_error)?;
+    if mode.eq_ignore_ascii_case("delete") {
+        Ok(())
+    } else {
+        Err(BackupError::PublishFailed)
+    }
+}
 #[cfg(target_os = "linux")]
 pub(super) fn classify(error: rusqlite::Error) -> BackupError {
     match error.sqlite_error_code() {

@@ -1,6 +1,6 @@
 //! Linux backup execution. FDs and transactions remain owned until cleanup/join.
 use super::super::backup_files::{AdmittedBackupFile, anchored as fs};
-use super::super::backup_sqlite::{ValidationLease, classify};
+use super::super::backup_sqlite::{ValidationLease, classify, rollback_journal};
 use super::*;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use rusqlite::{Connection, OpenFlags};
@@ -73,7 +73,7 @@ struct Partial<'a> {
 impl Drop for Partial<'_> {
     fn drop(&mut self) {
         // An unpredictable exclusive name makes these sidecars invocation-owned.
-        for suffix in ["-wal", "-shm", "-journal"] {
+        for suffix in SIDECARS {
             let name = format!("{}{suffix}", self.owned.name);
             if let Ok((_, file)) = record(self.directory, &name) {
                 let _ = fs::remove(self.directory, &file);
@@ -303,6 +303,9 @@ impl SqliteBoardBackup {
             &mut copy_remaining,
         )?;
         drop(connection);
+        // #2767: the copy carries the source's WAL header; a rollback-journal
+        // snapshot is validated, published and later re-read without sidecars.
+        rollback_journal(&destination)?;
         outcome.stage = BackupStage::Validation;
         self.guarded(&destination, budget, || {
             admission::admit(&destination, &outcome.board)?;
@@ -402,34 +405,15 @@ impl SqliteBoardBackup {
         board: &str,
         request: &BackupRequest,
     ) -> Result<Vec<(AdmittedBackupFile, Timestamp)>, BackupError> {
-        let prefix = format!("{board}-");
         let mut result = Vec::new();
         for name in entries(directory, request.limits.entries)? {
-            if let Some(text) = name
-                .strip_prefix(&prefix)
-                .and_then(|n| n.strip_suffix(".sqlite"))
-            {
-                if text.len() == 16 && text.is_ascii() {
-                    let spelled = format!(
-                        "{}-{}-{}T{}:{}:{}Z",
-                        &text[..4],
-                        &text[4..6],
-                        &text[6..8],
-                        &text[9..11],
-                        &text[11..13],
-                        &text[13..15]
-                    );
-                    if text.as_bytes()[8] == b'T' && text.as_bytes()[15] == b'Z' {
-                        if let Ok(at) = Timestamp::parse(&spelled) {
-                            if result.len() < request.limits.candidates {
-                            } else {
-                                return Err(BackupError::ResourceLimit);
-                            }
-                            let (_, candidate) = record(directory, &name)?;
-                            result.push((candidate, at));
-                        }
-                    }
+            if let Some(at) = snapshot_at(board, &name) {
+                if result.len() < request.limits.candidates {
+                } else {
+                    return Err(BackupError::ResourceLimit);
                 }
+                let (_, candidate) = record(directory, &name)?;
+                result.push((candidate, at));
             }
         }
         result.sort_by(|a, b| b.1.cmp(&a.1));
@@ -465,13 +449,95 @@ impl SqliteBoardBackup {
                 outcome.deleted += 1;
             }
         }
-        if outcome.deleted > 0 {
+        let swept = self.sweep_sidecars(directory, canonical, budget, &outcome.board)?;
+        if outcome.deleted > 0 || swept > 0 {
             self.files
                 .sync_directory(directory)
                 .map_err(|_| BackupError::RetentionFailed)?;
         }
         Ok(())
     }
+    /// Removes this board's canonical sidecars whose snapshot is gone: those of
+    /// the snapshots just pruned and orphans left by earlier runs (#2767).
+    /// Runs under the board lock, so no publisher of this board races it.
+    fn sweep_sidecars(
+        &self,
+        directory: &File,
+        canonical: &Path,
+        budget: &Budget<'_>,
+        board: &str,
+    ) -> Result<usize, BackupError> {
+        let names = entries(directory, budget.limits.entries)?;
+        let present: BTreeSet<&str> = names.iter().map(String::as_str).collect();
+        let mut swept = 0;
+        for name in &names {
+            let Some(snapshot) = sidecar_of(board, name) else {
+                continue;
+            };
+            if present.contains(snapshot) {
+                continue;
+            }
+            assert!(
+                SIDECARS.iter().any(|suffix| name.ends_with(suffix))
+                    && snapshot_at(board, snapshot).is_some(),
+                "only canonical snapshot sidecars are swept"
+            );
+            budget.remaining()?;
+            fs::stable_directory(directory, canonical).map_err(|_| BackupError::RetentionFailed)?;
+            let file = match fs::open(directory, name, libc::O_RDONLY | libc::O_NONBLOCK, 0) {
+                Ok(file) => file,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(_) => return Err(BackupError::RetentionFailed),
+            };
+            let identity = file
+                .metadata()
+                .and_then(|meta| fs::identity(&meta))
+                .map_err(|_| BackupError::RetentionFailed)?;
+            let sidecar = AdmittedBackupFile {
+                name: name.clone(),
+                identity,
+            };
+            self.files
+                .prune_admitted(directory, &sidecar)
+                .map_err(|_| BackupError::RetentionFailed)?;
+            swept += 1;
+        }
+        Ok(swept)
+    }
+}
+/// SQLite's companion files for a snapshot; nothing else is ever a sidecar.
+const SIDECARS: [&str; 3] = ["-wal", "-shm", "-journal"];
+/// Allowlist: `<board>-<YYYYMMDDTHHMMSSZ>.sqlite` exactly as this adapter
+/// spells its publications.
+fn snapshot_at(board: &str, name: &str) -> Option<Timestamp> {
+    let text = name
+        .strip_prefix(board)?
+        .strip_prefix('-')?
+        .strip_suffix(".sqlite")?;
+    let bytes = text.as_bytes();
+    if text.len() == 16 && text.is_ascii() && bytes[8] == b'T' && bytes[15] == b'Z' {
+    } else {
+        return None;
+    }
+    let spelled = format!(
+        "{}-{}-{}T{}:{}:{}Z",
+        &text[..4],
+        &text[4..6],
+        &text[6..8],
+        &text[9..11],
+        &text[11..13],
+        &text[13..15]
+    );
+    Timestamp::parse(&spelled)
+        .ok()
+        .filter(|at| snapshot_name(board, at) == name)
+}
+/// Allowlist: the snapshot name a canonical `-wal`/`-shm`/`-journal` belongs to.
+fn sidecar_of<'a>(board: &str, name: &'a str) -> Option<&'a str> {
+    SIDECARS
+        .iter()
+        .find_map(|suffix| name.strip_suffix(suffix))
+        .filter(|snapshot| snapshot_at(board, snapshot).is_some())
 }
 fn check_time(
     candidates: &[(AdmittedBackupFile, Timestamp)],

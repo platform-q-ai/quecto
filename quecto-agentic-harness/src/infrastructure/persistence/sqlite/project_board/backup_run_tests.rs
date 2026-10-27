@@ -102,10 +102,7 @@ fn backup_post_link_error_reports_uncertainty_keeps_snapshot_and_cleans_owned_pa
     assert_eq!(exact_integrity(&c), Ok(()));
     assert!(std::fs::read_dir(to).unwrap().all(|entry| {
         let name = entry.unwrap().file_name().into_string().unwrap();
-        name.ends_with(".sqlite")
-            || name.ends_with(".lock")
-            || name.ends_with("-shm")
-            || name.ends_with("-wal")
+        name.ends_with(".sqlite") || name.ends_with(".lock")
     }));
 }
 
@@ -217,4 +214,110 @@ fn backup_copy_budget_is_shared_across_actual_sqlite_copies() {
         *operations.received.lock().unwrap(),
         [Duration::from_millis(400), Duration::from_millis(100)]
     );
+}
+
+const BOARD: &str = "0123456789abcdef";
+fn bootstrapped_board(temp: &Path) -> PathBuf {
+    use crate::application::project_board::ports::ProjectBoardStore;
+    use crate::domain::project_board::entities::claim::Identity;
+    let root = temp.join("boards");
+    std::fs::create_dir(&root).unwrap();
+    let store = super::super::super::SqliteProjectBoardStore::open(
+        &root.join(format!("{BOARD}.sqlite")),
+        Identity {
+            name: "Backup Fixture".into(),
+            email: "backup@example.test".into(),
+        },
+    )
+    .unwrap();
+    store.bootstrap().unwrap();
+    root
+}
+fn back_up(root: &Path, to: &Path, at: &str) -> BackupOutcome {
+    let mut report = SqliteBoardBackup::new(root.to_owned())
+        .backup(&BackupRequest {
+            board: None,
+            to: to.to_owned(),
+            at: Timestamp::parse(at).unwrap(),
+            limits: BackupLimits::default(),
+        })
+        .unwrap();
+    assert_eq!(report.outcomes.len(), 1);
+    report.outcomes.remove(0)
+}
+fn listing(directory: &Path) -> Vec<String> {
+    let mut names: Vec<_> = std::fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    names
+}
+/// #2767: validation of a WAL-mode copy left `-wal`/`-shm` beside every
+/// publication until the directory hit the admission entry limit.
+#[test]
+fn backup_publication_and_prior_validation_leave_no_sidecars() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = bootstrapped_board(temp.path());
+    let to = temp.path().join("snapshots");
+    let lock = format!(".{BOARD}.backup.lock");
+    let first = back_up(&root, &to, "2026-10-25T12:00:00Z");
+    assert_eq!(first.error, None);
+    assert_eq!(first.stage, BackupStage::Complete);
+    let first_name = format!("{BOARD}-20261025T120000Z.sqlite");
+    assert_eq!(listing(&to), [lock.clone(), first_name.clone()]);
+    // A rollback-journal header (format bytes 18/19 == 1) keeps every later
+    // read-only open of this snapshot from creating WAL sidecars.
+    let header = std::fs::read(to.join(&first_name)).unwrap();
+    assert_eq!(&header[18..20], &[1, 1]);
+    // The next day's run validates (and retains) the first snapshot read-only.
+    let second = back_up(&root, &to, "2026-10-26T13:00:00Z");
+    assert_eq!(second.error, None);
+    assert_eq!(
+        listing(&to),
+        [lock, first_name, format!("{BOARD}-20261026T130000Z.sqlite"),]
+    );
+}
+#[test]
+fn backup_retention_prunes_sidecars_of_pruned_and_orphaned_snapshots_by_canonical_name_only() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = bootstrapped_board(temp.path());
+    let to = temp.path().join("snapshots");
+    let lock = format!(".{BOARD}.backup.lock");
+    let seed = back_up(&root, &to, "2026-10-20T10:00:00Z");
+    assert_eq!(seed.error, None);
+    let pruned = format!("{BOARD}-20261020T100000Z.sqlite");
+    let kept = format!("{BOARD}-20261020T110000Z.sqlite");
+    std::fs::copy(to.join(&pruned), to.join(&kept)).unwrap();
+    let touch = |name: &str| std::fs::write(to.join(name), b"").unwrap();
+    let mut removed = Vec::new();
+    for suffix in ["-wal", "-shm", "-journal"] {
+        // Sidecars of the snapshot retention prunes in this run.
+        removed.push(format!("{pruned}{suffix}"));
+        // Orphans whose snapshot an earlier run already pruned.
+        removed.push(format!("{BOARD}-20261001T120000Z.sqlite{suffix}"));
+    }
+    let foreign = [
+        // A retained snapshot's sidecar is never an orphan.
+        format!("{kept}-shm"),
+        // Not the canonical spelling: allowlist refuses each one.
+        "notes.sqlite-wal".to_owned(),
+        format!("{BOARD}-20261001T120000Z.sqlite-walx"),
+        format!("{BOARD}-2026100XT120000Z.sqlite-wal"),
+        format!("{BOARD}-20261001T120000Z.sqlite.wal"),
+        format!(".{BOARD}-20261001T120000Z.sqlite-wal"),
+        // Another board's sidecars belong to that board's locked run.
+        "fedcba9876543210-20261001T120000Z.sqlite-wal".to_owned(),
+    ];
+    for name in removed.iter().chain(&foreign) {
+        touch(name);
+    }
+    let outcome = back_up(&root, &to, "2026-10-25T12:00:00Z");
+    assert_eq!(outcome.error, None);
+    assert_eq!(outcome.stage, BackupStage::Complete);
+    assert_eq!((outcome.retained, outcome.deleted), (2, 1));
+    let mut expected: Vec<String> = foreign.to_vec();
+    expected.extend([lock, kept, format!("{BOARD}-20261025T120000Z.sqlite")]);
+    expected.sort();
+    assert_eq!(listing(&to), expected);
 }
