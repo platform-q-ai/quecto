@@ -277,7 +277,8 @@ impl SqliteBoardBackup {
         let preflight =
             self.candidates(&directory, &outcome.board, request, Interrupted::Tolerated)?;
         check_time(&preflight, request, &outcome.board)?;
-        let _lock = fs::lock(&directory, &outcome.board).map_err(|e| {
+        let busy = request.limits.busy.min(budget.remaining()?);
+        let _lock = fs::lock(&directory, &outcome.board, busy).map_err(|e| {
             if e.kind() == io::ErrorKind::WouldBlock {
                 BackupError::BusyDeadline
             } else {
