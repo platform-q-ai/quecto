@@ -503,8 +503,29 @@ impl SqliteBoardBackup {
         // Bounded like every listing here. Another board's concurrent run may
         // grow the shared directory past the bound; the sweep then works on the
         // names it listed and the rest wait for a later run.
-        let (names, _) = bounded_entries(directory, budget.limits.entries.saturating_add(1))?;
-        for name in &names {
+        let (names, _) = bounded_entries(directory, budget.limits.entries.saturating_add(1))
+            .map_err(|_| BackupError::RetentionFailed)?;
+        let scope = SweepScope {
+            directory,
+            canonical,
+            board,
+        };
+        self.sweep_listed(&scope, budget, &names, swept)
+    }
+    /// Decides per listed name; `names` may be any subset of the directory.
+    fn sweep_listed(
+        &self,
+        scope: &SweepScope<'_>,
+        budget: &Budget<'_>,
+        names: &[String],
+        swept: &mut usize,
+    ) -> Result<(), BackupError> {
+        let SweepScope {
+            directory,
+            canonical,
+            board,
+        } = *scope;
+        for name in names {
             if let Some(snapshot) = sidecar_of(board, name) {
                 // Presence is asked of the directory, not inferred from a listing
                 // that may be truncated.
@@ -520,12 +541,15 @@ impl SqliteBoardBackup {
                     fs::stable_directory(directory, canonical)
                         .map_err(|_| BackupError::RetentionFailed)?;
                     if let Some(sidecar) = regular_sidecar(directory, name)? {
-                        // An entry that cannot be unlinked as admitted (unreadable,
-                        // replaced or gone since the probe) is left alone.
-                        if self.files.prune_admitted(directory, &sidecar).is_ok() {
-                            *swept += 1;
-                        } else {
-                            // Skipped; the sweep continues.
+                        match self.files.prune_admitted(directory, &sidecar) {
+                            Ok(()) => *swept += 1,
+                            Err(error) => {
+                                if entry_refusal(&error) {
+                                    // Left alone; the sweep continues.
+                                } else {
+                                    return Err(BackupError::RetentionFailed);
+                                }
+                            }
                         }
                     }
                 }
@@ -533,6 +557,22 @@ impl SqliteBoardBackup {
         }
         Ok(())
     }
+}
+/// The held destination a sweep works in, and the board whose lock it holds.
+#[derive(Clone, Copy)]
+struct SweepScope<'a> {
+    directory: &'a File,
+    canonical: &'a Path,
+    board: &'a str,
+}
+/// Allowlist of refusals that concern only the entry: unreadable, gone, or
+/// replaced (identity/path refusal, now a symlink) since the probe. Anything
+/// else (EIO, EROFS...) is a directory or device fault and fails retention.
+fn entry_refusal(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::InvalidInput | io::ErrorKind::PermissionDenied
+    ) || error.raw_os_error() == Some(libc::ELOOP)
 }
 /// Whether `name` exists, without following it or opening its target.
 fn exists(directory: &File, name: &str) -> Result<bool, BackupError> {

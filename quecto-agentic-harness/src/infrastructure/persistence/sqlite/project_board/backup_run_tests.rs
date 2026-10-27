@@ -325,6 +325,7 @@ fn backup_retention_prunes_sidecars_of_pruned_and_orphaned_snapshots_by_canonica
 enum Refuse {
     Nothing,
     WalSidecars,
+    WalSidecarsWithIo,
     SecondSnapshot,
 }
 /// Counts directory syncs; optionally refuses chosen unlinks.
@@ -373,12 +374,14 @@ impl BackupFileOps for CountingSyncs {
             0
         };
         let refused = match self.refuse {
-            Refuse::Nothing => false,
-            Refuse::WalSidecars => candidate.name.ends_with("-wal"),
-            Refuse::SecondSnapshot => nth_snapshot == 2,
+            Refuse::Nothing => None,
+            // An entry-level refusal, as the anchored check open reports it.
+            Refuse::WalSidecars => candidate.name.ends_with("-wal").then_some(libc::EACCES),
+            Refuse::WalSidecarsWithIo => candidate.name.ends_with("-wal").then_some(libc::EIO),
+            Refuse::SecondSnapshot => (nth_snapshot == 2).then_some(libc::EIO),
         };
-        if refused {
-            Err(io::Error::other("owned test refuses this unlink"))
+        if let Some(errno) = refused {
+            Err(io::Error::from_raw_os_error(errno))
         } else {
             SystemBackupFileOps.prune_admitted(directory, candidate)
         }
@@ -633,4 +636,109 @@ fn backup_sweep_runs_when_preflight_admitted_a_full_directory() {
             format!("{BOARD}-20261025T120000Z.sqlite"),
         ]
     );
+}
+fn sweep_fixture(temp: &Path) -> (SqliteBoardBackup, PathBuf, BackupLimits) {
+    let to = temp.join("snapshots");
+    std::fs::create_dir(&to).unwrap();
+    (
+        SqliteBoardBackup::new(temp.to_owned()),
+        to,
+        BackupLimits::default(),
+    )
+}
+/// Presence of a snapshot is asked of the directory: a listing that names a
+/// retained snapshot's sidecars but not the snapshot itself never sweeps them.
+#[test]
+fn backup_sweep_asks_the_directory_whether_a_listed_sidecars_snapshot_exists() {
+    let temp = tempfile::tempdir().unwrap();
+    let (adapter, to, limits) = sweep_fixture(temp.path());
+    let retained = format!("{BOARD}-20261020T100000Z.sqlite");
+    std::fs::write(to.join(&retained), b"snapshot").unwrap();
+    let orphan = format!("{BOARD}-20261001T120000Z.sqlite-wal");
+    let mut names = vec![format!("{retained}-journal"), format!("{retained}-wal")];
+    names.push(orphan.clone());
+    for name in &names {
+        std::fs::write(to.join(name), b"").unwrap();
+    }
+    names.sort();
+    let budget = Budget {
+        owner: &adapter,
+        invocation: adapter.time.elapsed(),
+        board: adapter.time.elapsed(),
+        limits: &limits,
+    };
+    let directory = fs::directory(&to).unwrap();
+    let mut swept = 0;
+    assert_eq!(
+        adapter.sweep_listed(
+            &SweepScope {
+                directory: &directory,
+                canonical: &to,
+                board: BOARD,
+            },
+            &budget,
+            &names,
+            &mut swept
+        ),
+        Ok(())
+    );
+    assert_eq!(
+        swept, 1,
+        "the listed canonical orphan was reached and swept"
+    );
+    assert_eq!(
+        listing(&to),
+        [
+            retained.clone(),
+            format!("{retained}-journal"),
+            format!("{retained}-wal"),
+        ]
+    );
+}
+#[test]
+fn backup_sweep_listing_failure_is_a_retention_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let (adapter, to, limits) = sweep_fixture(temp.path());
+    std::fs::write(to.join("not-a-directory"), b"").unwrap();
+    let budget = Budget {
+        owner: &adapter,
+        invocation: adapter.time.elapsed(),
+        board: adapter.time.elapsed(),
+        limits: &limits,
+    };
+    let file = File::open(to.join("not-a-directory")).unwrap();
+    let mut swept = 0;
+    assert_eq!(
+        adapter.sweep_sidecars(&file, &to, &budget, BOARD, &mut swept),
+        Err(BackupError::RetentionFailed)
+    );
+}
+/// Only entry-level refusals are skipped; a device-level unlink error fails
+/// retention after the earlier unlinks are made durable.
+#[test]
+fn backup_sweep_io_error_fails_retention_after_syncing() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = bootstrapped_board(temp.path());
+    let to = temp.path().join("snapshots");
+    assert_eq!(back_up(&root, &to, "2026-10-20T10:00:00Z").error, None);
+    let pruned = format!("{BOARD}-20261020T100000Z.sqlite");
+    std::fs::copy(
+        to.join(&pruned),
+        to.join(format!("{BOARD}-20261020T110000Z.sqlite")),
+    )
+    .unwrap();
+    std::fs::write(to.join(format!("{pruned}-wal")), b"").unwrap();
+    let files = CountingSyncs::new(Refuse::WalSidecarsWithIo);
+    let outcome = back_up_with(
+        &root,
+        &to,
+        "2026-10-25T12:00:00Z",
+        files.clone(),
+        BackupLimits::default(),
+    );
+    assert_eq!(outcome.error, Some(BackupError::RetentionFailed));
+    assert_eq!(outcome.stage, BackupStage::Retention);
+    assert_eq!(outcome.deleted, 1);
+    assert!(listing(&to).contains(&format!("{pruned}-wal")));
+    assert_eq!(files.syncs(), 2);
 }
