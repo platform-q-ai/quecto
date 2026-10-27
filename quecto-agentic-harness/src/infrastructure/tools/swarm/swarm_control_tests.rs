@@ -135,6 +135,7 @@ async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
         input.clone(),
         participation.clone(),
         engaged,
+        LaunchRole::Coordinator,
     )
     .await
     .unwrap_err()
@@ -154,6 +155,7 @@ async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
         input,
         participation.clone(),
         Default::default(),
+        LaunchRole::Coordinator,
     )
     .await
     .unwrap();

@@ -52,6 +52,11 @@ impl Swarms {
 }
 
 impl CoordinatorLaunch for Swarms {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         true
     }

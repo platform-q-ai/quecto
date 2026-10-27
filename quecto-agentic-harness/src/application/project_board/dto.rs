@@ -654,6 +654,8 @@ pub enum ProjectBoardError {
     /// This session may not spawn, so it has no launcher: nothing is
     /// started (S4c).
     NoLauncher,
+    /// The coordinator's container would be refused: nothing is started.
+    ContainerRefused(String),
     /// The board server stayed busy (#2705 B7): try again shortly.
     Busy(String),
     /// A write's server sent no reply in time (B7): it may have landed.

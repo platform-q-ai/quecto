@@ -10,13 +10,14 @@
 //! `quecto config trust` is the one approval path.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::application::configuration::dto::{ConfigSelection, EffectiveConfigError, OverlayState};
 use crate::application::environments::use_cases::ListContainerConfigs;
 use crate::application::subagents::ports::container_configs::EffectiveContainerConfigs;
-use crate::application::subagents::use_cases::SelectContainerConfig;
+use crate::application::subagents::ports::container_repository::{ProjectOrigin, RepositoryUrls};
+use crate::application::subagents::use_cases::{ConfirmContainerRepository, SelectContainerConfig};
 use crate::infrastructure::config::container_config_roster::EffectiveConfigRoster;
 use crate::infrastructure::config::container_configs::{
     ContainerConfigsFromEffectiveConfig, ExplicitConfigLoader, LaunchingAgentConfigLoader,
@@ -58,16 +59,61 @@ pub fn build_refreshing_container_config_selection(
 /// The selection AND the discovery query (#2024 S4c) over one effective
 /// container-config adapter, so `container: true`, `get_container_configs`
 /// and the spawn description's roster line read the same layers.
+/// A launcher composed this way knows no project checkout, so it refuses
+/// every swarm (swarm-container-matches-repo):
+/// [`build_project_container_config_handles`] names the checkout.
 pub fn build_container_config_handles(
     base_dir: &Path,
     launching_agent: Option<ConfigSelection>,
 ) -> ContainerConfigHandles {
+    build_handles(base_dir, launching_agent, None)
+}
+
+/// As [`build_container_config_handles`], for a launcher whose project is
+/// the checkout at `project`: a swarm's container must clone that
+/// checkout's `origin` repository (swarm-container-matches-repo).
+pub fn build_project_container_config_handles(
+    base_dir: &Path,
+    launching_agent: Option<ConfigSelection>,
+    project: &Path,
+) -> ContainerConfigHandles {
+    build_handles(base_dir, launching_agent, Some(project.to_path_buf()))
+}
+
+/// The swarm repository check over `project` (`None`: no checkout, every
+/// swarm refused), git reading its origin and the remote-URL reader
+/// naming both repositories.
+pub fn build_container_repository_check(
+    project: Option<PathBuf>,
+) -> Arc<ConfirmContainerRepository> {
+    Arc::new(ConfirmContainerRepository::new(
+        project,
+        build_project_origin(),
+        build_repository_urls(),
+    ))
+}
+
+/// The project-origin port adapter: git's `origin` of a checkout.
+pub fn build_project_origin() -> Arc<dyn ProjectOrigin> {
+    Arc::new(crate::infrastructure::processes::containers::standard::workspace_origin::GitWorkspaceOrigin)
+}
+
+/// The remote-URL port adapter: the repository a URL names.
+pub fn build_repository_urls() -> Arc<dyn RepositoryUrls> {
+    Arc::new(crate::infrastructure::config::container_repository_urls::RemoteRepositoryUrls)
+}
+
+fn build_handles(
+    base_dir: &Path,
+    launching_agent: Option<ConfigSelection>,
+    project: Option<PathBuf>,
+) -> ContainerConfigHandles {
     let configs = build_effective_container_configs(base_dir, launching_agent.clone());
     ContainerConfigHandles {
-        selection: Arc::new(SelectContainerConfig::new(
-            configs.clone(),
-            build_container_script_integrity(),
-        )),
+        selection: Arc::new(
+            SelectContainerConfig::new(configs.clone(), build_container_script_integrity())
+                .confirming(build_container_repository_check(project)),
+        ),
         roster: Arc::new(ListContainerConfigs::new(Arc::new(
             EffectiveConfigRoster::new(configs, roster_revision_probe(base_dir, launching_agent)),
         ))),
@@ -100,11 +146,18 @@ fn roster_revision_probe(
 /// agent build resolved for its working directory — with trust under
 /// `base_dir`. `main` hands this builder to the CLI entry point; the agent
 /// build invokes it once beside the other capability builders.
+///
+/// The run's project is its working directory, the workspace its tools
+/// and its `board` work in: a swarm it launches must run in a container
+/// of that checkout's repository (swarm-container-matches-repo). A working
+/// directory that cannot be read leaves no project, and every swarm is
+/// refused.
 pub fn build_agent_container_config_handles(
     base_dir: &Path,
     selection: &ConfigSelection,
 ) -> ContainerConfigHandles {
-    build_container_config_handles(base_dir, Some(selection.clone()))
+    let project = std::env::current_dir().ok();
+    build_handles(base_dir, Some(selection.clone()), project)
 }
 
 /// The discovery port adapter alone, for the contract suite.

@@ -135,6 +135,10 @@ impl fmt::Display for ProjectBoardError {
                 "this session may not spawn, so it cannot launch a coordinator: \
                  start the task from a session that may",
             ),
+            Self::ContainerRefused(reason) => match reason.ends_with('.') {
+                true => write!(f, "{reason} Nothing was written to the board."),
+                false => write!(f, "{reason}. Nothing was written to the board."),
+            },
             Self::Brief { reason, .. } => write!(f, "the plan cannot brief a swarm: {reason}"),
             Self::RunLive { task, run, agent } => write!(
                 f,

@@ -11,6 +11,7 @@ use std::pin::Pin;
 
 pub mod child_routing;
 pub mod container_configs;
+pub mod container_repository;
 pub mod delegated_agent_registry;
 pub mod ended_child_records;
 pub mod harness_shutdown;

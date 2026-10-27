@@ -102,6 +102,9 @@ pub struct OfficialToolDeps {
     /// The composition's workflow engine slot (#1715); a run cannot be created
     /// while it is engaged.
     pub workflow_engine: crate::infrastructure::tools::swarm::swarm_bridge::WorkflowEngineSlot,
+    /// How this process was launched: only a coordinator's `swarm` tool
+    /// creates a run (swarm-container-matches-repo).
+    pub launch: crate::infrastructure::tools::swarm::swarm_control::LaunchRole,
     pub workspace: PathBuf,
     pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
     pub exec_options: crate::infrastructure::tools::native::bash::ExecOptions,
@@ -162,7 +165,8 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
                 crate::infrastructure::tools::swarm::SwarmTool::new()
                     .with_context(deps.swarm_context)
                     .with_participation(deps.swarm_participation.clone())
-                    .with_workflow_engine(deps.workflow_engine),
+                    .with_workflow_engine(deps.workflow_engine)
+                    .launched_as(deps.launch),
             ),
             deps.find_tool,
             // Quecto operating manual, embedded in the binary. Runtime profile
@@ -436,6 +440,7 @@ pub fn build_official_tool_registry_with_context(
             swarm_participation:
                 crate::infrastructure::tools::swarm::swarm_bridge::Participation::none(),
             workflow_engine: Default::default(),
+            launch: crate::infrastructure::tools::swarm::swarm_control::LaunchRole::Other,
             swarm_context,
             workspace,
             sandbox,

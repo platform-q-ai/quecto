@@ -37,6 +37,8 @@ struct Launcher {
     answer: Result<LaunchedCoordinator, LaunchRefused>,
     asked: Mutex<Vec<CoordinatorRequest>>,
     may: bool,
+    /// The container refusal it reports before a start writes.
+    refusal: Option<String>,
 }
 
 impl Launcher {
@@ -48,6 +50,7 @@ impl Launcher {
             }),
             asked: Mutex::default(),
             may: true,
+            refusal: None,
         })
     }
 
@@ -56,6 +59,7 @@ impl Launcher {
             answer: Err(LaunchRefused::because("no container runtime")),
             asked: Mutex::default(),
             may: true,
+            refusal: None,
         })
     }
 
@@ -63,6 +67,14 @@ impl Launcher {
     fn forbidden() -> Arc<Self> {
         Arc::new(Self {
             may: false,
+            ..Arc::into_inner(Self::launching()).unwrap()
+        })
+    }
+
+    /// A session whose spawn would refuse the coordinator's container.
+    fn refusing_container(reason: &str) -> Arc<Self> {
+        Arc::new(Self {
+            refusal: Some(reason.into()),
             ..Arc::into_inner(Self::launching()).unwrap()
         })
     }
@@ -75,6 +87,10 @@ impl Launcher {
 impl CoordinatorLaunch for Launcher {
     fn may_launch(&self) -> bool {
         self.may
+    }
+
+    fn container_refusal(&self) -> Option<String> {
+        self.refusal.clone()
     }
 
     fn launch(
@@ -505,6 +521,11 @@ fn a_start_racing_an_acceptance_launches_nothing_unconfirmed() {
 struct FreezingLauncher(MemoryBoardStore);
 
 impl CoordinatorLaunch for FreezingLauncher {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         true
     }
@@ -565,3 +586,57 @@ mod served;
 
 #[path = "start_board_task_restore_tests.rs"]
 mod restore;
+
+/// swarm-container-matches-repo: a coordinator whose container would be
+/// refused (another repository's, or one that cannot be confirmed) is
+/// refused before the start writes anything: no claim, no run, no launch.
+#[test]
+fn a_start_whose_container_would_be_refused_writes_and_launches_nothing() {
+    let store = seeded(ready, vec![plan(1, PlanState::Accepted)], vec![]);
+    let writes = store.writes();
+    let before = task_and_runs(&store);
+    let reason = "swarm launch refused before anything was created: this project (/w) is repository o/pocket, but container config 'default' clones o/quecto. Set it up.";
+    let launcher = Launcher::refusing_container(reason);
+    let mut facts = OpFacts::default();
+    let refused =
+        starter(&store, Some(launcher.clone())).execute_noted(&confirmed(1), Some(&mut facts));
+    assert_eq!(
+        refused,
+        Err(ProjectBoardError::ContainerRefused(reason.into()))
+    );
+    assert_eq!(
+        refused.unwrap_err().to_string(),
+        format!("{reason} Nothing was written to the board.")
+    );
+    assert!(launcher.asked().is_empty(), "nothing is launched");
+    assert_eq!(store.writes(), writes, "nothing is written");
+    assert_eq!(task_and_runs(&store), before);
+    assert_eq!(facts.attempts, None, "no write was attempted");
+}
+
+/// A launcher whose container is confirmed starts exactly as before.
+#[test]
+fn a_start_whose_container_is_confirmed_launches_as_before() {
+    let store = seeded(ready, vec![plan(1, PlanState::Accepted)], vec![]);
+    let launcher = Launcher::launching();
+    assert_eq!(launcher.container_refusal(), None);
+    let started = starter(&store, Some(launcher.clone()))
+        .execute(&confirmed(1))
+        .unwrap();
+    assert_eq!(started.coordinator.environment_ref, "C7");
+    assert_eq!(launcher.asked().len(), 1);
+}
+
+/// A container refusal's text gains the board's own sentence, a full stop
+/// first when the reason has none of its own.
+#[test]
+fn a_container_refusal_reads_as_one_sentence_whatever_its_reasons_end() {
+    assert_eq!(
+        ProjectBoardError::ContainerRefused("refused, then start again.".into()).to_string(),
+        "refused, then start again. Nothing was written to the board."
+    );
+    assert_eq!(
+        ProjectBoardError::ContainerRefused("refused with no full stop".into()).to_string(),
+        "refused with no full stop. Nothing was written to the board."
+    );
+}

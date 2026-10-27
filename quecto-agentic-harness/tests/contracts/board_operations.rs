@@ -393,18 +393,24 @@ fn board_operations_no_left_runs() {
 }
 
 /// A session's swarms for the run checks: a launch comes up as `c-1`
-/// while `up`, a coordinator is seen running as `running` says, and the
-/// runs it launched are kept.
+/// while `up`, a coordinator is seen running as `running` says, the runs
+/// it launched are kept, and its container is refused as `refusing` says
+/// (swarm-container-matches-repo).
 #[derive(Default)]
 pub struct Swarms {
     up: AtomicBool,
     running: Mutex<Option<String>>,
     started: Mutex<Vec<(Slug, u32)>>,
+    refusing: Mutex<Option<String>>,
 }
 
 impl CoordinatorLaunch for Swarms {
     fn may_launch(&self) -> bool {
         true
+    }
+
+    fn container_refusal(&self) -> Option<String> {
+        self.refusing.lock().expect("refusing").clone()
     }
 
     fn launch(
@@ -457,6 +463,24 @@ pub fn check_starts_and_ends(fixture: Fixture, swarms: &Swarms) {
                         "expected_accepted": null});
     assert_eq!(run(operations, accept)["ok"], json!(true));
     let start = json!({"op": "start", "task": "a", "plan_version": 1});
+    // A container the launch would refuse (another repository's) refuses
+    // the start before its write: no claim, no run, no launch.
+    let reason = "swarm launch refused before anything was created: this project (/w) is repository o/pocket, but container config 'default' clones o/quecto.";
+    *swarms.refusing.lock().expect("refusing") = Some(reason.into());
+    let refused = run(operations, start.clone());
+    assert_eq!(
+        (code(&refused), &refused["error"]["reason"]),
+        (&json!("container_refused"), &json!(reason)),
+        "{refused}"
+    );
+    let shown = run(operations, json!({"op": "show", "task": "a"}));
+    assert_eq!(
+        (&shown["task"]["status"], &shown["runs"]),
+        (&json!("ready"), &json!([])),
+        "{shown}"
+    );
+    assert!(swarms.started().is_empty(), "nothing was launched");
+    *swarms.refusing.lock().expect("refusing") = None;
     let failed = run(operations, start.clone());
     let error = &failed["error"];
     assert_eq!(

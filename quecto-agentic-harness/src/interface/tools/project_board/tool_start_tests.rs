@@ -162,6 +162,11 @@ impl crate::application::project_board::ports::RunLiveness for Launching {
 }
 
 impl crate::application::project_board::ports::CoordinatorLaunch for Launching {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         true
     }
@@ -388,6 +393,11 @@ impl crate::application::project_board::ports::RunLiveness for Failing {
 }
 
 impl crate::application::project_board::ports::CoordinatorLaunch for Failing {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         true
     }
@@ -478,6 +488,11 @@ impl crate::application::project_board::ports::RunLiveness for StillRunning {
 }
 
 impl crate::application::project_board::ports::CoordinatorLaunch for StillRunning {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         true
     }
@@ -615,4 +630,81 @@ impl crate::application::project_board::ports::StartedRuns for StillRunning {
     fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
         vec![]
     }
+}
+
+/// swarm-container-matches-repo: a session whose spawn would refuse the
+/// coordinator's container (another repository's).
+struct RefusingContainer;
+
+const CONTAINER_REFUSAL: &str = "swarm launch refused before anything was created: this project (/w/pocket) is repository o/pocket, but container config 'default' clones o/quecto. A swarm runs only in a container of its own repository: set this repository's container up with `quecto container init --project /w/pocket --repo https://github.com/o/pocket`, then start again.";
+
+impl crate::application::project_board::ports::RunLiveness for RefusingContainer {
+    fn running_coordinator(
+        &self,
+        _: &crate::domain::project_board::value_objects::slug::Slug,
+        _: u32,
+    ) -> Option<String> {
+        None
+    }
+}
+
+impl crate::application::project_board::ports::StartedRuns for RefusingContainer {
+    fn started(&self) -> Vec<(crate::domain::project_board::value_objects::slug::Slug, u32)> {
+        vec![]
+    }
+}
+
+impl crate::application::project_board::ports::CoordinatorLaunch for RefusingContainer {
+    fn may_launch(&self) -> bool {
+        true
+    }
+
+    fn container_refusal(&self) -> Option<String> {
+        Some(CONTAINER_REFUSAL.into())
+    }
+
+    fn launch(
+        &self,
+        _: &crate::application::project_board::ports::CoordinatorRequest,
+        _: &std::sync::atomic::AtomicBool,
+    ) -> Result<
+        crate::application::project_board::ports::LaunchedCoordinator,
+        crate::application::project_board::ports::LaunchRefused,
+    > {
+        panic!("a refused container is never launched");
+    }
+}
+
+/// The tool answers `container_refused` with the launch's own reason, and
+/// the task is left as it was: ready, unclaimed, no run.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_refused_its_container_answers_container_refused_and_writes_nothing() {
+    let refusing = BoardSite {
+        launcher: Some(Arc::new(RefusingContainer)),
+        ..site(Some(launching_board))
+    };
+    let tool = tool(refusing);
+    let request = json!({"op": "start", "task": "a", "plan_version": 1});
+    let refused = tool.execute(&request.to_string()).await.unwrap();
+    let answer: Value = serde_json::from_str(&refused.content).unwrap();
+    assert!(refused.is_error, "{answer}");
+    assert_eq!(
+        answer["error"]["code"],
+        json!("container_refused"),
+        "{answer}"
+    );
+    assert_eq!(
+        answer["error"]["reason"],
+        json!(CONTAINER_REFUSAL),
+        "{answer}"
+    );
+    assert_eq!(answer["error"]["steps"], json!(steps::REFUSED), "{answer}");
+    let shown = tool
+        .execute(r#"{"op": "show", "task": "a"}"#)
+        .await
+        .unwrap();
+    let shown: Value = serde_json::from_str(&shown.content).unwrap();
+    assert_eq!(shown["task"]["status"], json!("ready"), "{shown}");
+    assert!(shown["task"]["claim"].is_null(), "{shown}");
+    assert_eq!(shown["runs"], json!([]), "{shown}");
 }

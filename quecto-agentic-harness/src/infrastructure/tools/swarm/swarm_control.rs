@@ -1,10 +1,12 @@
 //! Swarm run commands, kept separate from Python execution and output handling.
 use super::swarm_bridge::SwarmContext;
 use crate::domain::shared::error::DomainError;
+pub use crate::domain::swarm::services::participation::LaunchRole;
 use crate::domain::swarm::value_objects::lifecycle::ProcessIdentity;
 use serde_json::Value;
 
-/// Test convenience: no shared participation handle, no engaged workflow.
+/// Test convenience: no shared participation handle, no engaged workflow,
+/// launched as a coordinator (the one launch that may create a run).
 #[cfg(any(test, feature = "test-support"))]
 pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Value, DomainError> {
     control_with_workflow(
@@ -13,6 +15,7 @@ pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Va
         input,
         super::swarm_bridge::Participation::none(),
         Default::default(),
+        LaunchRole::Coordinator,
     )
     .await
 }
@@ -21,12 +24,15 @@ pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Va
 /// selected template make it engaged): creating a run makes the process a
 /// coordinator, which cannot be running a workflow (#1715). The slot is read
 /// inside the create step, not before, so nothing can be selected in between.
+/// `launch` is how this process was launched: only a coordinator creates a
+/// run (swarm-container-matches-repo).
 pub async fn control_with_workflow(
     context: SwarmContext,
     op: &str,
     input: Value,
     participation: super::swarm_bridge::Participation,
     workflow_engine: super::swarm_bridge::WorkflowEngineSlot,
+    launch: LaunchRole,
 ) -> Result<Value, DomainError> {
     let settles = matches!(
         op,
@@ -41,6 +47,7 @@ pub async fn control_with_workflow(
             "create" => {
                 crate::domain::swarm::services::participation::validate_swarm_creation(
                     super::swarm_bridge::workflow_engaged(&workflow_engine),
+                    launch,
                 )?;
                 let database = ctx.database();
                 std::fs::create_dir_all(database.parent().expect("the store has a directory"))

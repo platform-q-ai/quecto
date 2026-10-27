@@ -43,6 +43,7 @@ fn runtime_with_board(
         session_key: "profile-test".to_string(),
         recall: crate::composition::sessions::build_retention_handles(tmp.path()).recall,
         spawned,
+        coordinator: false,
         parent_session_name: None,
         parent_config_path: None,
         effort_control: None,
@@ -295,6 +296,17 @@ fn runtime_in_container(
     tmp: &std::path::Path,
     participation: crate::infrastructure::tools::swarm::swarm_bridge::Participation,
 ) -> Result<crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuild, String> {
+    runtime_in_container_as(context, tmp, participation, false)
+}
+
+/// [`runtime_in_container`], launched with `--coordinator` when
+/// `coordinator`.
+fn runtime_in_container_as(
+    context: crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext,
+    tmp: &std::path::Path,
+    participation: crate::infrastructure::tools::swarm::swarm_bridge::Participation,
+    coordinator: bool,
+) -> Result<crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuild, String> {
     let config = crate::infrastructure::config::Config::default();
     let client = reqwest::Client::new();
     let sandbox = crate::infrastructure::security::sandbox::Sandbox::new(Some(tmp.to_path_buf()));
@@ -317,6 +329,7 @@ fn runtime_in_container(
         session_key: "container-workflow-test".to_string(),
         recall: crate::composition::sessions::build_retention_handles(tmp).recall,
         spawned: true,
+        coordinator,
         parent_session_name: None,
         parent_config_path: None,
         effort_control: None,
@@ -373,4 +386,64 @@ fn container_runtime_workflow_follows_swarm_participation() {
         "the composition's handle is set from the join"
     );
     assert!(!names_for(&built, ToolProfileContext::Child).contains("workflow"));
+}
+
+/// swarm-container-matches-repo: the composed `swarm` tool creates a run
+/// only in a process launched with `--coordinator`; the flag reaches it
+/// through the runtime, so an ordinary container child is refused.
+#[test]
+fn only_a_coordinator_runtimes_swarm_tool_creates_a_run() {
+    use crate::domain::swarm::value_objects::lifecycle::ProcessIdentity;
+    let identity = ProcessIdentity {
+        pid: std::process::id(),
+        started: crate::infrastructure::tools::swarm::swarm_bridge::process_start(
+            std::process::id(),
+        )
+        .unwrap(),
+    };
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 300;
+    let create = serde_json::json!({"op":"create","goal":"ship","constraints":[],
+        "criteria":[{"id":"t","kind":"command","description":"pass"}],
+        "member_limit":3,"deadline":deadline})
+    .to_string();
+    let mut answers = Vec::new();
+    for coordinator in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".quecto")).unwrap();
+        let context = crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
+            board: crate::composition::swarm::swarm_board(),
+            checkout: dir.path().to_path_buf(),
+            member: "first".into(),
+            lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
+        };
+        context.join(&identity, None, None).unwrap();
+        let handle = crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared();
+        let built =
+            runtime_in_container_as(context, dir.path(), handle.clone(), coordinator).unwrap();
+        let swarm = built
+            .registry
+            .get("swarm")
+            .expect("a container has the swarm tool");
+        let answer = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(swarm.execute(&create))
+            .unwrap();
+        answers.push((answer.is_error, answer.content, handle.participating()));
+    }
+    let (refused, created) = (&answers[0], &answers[1]);
+    assert!(refused.0, "{}", refused.1);
+    assert!(
+        refused
+            .1
+            .contains(crate::domain::swarm::services::participation::NOT_A_COORDINATOR),
+        "{}",
+        refused.1
+    );
+    assert!(!refused.2, "an ordinary child joins no swarm");
+    assert!(!created.0, "{}", created.1);
+    assert!(created.2, "the coordinator now runs a swarm");
 }

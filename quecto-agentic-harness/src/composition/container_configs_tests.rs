@@ -370,3 +370,112 @@ fn the_composed_handles_and_port_adapters_describe_themselves_without_naming_the
         admission.uninstall
     );
 }
+
+/// Set only in the child process of
+/// [`the_agents_handles_confirm_against_the_working_directorys_checkout`]:
+/// the config file its selection reads.
+const AGENT_HANDLES_CONFIG: &str = "QUECTO_AGENT_HANDLES_CHILD_CONFIG";
+const AGENT_HANDLES_CHILD: &str =
+    "composition::container_configs::tests::agent_handles_in_the_working_directory";
+
+/// In the child, whose working directory is an isolated checkout: the
+/// agent's handles, built as `main` builds them, judge a swarm's default
+/// container against that checkout; elsewhere does nothing.
+#[test]
+fn agent_handles_in_the_working_directory() {
+    let Some(config) = std::env::var_os(AGENT_HANDLES_CONFIG) else {
+        return;
+    };
+    let config = PathBuf::from(config);
+    let base_dir = config
+        .parent()
+        .expect("the config's directory")
+        .to_path_buf();
+    let handles =
+        super::build_agent_container_config_handles(&base_dir, &ConfigSelection::Explicit(config));
+    let outcome = handles
+        .selection
+        .select_for_swarm(&SelectContainerConfigRequest {
+            source: ContainerConfigSource::LaunchingAgent,
+            name: None,
+        });
+    match outcome {
+        Ok(selected) => println!("child outcome: confirmed {}", selected.config.name),
+        Err(refusal) => println!("child outcome: refused {refusal}"),
+    }
+}
+
+/// Runs the child in `project` over the config at `config`, with every
+/// `GIT_*` variable removed and its home in `home`: its outcome line.
+fn agent_handles_child(project: &Path, config: &Path, home: &Path) -> String {
+    let mut command = std::process::Command::new(std::env::current_exe().expect("the test binary"));
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(&name);
+        }
+    }
+    let output = command
+        .args([
+            AGENT_HANDLES_CHILD,
+            "--exact",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .current_dir(project)
+        .env(AGENT_HANDLES_CONFIG, config)
+        .env("HOME", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("the child test runs");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{}\n{stdout}\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    stdout
+        .lines()
+        .find_map(|line| {
+            line.split_once("child outcome: ")
+                .map(|(_, outcome)| outcome)
+        })
+        .expect("the child's outcome")
+        .to_string()
+}
+
+/// swarm-container-matches-repo: the agent's handles take the working
+/// directory as the project, so a default naming its origin is confirmed
+/// and one naming another repository is refused naming the checkout. With
+/// no project, both would be refused as unconfirmable.
+#[test]
+fn the_agents_handles_confirm_against_the_working_directorys_checkout() {
+    use crate::infrastructure::test_support::isolated_git::checkout_with_origin;
+    let root = TempDir::new().unwrap();
+    let origin = "git@github-work:platform-q-ai/quecto-pocket.git";
+    let project = checkout_with_origin(root.path(), origin);
+    let write = |name: &str, repo: &str| {
+        let path = root.path().join(name);
+        let config = serde_json::json!({"container_configs": {"default": entry(true, repo)}});
+        std::fs::write(&path, config.to_string()).unwrap();
+        path
+    };
+    let matching = write("matching.json", origin);
+    assert_eq!(
+        agent_handles_child(&project, &matching, root.path()),
+        "confirmed default"
+    );
+    let other = write("other.json", "git@github-work:platform-q-ai/quecto.git");
+    let refused = agent_handles_child(&project, &other, root.path());
+    assert!(
+        refused.starts_with(
+            "refused swarm launch refused before anything was created: this project ("
+        ) && refused.contains(&format!(
+            "{}) is repository github-work/platform-q-ai/quecto-pocket",
+            project.display()
+        )),
+        "{refused}"
+    );
+}

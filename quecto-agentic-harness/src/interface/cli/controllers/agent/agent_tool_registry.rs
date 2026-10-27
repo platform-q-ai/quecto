@@ -165,6 +165,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             session_key,
             recall: retention.recall.clone(),
             spawned: flags.spawned,
+            coordinator: flags.coordinator,
             parent_session_name: parent_session_name.clone(),
             parent_config_path: Some(config_path.to_path_buf()),
             child_extensions: super::build_result::child_extensions(config, flags),

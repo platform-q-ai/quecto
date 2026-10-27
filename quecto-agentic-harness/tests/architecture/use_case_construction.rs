@@ -172,6 +172,7 @@ const USE_CASES: &[&str] = &[
     "SaveSession",
     "SearchSessionMetadata",
     "SelectConfig",
+    "ConfirmContainerRepository",
     "SelectContainerConfig",
     "SendMessage",
     "ServeBoard",

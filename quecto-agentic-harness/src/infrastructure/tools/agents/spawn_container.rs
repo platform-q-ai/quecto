@@ -129,7 +129,10 @@ pub(super) const NO_CONTAINER_CONFIG_SELECTION_COMPOSED: &str =
 /// layer diagnostics (an untrusted or refused overlay that was not
 /// applied) reach the operator's stderr, as every other load reports
 /// them, and travel with the selection into the spawn result — or, when
-/// the selection fails, inside the tool error's text.
+/// the selection fails, inside the tool error's text. A coordinator's
+/// container (a swarm's) must also clone the launching project's own
+/// repository (swarm-container-matches-repo): refused here, before any
+/// script runs, when it is not confirmed to.
 fn select_container_config(
     selection: Option<&SelectContainerConfig>,
     config: &SubagentConfig,
@@ -141,15 +144,18 @@ fn select_container_config(
         Some(path) => ContainerConfigSource::Explicit(path.clone()),
         None => ContainerConfigSource::LaunchingAgent,
     };
-    let selected = selection
-        .execute(&SelectContainerConfigRequest {
-            source,
-            name: name.clone(),
-        })
-        .map_err(|error| {
-            report_diagnostics(error.diagnostics());
-            DomainError::Tool(error.to_string())
-        })?;
+    let request = SelectContainerConfigRequest {
+        source,
+        name: name.clone(),
+    };
+    let selected = match config.coordinator {
+        true => selection.select_for_swarm(&request),
+        false => selection.execute(&request),
+    };
+    let selected = selected.map_err(|error| {
+        report_diagnostics(error.diagnostics());
+        DomainError::Tool(error.to_string())
+    })?;
     report_diagnostics(&selected.diagnostics);
     Ok(selected)
 }
@@ -644,3 +650,7 @@ mod admission_tests;
 #[cfg(test)]
 #[path = "spawn_container_cancel_tests.rs"]
 mod cancel_tests;
+
+#[cfg(test)]
+#[path = "spawn_container_repository_tests.rs"]
+mod repository_tests;

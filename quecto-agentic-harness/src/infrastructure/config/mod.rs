@@ -532,6 +532,7 @@ pub mod board_server;
 pub mod container_config_lookup;
 pub mod container_config_roster;
 pub mod container_configs;
+pub mod container_repository_urls;
 pub mod extensions;
 pub mod grep_tool;
 pub mod telemetry;

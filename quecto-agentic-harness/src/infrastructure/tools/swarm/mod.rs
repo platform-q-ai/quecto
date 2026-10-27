@@ -37,6 +37,9 @@ pub struct SwarmTool {
     participation: self::swarm_bridge::Participation,
     /// The composition's workflow engine (#1715); `create` refuses while engaged.
     workflow_engine: self::swarm_bridge::WorkflowEngineSlot,
+    /// How this process was launched: `create` is a coordinator's alone
+    /// (swarm-container-matches-repo). `Other` until composition says so.
+    launch: self::swarm_control::LaunchRole,
 }
 
 impl SwarmTool {
@@ -45,7 +48,14 @@ impl SwarmTool {
             context: None,
             participation: self::swarm_bridge::Participation::none(),
             workflow_engine: Default::default(),
+            launch: self::swarm_control::LaunchRole::Other,
         }
+    }
+
+    /// This tool, in a process launched as `launch`.
+    pub fn launched_as(mut self, launch: self::swarm_control::LaunchRole) -> Self {
+        self.launch = launch;
+        self
     }
 
     pub fn with_participation(mut self, participation: self::swarm_bridge::Participation) -> Self {
@@ -83,6 +93,7 @@ impl Tool for SwarmTool {
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let workflow_engine = self.workflow_engine.clone();
+        let launch = self.launch;
         let participation = self.participation.clone();
         let context = self.context.clone();
         // A structured board op reads the member's text as `json.loads`
@@ -116,6 +127,7 @@ impl Tool for SwarmTool {
                         v.clone(),
                         participation,
                         workflow_engine,
+                        launch,
                     )
                     .await
                     {

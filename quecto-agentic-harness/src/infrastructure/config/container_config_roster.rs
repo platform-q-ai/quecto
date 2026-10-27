@@ -87,6 +87,7 @@ impl ContainerConfigRoster for EffectiveConfigRoster {
                     // hand its token to every agent that lists the roster.
                     repository: config
                         .repository
+                        .shown()
                         .as_deref()
                         .map(crate::domain::shared::redaction::redact_url_userinfo),
                     joinable: !config.exec.is_empty(),

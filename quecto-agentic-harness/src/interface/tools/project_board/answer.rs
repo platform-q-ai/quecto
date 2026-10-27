@@ -141,6 +141,10 @@ pub enum ErrorCode {
     NoPullRequestHost,
     /// This session may not spawn, so it starts nothing (S4c).
     NoLauncher,
+    /// `reason`: the coordinator's container would be refused (it does not
+    /// clone the project's own repository, or that cannot be confirmed):
+    /// nothing was written or started (swarm-container-matches-repo).
+    ContainerRefused,
     /// `reason`: the server stayed busy, or never replied to a write (B7).
     Busy,
     Unanswered,
@@ -201,6 +205,7 @@ impl ErrorCode {
             Self::NotSetAside => "not_set_aside",
             Self::NoPullRequestHost => "no_pull_request_host",
             Self::NoLauncher => "no_launcher",
+            Self::ContainerRefused => "container_refused",
             Self::Busy => "busy",
             Self::Unanswered => "unanswered",
             Self::RunLive => "run_live",
@@ -652,6 +657,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             fields([("reason", shown_json(&why.to_string()))]),
         ),
         E::NoLauncher => (C::NoLauncher, Map::new()),
+        E::ContainerRefused(why) => (C::ContainerRefused, fields([("reason", shown_json(why))])),
         E::Busy(why) => (C::Busy, fields([("reason", shown_json(why))])),
         E::Unanswered(why) => (C::Unanswered, fields([("reason", shown_json(why))])),
         E::RunLive { task, run, agent } => (

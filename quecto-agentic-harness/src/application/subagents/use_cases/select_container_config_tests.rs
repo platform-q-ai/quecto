@@ -39,7 +39,7 @@ fn entry(name: &str, default: bool) -> ContainerLaunchConfig {
         kill: vec![],
         inspect: vec![],
         repo_bound: false,
-        repository: None,
+        repository: crate::application::subagents::dto::container_config::ConfigRepository::Unnamed,
     }
 }
 
@@ -406,7 +406,9 @@ fn standard_entry() -> ContainerLaunchConfig {
         kill: vec![script("kill.sh"), "--op".into(), "kill".into()],
         inspect: vec![script("inspect.sh")],
         repo_bound: true,
-        repository: Some("https://x/y".into()),
+        repository: crate::application::subagents::dto::container_config::ConfigRepository::Named(
+            "https://x/y".into(),
+        ),
     }
 }
 
@@ -539,7 +541,9 @@ fn intact_standard_scripts_and_non_standard_entries_launch() {
 fn repo_standard(default: bool) -> ContainerLaunchConfig {
     ContainerLaunchConfig {
         repo_bound: true,
-        repository: Some("https://example.test/repo".into()),
+        repository: crate::application::subagents::dto::container_config::ConfigRepository::Named(
+            "https://example.test/repo".into(),
+        ),
         ..entry(REPO_STANDARD_CONTAINER, default)
     }
 }

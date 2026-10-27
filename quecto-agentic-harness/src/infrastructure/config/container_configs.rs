@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::subagents::dto::container_config::{
-    ContainerConfigSource, ContainerConfigsError, ContainerLaunchConfig,
+    ConfigRepository, ContainerConfigSource, ContainerConfigsError, ContainerLaunchConfig,
     EffectiveContainerConfigSet,
 };
 use crate::application::subagents::ports::container_configs::EffectiveContainerConfigs;
@@ -108,18 +108,31 @@ pub fn launch_configs(config: &Config, overlay_entries: &[String]) -> Vec<Contai
 }
 
 /// The repository a create argv bakes in, by the shipped scripts'
-/// convention: the non-empty value after `--repo`, before the `--` that
-/// separates the script's own arguments from the child command (the
-/// scripts accept no `--repo=<url>` form, so none is read). Descriptive
-/// only — the argv is executed as written, whatever this reads.
-pub fn repository_from_argv(create: &[String]) -> Option<String> {
-    create
+/// convention: the value after `--repo`, before the `--` that separates
+/// the script's own arguments from the child command (the scripts accept
+/// no `--repo=<url>` form, so none is read). A `--repo` with no value, or
+/// an empty one, names none. More than one `--repo` is
+/// [`ConfigRepository::Repeated`]: the shipped `create.sh` takes the last
+/// and an earlier reader took the first, so none is trusted
+/// (swarm-container-matches-repo). The argv is executed as written,
+/// whatever this reads.
+pub fn repository_from_argv(create: &[String]) -> ConfigRepository {
+    let own: Vec<&String> = create.iter().take_while(|arg| *arg != "--").collect();
+    let named: Vec<String> = own
         .iter()
-        .take_while(|arg| *arg != "--")
-        .skip_while(|arg| *arg != "--repo")
-        .nth(1)
-        .filter(|url| !url.is_empty())
-        .cloned()
+        .enumerate()
+        .filter(|(_, arg)| arg.as_str() == "--repo")
+        .map(|(at, _)| {
+            own.get(at + 1)
+                .map_or_else(String::new, |url| url.to_string())
+        })
+        .collect();
+    match named.as_slice() {
+        [] => ConfigRepository::Unnamed,
+        [url] if url.is_empty() => ConfigRepository::Unnamed,
+        [url] => ConfigRepository::Named(url.clone()),
+        [_, _, ..] => ConfigRepository::Repeated(named),
+    }
 }
 
 impl std::fmt::Debug for ContainerConfigsFromEffectiveConfig {

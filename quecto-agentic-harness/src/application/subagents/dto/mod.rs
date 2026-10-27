@@ -472,5 +472,6 @@ impl fmt::Display for FleetTeardownError {
 impl std::error::Error for FleetTeardownError {}
 
 pub mod container_config;
+pub mod container_repository;
 pub mod standard_script;
 pub mod subagent;

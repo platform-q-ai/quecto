@@ -41,6 +41,7 @@ const KNOWN_KINDS : & [
 "no_launcher" ,
 "brief" ,
 "launch_failed" ,
+"container_refused" ,
 "folded" ,
 "ended_already" ,
 "open" ,

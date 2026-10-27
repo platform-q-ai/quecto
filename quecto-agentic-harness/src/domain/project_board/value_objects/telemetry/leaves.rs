@@ -75,6 +75,9 @@ const KNOWN_KINDS: &[&str] = &[
     "no_launcher",
     "brief",
     "launch_failed",
+    // A start refused before its write: the coordinator's container would
+    // not clone the project's own repository (swarm-container-matches-repo).
+    "container_refused",
     // A start's undo (S4c review round 2): where it left the run.
     "folded",
     "ended_already",

@@ -160,6 +160,11 @@ fn a_start_cancelled_before_its_write_writes_nothing() {
 struct Panicking;
 
 impl CoordinatorLaunch for Panicking {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         true
     }

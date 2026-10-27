@@ -67,6 +67,7 @@ fn parent_in(
         session_key: "workflow-denial".into(),
         recall: crate::composition::sessions::build_retention_handles(root).recall,
         spawned: false,
+        coordinator: false,
         parent_session_name: None,
         parent_config_path: None,
         effort_control: None,

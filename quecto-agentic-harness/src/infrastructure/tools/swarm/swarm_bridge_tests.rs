@@ -146,7 +146,9 @@ fn harness_death_alone_retains_a_recorded_launch() {
 async fn run_creation_requires_authorized_container_and_bounded_policy() {
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
-    let tool = SwarmTool::new().with_context(Some(context.clone()));
+    let tool = SwarmTool::new()
+        .with_context(Some(context.clone()))
+        .launched_as(super::swarm_control::LaunchRole::Coordinator);
     let invalid_deadline = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -471,4 +473,44 @@ fn a_run_creator_is_a_participating_container_creator() {
     let fixed = crate::infrastructure::tools::swarm::swarm_bridge::Participation::Fixed(true);
     fixed.record_creator(true);
     assert!(!fixed.created_run(), "a fixed answer never changes");
+}
+
+/// swarm-container-matches-repo: only a process launched as a coordinator
+/// (its container's repository confirmed at spawn) creates a run; any other
+/// container agent is refused and nothing is created.
+#[tokio::test]
+async fn only_a_process_launched_as_a_coordinator_creates_a_run() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(&directory);
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 300;
+    let create = json!({"op":"create","goal":"ship","constraints":[],
+        "criteria":[{"id":"test","kind":"command","description":"pass"}],
+        "member_limit":3,"deadline":deadline})
+    .to_string();
+    let participation = super::swarm_bridge::Participation::shared();
+    let ordinary = SwarmTool::new()
+        .with_context(Some(context.clone()))
+        .with_participation(participation.clone());
+    let refused = ordinary.execute(&create).await.unwrap();
+    assert!(refused.is_error, "{}", refused.content);
+    assert!(
+        refused
+            .content
+            .contains(crate::domain::swarm::services::participation::NOT_A_COORDINATOR),
+        "{}",
+        refused.content
+    );
+    assert!(!context.database().exists(), "no store was created");
+    assert!(!participation.participating(), "still no swarm agent");
+    let coordinator = ordinary.launched_as(super::swarm_control::LaunchRole::Coordinator);
+    let created = coordinator.execute(&create).await.unwrap();
+    assert!(!created.is_error, "{}", created.content);
+    assert!(
+        participation.participating(),
+        "the coordinator now runs a swarm"
+    );
 }

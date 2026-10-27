@@ -112,6 +112,11 @@ fn a_launched_answer_names_its_coordinator_in_place_of_its_launch() {
 struct Refusing;
 
 impl crate::application::project_board::ports::CoordinatorLaunch for Refusing {
+    /// A double that launches no real container refuses none.
+    fn container_refusal(&self) -> Option<String> {
+        None
+    }
+
     fn may_launch(&self) -> bool {
         true
     }

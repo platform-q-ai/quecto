@@ -689,6 +689,11 @@ pub trait CoordinatorLaunch: Send + Sync {
     /// A start asks before it writes anything; the launch asks again.
     fn may_launch(&self) -> bool;
 
+    /// Why a coordinator launched now would be refused its container
+    /// for its repository (swarm-container-matches-repo), or `None`:
+    /// asked before a start writes anything. Every adapter answers.
+    fn container_refusal(&self) -> Option<String>;
+
     /// Launches the coordinator `request` describes, giving up once
     /// `cancelled` is set (the call it serves was cancelled): what it began
     /// is stopped, and the launch refused.

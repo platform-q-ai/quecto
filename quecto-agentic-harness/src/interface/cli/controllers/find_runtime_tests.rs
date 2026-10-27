@@ -58,6 +58,7 @@ fn runtime(
         session_key: "find-runtime".into(),
         recall: crate::composition::sessions::build_retention_handles(root).recall,
         spawned: false,
+        coordinator: false,
         parent_session_name: None,
         parent_config_path: None,
         effort_control: None,

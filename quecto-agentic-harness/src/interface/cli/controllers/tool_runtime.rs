@@ -4,7 +4,7 @@ use crate::infrastructure::tools::agents::{
     agent_cmd_containers, coordinator_launch, harness_lifecycle, inherited_tool_policy,
     subagent_registry,
 };
-use crate::infrastructure::tools::swarm::{swarm_bridge, swarm_lifecycle};
+use crate::infrastructure::tools::swarm::{swarm_bridge, swarm_control, swarm_lifecycle};
 use crate::interface::tools::project_board::{site::BoardSite, tool::BoardTool};
 use std::sync::Arc;
 
@@ -147,6 +147,8 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     /// over the run's retention store.
     pub recall: std::sync::Arc<crate::application::sessions::use_cases::RecallContext>,
     pub spawned: bool,
+    /// Launched with `--coordinator`: only then does `swarm` create a run.
+    pub coordinator: bool,
     pub parent_session_name: Option<String>,
     /// The parent agent's own config path, forwarded so container spawns can
     /// fall back to it when the spawn call omits `config` (#1369 follow-up).
@@ -254,6 +256,7 @@ pub(crate) fn build_tool_runtime(
         session_key,
         recall,
         spawned,
+        coordinator,
         parent_session_name,
         parent_config_path,
         child_extensions,
@@ -322,6 +325,7 @@ pub(crate) fn build_tool_runtime(
             swarm_context: swarm_context.clone(),
             swarm_participation: swarm_participation.clone(),
             workflow_engine: workflow_engine.clone(),
+            launch: swarm_control::LaunchRole::of_flag(coordinator),
             workspace,
             sandbox,
             exec_options,
@@ -355,6 +359,7 @@ pub(crate) fn build_tool_runtime(
     // Agent-control tools are supplied through the same bundled-native provider
     // for every entrypoint. REPL's current public surface is preserved below by
     // policy-disabling the tools after registration.
+    let coordinator_containers = container_configs.as_ref().map(|h| h.selection.clone());
     let agent_control = build_agent_control_tool_extensions(AgentControlToolDeps {
         swarm_participation: swarm_participation.clone(),
         swarm_context,
@@ -368,9 +373,7 @@ pub(crate) fn build_tool_runtime(
         owned_child_supervisor:
             crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
         effort_control,
-        container_config_selection: container_configs
-            .as_ref()
-            .map(|handles| handles.selection.clone()),
+        container_config_selection: coordinator_containers.clone(),
         container_config_roster: container_configs.map(|handles| handles.roster),
         environment_registry,
     });
@@ -413,6 +416,7 @@ pub(crate) fn build_tool_runtime(
             &agent_control.spawn_tool,
             &agent_control.agent_cmd_tool,
             &agent_control.subagent_registry,
+            coordinator_containers,
         );
         let environments = &agent_control.environment_registry;
         let site = BoardSite::agent(board_repo, build, Arc::new(launcher), environments);
@@ -697,19 +701,14 @@ fn build_workflow_runtime(
 
 #[cfg(test)]
 mod catalogue_tests;
-
-#[cfg(test)]
-mod profile_tests;
-
-#[cfg(test)]
-mod swarm_board_tests;
-
 #[cfg(test)]
 mod inherited_workflow_tests;
-
+#[cfg(test)]
+mod profile_tests;
+#[cfg(test)]
+mod swarm_board_tests;
 #[cfg(test)]
 mod workflow_denial_tests;
-
 #[cfg(test)]
 mod workflow_engine_tests;
 
