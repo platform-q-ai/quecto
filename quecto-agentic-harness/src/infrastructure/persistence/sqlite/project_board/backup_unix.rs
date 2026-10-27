@@ -184,10 +184,9 @@ pub(in super::super) fn stable_directory(file: &File, path: &Path) -> io::Result
 /// names the very inode this run flocked.
 pub(in super::super) fn lock(directory: &File, board: &str) -> io::Result<File> {
     let handle = open_lock(directory, board)?;
+    #[cfg(test)]
+    between_open_and_flock::run();
     hold(directory, board, handle)
-}
-pub(in super::super) fn lock_name(board: &str) -> String {
-    format!(".{board}.backup.lock")
 }
 pub(in super::super) fn open_lock(directory: &File, board: &str) -> io::Result<File> {
     let handle = open(
@@ -229,5 +228,26 @@ pub(in super::super) fn hold(directory: &File, board: &str, handle: File) -> io:
         Ok(handle)
     } else {
         Err(unsafe_path())
+    }
+}
+pub(in super::super) fn lock_name(board: &str) -> String {
+    format!(".{board}.backup.lock")
+}
+/// Test seam: lets a test swap the lock name inside `lock()`'s window
+/// between its open and its flock. Thread-local, so tests stay independent.
+#[cfg(test)]
+pub(in super::super) mod between_open_and_flock {
+    use std::cell::RefCell;
+    thread_local! {
+        static HOOK: RefCell<Option<Box<dyn FnOnce()>>> = RefCell::new(None);
+    }
+    /// Runs `hook` once, on this thread's next `lock()`.
+    pub(in super::super::super) fn set(hook: impl FnOnce() + 'static) {
+        HOOK.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+    }
+    pub(super) fn run() {
+        if let Some(hook) = HOOK.with(|slot| slot.borrow_mut().take()) {
+            hook();
+        }
     }
 }

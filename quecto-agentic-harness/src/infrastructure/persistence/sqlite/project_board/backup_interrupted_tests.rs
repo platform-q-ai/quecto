@@ -91,3 +91,22 @@ fn backup_still_refuses_when_the_canonical_partial_is_a_symlink() {
     assert!(listing(&to).contains(&partial));
     assert_eq!(std::fs::metadata(to.join(&snapshot)).unwrap().nlink(), 2);
 }
+/// The repair runs only under the board lock: while another holder has it,
+/// the run refuses busy and the pair is left exactly as it was.
+#[test]
+fn backup_leaves_an_interrupted_pair_alone_while_the_board_lock_is_held() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = bootstrapped_board(temp.path());
+    let to = temp.path().join("snapshots");
+    assert_eq!(back_up(&root, &to, "2026-10-20T10:00:00Z").error, None);
+    let snapshot = format!("{BOARD}-20261020T100000Z.sqlite");
+    let partial = format!(".{BOARD}.{}.partial", uuid::Uuid::new_v4());
+    interrupted_publication(&to, &snapshot, &partial);
+    let directory = fs::directory(&to).unwrap();
+    let _held = fs::lock(&directory, BOARD).unwrap();
+    let outcome = back_up(&root, &to, "2026-10-25T12:00:00Z");
+    assert_eq!(outcome.error, Some(BackupError::BusyDeadline));
+    let names = listing(&to);
+    assert!(names.contains(&snapshot) && names.contains(&partial));
+    assert_eq!(std::fs::metadata(to.join(&snapshot)).unwrap().nlink(), 2);
+}

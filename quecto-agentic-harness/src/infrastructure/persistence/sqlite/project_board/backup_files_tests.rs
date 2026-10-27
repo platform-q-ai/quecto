@@ -161,3 +161,24 @@ fn backup_lock_after_a_rename_aside_takes_the_newly_named_file() {
         named.ino()
     );
 }
+/// `lock()` itself re-checks the name after its flock: a swap inside its own
+/// open-to-flock window is refused, not held.
+#[test]
+fn backup_lock_refuses_a_name_swapped_inside_its_own_window() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = anchored::directory(temp.path()).unwrap();
+    let board = "0123456789abcdef";
+    let lock = temp.path().join(anchored::lock_name(board));
+    let aside = temp.path().join("aside");
+    let swap_lock = lock.clone();
+    anchored::between_open_and_flock::set(move || {
+        std::fs::rename(&swap_lock, &aside).unwrap();
+        std::fs::write(&swap_lock, b"").unwrap();
+    });
+    assert_eq!(
+        anchored::lock(&directory, board).unwrap_err().kind(),
+        io::ErrorKind::InvalidInput,
+        "the flocked inode is no longer the board lock"
+    );
+    assert!(lock.exists(), "the swapped-in name is left alone");
+}
