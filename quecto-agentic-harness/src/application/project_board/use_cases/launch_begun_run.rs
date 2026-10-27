@@ -70,15 +70,20 @@ impl LaunchBegunRun {
     }
 
     /// Whether this session may launch now: asked before a start writes
-    /// anything.
+    /// anything, so a launch that would be refused its container
+    /// (swarm-container-matches-repo) writes nothing either.
     ///
     /// # Errors
-    /// No launcher, or one whose session may not spawn now.
+    /// No launcher, or one whose session may not spawn now; a coordinator
+    /// container the launch would refuse.
     pub fn may_launch(&self) -> Result<(), ProjectBoardError> {
-        let launcher = self.launcher.as_ref();
-        match launcher.is_some_and(|launcher| launcher.may_launch()) {
-            true => Ok(()),
-            false => Err(ProjectBoardError::NoLauncher),
+        let launcher = match self.launcher.as_ref() {
+            Some(launcher) if launcher.may_launch() => launcher,
+            Some(_) | None => return Err(ProjectBoardError::NoLauncher),
+        };
+        match launcher.container_refusal() {
+            None => Ok(()),
+            Some(reason) => Err(ProjectBoardError::ContainerRefused(reason)),
         }
     }
 

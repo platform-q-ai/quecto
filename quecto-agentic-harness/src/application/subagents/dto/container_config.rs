@@ -204,6 +204,14 @@ pub enum SelectContainerConfigError {
         script: std::path::PathBuf,
         verdict: StandardScriptVerdict,
     },
+    /// A swarm's container is not confirmed to clone the launching
+    /// project's own repository (swarm-container-matches-repo).
+    Repository(Box<super::container_repository::ContainerRepositoryRefusal>),
+    /// A swarm was asked of a selection composed with no repository
+    /// check, so the selected config `name` cannot be confirmed.
+    NoRepositoryCheck {
+        name: String,
+    },
 }
 
 fn available(names: &[String]) -> String {
@@ -235,7 +243,9 @@ impl SelectContainerConfigError {
             Self::RelativeConfigPath(_)
             | Self::Unavailable(_)
             | Self::InvalidArgv { .. }
-            | Self::StandardScriptAltered { .. } => &[],
+            | Self::StandardScriptAltered { .. }
+            | Self::Repository(_)
+            | Self::NoRepositoryCheck { .. } => &[],
         }
     }
 }
@@ -284,6 +294,12 @@ impl fmt::Display for SelectContainerConfigError {
                 });
                 write!(f, "container config '{name}' refused: {reason}")
             }
+            Self::Repository(refusal) => write!(f, "{refusal}"),
+            Self::NoRepositoryCheck { name } => write!(
+                f,
+                "{}: this launcher has no repository check, so quecto cannot confirm that container config '{name}' clones the project's repository",
+                super::container_repository::REFUSAL_OPENING
+            ),
         }
     }
 }

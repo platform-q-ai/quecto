@@ -57,6 +57,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         // (a_duplicate_artifact_is_named_by_its_kind_task_and_number).
         C::DuplicateArtifact => &["kind", "task", "number"],
         C::NoLauncher => &[],
+        C::ContainerRefused => &["reason"],
         C::RunLive => &["task", "run", "agent"],
         C::Brief => &["brief"],
         C::LaunchFailed => &[
@@ -178,6 +179,7 @@ board_errors! {
         updated: at("10:00:00"),
     },
     E::NoLauncher => E::NoLauncher,
+    E::ContainerRefused(_) => E::ContainerRefused("swarm launch refused".into()),
     E::Busy(_) => E::Busy("busy".into()),
     E::Unanswered(_) => E::Unanswered("late".into()),
     E::RunLive { .. } => E::RunLive {

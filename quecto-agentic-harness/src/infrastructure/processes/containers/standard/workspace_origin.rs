@@ -12,6 +12,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use crate::application::environments::ports::container::WorkspaceOrigin;
+use crate::application::subagents::ports::container_repository::ProjectOrigin;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GitWorkspaceOrigin;
@@ -70,6 +71,15 @@ impl WorkspaceOrigin for GitWorkspaceOrigin {
             output.status,
             stderr.trim()
         ))
+    }
+}
+
+/// The launching project's origin a swarm's container is confirmed
+/// against (swarm-container-matches-repo): the same read as the
+/// container setup's, so the two never disagree about a checkout.
+impl ProjectOrigin for GitWorkspaceOrigin {
+    fn origin(&self, checkout: &Path) -> Result<Option<String>, String> {
+        WorkspaceOrigin::origin(self, checkout)
     }
 }
 

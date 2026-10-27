@@ -473,6 +473,7 @@ pub(super) fn refusal_parts(
         | E::NoPullRequestHost(_)
         | E::Stale { .. }
         | E::NoLauncher
+        | E::ContainerRefused(_)
         | E::Busy(_)
         | E::Unanswered(_)
         | E::RunLive { .. }

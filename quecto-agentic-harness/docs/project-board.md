@@ -663,6 +663,18 @@ and the answer lists them as `not_applied`.
 - A session that may not spawn starts nothing (`no_launcher`): `start`
   launches only what the session's own `spawn` would, and asks again as it
   launches.
+- A swarm runs only in a container of its own repository
+  (`container_refused`): before anything is written, `start` selects the
+  container config the coordinator's `spawn` would (the checkout's own
+  `standard`, else the labelled default) and confirms its `--repo` names
+  the same repository as the checkout's `origin` (host, owner and name,
+  case-insensitive; `https`, `ssh` and scp forms, `.git` and trailing
+  slashes alike). A global default serves only the repository it names. A
+  config that names no repository, or one either side of which cannot be
+  read, is refused too: quecto cannot confirm it. The reason names both
+  repositories and the fix, `quecto container init --project <dir> --repo
+  <url>`. `spawn` with `coordinator: true` applies the same rule, so an
+  ad-hoc swarm is held to it as well.
 - If the coordinator does not launch, the call is cancelled (after the write,
   then nothing is launched; or during the launch, then the launch is dropped
   and a coordinator that came up anyway is stopped), or the launch fails

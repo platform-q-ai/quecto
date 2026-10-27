@@ -5308,6 +5308,11 @@ const TEARDOWN_PORTS: &[&str] = &[
     // that a materialised standard-bundle script still carries the
     // embedded bytes before the host runs it.
     "ContainerScriptIntegrity",
+    // A swarm's container must clone the launching project's own
+    // repository (swarm-container-matches-repo): the project's origin and
+    // the reading of a remote URL as a repository.
+    "ProjectOrigin",
+    "RepositoryUrls",
 ];
 
 /// The subagents capability's other ports: not teardown, but the parent's
@@ -5734,6 +5739,7 @@ fn a_ports_reexport_of_any_visibility_is_found() {
 const SUBAGENT_PORT_FILES: &[&str] = &[
     "child_routing.rs",
     "container_configs.rs",
+    "container_repository.rs",
     "delegated_agent_registry.rs",
     "ended_child_records.rs",
     "harness_shutdown.rs",

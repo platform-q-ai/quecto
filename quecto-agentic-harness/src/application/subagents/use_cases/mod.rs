@@ -2,6 +2,7 @@
 
 mod bounded_settlement;
 pub mod compensate_failed_launch;
+pub mod confirm_container_repository;
 pub mod harness_shutdown;
 pub mod inspect_ended_child;
 pub mod kill_delegated_agent;
@@ -12,6 +13,7 @@ pub mod terminate_all_delegated_agents;
 pub mod terminate_delegated_agent;
 
 pub use compensate_failed_launch::{CompensateFailedLaunch, CompensateFailedLaunchPorts};
+pub use confirm_container_repository::ConfirmContainerRepository;
 pub use harness_shutdown::{
     ExecuteHarnessShutdown, ExecuteHarnessShutdownPorts, HarnessShutdownTransaction,
     PrepareHarnessShutdown,

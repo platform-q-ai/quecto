@@ -355,6 +355,11 @@ pub(crate) fn build_tool_runtime(
     // Agent-control tools are supplied through the same bundled-native provider
     // for every entrypoint. REPL's current public surface is preserved below by
     // policy-disabling the tools after registration.
+    // The selection `spawn` makes is also how a board start judges its
+    // coordinator's container before writing (swarm-container-matches-repo).
+    let coordinator_containers = container_configs
+        .as_ref()
+        .map(|handles| handles.selection.clone());
     let agent_control = build_agent_control_tool_extensions(AgentControlToolDeps {
         swarm_participation: swarm_participation.clone(),
         swarm_context,
@@ -368,9 +373,7 @@ pub(crate) fn build_tool_runtime(
         owned_child_supervisor:
             crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor::process_wide(),
         effort_control,
-        container_config_selection: container_configs
-            .as_ref()
-            .map(|handles| handles.selection.clone()),
+        container_config_selection: coordinator_containers.clone(),
         container_config_roster: container_configs.map(|handles| handles.roster),
         environment_registry,
     });
@@ -413,6 +416,7 @@ pub(crate) fn build_tool_runtime(
             &agent_control.spawn_tool,
             &agent_control.agent_cmd_tool,
             &agent_control.subagent_registry,
+            coordinator_containers,
         );
         let environments = &agent_control.environment_registry;
         let site = BoardSite::agent(board_repo, build, Arc::new(launcher), environments);

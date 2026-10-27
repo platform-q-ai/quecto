@@ -132,6 +132,7 @@ pub fn refused(request: &BoardRequest, error: &ProjectBoardError) -> Option<Stri
         | E::NoPullRequestHost(_)
         | E::Stale { .. }
         | E::NoLauncher
+        | E::ContainerRefused(_)
         | E::Busy(_)
         | E::Unanswered(_)
         | E::RunLive { .. }

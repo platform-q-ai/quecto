@@ -35,6 +35,10 @@ use crate::application::project_board::ports::{
     CoordinatorLaunch, CoordinatorRequest, LaunchRefused, LaunchedCoordinator, RunLiveness,
     StartedRuns,
 };
+use crate::application::subagents::dto::container_config::{
+    ContainerConfigSource, SelectContainerConfigRequest,
+};
+use crate::application::subagents::use_cases::SelectContainerConfig;
 use crate::application::tools::ports::Tool;
 use crate::domain::agents::services::subagent::{MAX_AGENT_ID_CHARS, validate_agent_id_format};
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -64,6 +68,11 @@ pub struct SpawnCoordinatorLauncher {
     spawn: Arc<dyn Tool>,
     agent_cmd: Arc<dyn Tool>,
     permit: SpawnPermit,
+    /// The selection the session's `spawn` makes for a coordinator's new
+    /// container, asked before a start writes anything
+    /// (swarm-container-matches-repo); `None` judges nothing here, and
+    /// spawn still judges the launch.
+    containers: Option<Arc<SelectContainerConfig>>,
     subagents: SubagentRegistry,
     timeout: Duration,
     kill_timeout: Duration,
@@ -82,11 +91,19 @@ impl SpawnCoordinatorLauncher {
             spawn,
             agent_cmd,
             permit,
+            containers: None,
             subagents,
             timeout: LAUNCH_TIMEOUT,
             kill_timeout: KILL_TIMEOUT,
             started: std::sync::Mutex::default(),
         }
+    }
+
+    /// This launcher, judging a coordinator's container with `containers`
+    /// (the session's `spawn` selection) before a start writes anything.
+    #[must_use]
+    pub fn judging_containers(self, containers: Option<Arc<SelectContainerConfig>>) -> Self {
+        Self { containers, ..self }
     }
 
     /// This launcher, waiting at most `timeout` for spawn and
@@ -172,16 +189,21 @@ impl SpawnCoordinatorLauncher {
 /// The session's launcher: through its own `spawn` and `agent_cmd`, its
 /// permit observing `registry`'s policy, its coordinators found among its
 /// subagents.
+///
+/// `containers` is the selection the session's `spawn` holds: a start
+/// judges the coordinator's container with it before writing anything.
 pub fn session_launcher(
     registry: &mut super::super::registry::ToolRegistryImpl,
     spawn: &Arc<dyn Tool>,
     agent_cmd: &Arc<dyn Tool>,
     subagents: &SubagentRegistry,
+    containers: Option<Arc<SelectContainerConfig>>,
 ) -> SpawnCoordinatorLauncher {
     let permit = SpawnPermit::default();
     registry.observe_policy(Arc::new(permit.clone()));
     let (spawn, agent_cmd) = (Arc::clone(spawn), Arc::clone(agent_cmd));
     SpawnCoordinatorLauncher::new(spawn, agent_cmd, permit, subagents.clone())
+        .judging_containers(containers)
 }
 
 /// Why a launch was refused before spawn answered.
@@ -200,6 +222,22 @@ enum Waited {
 impl CoordinatorLaunch for SpawnCoordinatorLauncher {
     fn may_launch(&self) -> bool {
         self.permit.allowed()
+    }
+
+    /// The selection the coordinator's spawn makes (`container: true`, no
+    /// `config` file: the launching agent's own layers), as a swarm's: its
+    /// refusal, a container of another repository's above all, in spawn's
+    /// own words.
+    fn container_refusal(&self) -> Option<String> {
+        let containers = self.containers.as_deref()?;
+        let request = SelectContainerConfigRequest {
+            source: ContainerConfigSource::LaunchingAgent,
+            name: None,
+        };
+        containers
+            .select_for_swarm(&request)
+            .err()
+            .map(|refusal| refusal.to_string())
     }
 
     fn launch(
@@ -380,3 +418,7 @@ mod spawn_permit;
 #[cfg(test)]
 #[path = "launcher_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "launcher_container_tests.rs"]
+mod container_tests;

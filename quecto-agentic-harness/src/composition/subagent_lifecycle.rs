@@ -88,7 +88,7 @@ pub fn compose_launcher(tool: SpawnTool) -> SpawnTool {
             overlay_origin: OverlayOrigin::WorkingDirectory,
         })
     });
-    compose_launcher_with_selection(tool, selection)
+    compose_launcher_with_selection(tool, selection, None)
 }
 
 /// As [`compose_launcher`], for a launcher whose agent works in
@@ -107,12 +107,15 @@ pub fn compose_launcher_in_checkout(tool: SpawnTool, checkout: &Path) -> SpawnTo
             global: global.to_path_buf(),
         })
     });
-    compose_launcher_with_selection(tool, selection)
+    compose_launcher_with_selection(tool, selection, Some(checkout))
 }
 
+/// `project`: the launcher's checkout, whose repository a swarm's
+/// container must clone; `None` refuses every swarm.
 fn compose_launcher_with_selection(
     tool: SpawnTool,
     selection: Option<ConfigSelection>,
+    project: Option<&Path>,
 ) -> SpawnTool {
     let use_cases = build_lifecycle_use_cases(
         tool.registry().clone(),
@@ -120,8 +123,16 @@ fn compose_launcher_with_selection(
         tool.notify_tx().cloned(),
         Some(build_ended_child_inspection(tool.base_dir())),
     );
-    let container_configs =
-        super::container_configs::build_container_config_handles(tool.base_dir(), selection);
+    let container_configs = match project {
+        Some(project) => super::container_configs::build_project_container_config_handles(
+            tool.base_dir(),
+            selection,
+            project,
+        ),
+        None => {
+            super::container_configs::build_container_config_handles(tool.base_dir(), selection)
+        }
+    };
     tool.with_lifecycle_use_cases(use_cases)
         .with_container_config_selection(Some(container_configs.selection))
         .with_container_config_roster(Some(container_configs.roster))

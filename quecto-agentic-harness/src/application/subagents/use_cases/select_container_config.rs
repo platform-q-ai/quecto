@@ -24,6 +24,12 @@
 //! overlay's trust covers the entry, not the files it names — else the
 //! launch is refused naming the file and the refresh, through the
 //! [`ContainerScriptIntegrity`] port.
+//!
+//! A swarm's selection ([`SelectContainerConfig::select_for_swarm`]) is
+//! the same selection, then confirmed to clone the launching project's own
+//! repository ([`ConfirmContainerRepository`], swarm-container-matches-repo):
+//! a global default names one repository and serves only that one. A
+//! selection composed without the confirmation refuses every swarm.
 
 use std::sync::Arc;
 
@@ -37,10 +43,13 @@ use crate::application::subagents::dto::{
 use crate::application::subagents::ports::container_configs::{
     ContainerScriptIntegrity, EffectiveContainerConfigs,
 };
+use crate::application::subagents::use_cases::ConfirmContainerRepository;
 
 pub struct SelectContainerConfig {
     configs: Arc<dyn EffectiveContainerConfigs>,
     integrity: Arc<dyn ContainerScriptIntegrity>,
+    /// A swarm's repository check; `None` refuses every swarm.
+    repository: Option<Arc<ConfirmContainerRepository>>,
 }
 
 impl SelectContainerConfig {
@@ -48,7 +57,47 @@ impl SelectContainerConfig {
         configs: Arc<dyn EffectiveContainerConfigs>,
         integrity: Arc<dyn ContainerScriptIntegrity>,
     ) -> Self {
-        Self { configs, integrity }
+        Self {
+            configs,
+            integrity,
+            repository: None,
+        }
+    }
+
+    /// This selection, confirming a swarm's container with `repository`.
+    #[must_use]
+    pub fn confirming(self, repository: Arc<ConfirmContainerRepository>) -> Self {
+        Self {
+            repository: Some(repository),
+            ..self
+        }
+    }
+
+    /// The config a swarm's new container launches with: [`Self::execute`]'s
+    /// selection, confirmed to clone the launching project's own
+    /// repository. Nothing is created by the selection or the check.
+    ///
+    /// # Errors
+    /// [`Self::execute`]'s; the repository check's refusal; no check
+    /// composed.
+    pub fn select_for_swarm(
+        &self,
+        request: &SelectContainerConfigRequest,
+    ) -> Result<SelectedContainerConfig, SelectContainerConfigError> {
+        let selected = self.execute(request)?;
+        let Some(repository) = self.repository.as_deref() else {
+            return Err(SelectContainerConfigError::NoRepositoryCheck {
+                name: selected.config.name,
+            });
+        };
+        let confirmed = repository
+            .confirm(&selected.config)
+            .map_err(SelectContainerConfigError::Repository)?;
+        debug_assert!(
+            selected.config.repository.is_some(),
+            "a confirmed container names the repository {confirmed}"
+        );
+        Ok(selected)
     }
 
     pub fn execute(
@@ -161,3 +210,7 @@ impl std::fmt::Debug for SelectContainerConfig {
 #[cfg(test)]
 #[path = "select_container_config_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "select_container_config_swarm_tests.rs"]
+mod swarm_tests;

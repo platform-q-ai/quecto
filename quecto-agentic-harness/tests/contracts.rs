@@ -242,6 +242,8 @@ mod project_board_schema_upgrade;
 mod project_board_sqlite;
 #[path = "contracts/project_board_store.rs"]
 mod project_board_store;
+#[path = "contracts/project_origin.rs"]
+mod project_origin;
 #[path = "contracts/remote_revisions.rs"]
 mod remote_revisions;
 
@@ -265,6 +267,8 @@ mod replica_store;
 mod replication_log;
 #[path = "contracts/replication_source.rs"]
 mod replication_source;
+#[path = "contracts/repository_urls.rs"]
+mod repository_urls;
 #[path = "contracts/retained_context.rs"]
 mod retained_context;
 #[path = "contracts/run_settings_source.rs"]
