@@ -1,5 +1,5 @@
 //! Linux backup execution. FDs and transactions remain owned until cleanup/join.
-use super::super::backup_files::{AdmittedBackupFile, anchored as fs};
+use super::super::backup_files::{AdmittedBackupFile, BackupFileIdentity, anchored as fs};
 use super::super::backup_sqlite::{ValidationLease, classify, rollback_journal};
 use super::*;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -274,7 +274,8 @@ impl SqliteBoardBackup {
         let (directory, canonical) =
             fs::private_destination(&request.to, &self.source_root).map_err(unsafe_io)?;
         // Read-only preflight preserves inventories for immediately refused requests.
-        let preflight = self.candidates(&directory, &outcome.board, request)?;
+        let preflight =
+            self.candidates(&directory, &outcome.board, request, Interrupted::Tolerated)?;
         check_time(&preflight, request, &outcome.board)?;
         let _lock = fs::lock(&directory, &outcome.board).map_err(|e| {
             if e.kind() == io::ErrorKind::WouldBlock {
@@ -283,7 +284,11 @@ impl SqliteBoardBackup {
                 BackupError::UnsafePath
             }
         })?;
-        let candidates = self.candidates(&directory, &outcome.board, request)?;
+        // #2770: a crash between publication's link and unlink is repaired
+        // under the lock, before the locked (single-link) admission.
+        self.repair_interrupted(&directory, &canonical, &outcome.board, request)?;
+        let candidates =
+            self.candidates(&directory, &outcome.board, request, Interrupted::Refused)?;
         let final_name = snapshot_name(&outcome.board, &request.at);
         check_time(&candidates, request, &outcome.board)?;
         let name = partial_name(&outcome.board, uuid::Uuid::new_v4());
@@ -423,15 +428,26 @@ impl SqliteBoardBackup {
         directory: &File,
         board: &str,
         request: &BackupRequest,
+        interrupted: Interrupted,
     ) -> Result<Vec<(AdmittedBackupFile, Timestamp)>, BackupError> {
         let mut result = Vec::new();
-        for name in entries(directory, request.limits.entries)? {
-            if let Some(at) = snapshot_at(board, &name) {
+        let names = entries(directory, request.limits.entries)?;
+        for name in &names {
+            if let Some(at) = snapshot_at(board, name) {
                 if result.len() < request.limits.candidates {
                 } else {
                     return Err(BackupError::ResourceLimit);
                 }
-                let (_, candidate) = record(directory, &name)?;
+                let pair = match interrupted {
+                    Interrupted::Tolerated => interrupted_pair(directory, board, &names, name)?,
+                    Interrupted::Refused => None,
+                };
+                let candidate = match pair {
+                    // Admitted for the preflight's time check only; the
+                    // locked run repairs it before its own admission.
+                    Some(pair) => pair.snapshot,
+                    None => record(directory, name)?.1,
+                };
                 result.push((candidate, at));
             }
         }
@@ -542,8 +558,11 @@ fn check_time(
     }
     Ok(())
 }
+#[path = "backup_interrupted.rs"]
+mod interrupted;
 #[path = "backup_sweep.rs"]
 mod sweep;
+use interrupted::{Interrupted, interrupted_pair};
 use sweep::{SweepScope, partial_name};
 #[cfg(test)]
 #[path = "backup_run_tests.rs"]

@@ -170,7 +170,7 @@ pub(super) fn partial_name(board: &str, id: uuid::Uuid) -> String {
 /// Allowlist: the canonical partial a name is, or is a `-wal`/`-shm`/`-journal`
 /// of: `.{board}.{uuid}.partial` exactly as `partial_name` spells it, with a
 /// lowercase hyphenated version-4 UUID.
-fn partial_of<'a>(board: &str, name: &'a str) -> Option<&'a str> {
+pub(super) fn partial_of<'a>(board: &str, name: &'a str) -> Option<&'a str> {
     let partial = SIDECARS
         .iter()
         .find_map(|suffix| name.strip_suffix(suffix))

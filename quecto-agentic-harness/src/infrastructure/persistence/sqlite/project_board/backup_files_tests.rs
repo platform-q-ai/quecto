@@ -107,3 +107,57 @@ fn backup_destination_parent_sync_error_refuses_before_any_partial() {
     assert_eq!(error.raw_os_error(), Some(libc::EINVAL));
     assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
 }
+/// A lock file swapped under its name between open and flock is not the
+/// board's lock: two runs could otherwise each hold a different inode.
+#[test]
+fn backup_lock_refuses_an_inode_its_name_no_longer_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = anchored::directory(temp.path()).unwrap();
+    let board = "0123456789abcdef";
+    let lock = temp.path().join(anchored::lock_name(board));
+    let stale = anchored::open_lock(&directory, board).unwrap();
+    std::fs::rename(&lock, temp.path().join("aside")).unwrap();
+    let current = anchored::open_lock(&directory, board).unwrap();
+    assert_eq!(
+        anchored::hold(&directory, board, stale).unwrap_err().kind(),
+        io::ErrorKind::InvalidInput,
+        "the renamed-aside inode is not the board lock"
+    );
+    let held = anchored::hold(&directory, board, current).unwrap();
+    let named = std::fs::symlink_metadata(&lock).unwrap();
+    assert_eq!(
+        (
+            held.metadata().unwrap().ino(),
+            held.metadata().unwrap().dev()
+        ),
+        (named.ino(), named.dev())
+    );
+}
+/// The same holds for a lock name unlinked between open and flock.
+#[test]
+fn backup_lock_refuses_an_unlinked_inode() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = anchored::directory(temp.path()).unwrap();
+    let board = "0123456789abcdef";
+    let stale = anchored::open_lock(&directory, board).unwrap();
+    std::fs::remove_file(temp.path().join(anchored::lock_name(board))).unwrap();
+    assert!(anchored::hold(&directory, board, stale).is_err());
+}
+/// Once the old holder is gone, the next run locks the file the name now names.
+#[test]
+fn backup_lock_after_a_rename_aside_takes_the_newly_named_file() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = anchored::directory(temp.path()).unwrap();
+    let board = "0123456789abcdef";
+    let lock = temp.path().join(anchored::lock_name(board));
+    let first = anchored::lock(&directory, board).unwrap();
+    std::fs::rename(&lock, temp.path().join("aside")).unwrap();
+    drop(first);
+    let next = anchored::lock(&directory, board).unwrap();
+    let named = std::fs::symlink_metadata(&lock).unwrap();
+    assert_eq!(next.metadata().unwrap().ino(), named.ino());
+    assert_ne!(
+        std::fs::metadata(temp.path().join("aside")).unwrap().ino(),
+        named.ino()
+    );
+}

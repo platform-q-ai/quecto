@@ -519,5 +519,7 @@ fn backup_sweep_skips_an_unremovable_canonical_orphan_and_continues() {
         "the later genuine orphan is swept"
     );
 }
+#[path = "backup_interrupted_tests.rs"]
+mod interrupted;
 #[path = "backup_sweep_tests.rs"]
 mod sweep;
