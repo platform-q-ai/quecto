@@ -85,7 +85,12 @@ fn a_device_off_the_allowlist_is_refused_and_the_overlay_is_untouched() {
     for device in ["/dev/sda", "dev/kvm"] {
         let output = rig.run(&ctx, &["container", "init", "--device", device]);
         assert_eq!(output.exit_code, 1, "{device}");
-        assert_eq!(output.stderr, "--device: only /dev/kvm is supported\n");
+        assert_eq!(
+            output.stderr,
+            format!(
+                "--device: only /dev/kvm is supported, not {device:?} (given with --device); pass --device /dev/kvm, or --no-device for none\n"
+            )
+        );
         assert!(!rig.checkout.join(".quecto/config.json").exists());
         assert!(!rig.assets_dir().exists());
     }

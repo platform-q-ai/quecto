@@ -21,10 +21,11 @@ use std::sync::Arc;
 
 use crate::application::environments::dto::{
     AssetOutcome, AssetOwnership, AssetState, ContainerAsset, ContainerConfigDocument,
-    ContainerConfigLayer, EntryValueChange, InitialiseStandardContainerError, RepositoryOrigin,
-    STANDARD_CONTAINER_CONFIG, STANDARD_CONTAINER_DIR, STANDARD_CONTAINER_IMAGE,
-    StandardContainerReport, StandardContainerRequest, StandardEntryOutcome,
-    is_allowed_container_device, standard_image_for,
+    ContainerConfigLayer, DeviceRefusal, DeviceSource, EntryValueChange,
+    InitialiseStandardContainerError, RepositoryOrigin, STANDARD_CONTAINER_CONFIG,
+    STANDARD_CONTAINER_DIR, STANDARD_CONTAINER_IMAGE, StandardContainerReport,
+    StandardContainerRequest, StandardEntryOutcome, is_allowed_container_device,
+    standard_image_for,
 };
 use crate::application::environments::ports::{
     container::ContainerAssetStore, container::ContainerConfigPersistence,
@@ -157,11 +158,18 @@ impl InitialiseStandardContainer {
                     .collect()
             })
             .unwrap_or_default();
+        let (requested, source) = match &request.devices {
+            Some(given) => (given, DeviceSource::Flag),
+            None => (&previous_devices, DeviceSource::ExistingEntry),
+        };
         let mut devices: Vec<String> = Vec::new();
-        for device in request.devices.as_ref().unwrap_or(&previous_devices) {
+        for device in requested {
             if !is_allowed_container_device(device) {
                 return Err(InitialiseStandardContainerError::DeviceNotAllowed(
-                    device.clone(),
+                    DeviceRefusal {
+                        device: device.clone(),
+                        source,
+                    },
                 ));
             }
             if !devices.contains(device) {

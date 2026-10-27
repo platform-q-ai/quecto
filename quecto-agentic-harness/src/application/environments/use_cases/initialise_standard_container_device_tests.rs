@@ -5,7 +5,8 @@
 //! them; anything off the allowlist is refused before anything is written.
 use super::rig_tests::*;
 use crate::application::environments::dto::{
-    ALLOWED_CONTAINER_DEVICES, EntryValueChange, InitialiseStandardContainerError,
+    ALLOWED_CONTAINER_DEVICES, DeviceRefusal, DeviceSource, EntryValueChange,
+    InitialiseStandardContainerError,
 };
 use crate::application::environments::ports::container::ContainerConfigRosterReport;
 
@@ -66,9 +67,17 @@ fn a_device_off_the_allowlist_is_refused_before_anything_is_written() {
             .unwrap_err();
         assert_eq!(
             error,
-            InitialiseStandardContainerError::DeviceNotAllowed(device.to_string())
+            InitialiseStandardContainerError::DeviceNotAllowed(DeviceRefusal {
+                device: device.to_string(),
+                source: DeviceSource::Flag,
+            })
         );
-        assert_eq!(error.to_string(), "--device: only /dev/kvm is supported");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "--device: only /dev/kvm is supported, not {device:?} (given with --device); pass --device /dev/kvm, or --no-device for none"
+            )
+        );
         assert!(
             rig.persistence.written.lock().unwrap().is_empty(),
             "{device:?}"
@@ -130,7 +139,14 @@ fn a_kept_device_is_judged_against_the_allowlist_too() {
     let error = rig.use_case.execute(&request("/p")).unwrap_err();
     assert_eq!(
         error,
-        InitialiseStandardContainerError::DeviceNotAllowed("/dev/sda".into())
+        InitialiseStandardContainerError::DeviceNotAllowed(DeviceRefusal {
+            device: "/dev/sda".into(),
+            source: DeviceSource::ExistingEntry,
+        })
+    );
+    assert_eq!(
+        error.to_string(),
+        "--device: only /dev/kvm is supported, not \"/dev/sda\" (kept from the existing standard entry); pass --device /dev/kvm to replace the entry's list, or --no-device to remove it"
     );
     // Replacing the list is the way out.
     assert!(rig.use_case.execute(&with_devices(&[])).is_ok());

@@ -416,27 +416,80 @@ else
 fi
 
 # Every requested device must be a character device the invoking user can
-# read and write: the container runs as this user, so a device closed to
-# the user is closed to the container too. A device the user reaches only
-# through a group (a 0660 root:kvm /dev/kvm) needs that group kept inside
-# the container: rootless Podman drops supplementary groups unless asked
-# (`--group-add keep-groups`, crun only); Docker does not keep them either.
-# QUECTO_CONTAINER_DEVICE_ROOT is a test seam: it moves where this check
-# looks, never what is forwarded (always the allowlisted path itself).
-device_root="${QUECTO_CONTAINER_DEVICE_ROOT:-}"
-device_via_group=0
+# read and write: the container runs as this user (the same uid), so it
+# opens the device exactly when this user's access survives into it.
+#   - The owner bits (this user owns it) or the other bits grant it: the
+#     same uid inside gets it as is.
+#   - Only the group bits grant it, through one of this user's groups (a
+#     0660 root:kvm /dev/kvm): the container must carry that group. Docker
+#     adds just the device's group (`--group-add <gid>`); rootless Podman
+#     cannot map a host group id into its user namespace and instead keeps
+#     ALL of this user's supplementary groups inside (`--group-add
+#     keep-groups`), which only the crun OCI runtime supports — anything
+#     else is refused here.
+#   - Anything else (an ACL, a capability) does not survive: refused.
+# The check always judges the real path it forwards.
+# device_access <path>: prints `direct`, `group <gid> <group name>` or
+# `other` for a path this user can read and write.
+device_access() {
+  local stat_out mode uid gid name my_uid bits
+  stat_out="$(stat -L -c '%a %u %g %G' -- "$1" 2>/dev/null)" || stat_out=""
+  read -r mode uid gid name <<<"$stat_out"
+  if ! [[ "$mode" =~ ^[0-7]{3,4}$ && "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ ]]; then
+    echo other
+    return 0
+  fi
+  my_uid="$(id -u)"
+  bits=$((8#$mode))
+  if [ $((bits & 8#006)) = $((8#006)) ] || { [ "$uid" = "$my_uid" ] && [ $((bits & 8#600)) = $((8#600)) ]; }; then
+    echo direct
+  elif [ $((bits & 8#060)) = $((8#060)) ] && [[ " $(id -G) " == *" $gid "* ]]; then
+    echo "group $gid ${name:-$gid}"
+  else
+    echo other
+  fi
+}
+device_group_ids=()
+device_keep_groups=0
 if [ "${#devices[@]}" = 0 ]; then
   report ok device "not requested" ""
 else
   for dev in "${devices[@]}"; do
     is_allowed_device "$dev" || die "device $dev escaped the allowlist"
-    probe_path="$device_root$dev"
+    probe_path="$dev"
     if [ -c "$probe_path" ] && [ -r "$probe_path" ] && [ -w "$probe_path" ]; then
-      report ok device "device $dev is present and this user can read and write it" ""
-      device_mode="$(stat -L -c %a -- "$probe_path" 2>/dev/null)" || device_mode=""
-      case "$device_mode" in
-      *[67]) ;;
-      *) device_via_group=1 ;;
+      read -r access access_gid access_group <<<"$(device_access "$probe_path")"
+      usable="device $dev is present and this user can read and write it"
+      case "$access" in
+      direct) report ok device "$usable" "" ;;
+      group)
+        through="through group $access_group (gid $access_gid)"
+        case "$cli" in
+        podman)
+          oci_runtime="$(bounded "$cli" info --format '{{.Host.OCIRuntime.Name}}' 2>/dev/null)" || oci_runtime=""
+          oci_runtime="$(last_line "$oci_runtime")"
+          if [ "$oci_runtime" = crun ]; then
+            report ok device "$usable $through; podman keeps the user's groups (--group-add keep-groups, crun)" ""
+            device_keep_groups=1
+          else
+            report fail device "device $dev is readable and writable only $through, and podman's OCI runtime is ${oci_runtime:-unknown}, not crun: the container would not keep that group" \
+              "install crun and set runtime = \"crun\" under [engine] in containers.conf, or make $dev read-write for everyone (0666), or remove --device $dev from the container config" "$EXIT_NO_DEVICE"
+          fi
+          ;;
+        "")
+          report warn device "$usable $through; whether the container keeps that group was not checked: no container runtime" \
+            "fix the runtime-cli check first"
+          ;;
+        *)
+          report ok device "$usable $through; $cli runs the container with --group-add $access_gid" ""
+          device_group_ids+=("$access_gid")
+          ;;
+        esac
+        ;;
+      *)
+        report fail device "device $dev is readable and writable here only through an ACL or a capability, which the container does not keep" \
+          "make $dev read-write for a group the user is in (sudo usermod -aG kvm \"\$USER\") or for everyone (0666), or remove --device $dev from the container config" "$EXIT_NO_DEVICE"
+        ;;
       esac
     elif [ -c "$probe_path" ]; then
       report fail device "device $dev is present but this user cannot read and write it" \
@@ -717,7 +770,11 @@ run_as+=(--pids-limit "$pids_limit")
 for dev in ${devices[@]+"${devices[@]}"}; do
   run_as+=(--device "$dev")
 done
-if [ "$device_via_group" = 1 ] && [ "$cli" = podman ]; then
+# The group the preflight found the device reachable through (see above).
+for gid in ${device_group_ids[@]+"${device_group_ids[@]}"}; do
+  run_as+=(--group-add "$gid")
+done
+if [ "$device_keep_groups" = 1 ]; then
   run_as+=(--group-add keep-groups)
 fi
 # SECURITY (PR #1401 review): provider API keys must NOT be passed with

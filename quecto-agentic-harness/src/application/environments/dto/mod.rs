@@ -358,7 +358,9 @@ mod devices;
 mod gc;
 mod standard_image;
 pub use assets::{AssetOutcome, AssetOwnership, AssetState, ContainerAsset};
-pub use devices::{ALLOWED_CONTAINER_DEVICES, is_allowed_container_device};
+pub use devices::{
+    ALLOWED_CONTAINER_DEVICES, DeviceRefusal, DeviceSource, is_allowed_container_device,
+};
 pub use gc::{AbandonedRuns, GcCandidate, GcKept, GcRefused, GcRemoval, GcReport, GcRequest};
 pub use standard_image::standard_image_for;
 
@@ -585,7 +587,7 @@ pub enum InitialiseStandardContainerError {
     },
     /// A `--device` (given, or kept from the existing entry) is not on
     /// [`ALLOWED_CONTAINER_DEVICES`].
-    DeviceNotAllowed(String),
+    DeviceNotAllowed(DeviceRefusal),
     /// The effective container-config set could not be read, or the
     /// checkout's overlay is withheld (untrusted): init never trusts an
     /// overlay it did not write.
@@ -637,11 +639,7 @@ impl std::fmt::Display for InitialiseStandardContainerError {
                 toplevel.display(),
                 toplevel.display()
             ),
-            Self::DeviceNotAllowed(_) => write!(
-                f,
-                "--device: only {} is supported",
-                ALLOWED_CONTAINER_DEVICES.join(", ")
-            ),
+            Self::DeviceNotAllowed(refusal) => write!(f, "{refusal}"),
             Self::Configuration(reason) => write!(f, "{reason}"),
             Self::Persist(reason) => write!(f, "{reason}"),
         }

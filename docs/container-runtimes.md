@@ -1653,12 +1653,19 @@ Design properties:
   read and write it (`device /dev/kvm is present but this user cannot read
   and write it`, remedy: add the user to the `kvm` group); the `run` passes
   `--device /dev/kvm` and the create result lists `metadata.devices`
-  (`[]` without one). The container runs as the invoking user, so the
-  user's access is the container's: a world read-write `/dev/kvm` (0666)
-  needs nothing more; a group-only one (0660 `root:kvm`) gets
-  `--group-add keep-groups` under rootless Podman, which needs the `crun`
-  OCI runtime (Podman refuses it under `runc`). Docker does not keep the
-  user's supplementary groups: there the device must be world read-write.
+  (`[]` without one). The container runs as the invoking user's uid, and
+  the check judges how that user's access would survive into it: through
+  the other bits (a 0666 `/dev/kvm`) or the owner bits, nothing more is
+  needed. Through the group bits alone (0660 `root:kvm`, the user in
+  `kvm`), the container must carry the group: Docker gets
+  `--group-add <gid>` (the device's group only); rootless Podman cannot map
+  a host group into its user namespace and gets `--group-add keep-groups`,
+  which keeps **all** of the user's supplementary groups inside the
+  container and works only with the `crun` OCI runtime — under any other
+  (`podman info --format '{{.Host.OCIRuntime.Name}}'`) the check fails
+  (`… and podman's OCI runtime is runc, not crun: the container would not
+  keep that group`, remedy: install crun or make the device 0666). Access
+  through an ACL or a capability does not survive and is refused.
   `quecto container init --device /dev/kvm` writes the flag into the
   standard entry (never hand-edit the trusted overlay).
 - **Rollback and containment.** `create.sh` installs an ERR trap that removes
@@ -1799,8 +1806,9 @@ container config "quecto" (create: /…/docker/create.sh --state-dir /var/tmp/en
 | `… status exit status: 3: … could not read the ai.quecto.required-tools label of image <img>` / `… could not run image <img>` / `… did not answer within 15s while running image <img>` | `✗ required-tools` / `✗ image-base` | The runtime failed, not the image: check the daemon/service (`podman info`); `QUECTO_REPO_CHECK_TIMEOUT` raises the bound. |
 | `… status exit status: 7: … --repo <url> is unreachable: fatal: …` | `✗ repo` | Check the URL and your credentials (`ssh` key or `gh auth login`); fix `--repo` in the config's create argv. |
 | `… status exit status: 8: … state dir <dir> is not owned by the current user` / `cannot be created` | `✗ state-dir` | Point `--state-dir` at a directory you own. |
-| `… status exit status: 9: … device /dev/kvm is not present on this host` / `… is present but this user cannot read and write it` | `✗ device` | Enable KVM (virtualisation on in the firmware, the `kvm` module loaded), or add the user to the `kvm` group (`sudo usermod -aG kvm "$USER"`, then log in again); or drop the device: `quecto container init --no-device`. |
+| `… status exit status: 9: … device /dev/kvm is not present on this host` / `… is present but this user cannot read and write it` / `… readable and writable only through group kvm (gid <n>), and podman's OCI runtime is runc, not crun …` / `… only through an ACL or a capability …` | `✗ device` | Enable KVM (virtualisation on in the firmware, the `kvm` module loaded), or add the user to the `kvm` group (`sudo usermod -aG kvm "$USER"`, then log in again); for a group-only `/dev/kvm` under podman, install crun (`runtime = "crun"` under `[engine]` in containers.conf) or make it 0666; or drop the device: `quecto container init --no-device`. |
 | `… status exit status: 2: … --device: only /dev/kvm is supported` | — (exit 1) | The create argv names a device off the allowlist; `quecto container init --device /dev/kvm` writes the only one supported. |
+| init: `--device: only /dev/kvm is supported, not "<path>" (given with --device)` / `(kept from the existing standard entry)` | — | Pass `--device /dev/kvm`, or `--no-device` for none. |
 | `unknown container config '<name>' (available container configs: …)` | (doctor refuses too) | Pick a listed name, or bind the repository: `quecto config set --local container_configs.<name> '{…,"default":true}'`. |
 | `container: true refused: the checkout's repo-local config overlay was not applied` | `container doctor refused: …` (exit 1, before any check) | Review `.quecto/config.json`, then `quecto config trust` in that directory; or `--name` a global entry. |
 | `… status exit status: 3: … podman could not look up image …` / `did not answer within 15s` | `✗ image` (runtime cause quoted) | The runtime is installed but cannot answer: start the daemon/service (`podman info`, `systemctl --user start podman.socket`, docker group membership). |
