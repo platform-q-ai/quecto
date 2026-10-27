@@ -112,7 +112,9 @@ fn backup_leaves_an_interrupted_pair_alone_while_the_board_lock_is_held() {
     assert_eq!(std::fs::metadata(to.join(&snapshot)).unwrap().nlink(), 2);
 }
 /// #2773: a lock held briefly by someone else is waited out within
-/// `limits.busy`; the run completes instead of reporting busy.
+/// `limits.busy`; the run completes instead of reporting busy. The holder lets
+/// go only 100 ms after the run's own `lock()` has opened the lock file (the
+/// `between_open_and_flock` seam), so the run's flock meets a held lock.
 #[test]
 fn backup_waits_out_a_brief_hold_of_the_board_lock() {
     let temp = tempfile::tempdir().unwrap();
@@ -121,12 +123,27 @@ fn backup_waits_out_a_brief_hold_of_the_board_lock() {
     assert_eq!(back_up(&root, &to, "2026-10-20T10:00:00Z").error, None);
     let directory = fs::directory(&to).unwrap();
     let held = fs::lock(&directory, BOARD, Duration::from_secs(5)).unwrap();
-    let release = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(50));
+    let (release, signal) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        if signal.recv().is_ok() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
         drop(held);
     });
-    let outcome = back_up(&root, &to, "2026-10-25T12:00:00Z");
-    release.join().unwrap();
+    fs::between_open_and_flock::set(move || release.send(()).unwrap());
+    let outcome = back_up_with(
+        &root,
+        &to,
+        "2026-10-25T12:00:00Z",
+        Arc::new(SystemBackupFileOps),
+        BackupLimits {
+            busy: Duration::from_secs(5),
+            ..BackupLimits::default()
+        },
+    );
+    // Drops an unrun hook's sender, so the holder never waits for ever.
+    fs::between_open_and_flock::set(|| {});
+    holder.join().unwrap();
     assert_eq!(outcome.error, None);
     assert_eq!(outcome.stage, BackupStage::Complete);
 }
