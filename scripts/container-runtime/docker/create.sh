@@ -4,18 +4,21 @@
 # docs/container-runtimes.md for the contract). Verified manually against a
 # local Docker daemon; the CI-exercised default remains the host-local set.
 #
-#   create.sh --state-dir <dir> [--image <img>] -- <child-binary> <child-args...>
-#   create.sh --state-dir <dir> [--image <img>] [--repo <url>] --preflight-only
+#   create.sh --state-dir <dir> [--image <img>] [--device /dev/kvm]... -- <child-binary> <child-args...>
+#   create.sh --state-dir <dir> [--image <img>] [--repo <url>] [--device /dev/kvm]... --preflight-only
 # The repository is BAKED INTO the container config's own argv via --repo
 # (#1410): Quecto passes no source information. No --repo → sandbox config
-# (empty workspace, no clone).
+# (empty workspace, no clone). --device hands the container a host device
+# from an allowlist (`/dev/kvm` alone: a headless Android emulator needs
+# it); any other spelling is refused before anything else happens.
 # Environment: QUECTO_CONTAINER_CONFIG,
 #              QUECTO_CONTAINER_ENVIRONMENT_REF
 #
 # Preflight (#2024 S4b): one list of checks — container runtime, jq, git,
-# gh, image present (never pulled implicitly), --repo reachable, state dir
-# writable — runs before any environment state exists. A normal create dies
-# at the first failure with a distinct message and exit code (see the
+# gh, image present (never pulled implicitly), --repo reachable, every
+# --device present and read-write for this user, state dir writable —
+# runs before any environment state exists. A normal create dies at the
+# first failure with a distinct message and exit code (see the
 # EXIT_* table); `--preflight-only` evaluates every check, prints one
 # `status<TAB>check<TAB>detail<TAB>remedy` line per check on stdout
 # (status ok|warn|fail) and exits non-zero when any failed. `quecto
@@ -48,6 +51,7 @@ EXIT_NO_GIT=5
 EXIT_NO_IMAGE=6
 EXIT_REPO_UNREACHABLE=7
 EXIT_STATE_DIR=8
+EXIT_NO_DEVICE=9
 die() {
   log "$@"
   exit 1
@@ -61,6 +65,24 @@ state_dir=""
 repo=""
 image="${QUECTO_DOCKER_IMAGE:-quecto-dev:local}"
 preflight_only=0
+# The host devices a config may hand its container: an allowlist, matched
+# exactly (no other spelling of the same path).
+allowed_devices=(/dev/kvm)
+devices=()
+is_allowed_device() {
+  local allowed
+  for allowed in "${allowed_devices[@]}"; do
+    if [ "$1" = "$allowed" ]; then return 0; fi
+  done
+  return 1
+}
+is_requested_device() {
+  local requested
+  for requested in ${devices[@]+"${devices[@]}"}; do
+    if [ "$1" = "$requested" ]; then return 0; fi
+  done
+  return 1
+}
 while [ "$#" -gt 0 ]; do
   case "$1" in
   --state-dir)
@@ -76,6 +98,12 @@ while [ "$#" -gt 0 ]; do
   --image)
     [ "$#" -ge 2 ] || usage "--image needs a value"
     image="$2"
+    shift 2
+    ;;
+  --device)
+    [ "$#" -ge 2 ] || usage "--device needs a value"
+    is_allowed_device "$2" || usage "--device: only /dev/kvm is supported"
+    is_requested_device "$2" || devices+=("$2")
     shift 2
     ;;
   --preflight-only)
@@ -149,6 +177,15 @@ else
   fi
 fi
 
+# The runtime family, by the CLI's basename (QUECTO_CONTAINER_CLI may name
+# it by path, or as podman-remote): `podman`, `docker`, or `other` — whose
+# behaviour this script does not assume.
+cli_kind=other
+case "${cli##*/}" in
+podman | podman-remote) cli_kind=podman ;;
+docker) cli_kind=docker ;;
+esac
+
 if jq_path="$(command -v jq 2>/dev/null)"; then
   report ok jq "jq at $jq_path" ""
 else
@@ -202,7 +239,7 @@ last_line() { printf '%s' "$1" | tr -d '\r' | tail -n 1; }
 # missing image.
 if [ -n "$cli" ]; then
   image_rc=0
-  case "$cli" in
+  case "$cli_kind" in
   podman) image_error="$(bounded "$cli" image exists "$image" 2>&1 >/dev/null)" || image_rc=$? ;;
   *) image_error="$(bounded "$cli" image inspect "$image" 2>&1 >/dev/null)" || image_rc=$? ;;
   esac
@@ -385,6 +422,104 @@ if [ -n "$repo" ]; then
   fi
 else
   report ok repo "not needed: sandbox config (no --repo)" ""
+fi
+
+# Every requested device must be a character device the invoking user can
+# read and write: the container runs as this user (the same uid), so it
+# opens the device exactly when this user's access survives into it.
+#   - The owner bits (this user owns it) or the other bits grant it: the
+#     same uid inside gets it as is.
+#   - Only the group bits grant it, through one of this user's groups (a
+#     0660 root:kvm /dev/kvm): the container must carry that group. Docker
+#     adds just the device's group (`--group-add <gid>`); rootless Podman
+#     cannot map a host group id into its user namespace and instead keeps
+#     ALL of this user's supplementary groups inside (`--group-add
+#     keep-groups`), which only the crun OCI runtime supports — anything
+#     else is refused here, and a podman that cannot name its runtime is a
+#     runtime failure. Any other CLI cannot be judged: refused.
+#   - Anything else (an ACL, a capability) does not survive: refused.
+# The check always judges the real path it forwards.
+# device_access <path>: prints `direct`, `group <gid> <group name>` or
+# `other` for a path this user can read and write.
+device_access() {
+  local stat_out mode uid gid name my_uid bits
+  stat_out="$(stat -L -c '%a %u %g %G' -- "$1" 2>/dev/null)" || stat_out=""
+  read -r mode uid gid name <<<"$stat_out"
+  if ! [[ "$mode" =~ ^[0-7]{1,4}$ && "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ ]]; then
+    echo other
+    return 0
+  fi
+  my_uid="$(id -u)"
+  bits=$((8#$mode))
+  if [ $((bits & 8#006)) = $((8#006)) ] || { [ "$uid" = "$my_uid" ] && [ $((bits & 8#600)) = $((8#600)) ]; }; then
+    echo direct
+  elif [ $((bits & 8#060)) = $((8#060)) ] && [[ " $(id -G) " == *" $gid "* ]]; then
+    echo "group $gid ${name:-UNKNOWN}"
+  else
+    echo other
+  fi
+}
+device_group_ids=()
+device_keep_groups=0
+if [ "${#devices[@]}" = 0 ]; then
+  report ok device "not requested" ""
+else
+  for dev in "${devices[@]}"; do
+    is_allowed_device "$dev" || die "device $dev escaped the allowlist"
+    probe_path="$dev"
+    if [ -c "$probe_path" ] && [ -r "$probe_path" ] && [ -w "$probe_path" ]; then
+      read -r access access_gid access_group <<<"$(device_access "$probe_path")"
+      usable="device $dev is present and this user can read and write it"
+      case "$access" in
+      direct) report ok device "$usable" "" ;;
+      group)
+        # A group without a name (stat's UNKNOWN) is shown by its id alone.
+        case "$access_group" in
+        UNKNOWN) group_label="gid $access_gid" ;;
+        *) group_label="group $access_group (gid $access_gid)" ;;
+        esac
+        through="through $group_label"
+        if [ -z "$cli" ]; then
+          report warn device "$usable $through; whether the container keeps that group was not checked: no container runtime" \
+            "fix the runtime-cli check first"
+        elif [ "$cli_kind" = docker ]; then
+          report ok device "$usable $through; $cli runs the container with --group-add $access_gid" ""
+          device_group_ids+=("$access_gid")
+        elif [ "$cli_kind" = podman ]; then
+          oci_rc=0
+          oci_runtime="$(bounded "$cli" info --format '{{.Host.OCIRuntime.Name}}' 2>/dev/null)" || oci_rc=$?
+          oci_runtime="$(last_line "$oci_runtime")"
+          if [ "$oci_rc" = 0 ] && [ "$oci_runtime" = crun ]; then
+            report ok device "$usable $through; podman keeps the user's groups (--group-add keep-groups, crun)" ""
+            device_keep_groups=1
+          elif [ "$oci_rc" = 0 ] && [ -n "$oci_runtime" ]; then
+            report fail device "device $dev is readable and writable only $through, and podman's OCI runtime is $oci_runtime, not crun: the container would not keep that group" \
+              "install crun and set runtime = \"crun\" under [engine] in containers.conf, or make $dev read-write for everyone (0666), or remove --device $dev from the container config" "$EXIT_NO_DEVICE"
+          elif [ "$oci_rc" = 124 ]; then
+            report fail device "$cli did not answer within ${probe_timeout}s while reporting its OCI runtime" \
+              "check that the $cli daemon/service is running and reachable (${cli} info); QUECTO_REPO_CHECK_TIMEOUT raises the bound" "$EXIT_NO_RUNTIME"
+          else
+            report fail device "$cli could not report its OCI runtime (exit $oci_rc)" \
+              "check that the $cli daemon/service is running and that this user may use it (${cli} info)" "$EXIT_NO_RUNTIME"
+          fi
+        else
+          report fail device "cannot judge whether $cli keeps $group_label" \
+            "make $dev 0666 or use podman/docker" "$EXIT_NO_DEVICE"
+        fi
+        ;;
+      *)
+        report fail device "device $dev is readable and writable here only through an ACL or a capability, which the container does not keep" \
+          "make $dev read-write for a group the user is in (sudo usermod -aG kvm \"\$USER\") or for everyone (0666), or remove --device $dev from the container config" "$EXIT_NO_DEVICE"
+        ;;
+      esac
+    elif [ -c "$probe_path" ]; then
+      report fail device "device $dev is present but this user cannot read and write it" \
+        "add the user to the kvm group (sudo usermod -aG kvm \"\$USER\", then log in again), or remove --device $dev from the container config" "$EXIT_NO_DEVICE"
+    else
+      report fail device "device $dev is not present on this host" \
+        "enable KVM on this host (virtualisation on in the firmware, the kvm module loaded), or remove --device $dev from the container config" "$EXIT_NO_DEVICE"
+    fi
+  done
 fi
 
 # The state root is created owner-only by a real create; the preflight
@@ -626,7 +761,7 @@ envs=(-e "RUST_LOG=${RUST_LOG:-info}" -e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER
 # to a subuid and every mounted file would look foreign); Docker already maps
 # container uids 1:1 to the host.
 run_as=(--user "$(id -u):$(id -g)")
-if [ "$cli" = podman ]; then
+if [ "$cli_kind" = podman ]; then
   run_as+=(--userns=keep-id)
 fi
 # --init puts a minimal init (catatonit under Podman, tini under Docker) at
@@ -652,6 +787,17 @@ case "$pids_limit" in
   ''|0|*[!0-9]*) die "QUECTO_CONTAINER_PIDS_LIMIT must be -1 or a positive integer" ;;
 esac
 run_as+=(--pids-limit "$pids_limit")
+# The allowlisted devices the preflight proved usable, at the same path.
+for dev in ${devices[@]+"${devices[@]}"}; do
+  run_as+=(--device "$dev")
+done
+# The group the preflight found the device reachable through (see above).
+for gid in ${device_group_ids[@]+"${device_group_ids[@]}"}; do
+  run_as+=(--group-add "$gid")
+done
+if [ "$device_keep_groups" = 1 ]; then
+  run_as+=(--group-add keep-groups)
+fi
 # SECURITY (PR #1401 review): provider API keys must NOT be passed with
 # `run -e KEY=value` — that bakes them into the container config,
 # readable for the container's whole lifetime via `inspect` and
@@ -748,4 +894,5 @@ jq -cn \
   --arg source "$source" \
   --arg repository "$repo_shown" \
   --arg admission "$admission_capability" \
-  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source, checkout: $checkout} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'
+  --argjson devices "$(jq -cn '$ARGS.positional' --args ${devices[@]+"${devices[@]}"})" \
+  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source, checkout: $checkout, devices: $devices} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'
