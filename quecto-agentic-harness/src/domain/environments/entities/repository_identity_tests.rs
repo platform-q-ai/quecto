@@ -27,13 +27,8 @@ fn identities_differ_by_owner_name_or_host() {
 fn a_github_identity_reads_as_owner_slash_name_and_another_host_keeps_its_host() {
     let github = identity("github.com", "Platform-Q-AI", "Quecto");
     assert_eq!(github.to_string(), "platform-q-ai/quecto");
-    assert_eq!(
-        github.https_url(),
-        "https://github.com/platform-q-ai/quecto"
-    );
     let other = identity("git.example.com", "team", "tool");
     assert_eq!(other.to_string(), "git.example.com/team/tool");
-    assert_eq!(other.https_url(), "https://git.example.com/team/tool");
 }
 
 #[test]
@@ -53,7 +48,6 @@ fn only_parts_of_the_allowed_shape_make_an_identity() {
         ("-github.com", "o", "n"),
         ("github.com:22", "o", "n"),
         ("github.com", "ö", "n"),
-        ("localhost", "o", "n"),
         ("c", "repos", "quecto"),
     ] {
         assert!(
@@ -69,4 +63,14 @@ fn an_overlong_part_is_refused() {
     assert!(RepositoryIdentity::new("github.com", &long, "n").is_none());
     assert!(RepositoryIdentity::new("github.com", "o", &long).is_none());
     assert!(RepositoryIdentity::new(&long, "o", "n").is_none());
+}
+
+/// An ssh alias host (`Host github-work` in ssh's config) is a host: the
+/// same alias, owner and name are the same repository.
+#[test]
+fn an_ssh_alias_host_names_a_repository_of_its_own() {
+    let alias = identity("github-work", "Platform-Q-AI", "quecto");
+    assert_eq!(alias, identity("GitHub-Work", "platform-q-ai", "Quecto"));
+    assert_eq!(alias.to_string(), "github-work/platform-q-ai/quecto");
+    assert_ne!(alias, identity("github.com", "platform-q-ai", "quecto"));
 }

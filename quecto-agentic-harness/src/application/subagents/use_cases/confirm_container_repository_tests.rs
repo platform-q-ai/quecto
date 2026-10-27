@@ -104,6 +104,7 @@ fn a_global_default_for_another_repository_is_refused_naming_both_and_the_setup(
             ContainerRepository::Named(identity("platform-q-ai", "quecto")),
             ProjectRepository::Known {
                 checkout: PathBuf::from(CHECKOUT),
+                origin: POCKET.into(),
                 identity: identity("platform-q-ai", "quecto-pocket"),
             },
         )
@@ -263,6 +264,7 @@ fn a_config_naming_more_than_one_repository_is_refused_as_unconfirmable() {
 fn a_matching_pair_is_never_a_refusal() {
     let known = || ProjectRepository::Known {
         checkout: PathBuf::from(CHECKOUT),
+        origin: POCKET.into(),
         identity: identity("platform-q-ai", "quecto-pocket"),
     };
     let matching = ContainerRepository::Named(identity("Platform-Q-AI", "Quecto-Pocket"));
@@ -285,4 +287,47 @@ fn a_matching_pair_is_never_a_refusal() {
             "{container:?}"
         );
     }
+}
+
+/// The advice suggests the project's origin as written, so an ssh alias
+/// (`git@github-work:…`) is set up as the alias it is; a token in an
+/// `https` origin is never shown.
+#[test]
+fn the_advice_suggests_the_origin_as_written_without_its_secret() {
+    let alias = "git@github-work:platform-q-ai/quecto-pocket.git";
+    let urls =
+        Arc::new(crate::infrastructure::config::container_repository_urls::RemoteRepositoryUrls);
+    let origins = |origin: &'static str| {
+        Arc::new(FakeOrigin {
+            answer: Ok(Some(origin.into())),
+            asked: Mutex::new(Vec::new()),
+        })
+    };
+    let aliased = ConfirmContainerRepository::new(
+        Some(PathBuf::from(CHECKOUT)),
+        origins(alias),
+        urls.clone(),
+    );
+    assert!(
+        aliased.confirm(&config("default", Some(alias))).is_ok(),
+        "written alike, it matches"
+    );
+    let refused = refusal(aliased.confirm(&config("default", Some(QUECTO))));
+    assert!(
+        refused.to_string().ends_with(&format!(
+            "set this repository's container up with `quecto container init --project {CHECKOUT} --repo {alias}`, then start again."
+        )),
+        "{refused}"
+    );
+    let secret = ConfirmContainerRepository::new(
+        Some(PathBuf::from(CHECKOUT)),
+        origins("https://ghp_hunter2@github.com/platform-q-ai/quecto-pocket"),
+        urls,
+    );
+    let text = refusal(secret.confirm(&config("default", Some(QUECTO)))).to_string();
+    assert!(!text.contains("hunter2"), "{text}");
+    assert!(
+        text.contains("--repo https://***@github.com/platform-q-ai/quecto-pocket`"),
+        "{text}"
+    );
 }

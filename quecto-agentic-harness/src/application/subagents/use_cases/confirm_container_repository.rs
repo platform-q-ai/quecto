@@ -78,7 +78,11 @@ impl ConfirmContainerRepository {
         };
         match self.origins.origin(&checkout) {
             Ok(Some(origin)) => match self.urls.identity(&origin) {
-                Some(identity) => ProjectRepository::Known { checkout, identity },
+                Some(identity) => ProjectRepository::Known {
+                    checkout,
+                    origin,
+                    identity,
+                },
                 None => ProjectRepository::Unreadable { checkout, origin },
             },
             Ok(None) => ProjectRepository::NoOrigin { checkout },

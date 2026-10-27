@@ -25,9 +25,10 @@ pub struct RepositoryIdentity {
 
 impl RepositoryIdentity {
     /// The repository `host`/`owner`/`name` names, its parts lower-cased;
-    /// `None` when a part is not of the allowed shape: a host name of
-    /// ASCII letters, digits, `.` and `-`, starting with a letter or digit
-    /// and holding a `.` (no port, no bare `localhost` or drive letter); an owner and a name of ASCII letters, digits, `.`, `_` and
+    /// `None` when a part is not of the allowed shape: a host name of at
+    /// least two ASCII letters, digits, `.` and `-`, starting with a letter
+    /// or digit (no port; a one-letter drive is no host; an ssh alias such
+    /// as `github-work` is); an owner and a name of ASCII letters, digits, `.`, `_` and
     /// `-`, not starting with `-` and neither `.` nor `..`; each at most
     /// [`MAX_PART_BYTES`].
     pub fn new(host: &str, owner: &str, name: &str) -> Option<Self> {
@@ -39,12 +40,6 @@ impl RepositoryIdentity {
             }),
             _ => None,
         }
-    }
-
-    /// The repository's `https` URL, with no credential in it: what a
-    /// container of this repository is set up with.
-    pub fn https_url(&self) -> String {
-        format!("https://{}/{}/{}", self.host, self.owner, self.name)
     }
 }
 
@@ -64,7 +59,7 @@ fn is_host(host: &str) -> bool {
         .next()
         .is_some_and(|b| b.is_ascii_alphanumeric());
     first
-        && host.contains('.')
+        && host.len() >= 2
         && host.len() <= MAX_PART_BYTES
         && host
             .bytes()

@@ -72,6 +72,11 @@ start identities for conservative lifecycle reconciliation.
 The first in-container agent is the coordinator and designated Git integrator.
 The parent spawns it with `coordinator: true` (a new container only), so it
 starts from the bundled coordinator playbook (#2461).
+That container's config must clone the parent's own repository (its `--repo`
+and the checkout's `origin` naming the same repository, written the same way),
+or the spawn is refused before anything is created; and only an agent launched
+with `coordinator: true` may `swarm` `op=create`, so this guarded spawn is the
+sanctioned way to start a swarm.
 The external supervising parent is not a member. Initial harness startup records
 membership in a setup board; creation cannot choose a smaller limit than the
 already live/reserved population. Create the run before launching the pool.

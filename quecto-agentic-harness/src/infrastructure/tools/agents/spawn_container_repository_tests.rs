@@ -93,7 +93,7 @@ async fn a_swarm_is_refused_a_container_of_another_repository_before_its_create_
     );
     assert!(
         text.contains(&format!(
-            "`quecto container init --project {} --repo https://git.example.test/platform-q-ai/quecto-pocket`",
+            "`quecto container init --project {} --repo git@git.example.test:platform-q-ai/quecto-pocket.git`",
             project.display()
         )),
         "{text}"

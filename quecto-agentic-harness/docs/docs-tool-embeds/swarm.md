@@ -18,7 +18,10 @@ containers to evade its limit. See `docs {"name":"subagents"}` for launching.
   global default overrides it; run `quecto container init` first if the
   roster shows none — else the labelled default). The result's
   `container_config=<name>` confirms the choice; a new container is a fresh
-  clone of that config's `--repo`, not the master's working tree.
+  clone of that config's `--repo`, not the master's working tree. That
+  `--repo` must be the master's own repository (its checkout's `origin`,
+  written the same way), or the coordinator spawn is refused before anything
+  is created; only an agent launched with `coordinator: true` may `op=create`.
 - **Workers are spawned with `container` omitted** (a local spawn inside the
   shared container); any other `container` value from a swarm member is
   refused. They inherit the container's identity through their environment.

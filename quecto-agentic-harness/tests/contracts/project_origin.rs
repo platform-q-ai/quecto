@@ -1,10 +1,9 @@
 //! Contract for the `ProjectOrigin` port (swarm-container-matches-repo):
-//! the launching project's `origin` remote, as `git remote get-url origin`
-//! answers it — the URL with any `insteadOf` rewrite of the machine's
-//! configuration applied, as the clone would see it — `None` for a
-//! directory that is no checkout or a checkout without `origin`. The
-//! checkouts are made by isolated git, and name a host no `insteadOf`
-//! rewrites, so the machine's configuration cannot change the answer.
+//! the launching project's `origin` remote as written in the checkout's
+//! own configuration (`remote.origin.url`), no `insteadOf` applied, so it
+//! compares like for like with a container config's `--repo`, which is
+//! read as written too; `None` for a directory that is no checkout or a
+//! checkout without `origin`. The checkouts are made by isolated git.
 use quecto::composition::container_configs::build_project_origin;
 use quecto::infrastructure::test_support::isolated_git::{checkout_with_origin, isolated_git_ok};
 
@@ -48,4 +47,33 @@ fn no_checkout_or_no_origin_is_none() {
         Ok(None),
         "a directory that is gone is no checkout"
     );
+}
+
+/// An ssh alias host with an `insteadOf` rewrite configured is read as
+/// written, not rewritten: the container's `--repo`, written the same way,
+/// is the same repository.
+#[test]
+fn an_insteadof_alias_is_read_as_written() {
+    let root = tempfile::tempdir().unwrap();
+    let alias = "git@github-work:platform-q-ai/quecto-pocket.git";
+    let checkout = checkout_with_origin(root.path(), alias);
+    isolated_git_ok(
+        root.path(),
+        &checkout,
+        &[
+            "config",
+            "url.https://rewritten.example.test/.insteadOf",
+            "git@github-work:",
+        ],
+    );
+    assert_eq!(
+        build_project_origin().origin(&checkout),
+        Ok(Some(alias.to_string()))
+    );
+    let urls = quecto::composition::container_configs::build_repository_urls();
+    assert_eq!(
+        urls.identity(alias),
+        urls.identity("git@GitHub-Work:Platform-Q-AI/quecto-pocket")
+    );
+    assert!(urls.identity(alias).is_some());
 }

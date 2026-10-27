@@ -75,11 +75,37 @@ impl WorkspaceOrigin for GitWorkspaceOrigin {
 }
 
 /// The launching project's origin a swarm's container is confirmed
-/// against (swarm-container-matches-repo): the same read as the
-/// container setup's, so the two never disagree about a checkout.
+/// against (swarm-container-matches-repo): `remote.origin.url` as written
+/// in the checkout's own configuration (`git config --local`), no
+/// `insteadOf` applied, so it compares like for like with a create argv's
+/// `--repo`, which is read as written too. Not a checkout, a directory
+/// that is gone, or no `origin` is `None`.
 impl ProjectOrigin for GitWorkspaceOrigin {
     fn origin(&self, checkout: &Path) -> Result<Option<String>, String> {
-        WorkspaceOrigin::origin(self, checkout)
+        let output = git(
+            checkout,
+            &["config", "--local", "--get", "remote.origin.url"],
+        )?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let nothing_to_read = [
+            "can only be used inside a git repository",
+            "not a git repository",
+            "No such file or directory",
+        ];
+        match output.status.code() {
+            Some(0) => {
+                let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                Ok((!url.is_empty()).then_some(url))
+            }
+            // `--get` of a key that is not set.
+            Some(1) => Ok(None),
+            _ if nothing_to_read.iter().any(|said| stderr.contains(said)) => Ok(None),
+            _ => Err(format!(
+                "git config --get remote.origin.url exited {}: {}",
+                output.status,
+                stderr.trim()
+            )),
+        }
     }
 }
 

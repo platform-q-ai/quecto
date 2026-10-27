@@ -31,9 +31,11 @@ pub enum ContainerRepository {
 /// The launching project's repository, as launch policy read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectRepository {
-    /// The checkout's `origin` names this repository.
+    /// The checkout's `origin`, as written (`origin`), names this
+    /// repository.
     Known {
         checkout: PathBuf,
+        origin: String,
         identity: RepositoryIdentity,
     },
     /// The checkout's `origin` is a URL naming no repository by host,
@@ -62,12 +64,14 @@ pub struct ContainerRepositoryRefusal {
 /// The opening every refusal shares.
 pub const REFUSAL_OPENING: &str = "swarm launch refused before anything was created";
 
-/// A URL as a refusal may show it: userinfo (a token in an `https` URL, a
-/// password in git's scp form) and secret shapes redacted, bounded.
+/// A URL as a refusal may show it: userinfo of a scheme URL (a token in an
+/// `https` URL) and a `user:password@` in git's scp form redacted, as are
+/// secret shapes; an scp form's bare account (`git@host:…`) is no secret
+/// and is kept, so the URL can be used as shown. Bounded.
 fn shown_url(url: &str) -> String {
     let url = match (url.contains("://"), url.split_once('@')) {
-        (false, Some((_, rest))) => format!("***@{rest}"),
-        (true, _) | (false, None) => url.to_string(),
+        (false, Some((userinfo, rest))) if userinfo.contains(':') => format!("***@{rest}"),
+        (false, Some(_) | None) | (true, _) => url.to_string(),
     };
     model_safe_text(&url)
 }
@@ -112,7 +116,9 @@ impl ContainerRepositoryRefusal {
 
     fn project_clause(&self) -> String {
         match &self.project {
-            ProjectRepository::Known { checkout, identity } => format!(
+            ProjectRepository::Known {
+                checkout, identity, ..
+            } => format!(
                 "this project ({}) is repository {identity}",
                 checkout.display()
             ),
@@ -163,25 +169,31 @@ impl ContainerRepositoryRefusal {
     fn advice(&self) -> String {
         match (&self.project, &self.container) {
             (
-                ProjectRepository::Known { checkout, identity },
+                ProjectRepository::Known {
+                    checkout,
+                    origin,
+                    identity,
+                },
                 ContainerRepository::Named(container),
             ) => {
                 debug_assert_ne!(identity, container, "Self::new never refuses a match");
                 format!(
                     "A swarm runs only in a container of its own repository: set this repository's container up with `quecto container init --project {} --repo {}`, then start again.",
                     checkout.display(),
-                    identity.https_url()
+                    shown_url(origin)
                 )
             }
             (
-                ProjectRepository::Known { checkout, identity },
+                ProjectRepository::Known {
+                    checkout, origin, ..
+                },
                 ContainerRepository::Unreadable(_)
                 | ContainerRepository::Unnamed
                 | ContainerRepository::Repeated(_),
             ) => format!(
                 "quecto cannot confirm that container clones this repository: set this repository's container up with `quecto container init --project {} --repo {}`, then start again.",
                 checkout.display(),
-                identity.https_url()
+                shown_url(origin)
             ),
             (
                 ProjectRepository::Unreadable { .. }
