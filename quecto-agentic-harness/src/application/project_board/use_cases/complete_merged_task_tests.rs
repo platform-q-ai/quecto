@@ -441,3 +441,26 @@ fn a_draft_is_not_completed_whatever_is_set_aside() {
         }))
     );
 }
+
+#[test]
+fn done_ticks_merged_pr_settles_outcomes_in_the_written_task() {
+    use crate::domain::project_board::entities::task_parts::DescriptionForm;
+    let store = seeded(&[7]);
+    let before = store.read().unwrap();
+    let mut fields = before.tasks[0].fields().clone();
+    let description = "## Goal\nShip safely.\n\n## Why\nKeep context.\n\n## Done when\n- [ ] First outcome\n- [x] Already met\n- [ ] Last outcome\n\n## Links\n- [Evidence](https://example.com/proof)";
+    fields.description = description.into();
+    fields.description_form = DescriptionForm::Sectioned;
+    store
+        .write_tasks(&before.head, &[Task::new(fields).unwrap()], "outcomes")
+        .unwrap();
+    let host = MemoryPullRequests::default();
+    host.set(7, PullRequestState::Merged);
+    let done = complete(&store, &host).execute(&slug("a")).unwrap();
+    assert_eq!(done.fields().status, TaskStatus::Done);
+    assert_eq!(store.read().unwrap().tasks, vec![done.clone()]);
+    assert_eq!(
+        done.fields().description,
+        description.replace("- [ ]", "- [x]")
+    );
+}

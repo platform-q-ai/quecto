@@ -740,3 +740,22 @@ fn changes_that_share_a_branch_or_pull_request_in_turn_agree() {
     let merged_now = host(&[(7, "feat/b2", merged('b'))]);
     assert!(complete(&of(Review), &same_pr, &merged_now, &[], &now()).is_ok());
 }
+
+#[test]
+fn done_ticks_merged_change_settles_task_outcomes() {
+    use crate::domain::project_board::entities::task_parts::DescriptionForm;
+    let description =
+        "## Goal\nShip the change.\n\n## Done when\n- [ ] Change merged\n- [x] Tested";
+    let mut fields = of(Review).into_fields();
+    fields.description = description.into();
+    fields.description_form = DescriptionForm::Sectioned;
+    let reviewed = Task::new(fields).unwrap();
+    let read = host(&[(7, "feat/b1", merged('a'))]);
+    let done = complete(&reviewed, &[change(1, Some(7))], &read, &[], &now()).unwrap();
+    assert_eq!(done.completed.task.fields().status, Done);
+    assert_eq!(done.changes[0].fields().merged, Some(commit('a')));
+    assert_eq!(
+        done.completed.task.fields().description,
+        description.replace("- [ ]", "- [x]")
+    );
+}

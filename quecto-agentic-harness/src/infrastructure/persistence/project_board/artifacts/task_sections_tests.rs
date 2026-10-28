@@ -211,3 +211,53 @@ fn awkward_sections_round_trip() {
         assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(task), "{file}");
     }
 }
+
+#[test]
+fn done_ticks_old_done_file_reads_as_met_and_round_trips() {
+    // Simulate an older file directly, not Task::new: compatibility belongs
+    // at the read boundary and must not depend on constructor normalization.
+    let old = FILE.replace(
+        "| Status | draft |",
+        "| Status | done |\n| Resolution | completed |",
+    );
+    let read = decode::<TaskCodec>(old.as_bytes()).unwrap();
+    assert_eq!(read.fields().status, TaskStatus::Done);
+    assert_eq!(
+        read.fields().description,
+        SECTIONED_TEXT.replace("- [ ]", "- [x]")
+    );
+    let written = encode::<TaskCodec>(&read).unwrap();
+    assert_eq!(decode::<TaskCodec>(written.as_bytes()).unwrap(), read);
+    assert!(old.contains("| no | Current master merged in, moves only |"));
+}
+
+#[test]
+fn done_ticks_unfinished_files_keep_unchecked_outcomes() {
+    for status in ["draft", "ready", "review", "blocked"] {
+        let file = FILE.replace("| Status | draft |", &format!("| Status | {status} |"));
+        let read = decode::<TaskCodec>(file.as_bytes()).unwrap();
+        assert_eq!(read.fields().description, SECTIONED_TEXT, "{status}");
+        assert_eq!(encode::<TaskCodec>(&read).unwrap(), file, "{status}");
+    }
+}
+
+#[test]
+fn done_ticks_legacy_and_unrelated_archived_text_stays_unchanged() {
+    for status in [TaskStatus::Done, TaskStatus::Archived] {
+        let mut legacy = fields(SECTIONED_TEXT, DescriptionForm::Legacy);
+        legacy.status = status;
+        legacy.resolution = match status {
+            TaskStatus::Done => {
+                Some(crate::domain::project_board::value_objects::vocabulary::Resolution::Completed)
+            }
+            _ => None,
+        };
+        let task = Task::new(legacy).unwrap();
+        let file = encode::<TaskCodec>(&task).unwrap();
+        assert_eq!(decode::<TaskCodec>(file.as_bytes()).unwrap(), task);
+    }
+    let archived = FILE.replace("| Status | draft |", "| Status | archived |");
+    let read = decode::<TaskCodec>(archived.as_bytes()).unwrap();
+    assert_eq!(read.fields().description, SECTIONED_TEXT);
+    assert_eq!(encode::<TaskCodec>(&read).unwrap(), archived);
+}
