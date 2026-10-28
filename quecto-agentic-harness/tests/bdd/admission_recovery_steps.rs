@@ -35,6 +35,8 @@ pub struct UdsAgent {
     last_error: Option<String>,
     last_provider_requests: usize,
     prompt_frames: Vec<serde_json::Value>,
+    guarded_root: bool,
+    early_ack: bool,
 }
 
 impl Drop for UdsAgent {
@@ -207,7 +209,7 @@ fn given_broker(world: &mut QuectoWorld) {
     state(world).broker = Some(broker);
 }
 
-fn start_agent(world: &mut QuectoWorld, name: &str, extra: &[&str]) {
+fn start_agent(world: &mut QuectoWorld, name: &str, extra: &[&str], guarded_root: bool) {
     let base_path = base(world);
     let socket = base_path.join(format!("{name}.sock"));
     let stderr_path = base_path.join(format!("{name}.stderr"));
@@ -217,7 +219,8 @@ fn start_agent(world: &mut QuectoWorld, name: &str, extra: &[&str]) {
     args.extend_from_slice(extra);
     let mut command = qcmd(&base_path, &args);
     command.env_remove("QUECTO_TURN_OUTCOMES");
-    if state(world).early_ack {
+    let early_ack = state(world).early_ack;
+    if early_ack {
         command.env("QUECTO_TURN_OUTCOMES", "1");
     }
     let mut child = command
@@ -253,13 +256,15 @@ fn start_agent(world: &mut QuectoWorld, name: &str, extra: &[&str]) {
             last_error: None,
             last_provider_requests: 0,
             prompt_frames: Vec::new(),
+            guarded_root,
+            early_ack,
         },
     );
 }
 
 #[given(expr = "a real root UDS agent {string} bound to the broker")]
 fn given_root_agent(world: &mut QuectoWorld, name: String) {
-    start_agent(world, &name, &[]);
+    start_agent(world, &name, &[], true);
 }
 
 #[given(
@@ -303,6 +308,7 @@ fn given_child_agent(world: &mut QuectoWorld, name: String) {
             &context,
             "--spawned",
         ],
+        false,
     );
 }
 
@@ -363,8 +369,8 @@ fn get_state(agent: &mut UdsAgent) -> serde_json::Value {
     reply["data"].clone()
 }
 
-/// Await a terminal correlated outcome, not the guarded root's early ACK.
-/// Legacy children reply to the prompt only after completion.
+/// Default roots await their owned-ID terminal prompt result. Exact-env1
+/// relays await ACK then outcome; explicitly unguarded children keep legacy errors.
 fn run_prompt(agent: &mut UdsAgent) {
     agent.last_error = None;
     agent.prompt_frames.clear();
@@ -394,24 +400,47 @@ fn run_prompt(agent: &mut UdsAgent) {
             agent.prompt_frames.push(event.clone());
         }
         if event["type"] == "turn_outcome" && event["episodeId"] == id {
-            assert_eq!(
-                acknowledgements, 1,
-                "guarded completion must follow its early ACK: {event}"
-            );
+            assert!(agent.guarded_root, "only a guarded root settles: {event}");
+            assert_eq!(acknowledgements, usize::from(agent.early_ack), "{event}");
             assert_eq!(event["outcome"], "done", "{event}");
-            return;
+            if agent.early_ack {
+                return;
+            }
         }
         if event["type"] == "response" && event["id"] == id {
+            assert_eq!(event["command"], "prompt", "{event}");
+            if event["success"] == false {
+                agent.last_error =
+                    Some(event["error"].as_str().expect("failure reason").to_owned());
+                return;
+            }
             assert_eq!(event["success"], true, "{event}");
             if event["data"]["episodeId"] == id {
+                assert!(
+                    agent.guarded_root && agent.early_ack,
+                    "only an opt-in root ACKs: {event}"
+                );
                 assert_eq!(acknowledgements, 0, "exactly one correlated ACK: {event}");
                 acknowledgements = 1;
                 continue; // admitted is not completed
             }
+            assert_eq!(
+                acknowledgements, 0,
+                "a completion client must not get an ACK"
+            );
             return;
         }
         if event["type"] == "response" && event["command"] == "agent_error" {
-            agent.last_error = Some(event["error"].as_str().unwrap_or("").to_owned());
+            assert!(
+                matches!(
+                    (agent.guarded_root, agent.early_ack),
+                    (false, _) | (true, true)
+                ),
+                "default root errors must own their prompt ID: {event}"
+            );
+            assert!(event["id"].is_null(), "legacy diagnostic: {event}");
+            assert_eq!(event["success"], false, "{event}");
+            agent.last_error = Some(event["error"].as_str().expect("failure reason").to_owned());
             return;
         }
     }

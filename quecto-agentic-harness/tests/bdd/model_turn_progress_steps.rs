@@ -404,7 +404,25 @@ fn prompted_until_the_turn_ends_blocking(run: &mut ModelTurnRun) {
     let mut client = Client::connect(&socket);
     client.send(json!({"type": "prompt", "message": "Write a lot.", "id": "p1"}));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.read_until(&mut run.lines, |line| line["command"] == "agent_error");
+        let early_ack = run.early_ack;
+        let terminal = client.read_until(&mut run.lines, |line| match early_ack {
+            true => {
+                line["type"] == "response"
+                    && line["command"] == "agent_error"
+                    && line["id"].is_null()
+            }
+            false => {
+                line["type"] == "response" && line["command"] == "prompt" && line["id"] == "p1"
+            }
+        });
+        assert_eq!(terminal["success"], false, "{terminal}");
+        assert!(
+            terminal["error"]
+                .as_str()
+                .expect("terminal failure reason")
+                .contains("output cap exceeded: "),
+            "{terminal}"
+        );
         client.send(json!({"type":"get_state", "id":"cap-barrier"}));
         let state = client.read_until(&mut run.lines, |line| {
             line["type"] == "response" && line["id"] == "cap-barrier"
