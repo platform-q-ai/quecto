@@ -387,3 +387,154 @@ async fn run16_m2_role_excluded_policy_restore_cannot_create_authority() {
         }
     }
 }
+
+// Run17 preservation supplement: failed/no-op effective changes must not
+// revoke an existing declaration handle or suppress the next guarded turn.
+#[derive(Clone, Copy, Debug)]
+enum Preserve {
+    Noop,
+    PersistenceFailure,
+    ReloadFailure,
+}
+
+async fn preserves_guard(case: Preserve) {
+    use crate::domain::tool_policy::value_objects::tool::{
+        ToolPolicyApplyMode, ToolPolicyMutationStatus,
+    };
+    let mut rig = Rig::new(done());
+    // DispatchTestEnv deliberately starts without a system message. Match
+    // multi_client_loop startup before asserting retained production guidance.
+    crate::domain::conversation::services::conversation_view::inject_system_prompt(
+        &mut rig.env.messages,
+        &rig.snippets,
+    );
+    let runtime = rig.runtime.clone().expect("production guarded root");
+    let active = runtime
+        .admit(
+            "cli:test",
+            TurnAdmission::External {
+                episode_id: "preserve".into(),
+            },
+            "preserve-turn",
+        )
+        .unwrap();
+    let before = runtime.capture().unwrap();
+    let operation_valid = match case {
+        Preserve::Noop => {
+            rig.send(r#"{"type":"set_tool_policy","id":"noop","operation":"patch","mutations":[],"mode":"immediateIfIdle","persist":false}"#).await;
+            let frames = rig.frames();
+            frames
+                .iter()
+                .any(|f| f["type"] == "response" && f["id"] == "noop" && f["success"] == true)
+        }
+        Preserve::PersistenceFailure => {
+            rig.env
+                .agent
+                .set_tool_policy_persistence(Some(Arc::new(|_| {
+                    Err("run17 deterministic write failure".into())
+                })));
+            let mut request = ToolPolicyRequest::patch(vec![ToolPolicyMutation::disable(
+                "declare_turn_outcome",
+                "attempted durable revoke",
+            )]);
+            request.persist = true;
+            let reconciliation = rig
+                .env
+                .agent
+                .request_tool_policy(request, ToolPolicyApplyMode::ImmediateIfIdle)
+                .expect("real idle policy port result");
+            reconciliation.results.len() == 1
+                && reconciliation.results[0].status == ToolPolicyMutationStatus::PersistenceFailed
+        }
+        Preserve::ReloadFailure => {
+            let path = install_reload(&mut rig, true);
+            std::fs::write(path, "{ invalid temporary config").unwrap();
+            rig.send(r#"{"type":"reload","id":"failed-reload"}"#).await;
+            let frames = rig.frames();
+            frames.iter().any(|f| {
+                f["type"] == "response" && f["id"] == "failed-reload" && f["success"] == false
+            })
+        }
+    };
+    let after = runtime.capture();
+    let visible = rig.env.agent.is_tool_model_visible("declare_turn_outcome");
+    let declaration = runtime.declare(
+        LaunchAuthority::TopLevelParent,
+        &before,
+        TurnIntent::Done,
+        "Preserved declaration authority",
+    );
+    let verdict = runtime.complete(active, TurnEnd::Completed(WorkLiveness::Empty));
+    rig.frames();
+    rig.prompt("next-guarded").await;
+    let requests = rig.provider.requests();
+    let frames = rig.frames();
+    // No services/loops in this rig. Close file source/registry scratch before
+    // making any preservation assertions, including an unexpectedly failed op.
+    drop(rig);
+    println!(
+        "RUN17 policy teardown complete case={case:?} operation_valid={operation_valid} requests={}",
+        requests.len()
+    );
+    assert!(
+        operation_valid,
+        "actual no-op/failure result must be observed"
+    );
+    assert!(visible, "last-good declaration visibility retained");
+    assert_eq!(
+        after.as_ref(),
+        Some(&before),
+        "unchanged effective policy retains exact epoch/nonce capture"
+    );
+    assert!(
+        declaration.is_ok(),
+        "old in-flight bound handle remains authoritative"
+    );
+    assert!(
+        matches!(verdict, ParentVerdict::Published(_)),
+        "preserved declaration settles without correction: {verdict:?}"
+    );
+    assert_eq!(
+        requests.len(),
+        2,
+        "next outer turn declares then finishes, without correction"
+    );
+    assert!(
+        requests[0]
+            .tools
+            .iter()
+            .any(|name| name == "declare_turn_outcome")
+    );
+    assert!(requests[0].guidance, "last-good guard guidance preserved");
+    assert!(requests[0].identity.is_some());
+    assert_eq!(of_type(&frames, "turn_admitted").len(), 1);
+    assert_eq!(of_type(&frames, "turn_outcome").len(), 1);
+    assert_eq!(of_type(&frames, "turn_outcome")[0]["outcome"], "done");
+}
+#[tokio::test]
+async fn run17_m2_noop_preserves_effective_guard() {
+    if isolated(concat!(
+        module_path!(),
+        "::run17_m2_noop_preserves_effective_guard"
+    )) {
+        preserves_guard(Preserve::Noop).await;
+    }
+}
+#[tokio::test]
+async fn run17_m2_failed_persistence_preserves_effective_guard() {
+    if isolated(concat!(
+        module_path!(),
+        "::run17_m2_failed_persistence_preserves_effective_guard"
+    )) {
+        preserves_guard(Preserve::PersistenceFailure).await;
+    }
+}
+#[tokio::test]
+async fn run17_m2_failed_reload_preserves_effective_guard() {
+    if isolated(concat!(
+        module_path!(),
+        "::run17_m2_failed_reload_preserves_effective_guard"
+    )) {
+        preserves_guard(Preserve::ReloadFailure).await;
+    }
+}

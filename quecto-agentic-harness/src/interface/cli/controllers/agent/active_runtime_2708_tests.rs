@@ -5,6 +5,8 @@ pub(crate) struct Composed {
     pub(crate) registry: crate::infrastructure::tools::registry::ToolRegistryImpl,
     pub(crate) runtime: Option<ParentOutcome>,
     pub(crate) workflow: Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
+    pub(crate) subagents:
+        Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     pub(crate) snippets: String,
     // Lifecycle/reload fixtures retain the production registry's scratch home.
     pub(crate) _home: tempfile::TempDir,
@@ -131,6 +133,7 @@ pub(crate) fn compose_with_config(
         registry: built.registry,
         runtime: built.parent_outcome,
         workflow: built.workflow_state,
+        subagents: built.subagent_registry,
         snippets: built.extension_prompt_snippets,
         _home: tmp,
     }
