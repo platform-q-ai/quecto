@@ -610,3 +610,144 @@ async fn run21_first_post_restore_boundary_holds_busy_before_dispatch() {
     );
     drop(held);
 }
+
+// Mixed persisted/runtime states are independent transaction inputs.
+#[tokio::test]
+async fn run26_mixed_policy_failed_persistence_restores_runtime_snapshot() {
+    if isolated(concat!(
+        module_path!(),
+        "::run26_mixed_policy_failed_persistence_restores_runtime_snapshot"
+    )) {
+        mixed_repair(false, true).await;
+    }
+}
+
+#[tokio::test]
+async fn run26_mixed_policy_queued_failure_restores_runtime_snapshot() {
+    if isolated(concat!(
+        module_path!(),
+        "::run26_mixed_policy_queued_failure_restores_runtime_snapshot"
+    )) {
+        mixed_repair(true, true).await;
+    }
+}
+
+#[tokio::test]
+async fn run26_mixed_policy_success_and_noop_controls() {
+    if isolated(concat!(
+        module_path!(),
+        "::run26_mixed_policy_success_and_noop_controls"
+    )) {
+        mixed_repair(false, false).await;
+    }
+}
+
+#[tokio::test]
+async fn run26_mixed_policy_queued_success_and_noop_controls() {
+    if isolated(concat!(
+        module_path!(),
+        "::run26_mixed_policy_queued_success_and_noop_controls"
+    )) {
+        mixed_repair(true, false).await;
+    }
+}
+
+async fn mixed_repair(queued: bool, fail: bool) {
+    use crate::domain::tool_policy::value_objects::tool::{
+        ToolPolicyApplyMode, ToolPolicyMutationStatus,
+    };
+    let mut rig = Rig::new(vec![]);
+    rig.policy(false, false).await;
+    install_reload(&mut rig, true);
+    rig.send(r#"{"type":"reload","id":"mixed-restore"}"#).await;
+    let entry = |rig: &Rig| {
+        rig.env
+            .agent
+            .tool_catalogue_entries()
+            .into_iter()
+            .find(|e| e.name == "declare_turn_outcome")
+            .unwrap()
+    };
+    let before = entry(&rig);
+    assert_eq!(before.profile_scope, Some(ProfileAvailabilityScope::Both));
+    assert!(!before.runtime_availability.is_enabled());
+    assert!(!rig.env.agent.is_tool_model_visible("declare_turn_outcome"));
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = calls.clone();
+    rig.env
+        .agent
+        .set_tool_policy_persistence(Some(Arc::new(move |_| {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if fail {
+                Err("run26 injected persistence-port failure".into())
+            } else {
+                Ok(())
+            }
+        })));
+    let mut request = ToolPolicyRequest::replace(Vec::new(), ProfileAvailabilityScope::Both);
+    request.persist = true;
+    let mode = if queued {
+        ToolPolicyApplyMode::AtNextTurnBoundary
+    } else {
+        ToolPolicyApplyMode::ImmediateIfIdle
+    };
+    let immediate = rig.env.agent.request_tool_policy(request.clone(), mode);
+    let reconciliation = if queued {
+        assert!(immediate.is_none());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(entry(&rig), before, "queued is not applied before boundary");
+        rig.env
+            .agent
+            .drain_tool_policy_mutations_at_boundary()
+            .unwrap()
+    } else {
+        immediate.unwrap()
+    };
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(
+        rig.env
+            .agent
+            .drain_tool_policy_mutations_at_boundary()
+            .is_none(),
+        "drains exactly once"
+    );
+    let result = reconciliation
+        .results
+        .iter()
+        .find(|r| r.name == "declare_turn_outcome")
+        .unwrap();
+    let after = entry(&rig);
+    println!(
+        "RUN26_MIXED_ROLLBACK queued={queued} fail={fail} before={before:?} after={after:?} status={:?}",
+        result.status
+    );
+    if fail {
+        assert_eq!(result.status, ToolPolicyMutationStatus::PersistenceFailed);
+        assert_eq!(
+            after, before,
+            "failed durable repair must restore actual independent runtime/profile state"
+        );
+        assert!(!rig.env.agent.is_tool_model_visible("declare_turn_outcome"));
+    } else {
+        assert_eq!(result.status, ToolPolicyMutationStatus::Applied);
+        assert!(after.runtime_availability.is_enabled());
+        assert_eq!(after.profile_scope, before.profile_scope);
+        assert!(rig.env.agent.is_tool_model_visible("declare_turn_outcome"));
+        let noop = rig
+            .env
+            .agent
+            .request_tool_policy(request, ToolPolicyApplyMode::ImmediateIfIdle)
+            .unwrap();
+        let noop = noop
+            .results
+            .iter()
+            .find(|r| r.name == "declare_turn_outcome")
+            .unwrap();
+        assert_eq!(noop.status, ToolPolicyMutationStatus::AlreadyInState);
+        assert_eq!(
+            entry(&rig),
+            after,
+            "successful equal replacement is an exact no-op"
+        );
+    }
+}

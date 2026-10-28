@@ -681,3 +681,6 @@ async fn run20_refuter_two_api_waiters_do_not_cross_resolve() {
     );
     assert!(pending.is_empty(), "both requests resolved");
 }
+
+#[path = "h2_cold_review_tests/run26_negative_credit_tests.rs"]
+mod run26_negative_credit_tests;

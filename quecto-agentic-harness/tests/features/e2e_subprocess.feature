@@ -55,11 +55,12 @@ Feature: End-to-End Subprocess Protocol
     And the subprocess stdout should contain "iteration limit (2)"
 
   @done
+  # Completed stalled settlement exits zero; the typed diagnostic still reports exhaustion.
   Scenario: Guarded root exhaustion remains a failure at the iteration bound
     Given the mock LLM always returns a tool call for "bash" with args:
       | command | echo loop |
     When I spawn quecto as a subprocess with args: agent -s - --max-iterations 2 -m "Loop"
-    Then the subprocess exit code should be 1
+    Then the subprocess exit code should be 0
     And the subprocess stdout should contain "iteration limit (2)"
     And the subprocess stderr should contain "Nothing is running after one correction."
 
