@@ -156,6 +156,24 @@ fn run_quiet(
     (legacy, notes, max_time): (bool, Vec<&str>, Option<&str>),
     (quiet, closed): (Option<std::time::Duration>, bool),
 ) -> Run {
+    run_composition(replies, (legacy, notes, max_time), (quiet, closed), None)
+}
+
+fn run_composition(
+    replies: Vec<Reply>,
+    (legacy, notes, max_time): (bool, Vec<&str>, Option<&str>),
+    (quiet, closed): (Option<std::time::Duration>, bool),
+    composed: Option<
+        crate::interface::cli::controllers::agent::active_runtime_2708_tests::Composed,
+    >,
+) -> Run {
+    let (tools, composed_runtime) = match composed {
+        Some(composed) => (composed.registry, Some(composed.runtime)),
+        None => (
+            crate::infrastructure::tools::registry::ToolRegistryImpl::new(),
+            None,
+        ),
+    };
     let provider = Arc::new(Scripted {
         replies: Mutex::new(replies.into()),
         seen: Mutex::new(Vec::new()),
@@ -163,9 +181,7 @@ fn run_quiet(
     let mut agent = crate::application::agent_turn::agent_loop::AgentLoopImpl::new(
         crate::application::agent_turn::agent_loop::AgentLoopConfig {
             provider: provider.clone(),
-            tool_registry: Box::new(
-                crate::infrastructure::tools::registry::ToolRegistryImpl::new(),
-            ),
+            tool_registry: Box::new(tools),
             model: "test-model".to_string(),
             max_tokens: 100,
             temperature: 0.0,
@@ -183,14 +199,20 @@ fn run_quiet(
                 crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
         },
     );
-    let runtime = crate::composition::bootstrap::agent_turn::build_parent_outcome();
     let registry = new_registry();
-    assert!(agent.register_runtime_tool(Arc::new(
-        crate::infrastructure::tools::native::declare_turn_outcome::DeclareTurnOutcomeTool::new(
-            runtime.clone(),
-            crate::domain::turn_declaration::LaunchAuthority::TopLevelParent,
-        )
-    )));
+    let runtime = match composed_runtime {
+        Some(runtime) => runtime,
+        None => {
+            let runtime = crate::composition::bootstrap::agent_turn::build_parent_outcome();
+            assert!(agent.register_runtime_tool(Arc::new(
+                crate::infrastructure::tools::native::declare_turn_outcome::DeclareTurnOutcomeTool::new(
+                    runtime.clone(),
+                    crate::domain::turn_declaration::LaunchAuthority::TopLevelParent,
+                )
+            )));
+            (!legacy).then_some(runtime)
+        }
+    };
     assert!(agent.register_runtime_tool(Arc::new(LaunchTool(registry.clone()))));
     let (tx, rx) = tokio::sync::mpsc::channel(8);
     for (sequence, agent_id) in notes.into_iter().enumerate() {
@@ -204,13 +226,10 @@ fn run_quiet(
     let tmp = tempfile::TempDir::new().unwrap();
     let retention = crate::composition::sessions::build_retention_handles(tmp.path());
     let mut handles = RunHandles::without_children(&retention);
-    handles.parent =
-        ParentRun::of((!legacy).then_some(runtime), Some(registry), Some(rx)).map(|parent| {
-            match quiet {
-                Some(quiet) => parent.quiet_for(quiet),
-                None => parent,
-            }
-        });
+    handles.parent = ParentRun::of(runtime, Some(registry), Some(rx)).map(|parent| match quiet {
+        Some(quiet) => parent.quiet_for(quiet),
+        None => parent,
+    });
     let (mut stdout, mut stderr) = (String::new(), String::new());
     let mut out = AgentOutput {
         stdout: &mut stdout,
@@ -241,6 +260,10 @@ fn assert_promise_is_corrected_once_then_stalls(promise: &'static str) {
         vec![],
         None,
     );
+    assert_stalled(run, promise);
+}
+
+fn assert_stalled(run: Run, promise: &str) {
     assert_eq!(
         run.requests.len(),
         2,
@@ -248,6 +271,13 @@ fn assert_promise_is_corrected_once_then_stalls(promise: &'static str) {
         run.requests
     );
     assert_eq!(run.requests[1], CORRECTION_NOTE);
+    assert_eq!(
+        run.requests
+            .iter()
+            .filter(|note| note.as_str() == CORRECTION_NOTE)
+            .count(),
+        1
+    );
     assert_eq!(run.code, 1, "stalled is not done");
     assert_eq!(run.stderr, format!("{STALLED_REASON}\n"));
     assert_eq!(run.stdout, format!("{promise}\n"), "the final reply, once");
@@ -389,4 +419,98 @@ fn issue_2708_cli_parent_an_unguarded_run_is_unchanged() {
     let run = run(vec![Reply::Text(PROMISE_2648)], true, vec![], None);
     assert_eq!((run.code, run.stderr.as_str()), (0, ""));
     assert_eq!(run.requests.len(), 1);
+}
+
+fn production_promise(test: &str, promise: &'static str, switches: &[&str]) {
+    use crate::interface::cli::controllers::agent::active_runtime_2708_tests::{compose, isolated};
+    if isolated(test, switches) {
+        let run = run_composition(
+            vec![Reply::Text(promise), Reply::Text(promise)],
+            (false, vec![], None),
+            (None, true),
+            Some(compose(false)),
+        );
+        assert_stalled(run, promise);
+    }
+}
+
+#[test]
+fn active_runtime_2708_cli_original_promise_2648_default_activation() {
+    production_promise(
+        concat!(
+            module_path!(),
+            "::active_runtime_2708_cli_original_promise_2648_default_activation"
+        ),
+        PROMISE_2648,
+        &["unset", "other"],
+    );
+}
+
+#[test]
+fn active_runtime_2708_cli_original_split_reader_default_activation() {
+    production_promise(
+        concat!(
+            module_path!(),
+            "::active_runtime_2708_cli_original_split_reader_default_activation"
+        ),
+        PROMISE_SPLIT_READER,
+        &["unset", "other"],
+    );
+}
+
+#[test]
+fn active_runtime_2708_characterization_cli_opt_in() {
+    let test = concat!(
+        module_path!(),
+        "::active_runtime_2708_characterization_cli_opt_in"
+    );
+    use crate::interface::cli::controllers::agent::active_runtime_2708_tests::{compose, isolated};
+    if isolated(test, &["1"]) {
+        for promise in [PROMISE_2648, PROMISE_SPLIT_READER] {
+            assert_stalled(
+                run_composition(
+                    vec![Reply::Text(promise), Reply::Text(promise)],
+                    (false, vec![], None),
+                    (None, true),
+                    Some(compose(false)),
+                ),
+                promise,
+            );
+        }
+        for (outcome, reason, code) in [
+            ("done", "Merged #2650", 0),
+            ("asking", "Which repository?", 1),
+            ("blocked", "Need the deploy key", 1),
+        ] {
+            let run = run_composition(
+                vec![
+                    Reply::Call(
+                        "declare_turn_outcome",
+                        json!({"outcome": outcome, "reason": reason}),
+                    ),
+                    Reply::Text("Final."),
+                ],
+                (false, vec![], None),
+                (None, true),
+                Some(compose(false)),
+            );
+            assert_eq!(run.code, code);
+            assert_eq!(run.requests.len(), 2);
+            assert_eq!(
+                run.requests
+                    .iter()
+                    .filter(|note| note.as_str() == CORRECTION_NOTE)
+                    .count(),
+                0
+            );
+            assert_eq!(
+                run.stderr,
+                if code == 0 {
+                    String::new()
+                } else {
+                    format!("{reason}\n")
+                }
+            );
+        }
+    }
 }

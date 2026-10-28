@@ -85,12 +85,20 @@ fn show_workflow_tool(
 pub(super) fn make_dispatch_test_agent(
     provider: std::sync::Arc<dyn crate::application::providers::ports::LlmProvider>,
 ) -> crate::application::agent_turn::agent_loop::AgentLoopImpl {
+    make_dispatch_test_agent_with_registry(
+        provider,
+        crate::infrastructure::tools::registry::ToolRegistryImpl::new(),
+    )
+}
+
+pub(super) fn make_dispatch_test_agent_with_registry(
+    provider: std::sync::Arc<dyn crate::application::providers::ports::LlmProvider>,
+    registry: crate::infrastructure::tools::registry::ToolRegistryImpl,
+) -> crate::application::agent_turn::agent_loop::AgentLoopImpl {
     crate::application::agent_turn::agent_loop::AgentLoopImpl::new(
         crate::application::agent_turn::agent_loop::AgentLoopConfig {
             provider,
-            tool_registry: Box::new(
-                crate::infrastructure::tools::registry::ToolRegistryImpl::new(),
-            ),
+            tool_registry: Box::new(registry),
             model: "stub".into(),
             max_tokens: 100,
             temperature: 0.0,

@@ -298,13 +298,24 @@ async fn assert_promise_is_corrected_once_then_stalls(promise: &'static str) {
     root.send(r#"{"type":"prompt","id":"ep-1","message":"Carry on with the layout epic"}"#)
         .await;
     let requests = root.provider.requests();
+    let frames = root.frames();
+    assert_stalled(&requests, &frames);
+}
+
+fn assert_stalled(requests: &[String], frames: &[Value]) {
     assert_eq!(
         requests.len(),
         2,
         "exactly two provider requests: {requests:?}"
     );
     assert_eq!(requests[1], CORRECTION_NOTE, "the literal correction, once");
-    let frames = root.frames();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|note| note.as_str() == CORRECTION_NOTE)
+            .count(),
+        1
+    );
     let admitted = of_type(&frames, "turn_admitted");
     assert_eq!(
         admitted.len(),
@@ -664,5 +675,117 @@ async fn issue_2708_uds_parent_an_unguarded_harness_is_unchanged() {
             !state["data"].as_object().unwrap().contains_key(field),
             "{field}"
         );
+    }
+}
+
+async fn production_run(replies: Vec<Reply>) -> (Vec<String>, Vec<Value>) {
+    use crate::interface::cli::controllers::active_runtime_2708_tests::compose;
+    let composed = compose(true);
+    let provider = Scripted::new(replies);
+    let mut env = DispatchTestEnv::with_unselected_workflow();
+    env.set_agent(
+        super::super::dispatch_test_env::make_dispatch_test_agent_with_registry(
+            provider.clone(),
+            composed.registry,
+        ),
+    );
+    env.subagent_registry =
+        Some(crate::infrastructure::tools::agents::subagent_registry::new_registry());
+    env.session.bind_parent_outcome(composed.runtime);
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(1024);
+    {
+        let mut ctx = env.ctx();
+        ctx.broadcast_tx = Some(tx);
+        ctx.stdout = None;
+        dispatch_command(
+            protocol::parse_command_line(
+                r#"{"type":"prompt","id":"ep-1","message":"Carry on with the layout epic"}"#,
+            )
+            .unwrap(),
+            &mut ctx,
+        )
+        .await;
+    }
+    let mut frames = Vec::new();
+    while let Ok(line) = rx.try_recv() {
+        frames.push(serde_json::from_str(line.trim_end()).expect("JSON frame"));
+    }
+    (provider.requests(), frames)
+}
+
+async fn production_promise(test: &str, promise: &'static str, switches: &[&str]) {
+    use crate::interface::cli::controllers::active_runtime_2708_tests::isolated;
+    if isolated(test, switches) {
+        let (requests, frames) =
+            production_run(vec![Reply::Text(promise), Reply::Text(promise)]).await;
+        assert_stalled(&requests, &frames);
+    }
+}
+
+#[tokio::test]
+async fn active_runtime_2708_uds_original_promise_2648_default_activation() {
+    production_promise(
+        concat!(
+            module_path!(),
+            "::active_runtime_2708_uds_original_promise_2648_default_activation"
+        ),
+        PROMISE_2648,
+        &["unset", "other"],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn active_runtime_2708_uds_original_split_reader_default_activation() {
+    production_promise(
+        concat!(
+            module_path!(),
+            "::active_runtime_2708_uds_original_split_reader_default_activation"
+        ),
+        PROMISE_SPLIT_READER,
+        &["unset", "other"],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn active_runtime_2708_characterization_uds_opt_in() {
+    let test = concat!(
+        module_path!(),
+        "::active_runtime_2708_characterization_uds_opt_in"
+    );
+    use crate::interface::cli::controllers::active_runtime_2708_tests::isolated;
+    if isolated(test, &["1"]) {
+        for promise in [PROMISE_2648, PROMISE_SPLIT_READER] {
+            let (requests, frames) =
+                production_run(vec![Reply::Text(promise), Reply::Text(promise)]).await;
+            assert_stalled(&requests, &frames);
+        }
+        for (outcome, expected, reason) in [
+            ("done", "done", "Merged #2650"),
+            ("asking", "needs_user", "Which repository?"),
+            ("blocked", "needs_user", "Need the deploy key"),
+        ] {
+            let (requests, frames) = production_run(vec![
+                Reply::Call(
+                    "declare_turn_outcome",
+                    json!({"outcome": outcome, "reason": reason}),
+                ),
+                Reply::Text("Final."),
+            ])
+            .await;
+            assert_eq!(requests.len(), 2);
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|note| note.as_str() == CORRECTION_NOTE)
+                    .count(),
+                0
+            );
+            let outcomes = of_type(&frames, "turn_outcome");
+            assert_eq!(outcomes.len(), 1);
+            assert_eq!(outcomes[0]["outcome"], expected);
+            assert_eq!(outcomes[0]["reason"], reason);
+        }
     }
 }
