@@ -63,8 +63,16 @@ async fn run21_real_composed_prompt_save_resume_roundtrip() {
         return;
     }
     let composed = compose(true);
+    let agents_dir = tempfile::tempdir().unwrap();
+    let agents_path = agents_dir.path().join("AGENTS.md");
+    std::fs::write(&agents_path, "AGENTS old").unwrap();
+    let old_agents = crate::infrastructure::config::agents_instructions::load_agents_instructions(
+        agents_dir.path(),
+    )
+    .unwrap()
+    .unwrap();
     let prompt = build_agent_system_prompt(
-        Some("AGENTS old"),
+        Some(&old_agents),
         Some("config old"),
         false,
         &composed.snippets,
@@ -101,20 +109,48 @@ async fn run21_real_composed_prompt_save_resume_roundtrip() {
         })
         .await
         .unwrap();
+    std::fs::write(&agents_path, "AGENTS refreshed").unwrap();
+    let refreshed_agents =
+        crate::infrastructure::config::agents_instructions::load_agents_instructions(
+            agents_dir.path(),
+        )
+        .unwrap()
+        .unwrap();
     let refreshed = build_agent_system_prompt(
-        Some("AGENTS refreshed"),
+        Some(&refreshed_agents),
         Some("config refreshed"),
         false,
         &composed.snippets,
     );
+    // Reconstruct a fresh process view from durable, head-free history.
+    fx.messages = saved.messages.clone();
     fx = fx.with_system_prompt(refreshed.clone());
+    inject_system_prompt(&mut fx.messages, &refreshed);
+    let (tx, mut rx) = tokio::sync::broadcast::channel(32);
+    let mut ctx = fx.ctx();
+    ctx.broadcast_tx = Some(tx);
     handle_resume_session(
-        &mut fx.ctx(),
+        &mut ctx,
         Some("resume-real"),
         "resume_session",
         "round21-saved".into(),
     )
     .await;
+    let frames: Vec<serde_json::Value> = std::iter::from_fn(|| rx.try_recv().ok())
+        .map(|line| serde_json::from_str(line.trim()).unwrap())
+        .collect();
+    assert!(
+        frames.iter().any(|frame| frame["type"] == "response"
+            && frame["id"] == "resume-real"
+            && frame["success"] == true),
+        "actual resume must succeed: {frames:?}"
+    );
+    assert_eq!(
+        fx.current_session_key(),
+        SessionIdentity::named_cli("round21-saved")
+            .unwrap()
+            .runtime_key()
+    );
     let resumed_head = fx.messages.first().unwrap().content.clone();
     assert_eq!(
         live_head, prompt,

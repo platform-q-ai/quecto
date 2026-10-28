@@ -60,10 +60,14 @@ async fn run16_m1_owned_child_completion_wakes_done_then_duplicate_is_inert() {
     );
     if isolated(test) {
         let mut replies = done();
-        replies.extend([
-            Reply::Text("Received the child report."),
-            Reply::Text("No declaration."),
-        ]);
+        if std::env::var("QUECTO_TURN_OUTCOMES").ok().as_deref() == Some("1") {
+            replies.extend(done());
+        } else {
+            replies.extend([
+                Reply::Text("Received the child report."),
+                Reply::Text("No declaration."),
+            ]);
+        }
         let mut rig = Rig::new(replies);
         let path = rig._home.path().join("child.sock");
         let supervisor = OwnedChildSupervisor::process_wide();
@@ -232,11 +236,11 @@ async fn run16_m1_owned_child_completion_wakes_done_then_duplicate_is_inert() {
             assert_eq!(
                 rig.provider.requests().len(),
                 4,
-                "next USER receives retained child information and fresh correction"
+                "next USER receives retained child information and declares done"
             );
             let next = rig.frames();
             assert_eq!(of_type(&next, "turn_admitted")[0]["episodeId"], "next-user");
-            assert_eq!(of_type(&next, "turn_outcome")[0]["outcome"], "stalled");
+            assert_eq!(of_type(&next, "turn_outcome")[0]["outcome"], "done");
             return;
         }
         assert_eq!(

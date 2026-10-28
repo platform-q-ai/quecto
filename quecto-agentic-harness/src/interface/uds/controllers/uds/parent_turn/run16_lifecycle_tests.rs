@@ -283,10 +283,14 @@ async fn workflow_after_terminal(completed: bool, initially_stalled: bool) {
     } else {
         done()
     };
-    replies.extend([
-        Reply::Text("Received fresh workflow information."),
-        Reply::Text("No declaration."),
-    ]);
+    if !initially_stalled && std::env::var("QUECTO_TURN_OUTCOMES").ok().as_deref() == Some("1") {
+        replies.extend(done());
+    } else {
+        replies.extend([
+            Reply::Text("Received fresh workflow information."),
+            Reply::Text("No declaration."),
+        ]);
+    }
     let mut rig = Rig::composed(composed, replies);
     rig.prompt("first").await;
     let initial = rig.frames();
@@ -324,11 +328,11 @@ async fn workflow_after_terminal(completed: bool, initially_stalled: bool) {
         assert_eq!(
             rig.provider.requests().len(),
             4,
-            "next USER opens fresh episode and correction"
+            "next USER opens fresh episode and declares done"
         );
         let next = rig.frames();
         assert_eq!(of_type(&next, "turn_admitted")[0]["episodeId"], "next-user");
-        assert_eq!(of_type(&next, "turn_outcome")[0]["outcome"], "stalled");
+        assert_eq!(of_type(&next, "turn_outcome")[0]["outcome"], "done");
         return;
     }
     assert_eq!(
@@ -459,7 +463,11 @@ async fn run20_refuter_new_history_tool_success_does_not_inherit_emission() {
             old_epoch
         );
         rig.prompt("second-task").await;
-        assert_eq!(rig.provider.requests().len(), 7);
+        assert_eq!(
+            rig.provider.requests().len(),
+            9,
+            "real prompt auto-drains fresh workflow input"
+        );
         assert!(
             rig.env.messages.iter().any(|message| {
                 message.role == crate::domain::conversation::value_objects::message::Role::Tool

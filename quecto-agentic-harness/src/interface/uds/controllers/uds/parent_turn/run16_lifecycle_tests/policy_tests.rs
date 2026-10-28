@@ -325,6 +325,16 @@ async fn run16_m2_startup_withheld_candidate_restores_on_next_outer_reload() {
                 Reply::Text("No declaration."),
             ],
         );
+        rig.snippets = crate::interface::cli::controllers::shared::build_agent_system_prompt(
+            None,
+            None,
+            false,
+            &rig.snippets,
+        );
+        crate::domain::conversation::services::conversation_view::inject_system_prompt(
+            &mut rig.env.messages,
+            &rig.snippets,
+        );
         install_reload(&mut rig, true);
         rig.send(r#"{"type":"reload","id":"restore"}"#).await;
         assert!(
