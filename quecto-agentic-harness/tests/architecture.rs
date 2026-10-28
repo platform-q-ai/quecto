@@ -59,6 +59,8 @@ mod hook_scripts_worktree;
 mod no_python;
 #[path = "architecture/panic_strategy.rs"]
 mod panic_strategy;
+#[path = "architecture/pre_push_fast_contract.rs"]
+mod pre_push_fast_contract;
 /// The board's front ends reach its use case only through the
 /// `BoardOperations` port (epic #2705 B6).
 #[path = "architecture/project_board_operations.rs"]
