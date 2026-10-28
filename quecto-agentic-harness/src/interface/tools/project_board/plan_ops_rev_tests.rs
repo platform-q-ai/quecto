@@ -257,3 +257,266 @@ fn a_page_pinned_by_rev_restarts_only_when_its_plan_changed() {
         "a pin is a page's: {unpaged}"
     );
 }
+
+/// Approved parent contract: exercise the real JSON dispatch without naming
+/// production symbols that do not exist yet. Writer and clock are trusted
+/// inputs from the existing assembly, never request fields.
+fn done_ticks_finished_board() -> (
+    crate::infrastructure::test_support::memory_board_store::MemoryBoardStore,
+    crate::composition::bootstrap::project_board_operations::LocalBoardOperations,
+) {
+    let store =
+        crate::infrastructure::test_support::memory_board_store::MemoryBoardStore::default();
+    use crate::application::project_board::ports::ProjectBoardStore;
+    store.bootstrap().unwrap();
+    let writer = super::plan_ops_tests::as_writer(&store, "Ada");
+    ok(
+        &writer,
+        json!({"op":"create","task":"a","title":"Ship safely","status":"ready",
+        "goal":"Ship safely.","done_when":["Same outcome","Same outcome"]}),
+    );
+    ok(
+        &writer,
+        json!({"op":"done_without_run","task":"a","reason":"Answered by hand"}),
+    );
+    (store, writer)
+}
+
+fn done_ticks_request(rev: &serde_json::Value) -> serde_json::Value {
+    json!({"op":"set_outcome","task":"a","outcome_index":0,"met":false,
+        "reason":"Owner deferred deployment","expected_rev":rev})
+}
+
+#[test]
+fn done_ticks_exception_is_attributed_roundtrips_answers_and_restores_without_reopening() {
+    use crate::application::project_board::ports::ProjectBoardStore;
+    let (store, writer) = done_ticks_finished_board();
+    let before = ok(&writer, json!({"op":"show","task":"a"}));
+    let mut request = done_ticks_request(&before["rev"]);
+    request["reason"] = json!("  Owner\u{a0}deferred deployment  ");
+    let changed = ok(&writer, request);
+    let task = &changed["task"];
+    assert_eq!(task["status"], "done");
+    assert_eq!(task["reason"], "Answered by hand");
+    assert_eq!(task["done_when"][0]["outcome"], "Same outcome");
+    assert_eq!(task["done_when"][0]["done"], false);
+    assert_eq!(
+        task["done_when"][1]["done"], true,
+        "index, not duplicate outcome text"
+    );
+    assert_eq!(
+        task["done_when"][0]["exception"]["reason"],
+        "Owner deferred deployment"
+    );
+    assert_eq!(
+        task["done_when"][0]["exception"]["by"],
+        json!({"name":"Ada","email":"ada@example.com"})
+    );
+    assert_eq!(task["done_when"][0]["exception"]["at"], task["updated"]);
+    assert!(task["done_when"][1].get("exception").is_none());
+    let description = task["description"].as_str().unwrap();
+    assert!(
+        description.contains("## Outcome exceptions"),
+        "{description}"
+    );
+    assert!(
+        description.contains("Owner deferred deployment"),
+        "{description}"
+    );
+    let shown = ok(&writer, json!({"op":"show","task":"a"}));
+    assert_eq!(
+        shown["task"], *task,
+        "fresh reads preserve exception answers"
+    );
+    let listed = ok(&writer, json!({"op":"list"}));
+    assert_eq!(listed["tasks"][0]["done_when"], task["done_when"]);
+    let restored = ok(
+        &writer,
+        json!({"op":"set_outcome","task":"a","outcome_index":0,
+        "met":true,"expected_rev":shown["rev"]}),
+    );
+    assert_eq!(restored["task"]["status"], "done");
+    assert_eq!(restored["task"]["reason"], "Answered by hand");
+    assert_eq!(restored["task"]["done_when"][0]["done"], true);
+    assert!(restored["task"]["done_when"][0].get("exception").is_none());
+    assert!(
+        !restored["task"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("## Outcome exceptions")
+    );
+    assert_eq!(
+        store.read().unwrap().tasks[0].fields().status,
+        crate::domain::project_board::value_objects::vocabulary::TaskStatus::Done
+    );
+}
+
+#[test]
+fn done_ticks_exception_survives_archiving_and_subsequent_reads() {
+    let (_store, writer) = done_ticks_finished_board();
+    let before = ok(&writer, json!({"op":"show","task":"a"}));
+    let changed = ok(&writer, done_ticks_request(&before["rev"]));
+    let archived = ok(&writer, json!({"op":"move","task":"a","to":"archived"}));
+    assert_eq!(archived["task"]["status"], "archived");
+    assert_eq!(archived["task"]["done_when"], changed["task"]["done_when"]);
+    assert_eq!(archived["task"]["reason"], "Answered by hand");
+    let shown = ok(&writer, json!({"op":"show","task":"a"}));
+    assert_eq!(shown["task"], archived["task"]);
+}
+
+#[test]
+fn done_ticks_exception_rejects_stale_and_unknown_board_revisions_without_writes() {
+    use crate::application::project_board::ports::ProjectBoardStore;
+    let (store, writer) = done_ticks_finished_board();
+    let read = ok(&writer, json!({"op":"show","task":"a"}));
+    ok(&writer, done_ticks_request(&read["rev"]));
+    for rev in [
+        read["rev"].clone(),
+        json!("ffffffffffffffffffffffffffffffffffffffff"),
+    ] {
+        let before = store.read().unwrap();
+        let writes = store.writes();
+        let refused = call(
+            &writer,
+            json!({"op":"set_outcome","task":"a","outcome_index":0,
+            "met":true,"expected_rev":rev}),
+        );
+        assert_eq!(refused["ok"], false, "{refused}");
+        assert_eq!(refused["error"]["code"], "stale", "{refused}");
+        assert_eq!(store.read().unwrap().tasks, before.tasks);
+        assert_eq!(store.writes(), writes);
+    }
+}
+
+#[test]
+fn done_ticks_exception_validates_reference_reason_types_and_required_rev_atomically() {
+    use crate::application::project_board::ports::ProjectBoardStore;
+    let (store, writer) = done_ticks_finished_board();
+    let read = ok(&writer, json!({"op":"show","task":"a"}));
+    let valid = done_ticks_request(&read["rev"]);
+    let mut cases = vec![];
+    for (field, value) in [
+        ("outcome_index", json!(-1)),
+        ("outcome_index", json!(0.5)),
+        ("outcome_index", json!("0")),
+        ("outcome_index", json!(2)),
+        ("outcome_index", json!(u64::MAX)),
+        ("met", json!("false")),
+        ("met", json!(null)),
+        ("reason", json!(" \t\u{a0}")),
+        ("reason", json!("")),
+        ("reason", json!(null)),
+        ("reason", json!("a".repeat(1001))),
+        ("expected_rev", json!(null)),
+        ("expected_rev", json!("")),
+        ("expected_rev", json!("BAD REV")),
+    ] {
+        let mut request = valid.clone();
+        request[field] = value;
+        cases.push((field, request));
+    }
+    for field in ["outcome_index", "met", "reason", "expected_rev"] {
+        let mut request = valid.clone();
+        request.as_object_mut().unwrap().remove(field);
+        cases.push((field, request));
+    }
+    let mut reason_on_met = valid.clone();
+    reason_on_met["met"] = json!(true);
+    cases.push(("reason", reason_on_met));
+    let mut deprecated = valid.clone();
+    deprecated.as_object_mut().unwrap().remove("expected_rev");
+    deprecated["expected_updated"] = read["task"]["updated"].clone();
+    cases.push(("expected_updated", deprecated));
+    for (field, request) in cases {
+        let before = store.read().unwrap();
+        let writes = store.writes();
+        let answer = call(&writer, request.clone());
+        assert_eq!(answer["ok"], false, "{request}: {answer}");
+        // Do not let the baseline's unknown-op refusal masquerade as a
+        // passing field-validation test.
+        let error_field = answer["error"]["field"]
+            .as_str()
+            .or_else(|| answer["error"]["rule"]["field"].as_str());
+        assert_eq!(error_field, Some(field), "{request}: {answer}");
+        assert_eq!(store.read().unwrap().tasks, before.tasks);
+        assert_eq!(store.writes(), writes);
+    }
+}
+
+#[test]
+fn done_ticks_exception_uses_done_only_allowlist_and_cannot_spoof_attribution() {
+    use crate::application::project_board::ports::ProjectBoardStore;
+    use crate::domain::project_board::entities::task::Task;
+    use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+    for status in [
+        TaskStatus::Draft,
+        TaskStatus::Ready,
+        TaskStatus::Claimed,
+        TaskStatus::InProgress,
+        TaskStatus::Review,
+        TaskStatus::Blocked,
+        TaskStatus::Archived,
+    ] {
+        let (store, writer) = done_ticks_finished_board();
+        let board = store.read().unwrap();
+        let mut fields = board.tasks[0].fields().clone();
+        fields.status = status;
+        fields.reason = None;
+        fields.resolution = None;
+        if matches!(status, TaskStatus::Claimed | TaskStatus::InProgress) {
+            let at = fields.updated.clone();
+            fields.claim = Some(crate::domain::project_board::entities::claim::Claim {
+                holder: crate::domain::project_board::entities::claim::Identity {
+                    name: "Ada".into(),
+                    email: "ada@example.com".into(),
+                },
+                since: at.clone(),
+                expires: at.plus_seconds(3600).unwrap(),
+            });
+        }
+        store
+            .write_tasks(&board.head, &[Task::new(fields).unwrap()], "status fixture")
+            .unwrap();
+        let read = ok(&writer, json!({"op":"show","task":"a"}));
+        let before = store.read().unwrap();
+        let writes = store.writes();
+        let refused = call(&writer, done_ticks_request(&read["rev"]));
+        assert_eq!(refused["ok"], false, "{status:?}: {refused}");
+        assert_eq!(refused["error"]["code"], "rule", "{status:?}: {refused}");
+        assert_eq!(store.read().unwrap().tasks, before.tasks);
+        assert_eq!(store.writes(), writes);
+    }
+    let (store, writer) = done_ticks_finished_board();
+    let read = ok(&writer, json!({"op":"show","task":"a"}));
+    for (field, value) in [
+        ("by", json!({"name":"Mallory","email":"m@example.com"})),
+        ("at", json!("2000-01-01T00:00:00Z")),
+    ] {
+        let mut request = done_ticks_request(&read["rev"]);
+        request[field] = value;
+        let writes = store.writes();
+        let refused = call(&writer, request);
+        assert_eq!(refused["error"]["field"], field, "{refused}");
+        assert_eq!(store.writes(), writes);
+    }
+}
+
+#[test]
+fn done_ticks_existing_cli_envelope_builds_the_same_exception_request() {
+    let flags = [
+        "--task",
+        "a",
+        "--outcome-index",
+        "0",
+        "--met",
+        "false",
+        "--reason",
+        "Owner deferred deployment",
+        "--expected-rev",
+        "r3",
+    ]
+    .map(String::from);
+    let request = super::command_line::request("set-outcome", &flags)
+        .expect("approved board operation through existing CLI envelope");
+    assert_eq!(request, done_ticks_request(&json!("r3")));
+}

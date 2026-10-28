@@ -261,3 +261,59 @@ fn done_ticks_legacy_and_unrelated_archived_text_stays_unchanged() {
     assert_eq!(read.fields().description, SECTIONED_TEXT);
     assert_eq!(encode::<TaskCodec>(&read).unwrap(), archived);
 }
+
+/// Parent approved explicit exception metadata; schema 4 is next after 3.
+/// Mechanical encoding uses the existing identity cell and timestamp spelling.
+const DONE_TICKS_EXCEPTION_SECTION: &str = "## Outcome exceptions\n| Outcome index | Reason | By | At |\n|---|---|---|---|\n| 0 | Owner deferred deployment | Ada (`ada@example.com`) | 2026-10-11T09:30:00Z |\n\n";
+
+fn done_ticks_exception_file(status: &str) -> String {
+    FILE.replace("schema=2", "schema=4")
+        .replace("| Status | draft |", &format!("| Status | {status} |\n| Resolution | done_without_run |\n| Reason | Answered by hand |"))
+        .replace("## Links\n", &format!("{DONE_TICKS_EXCEPTION_SECTION}## Links\n"))
+}
+
+#[test]
+fn done_ticks_schema4_exception_survives_done_and_archive_codec_roundtrips() {
+    for status in ["done", "archived"] {
+        let file = done_ticks_exception_file(status);
+        let read =
+            decode::<TaskCodec>(file.as_bytes()).expect("approved schema4 exception is readable");
+        assert_eq!(read.fields().reason.as_deref(), Some("Answered by hand"));
+        let expected = SECTIONED_TEXT.replace(
+            "## Links\n",
+            &format!("{DONE_TICKS_EXCEPTION_SECTION}## Links\n"),
+        );
+        assert_eq!(
+            read.fields().description,
+            expected,
+            "explicit unmet is not implicit met"
+        );
+        let parsed = Description::read(&read.fields().description)
+            .expect("exception text remains parseable");
+        assert!(!parsed.done_when()[0].done);
+        assert!(parsed.done_when()[1].done);
+        assert_eq!(
+            parsed.done_when()[0].text,
+            "Current master merged in, moves only"
+        );
+        assert_eq!(parsed.markdown(), expected);
+        let encoded = encode::<TaskCodec>(&read).unwrap();
+        assert_eq!(encoded, file, "metadata, reasons and attribution preserved");
+        assert_eq!(decode::<TaskCodec>(encoded.as_bytes()).unwrap(), read);
+    }
+}
+
+#[test]
+fn done_ticks_exception_description_is_parseable_without_changing_outcome_text() {
+    let description = SECTIONED_TEXT.replace(
+        "## Links\n",
+        &format!("{DONE_TICKS_EXCEPTION_SECTION}## Links\n"),
+    );
+    let parsed = Description::read(&description).expect("approved exception description grammar");
+    assert_eq!(parsed.markdown(), description);
+    assert_eq!(
+        parsed.done_when()[0].text,
+        "Current master merged in, moves only"
+    );
+    assert!(!parsed.done_when()[0].done);
+}
