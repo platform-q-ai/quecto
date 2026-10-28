@@ -1,6 +1,9 @@
 //! Executable local/CI boundary contract. Adapters record commands, never compile.
 #[path = "pre_push_fast_contract_round3.rs"]
 mod pre_push_ci_round3;
+#[path = "pre_push_fast_contract_scope.rs"]
+mod scope;
+use scope::{required_job, workflow_jobs};
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -248,30 +251,6 @@ fn tolerance_is_required(lines: &[&str], prefix: &str) -> bool {
     matches!(values.as_slice(), [] | ["false"])
 }
 
-fn required_job<'a>(lines: &'a [&str], id: &str) -> Option<&'a [&'a str]> {
-    let marker = format!("  {id}:");
-    let starts: Vec<_> = lines
-        .iter()
-        .enumerate()
-        .filter(|(_, line)| **line == marker)
-        .map(|(i, _)| i)
-        .collect();
-    let [start] = starts.as_slice() else {
-        return None;
-    };
-    let tail = &lines[start + 1..];
-    let end = tail
-        .iter()
-        .position(
-            |line| match line.strip_prefix("  ").and_then(|line| line.chars().next()) {
-                None | Some(' ' | '#') => false,
-                Some(_) => true,
-            },
-        )
-        .unwrap_or(tail.len());
-    Some(&tail[..end])
-}
-
 fn required_step(steps: &[&str], name: &str) -> Option<Vec<String>> {
     let starts: Vec<_> = steps
         .iter()
@@ -429,9 +408,12 @@ fn ci_contract_valid(workflow: &str) -> bool {
             vec![(COMPILED_NAME, vec![SHAPE, COMPILED_COMMAND])],
         ),
     ];
+    let Some(jobs) = workflow_jobs(&lines) else {
+        return false;
+    };
     labeled_pull_request_trigger(&lines)
         && required.into_iter().all(|(id, display, required)| {
-            let Some(body) = required_job(&lines, id) else {
+            let Some(body) = required_job(jobs, id) else {
                 return false;
             };
             let Some(steps_start) = body.iter().position(|line| *line == "    steps:") else {
