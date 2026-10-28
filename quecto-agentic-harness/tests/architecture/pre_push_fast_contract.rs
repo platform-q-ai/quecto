@@ -1,4 +1,7 @@
 //! Executable local/CI boundary contract. Adapters record commands, never compile.
+#[path = "pre_push_fast_contract_round3.rs"]
+mod pre_push_ci_round3;
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
