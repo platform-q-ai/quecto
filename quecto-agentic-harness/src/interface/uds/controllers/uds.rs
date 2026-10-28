@@ -310,6 +310,9 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         pending::queue_prompt(ctx, id.as_deref(), &type_name, message, work).await;
         return false;
     }
+    // Restore effective authority before automatic admission and the busy guard.
+    super::uds_dispatch_reload::poll_reload(ctx).await;
+    parent_turn::enter_outer(ctx);
     if !parent_turn::admits(ctx, work) {
         return false; // #2708: a terminal outcome fences automatic turns.
     }
@@ -319,10 +322,6 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     let steer = work.is_steer();
     let generation = ctx.turn_control.control_generation();
     ctx.session.automatic_turns().start_turn(work, generation);
-    // Reload runtime configuration (#1849): the pull-based poll before every
-    // prompt (ADR-0002), rebuilt off the runtime; a failure keeps last-good.
-    super::uds_dispatch_reload::poll_reload(ctx).await;
-    parent_turn::enter_outer(ctx);
     let cancel_rx = arm_prompt_cancel(ctx, steer).await;
     let Some(cancel_rx) = cancel_rx else {
         ctx.session.record_control(

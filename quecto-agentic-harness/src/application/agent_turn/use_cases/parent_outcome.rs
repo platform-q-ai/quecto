@@ -142,14 +142,14 @@ impl ParentOutcomeRuntime {
             (TurnAdmission::FreshWake, _, _) => {
                 if state.fenced || state.episode.is_none() {
                     state.episode = Some((self.mint)());
+                    state.correction = Correction::Unspent;
                 }
                 state.fenced = false;
-                state.correction = Correction::Unspent;
             }
             (TurnAdmission::Correction, true, Correction::Owed) => {
                 state.correction = Correction::Spent;
             }
-            (TurnAdmission::WorkWake, true, _) => state.correction = Correction::Unspent,
+            (TurnAdmission::WorkWake, true, _) => {}
             (TurnAdmission::Nudge, true, _) => {}
             (TurnAdmission::Correction | TurnAdmission::WorkWake | TurnAdmission::Nudge, _, _) => {
                 return None;

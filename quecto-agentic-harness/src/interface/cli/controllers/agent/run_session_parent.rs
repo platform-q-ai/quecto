@@ -240,7 +240,7 @@ pub(crate) fn exit_code(settled: Option<&TurnOutcomeRecord>, out: &mut AgentOutp
     };
     out.stderr
         .push_str(&format!("turn outcome: {name}: {}\n", record.reason));
-    i32::from(record.outcome == TurnOutcome::Stalled)
+    0
 }
 
 #[cfg(test)]

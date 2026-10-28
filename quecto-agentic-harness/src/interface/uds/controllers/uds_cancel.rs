@@ -366,7 +366,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
         let advance = session.write().await.publish(&visible);
         sink.emit_ledger_advanced(advance).await;
     }
-
+    agent.bind_canonical_prompt(messages, system_prompt);
     // Install a progress callback that forwards events to a bounded channel.
     // Capacity 256 limits back-pressure from a slow UDS consumer while being
     // large enough to never block under normal streaming throughput.

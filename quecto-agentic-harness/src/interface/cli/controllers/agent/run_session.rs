@@ -81,6 +81,7 @@ pub(crate) fn run_agent_session(
         messages.push(msg);
         id
     });
+    agent.bind_composed_prompt(system_prompt_id);
 
     let message = flags.message.as_deref().unwrap_or("");
     let prompt = crate::domain::conversation::services::turn_origin::prompt(message.to_string());

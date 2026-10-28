@@ -2007,8 +2007,8 @@ is a test rig that is never given it.
   A default guarded `prompt` receives exactly one id-correlated response at
   execution end, after guard settlement/correction handling, with its original
   execution success (true even for semantic `stalled`, false for actual error
-  or cancellation). It precedes any uncorrelated `agent_error` fallback, so an
-  API first-response-by-id waiter cannot resolve early or lose correlation.
+  or cancellation). Deferred diagnostics belong to that same correlated response;
+  no extra uncorrelated `agent_error` may steal another pending API waiter.
   Only exact `QUECTO_TURN_OUTCOMES=1` retains the early admission ACK with
   `data.episodeId`, with no duplicate final response. This compatibility mode
   is session-wide, not per-connection/payload negotiation or guard authority.
@@ -2023,13 +2023,18 @@ is a test rig that is never given it.
   `episodeId`) → `turn_admitted` → `agent_start` … `agent_end` → `turn_outcome`
   (or correction admission/run/settlement) → `workflow_idle`; no final response.
   Admission is never a completion guarantee. Interrupted runs settle no outcome.
-- **Fresh automatic input.** Terminal outcomes fence internal automatic work,
-  not new external information. Trusted retained sequenced child completion/
-  report notes and actual workflow emissions can wake a persistent root once
-  with fresh episode/turn authority. Notes buffered while streaming wait until
-  idle. Duplicate/older notes, snapshots, unchanged engine retries and drain
-  activity cannot open episodes or reset correction budgets. Explicit steering,
-  automatic suspension and descendant checks retain priority and bounds.
+- **Fresh automatic input.** Default roots may wake after a terminal outcome
+  on trusted retained sequenced child reports/completions or actual workflow
+  emissions, with fresh episode/turn authority. Exact `QUECTO_TURN_OUTCOMES=1`
+  roots instead wait for the next USER prompt after `done` or `needs_user`
+  (`asking`/`blocked`): the relay cannot display harness-minted episodes.
+  Waiting/live-owned work and stalled recovery retain normal wake semantics.
+  Notes buffered while streaming wait until idle. Duplicate/older notes,
+  same-history workflow A→B→A snapshots, retries and drains cannot mint new
+  episodes; only a genuinely new episode resets correction budget. A nudge or
+  work wake inside a still-open episode preserves the spent budget. Successful
+  history replacement resets workflow consumption; failed resets preserve it.
+  Explicit steering, automatic suspension and descendant checks retain priority.
 - **State.** `get_state` carries `turnOutcomeVersion`, `outcomeEpoch` and
   `latestTurnOutcome` on every reply: the full one, the busy and connect-time
   snapshots, and the `since` unchanged marker, which then also carries the
@@ -2084,9 +2089,9 @@ One-shot CLI stdout selects the last substantive assistant text from the current
 invocation, including text alongside a declaration before an empty response,
 never concatenated/history text. Synthetic diagnostics take precedence. Stderr
 prints `turn outcome: <done|needs_user|waiting|stalled>: <reason>`. Completed
-`done`, `asking`/`blocked` (`needs_user`) and `waiting` exit 0; `stalled` exits 1
-because its correction exhausted without valid settlement, actual errors remain
-1 and timeout 2. A one-shot waits for owned notes within its one deadline and
+`done`, `asking`/`blocked` (`needs_user`), `waiting` and `stalled` exit 0,
+matching master; the typed outcome still distinguishes correction exhaustion.
+Actual errors remain 1 and timeout 2. A one-shot waits for owned notes within its one deadline and
 does not become a persistent listener after returning.
 
 ## Event sequence diagrams

@@ -27,6 +27,15 @@ fn guarded(ctx: &DispatchCtx<'_>) -> bool {
     ctx.session.parent_outcome().is_some()
 }
 
+/// A streaming turn retains its current authority until the next outer input.
+async fn reconcile_idle_boundary(ctx: &mut DispatchCtx<'_>) {
+    let false = ctx.session.is_streaming() else {
+        return;
+    };
+    super::super::uds_dispatch_reload::poll_reload(ctx).await;
+    enter_outer(ctx);
+}
+
 /// The identity of an external instruction: unchanged when the session is
 /// unguarded or none was supplied (its episode is minted at admission); on
 /// a guarded one a supplied identity of 1..=512 bytes as it is. `Err` once
@@ -36,6 +45,7 @@ pub(in crate::interface::uds::controllers) async fn episode_id(
     id: Option<String>,
     type_name: &str,
 ) -> Result<Option<String>, ()> {
+    reconcile_idle_boundary(ctx).await;
     match (guarded(ctx), id) {
         (false, id) | (true, id @ None) => Ok(id),
         (true, Some(id)) if admissible_episode_id(&id) => Ok(Some(id)),
@@ -108,23 +118,48 @@ pub(super) async fn respond_prompt(
     completion_response: bool,
     early_ack: bool,
 ) {
+    let errors = ctx.session.finish_completion_response();
     // #1072: the turn's own save (`TurnSave`) drains the durable-prefix dirty latch.
     if matches!(
         (completion_response, early_ack, &outcome),
         (true, _, _) | (false, false, PromptOutcome::Success)
     ) {
-        let ev = match outcome {
+        let mut ev = match outcome {
             PromptOutcome::Success => AgentEvent::ok(id, type_name, None),
             PromptOutcome::Error => AgentEvent::err(id, type_name, "prompt execution failed"),
             PromptOutcome::Cancelled => {
                 AgentEvent::err(id, type_name, "prompt execution cancelled")
             }
         };
+        // Preserve diagnostics even when only the correction failed: the original
+        // prompt's success flag still describes its own execution, not the guard.
+        if let (true, Some(_), AgentEvent::Response { error, .. }) =
+            (completion_response, errors.first(), &mut ev)
+        {
+            *error = Some(errors.join("\n"));
+        }
         super::emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
-    for error in ctx.session.finish_completion_response() {
+    let false = completion_response else {
+        return;
+    };
+    for error in errors {
         super::emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(None, "agent_error", error))
             .await;
+    }
+}
+
+/// Exact-env1 relays cannot display harness-minted episodes after settlement.
+/// Waiting, stalled and still-open episodes keep their ordinary wake semantics.
+pub(super) fn fresh_wake_allowed(ctx: &DispatchCtx<'_>) -> bool {
+    use crate::domain::agents::value_objects::turn_outcome::TurnOutcome;
+    match (ctx.session.admission_ack(), ctx.session.parent_outcome()) {
+        (true, Some(runtime)) if runtime.admits_automatic() => true,
+        (true, Some(runtime)) => match runtime.view().latest.map(|record| record.outcome) {
+            Some(TurnOutcome::Done | TurnOutcome::NeedsUser) => false,
+            None | Some(TurnOutcome::Waiting | TurnOutcome::Stalled) => true,
+        },
+        _ => true,
     }
 }
 
@@ -133,6 +168,9 @@ pub(super) fn workflow_admission(
     ctx: &mut DispatchCtx<'_>,
     identity: Option<&str>,
 ) -> Option<TurnAdmission> {
+    let true = fresh_wake_allowed(ctx) else {
+        return None;
+    };
     let guarded = ctx.session.parent_outcome().is_some();
     let fresh =
         identity.is_some_and(|identity| ctx.session.take_workflow_emission(identity.to_owned()));

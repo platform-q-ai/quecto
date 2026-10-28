@@ -166,37 +166,31 @@ impl AgentLoopImpl {
         self.tool_catalog().parent_outcome_candidate()
     }
 
-    pub(super) fn reconcile_declaration_guidance(
-        &self,
-        messages: &mut Vec<crate::domain::conversation::value_objects::message::Message>,
+    /// The transport owns the injected prompt's identity, not its position.
+    pub(crate) fn bind_composed_prompt(&mut self, id: Option<uuid::Uuid>) {
+        self.composed_prompt_id = id;
+    }
+
+    /// UDS has the canonical marker; resolve it to the injected prompt identity.
+    pub(crate) fn bind_canonical_prompt(
+        &mut self,
+        messages: &[crate::domain::conversation::value_objects::message::Message],
+        canonical: &str,
     ) {
-        use crate::domain::agents::value_objects::turn_outcome::DECLARE_GUIDANCE;
         use crate::domain::conversation::value_objects::message::{Message, Role};
-        if let Some(runtime) = self.parent_outcome_candidate() {
-            for message in messages
-                .iter_mut()
-                .filter(|message| message.role == Role::System)
-            {
-                message.content = message.content.replace(DECLARE_GUIDANCE, "");
-            }
-            if runtime.enabled() {
-                if let Some(system) = messages
-                    .iter_mut()
-                    .find(|message| message.role == Role::System)
-                {
-                    system.content.push_str(DECLARE_GUIDANCE);
-                } else {
-                    messages.insert(0, Message::system(DECLARE_GUIDANCE.to_owned()));
-                }
-            }
-        }
+        self.bind_composed_prompt(match canonical {
+            "" => None,
+            _ => messages
+                .iter()
+                .find(|message| message.role == Role::System && message.content == canonical)
+                .map(Message::id),
+        });
     }
 
     /// One shared effective catalogue/overlay snapshot owns declaration authority.
     pub fn reconcile_declaration_policy(&self, outer_boundary: bool) {
-        let name = "declare_turn_outcome";
-        let visible = self.is_tool_model_visible(name);
         if let Some(runtime) = self.parent_outcome_candidate() {
+            let visible = self.is_tool_model_visible("declare_turn_outcome");
             runtime.observe_policy(visible);
             if outer_boundary {
                 runtime.enter_outer_boundary();

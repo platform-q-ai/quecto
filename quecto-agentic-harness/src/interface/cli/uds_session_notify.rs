@@ -292,14 +292,12 @@ impl AgentSession {
         self.admission_ack && self.parent_outcome().is_some()
     }
 
+    pub(crate) fn reset_workflow_emissions(&mut self) {
+        self.workflow_emission.clear();
+    }
+
     /// Consumed engine emission identity, retained across idle drains.
     pub(crate) fn take_workflow_emission(&mut self, identity: String) -> bool {
-        match self.workflow_emission.as_ref() {
-            Some(previous) if previous == &identity => false,
-            _ => {
-                self.workflow_emission = Some(identity);
-                true
-            }
-        }
+        self.workflow_emission.insert(identity)
     }
 }

@@ -11,7 +11,6 @@ impl AgentLoopImpl {
         messages: &mut Vec<Message>,
     ) -> Result<AgentResult, DomainError> {
         self.mark_turn_in_flight();
-        self.reconcile_declaration_guidance(messages);
         let mut tool_defs = self.current_tool_definitions();
         let mut iterations: u32 = 0;
         let mut current_turn: u32 = 1;
@@ -42,7 +41,6 @@ impl AgentLoopImpl {
         loop {
             if iterations > 0 {
                 self.drain_tool_policy_mutations_at_internal_boundary();
-                self.reconcile_declaration_guidance(messages);
                 tool_defs = self.current_tool_definitions();
             }
             let _state = TurnState::PrepareProviderRequest;
@@ -54,7 +52,13 @@ impl AgentLoopImpl {
             });
 
             // #2421: the conversation as the active model is sent it.
-            let sent = self.conversation_for_model(messages);
+            let mut guidance = guidance_projection::GuidanceProjection::new(
+                messages,
+                self.composed_prompt_id,
+                self.parent_outcome_candidate()
+                    .map(|runtime| runtime.enabled()),
+            );
+            let sent = self.conversation_for_model(guidance.messages());
             // #2434: whether its reply may be empty (tool results) or must
             // have output (a prompt, a steer, a follow-up, feedback).
             let requirement = if self
@@ -97,6 +101,7 @@ impl AgentLoopImpl {
                 ),
             };
             drop(sent);
+            drop(guidance);
 
             let llm_duration_ms = llm_start.elapsed().as_millis() as u64;
             // Every response is audited and counted, including one dropped below.

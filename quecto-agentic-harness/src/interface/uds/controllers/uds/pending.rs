@@ -39,7 +39,8 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
             }
             // Earlier work in this batch may have settled terminal. Recheck
             // each item; a stale note must not hide an instruction behind it.
-            let fresh = matches!(
+            let fresh = super::parent_turn::fresh_wake_allowed(ctx)
+                && matches!(
                 super::parent_turn::pending_admission(&pending_msg),
                 crate::application::agent_turn::use_cases::parent_outcome::TurnAdmission::FreshWake
             );
@@ -148,8 +149,8 @@ fn take_admissible_pending(
             let work = work_of(message);
             ctx.session.automatic_turns().admits(work)
                 && (super::parent_turn::admits(ctx, work)
-                    || matches!(super::parent_turn::pending_admission(message),
-                        crate::application::agent_turn::use_cases::parent_outcome::TurnAdmission::FreshWake))
+                    || (super::parent_turn::fresh_wake_allowed(ctx) && matches!(super::parent_turn::pending_admission(message),
+                        crate::application::agent_turn::use_cases::parent_outcome::TurnAdmission::FreshWake)))
         });
     ctx.session.restore_pending(automatic.into_iter());
     if explicit.is_empty() {

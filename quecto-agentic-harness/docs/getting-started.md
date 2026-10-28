@@ -5,34 +5,11 @@ apply with no `~/.quecto/config.json`.
 
 ## Root turn outcomes and completion
 
-Eligible top-level CLI/UDS roots declare how each turn ends. The launch
-allowlist excludes children, coordinators, parent-bound and swarm roles;
-explicitly uncomposed contexts remain unguarded. Effective declaration-tool
-policy owns guard, guidance and model visibility together: removal revokes
-capture/correction immediately, restoration (including startup withholding or
-reload) re-arms only at the next outer boundary, never a tool iteration.
-
-A compliant declaration costs **one extra provider request** for the tool
-result; a noncompliant turn gets one correction then `stalled` when no usable
-outcome/live work remains. Tools/retries can add requests, so these are not
-universal totals. Fresh sequenced child reports/completions and actual workflow
-emissions can wake a persistent terminal root once with fresh authority;
-stale/duplicate notes, snapshots and internal retries/drains cannot.
-
-One-shot stdout is the last substantive assistant text of the current
-invocation, including text accompanying a declaration before an empty reply;
-it never concatenates text or prints old history. Synthetic diagnostics win.
-Typed stderr is `turn outcome: <outcome>: <reason>`; completed `done`,
-`needs_user` (`asking`/`blocked`) and `waiting` exit 0, correction-exhausted
-`stalled` exits 1, real errors remain 1 and timeout remains 2. The one-shot
-process does not listen after returning.
-
-Default UDS prompt responses correlate by id **at execution end**, carrying
-actual execution success/failure/cancellation, not semantic completion. Exact
-`QUECTO_TURN_OUTCOMES=1` alone retains early admission ACK (not completion),
-without a duplicate final response. This session-wide compatibility mode
-cannot grant guard authority; no payload negotiates it. See
-[UDS turn outcomes](uds-protocol.md#turn-outcomes-trusted-root-parents).
+Before starting a root session, see the canonical
+[root turn-outcome contract](uds-protocol.md#turn-outcomes-trusted-root-parents)
+for eligibility and policy reload, default completion versus opt-in admission
+ACKs, automatic wake modes, correction/request costs, and CLI stdout/stderr/exit
+semantics. Runtime guidance stays out of durable session history.
 
 
 ## 1. Install

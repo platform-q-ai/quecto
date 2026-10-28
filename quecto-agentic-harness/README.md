@@ -188,8 +188,9 @@ A compliant declaration costs **one extra provider request** to process its tool
 result. A noncompliant turn with nothing running gets one literal correction
 then `stalled` if it still supplies no usable outcome/live work, never inferred
 `done`. Tool calls and retries can add requests: these are not universal totals
-or dollar estimates. Owned child/workflow information can wake a persistent
-terminal root once with fresh authority; duplicate/stale notes, snapshots and
+or dollar estimates. Fresh owned child/workflow information can wake default
+persistent roots. Exact `QUECTO_TURN_OUTCOMES=1` roots settled as `done` or
+`needs_user` wait for the next USER prompt; duplicate/stale notes, snapshots and
 internal retry/drain activity cannot renew the budget. The completion note is
 not the child's report: inspect `get_messages` before reporting its work.
 
@@ -198,8 +199,8 @@ this invocation**, including text alongside a declaration followed by an empty
 reply, never concatenated text or old history. Synthetic stop/iteration
 diagnostics take precedence. Guarded outcomes appear on stderr as
 `turn outcome: <done|needs_user|waiting|stalled>: <reason>`. Completed `done`,
-`asking`/`blocked` (normalized `needs_user`) and `waiting` have exit 0. `stalled`
-exits 1 because the correction budget ended without a valid settlement; real
+`asking`/`blocked` (normalized `needs_user`), `waiting` and `stalled` have exit 0,
+matching master while typed stderr distinguishes correction exhaustion. Real
 errors remain 1 and `--max-time` remains 2. The one-shot driver waits for its
 owned children's notes under that one deadline; without one, 30 quiet minutes
 or a closed note channel yields `needs_user` with an unknown-work diagnostic.

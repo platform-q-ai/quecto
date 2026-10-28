@@ -52,7 +52,7 @@ pub struct AgentSession {
     admission_ack: bool,
     completion_response_pending: bool,
     deferred_prompt_errors: Vec<String>,
-    workflow_emission: Option<String>,
+    workflow_emission: std::collections::HashSet<String>,
 }
 pub(crate) type ParentOutcome =
     std::sync::Arc<crate::application::agent_turn::use_cases::parent_outcome::ParentOutcomeRuntime>;
@@ -256,7 +256,7 @@ impl AgentSession {
             admission_ack: false,
             completion_response_pending: false,
             deferred_prompt_errors: Vec::new(),
-            workflow_emission: None,
+            workflow_emission: Default::default(),
         }
     }
     pub fn model(&self) -> &str {
