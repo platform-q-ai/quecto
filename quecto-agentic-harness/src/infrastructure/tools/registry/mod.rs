@@ -32,6 +32,8 @@ use crate::infrastructure::config::Config;
 
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
+    pub(crate) parent_outcome_candidate:
+        Option<Arc<dyn crate::application::agent_turn::ports::ParentOutcomeGuard>>,
     pub(super) tools: HashMap<String, Arc<dyn Tool>>,
     pub(super) metadata: HashMap<String, ToolRegistration>,
     definitions: Vec<ToolDefinition>,
@@ -81,6 +83,7 @@ impl ToolRegistryImpl {
     /// Create a new empty registry.
     pub fn new() -> Self {
         Self {
+            parent_outcome_candidate: None,
             tools: HashMap::new(),
             metadata: HashMap::new(),
             definitions: Vec::new(),

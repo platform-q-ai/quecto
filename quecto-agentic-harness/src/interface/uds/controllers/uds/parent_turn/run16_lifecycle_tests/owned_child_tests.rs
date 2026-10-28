@@ -184,7 +184,7 @@ async fn run16_m1_owned_child_completion_wakes_done_then_duplicate_is_inert() {
         // Even setup/channel assertion panics release/terminate and reap the
         // concrete owned process before the panic is propagated.
         drop(child.stdin.take());
-        if matches!(probe, Err(_)) {
+        if probe.is_err() {
             use crate::infrastructure::processes::owned_child_supervisor::{
                 ProtocolOutcome, TerminationBudget,
             };

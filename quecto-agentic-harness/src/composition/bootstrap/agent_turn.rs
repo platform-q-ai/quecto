@@ -9,11 +9,13 @@ use crate::interface::cli::uds_session::AgentSession;
 /// cases: its automatic turns (taking turns, nothing suspended) and its
 /// usage (nothing used yet).
 pub fn build_turn_session(model: String) -> AgentSession {
-    AgentSession::new(
+    let mut session = AgentSession::new(
         model,
         ResumeAfterProviderFailure::new(),
         InspectSessionUsage::new(),
-    )
+    );
+    session.set_admission_ack(std::env::var("QUECTO_TURN_OUTCOMES").ok().as_deref() == Some("1"));
+    session
 }
 
 /// Supply the default turn-outcome runtime to production launch composition.

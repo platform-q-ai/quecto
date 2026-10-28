@@ -41,3 +41,26 @@ pub trait DeclareTurnOutcome: Send + Sync {
 pub trait BoundTurnDeclaration: DeclareTurnOutcome {
     fn capture(&self) -> Option<crate::domain::turn_declaration::TurnIdentity>;
 }
+
+/// Lifecycle port of a composition-authorized root guard. Effective policy and
+/// trusted outer input drive this port; infrastructure never names its use case.
+pub trait ParentOutcomeGuard: BoundTurnDeclaration + std::fmt::Debug {
+    fn enabled(&self) -> bool;
+    fn observe_policy(&self, visible: bool);
+    fn enter_outer_boundary(&self);
+    fn correcting(&self) -> bool;
+    fn admits_automatic(&self) -> bool;
+    fn admit(
+        &self,
+        session_key: &str,
+        admission: crate::application::agent_turn::dto::parent_outcome::TurnAdmission,
+        turn_id: &str,
+    ) -> Option<crate::application::agent_turn::dto::parent_outcome::ActiveTurn>;
+    fn complete(
+        &self,
+        turn: crate::application::agent_turn::dto::parent_outcome::ActiveTurn,
+        end: crate::application::agent_turn::dto::parent_outcome::TurnEnd,
+    ) -> crate::application::agent_turn::dto::parent_outcome::ParentVerdict;
+    fn history_replaced(&self);
+    fn view(&self) -> crate::application::agent_turn::dto::parent_outcome::OutcomeView;
+}

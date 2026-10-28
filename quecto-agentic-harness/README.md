@@ -174,7 +174,46 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 ### interface/ — CLI (composition root)
 Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 
-**Turn outcomes** (#2708, on by default): an eligible top-level CLI or UDS parent (not spawned, not a coordinator, no parent id or parent control, not in a swarm) declares how each turn ends with the `declare_turn_outcome` tool (`waiting`, `blocked`, `asking` or `done`, with a one-line reason). A turn that ends with nothing running and no `blocked`, `asking` or `done` gets one system note, `Nothing is running. If your reply says you'll start something you haven't launched, you're not done: launch it now, or call declare_turn_outcome with blocked or asking. Otherwise call declare_turn_outcome: asking if you asked the user something, blocked if you can't proceed, done if you've finished.`, and if nothing runs after it the turn is `stalled`, never done. A one-shot `quecto agent -m` run waits for its own children's notes while they run (under the same `--max-time`; without one, 30 minutes with no note, or its note channel closing, ends it needs_user, `Unable to determine whether work is running. Inspect the harness state before continuing.`), then exits 0 on `done` and 1 on `stalled` or a `blocked`/`asking` declaration, with the reason on stderr. Over UDS the outcome is the `turn_outcome` event and `get_state.latestTurnOutcome` (a guarded harness answers its own `get_state` mid-turn from its refreshed snapshot, so a long turn doesn't hold it); see [docs/uds-protocol.md](docs/uds-protocol.md#turn-outcomes-trusted-root-parents). Activation does not depend on `QUECTO_TURN_OUTCOMES` (unset, `1` and other values behave alike); there is no environment opt-out. Children, coordinators and swarm members are never guarded. Ordinary TUI-launched UDS roots are guarded when eligible under the same launch and tool-policy allowlists. A startup tool policy withholding `declare_turn_outcome` and explicitly uncomposed contexts remain unguarded. Legacy launcher metadata is still removed from child bash and configured-extension environments.
+**Turn outcomes** (#2708, on by default): an eligible top-level CLI or UDS
+parent declares each turn with `declare_turn_outcome` (`waiting`, `blocked`,
+`asking` or `done`, with a one-line reason). Children, coordinators, launches
+with a parent id/control, swarm members and explicitly uncomposed contexts
+cannot acquire this authority. Ordinary TUI-launched UDS roots use the same
+allowlist. Effective tool policy owns both guard eligibility and guidance:
+removing the declaration immediately revokes the guard, its capture and owed
+correction; restoring it re-arms an authorized root at the **next outer turn**,
+not in a tool loop. This also applies to startup-withheld roots and config reload.
+
+A compliant declaration costs **one extra provider request** to process its tool
+result. A noncompliant turn with nothing running gets one literal correction
+then `stalled` if it still supplies no usable outcome/live work, never inferred
+`done`. Tool calls and retries can add requests: these are not universal totals
+or dollar estimates. Owned child/workflow information can wake a persistent
+terminal root once with fresh authority; duplicate/stale notes, snapshots and
+internal retry/drain activity cannot renew the budget. The completion note is
+not the child's report: inspect `get_messages` before reporting its work.
+
+One-shot `quecto agent -m` stdout is the **last substantive assistant text of
+this invocation**, including text alongside a declaration followed by an empty
+reply, never concatenated text or old history. Synthetic stop/iteration
+diagnostics take precedence. Guarded outcomes appear on stderr as
+`turn outcome: <done|needs_user|waiting|stalled>: <reason>`. Completed `done`,
+`asking`/`blocked` (normalized `needs_user`) and `waiting` have exit 0. `stalled`
+exits 1 because the correction budget ended without a valid settlement; real
+errors remain 1 and `--max-time` remains 2. The one-shot driver waits for its
+owned children's notes under that one deadline; without one, 30 quiet minutes
+or a closed note channel yields `needs_user` with an unknown-work diagnostic.
+It does not keep listening after returning.
+
+Default UDS clients receive one id-correlated prompt response **at execution
+end**, after guard handling, with actual execution success/failure/cancellation
+(not semantic `done`). Only exact `QUECTO_TURN_OUTCOMES=1` retains the early
+admission ACK with `data.episodeId`, no duplicate final response. This is a
+session-wide transport compatibility mode, not guard authority or per-payload
+negotiation: unset/other values still guard eligible roots. Admission is never
+completion. See [UDS turn outcomes](docs/uds-protocol.md#turn-outcomes-trusted-root-parents)
+for events, state snapshots and ordering. Legacy launcher metadata remains
+removed from child bash and configured-extension environments.
 
 | Command | Description |
 |---|---|

@@ -94,3 +94,18 @@ pub(super) fn assert_stalled_opt_in(requests: &[String], frames: &[Value]) {
         "one acknowledgement, at admission"
     );
 }
+
+/// Whether any file under `dir` holds `needle`.
+pub(super) fn saved_under(dir: &std::path::Path, needle: &str) -> bool {
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| {
+            let path = entry.path();
+            match path.is_dir() {
+                true => saved_under(&path, needle),
+                false => std::fs::read_to_string(&path).is_ok_and(|text| text.contains(needle)),
+            }
+        })
+}

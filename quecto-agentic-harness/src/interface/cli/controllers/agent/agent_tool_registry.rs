@@ -145,7 +145,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         .then_some(flags.parent_outcome)
         .flatten()
         .and_then(|build| build());
-    let runtime = crate::interface::cli::controllers::tool_runtime::build_tool_runtime(
+    let mut runtime = crate::interface::cli::controllers::tool_runtime::build_tool_runtime(
         crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuildArgs {
             swarm_context,
             parent_outcome: parent_outcome.clone().map(|runtime| runtime as _),
@@ -197,6 +197,10 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent;
     let mut offered = runtime.registry.definitions_for(parent_context).iter();
     let offered = offered.any(|definition| definition.name == "declare_turn_outcome");
+    runtime.registry.parent_outcome_candidate = parent_outcome.clone().map(|runtime| runtime as _);
+    if let Some(candidate) = &parent_outcome {
+        candidate.observe_policy(offered);
+    }
     let parent_outcome = parent_outcome.filter(|_| offered);
     // #2708: a guarded root is told, with the tools' prompt notes, to declare.
     use crate::domain::agents::value_objects::turn_outcome::DECLARE_GUIDANCE;

@@ -11,6 +11,7 @@ impl AgentLoopImpl {
         messages: &mut Vec<Message>,
     ) -> Result<AgentResult, DomainError> {
         self.mark_turn_in_flight();
+        self.reconcile_declaration_guidance(messages);
         let mut tool_defs = self.current_tool_definitions();
         let mut iterations: u32 = 0;
         let mut current_turn: u32 = 1;
@@ -41,6 +42,7 @@ impl AgentLoopImpl {
         loop {
             if iterations > 0 {
                 self.drain_tool_policy_mutations_at_internal_boundary();
+                self.reconcile_declaration_guidance(messages);
                 tool_defs = self.current_tool_definitions();
             }
             let _state = TurnState::PrepareProviderRequest;
@@ -55,7 +57,14 @@ impl AgentLoopImpl {
             let sent = self.conversation_for_model(messages);
             // #2434: whether its reply may be empty (tool results) or must
             // have output (a prompt, a steer, a follow-up, feedback).
-            let requirement = ReplyRequirement::for_conversation(sent.messages());
+            let requirement = if self
+                .parent_outcome_candidate()
+                .is_some_and(|runtime| runtime.correcting())
+            {
+                ReplyRequirement::MayBeEmpty
+            } else {
+                ReplyRequirement::for_conversation(sent.messages())
+            };
             let request = self.prepare_provider_request_transition(
                 sent.messages(),
                 &tool_defs,

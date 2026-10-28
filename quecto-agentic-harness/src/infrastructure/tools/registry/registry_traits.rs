@@ -19,6 +19,12 @@ use crate::domain::tool_policy::value_objects::tool_descriptor::{
 use crate::infrastructure::config::{ToolPolicyConfig, ToolPolicyEntryConfig};
 
 impl ToolCatalog for ToolRegistryImpl {
+    fn parent_outcome_candidate(
+        &self,
+    ) -> Option<Arc<dyn crate::application::agent_turn::ports::ParentOutcomeGuard>> {
+        self.parent_outcome_candidate.clone()
+    }
+
     fn definitions(&self) -> &[ToolDefinition] {
         self.definitions()
     }

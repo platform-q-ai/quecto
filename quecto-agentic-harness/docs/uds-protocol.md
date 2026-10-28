@@ -570,7 +570,7 @@ conversation never hides the latest outcome.
 
 | Field | Type | Description |
 |---|---|---|
-| `turnOutcomeVersion` | integer | `1`: this harness emits `turn_admitted` and `turn_outcome`. Present by default for eligible top-level CLI/UDS parents whose startup tool policy permits `declare_turn_outcome`; absent from excluded roles and explicitly uncomposed contexts; a peer without it is unguarded |
+| `turnOutcomeVersion` | integer | `1`: this harness emits `turn_admitted` and `turn_outcome`. Present by default for eligible top-level CLI/UDS parents whose effective tool policy permits `declare_turn_outcome`; absent from excluded roles and explicitly uncomposed contexts; a peer without it is unguarded |
 | `outcomeEpoch` | string | The incarnation the outcomes belong to; a new one is minted when the history is replaced |
 | `latestTurnOutcome` | object or `null` | The last `turn_outcome` event of this epoch, byte-for-byte the event that was emitted, with its original `sequence`; an explicit `null` before the first, never omitted |
 
@@ -1956,11 +1956,15 @@ Sent when a client falls behind on the broadcast channel (buffer overflow). The 
 The guard is on by default (#2708) for eligible top-level CLI and UDS
 parents, including plain `quecto agent -m` runs and default, named and
 ephemeral sessions. Activation is independent of `QUECTO_TURN_OUTCOMES`:
-unset, `1` and other values behave alike, with no environment opt-out.
+unset, `1` and other values grant the same eligible guard authority, with no
+environment opt-out. Only exact `1` selects the early-ACK transport mode below.
 The existing launch allowlist admits only a top-level parent (not spawned,
 not a coordinator, no parent id or parent control, not in a swarm). A root
-whose tool policy withholds `declare_turn_outcome` at startup is not guarded
-(it could never declare). Ordinary TUI-launched UDS roots are guarded when
+whose effective tool policy withholds `declare_turn_outcome` is not guarded.
+Removal immediately revokes capture, declaration, owed correction and guidance;
+restoration through Replace or reload re-arms only at the next outer boundary,
+not an internal tool iteration. A startup-withheld authorized root can re-arm,
+but a role-excluded launch cannot. Ordinary TUI-launched UDS roots are guarded when
 eligible under the same launch and tool-policy allowlists. Excluded roles and
 explicitly uncomposed contexts remain unchanged: no declaration tool, no
 correction turn, no turn-outcome events or `get_state` members. Legacy launcher
@@ -2000,20 +2004,32 @@ is a test rig that is never given it.
   1 to 512 UTF-8 bytes, kept exactly (an empty or longer one is refused with
   `Turn identity metadata must be nonempty and at most 512 bytes.` before
   anything is committed); a `prompt` without an `id` gets a minted one.
-  A guarded `prompt` is acknowledged when it is admitted, not when its turn
-  ends, with `data.episodeId`; a queued or accepted `steer`/`follow_up` that
-  named an `id` carries it as `episodeId` too (one without an `id` gets its
-  episode minted when it runs). Corrections and notes of owned work
-  continue the episode under new `turnId`s.
-- **Order.** For a turn: `response` (prompt acknowledgement) → `turn_admitted`
-  → `agent_start` … `agent_end` → `turn_outcome` (or the correction's
-  `turn_admitted`) → `workflow_idle`. A `turn_outcome` always follows its own
-  turn's `agent_end`.
-- **Terminal fence.** After a terminal outcome no automatic turn runs (a
-  sub-agent note, a swarm wake, a workflow nudge): notes stay queued. A queued
-  or new external instruction is admitted as soon as the harness is idle:
-  right after the previous turn's `turn_outcome`, with nothing run between,
-  and it opens a fresh episode in which automatic turns run again.
+  A default guarded `prompt` receives exactly one id-correlated response at
+  execution end, after guard settlement/correction handling, with its original
+  execution success (true even for semantic `stalled`, false for actual error
+  or cancellation). It precedes any uncorrelated `agent_error` fallback, so an
+  API first-response-by-id waiter cannot resolve early or lose correlation.
+  Only exact `QUECTO_TURN_OUTCOMES=1` retains the early admission ACK with
+  `data.episodeId`, with no duplicate final response. This compatibility mode
+  is session-wide, not per-connection/payload negotiation or guard authority.
+  A queued/accepted `steer`/`follow_up` that names an `id` still carries it as
+  `episodeId`; absent ids are minted on admission. Corrections continue the
+  episode with new `turnId`s. Fresh external wakes after terminal open a fresh
+  episode and cannot reuse an old declaration.
+- **Order, default completion mode.** `turn_admitted` → `agent_start` …
+  `agent_end` → `turn_outcome` (or correction admission/run/settlement) →
+  `response` (original id and execution result) → pending work/`workflow_idle`.
+- **Order, exact env=1 admission mode.** `response` (admission ACK with
+  `episodeId`) → `turn_admitted` → `agent_start` … `agent_end` → `turn_outcome`
+  (or correction admission/run/settlement) → `workflow_idle`; no final response.
+  Admission is never a completion guarantee. Interrupted runs settle no outcome.
+- **Fresh automatic input.** Terminal outcomes fence internal automatic work,
+  not new external information. Trusted retained sequenced child completion/
+  report notes and actual workflow emissions can wake a persistent root once
+  with fresh episode/turn authority. Notes buffered while streaming wait until
+  idle. Duplicate/older notes, snapshots, unchanged engine retries and drain
+  activity cannot open episodes or reset correction budgets. Explicit steering,
+  automatic suspension and descendant checks retain priority and bounds.
 - **State.** `get_state` carries `turnOutcomeVersion`, `outcomeEpoch` and
   `latestTurnOutcome` on every reply: the full one, the busy and connect-time
   snapshots, and the `since` unchanged marker, which then also carries the
@@ -2052,7 +2068,26 @@ is a test rig that is never given it.
 - **Epochs.** `new_session`, `resume_session`, `clear_history` and `rewind_to`
   mint a new `outcomeEpoch` and reset `latestTurnOutcome` to `null` once the
   history is replaced (even if the save after it fails); a refused one, a
-  model or effort change, `reload`, a save or a reconnect keep both.
+  model or effort change, a save or a reconnect keep both. A reload that
+  actually removes declaration visibility revokes the guard and changes its
+  policy-incarnation epoch; failed/no-op reloads preserve last-good authority.
+
+**Request cost and CLI presentation.** A compliant declaration costs **one extra
+provider request** to process its tool result. Noncompliance gets one correction
+then `stalled` if no usable outcome/live work remains; an explicit empty EndTurn
+on that correction settles as noncompliance, not a new retry budget. Tools and
+provider retries can add requests: these are not universal request/dollar totals.
+The original plain promise fixtures still take exactly two requests, one literal
+correction, then `stalled`, never prose-inferred `done`.
+
+One-shot CLI stdout selects the last substantive assistant text from the current
+invocation, including text alongside a declaration before an empty response,
+never concatenated/history text. Synthetic diagnostics take precedence. Stderr
+prints `turn outcome: <done|needs_user|waiting|stalled>: <reason>`. Completed
+`done`, `asking`/`blocked` (`needs_user`) and `waiting` exit 0; `stalled` exits 1
+because its correction exhausted without valid settlement, actual errors remain
+1 and timeout 2. A one-shot waits for owned notes within its one deadline and
+does not become a persistent listener after returning.
 
 ## Event sequence diagrams
 

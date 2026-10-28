@@ -262,10 +262,12 @@ impl AgentLoopImpl {
         usage_totals: UsageTotals,
         appended_messages: Vec<Message>,
     ) -> AgentResult {
-        debug_assert_eq!(
-            ReplyRequirement::for_conversation(messages),
-            ReplyRequirement::MayBeEmpty,
-            "only a reply to tool results ends a turn empty"
+        debug_assert!(
+            ReplyRequirement::for_conversation(messages) == ReplyRequirement::MayBeEmpty
+                || self
+                    .parent_outcome_candidate()
+                    .is_some_and(|runtime| runtime.correcting()),
+            "only tool results or an admitted correction end a turn empty"
         );
         tracing::info!(
             target: "agent_loop",

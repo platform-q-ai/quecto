@@ -114,6 +114,13 @@ pub trait ToolGuard: Send + Sync {
 /// Use this role when callers only need schema/name visibility and should not
 /// execute or mutate the registry.
 pub trait ToolCatalog: Send + Sync {
+    /// A composition-authorized parent guard, including a policy-dormant one.
+    fn parent_outcome_candidate(
+        &self,
+    ) -> Option<Arc<dyn crate::application::agent_turn::ports::ParentOutcomeGuard>> {
+        None
+    }
+
     /// Return enabled tool definitions visible to the model.
     fn definitions(&self) -> &[ToolDefinition];
 

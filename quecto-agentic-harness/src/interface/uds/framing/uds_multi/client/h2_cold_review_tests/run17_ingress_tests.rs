@@ -225,7 +225,7 @@ async fn observe(case: Case, selection: &str) {
         let _ = task.await;
     }
     drop(child.stdin.take());
-    if matches!(probe, Err(_)) {
+    if probe.is_err() {
         let _ = supervisor
             .terminate(
                 child.handle,

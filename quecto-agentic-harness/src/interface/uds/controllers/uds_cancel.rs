@@ -520,8 +520,10 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             }
             // Dated by the dispatch loop once it knows the control generation.
             agent_session.automatic_turns().suspend_after_failure(&e);
-            sink.emit(&AgentEvent::err(None, "agent_error", format!("{e}")))
-                .await;
+            if let Some(error) = agent_session.prompt_error(format!("{e}")) {
+                sink.emit(&AgentEvent::err(None, "agent_error", error))
+                    .await;
+            }
             PromptOutcome::Error
         }
     }

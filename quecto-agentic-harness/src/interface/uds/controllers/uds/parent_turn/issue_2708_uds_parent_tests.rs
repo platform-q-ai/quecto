@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
 mod assertions_tests;
-use assertions_tests::assert_stalled;
+use assertions_tests::{assert_stalled, saved_under};
 
 /// The two original promises of #2708: each ends the turn with nothing run.
 pub(super) const PROMISE_2648: &str = "#2648 merged … Now working on #2650";
@@ -36,21 +36,6 @@ pub(super) struct Scripted {
     /// already saved under this directory.
     pub(super) probe: Mutex<Option<std::path::PathBuf>>,
     pub(super) persisted: Mutex<Vec<bool>>,
-}
-
-/// Whether any file under `dir` holds `needle`.
-fn saved_under(dir: &std::path::Path, needle: &str) -> bool {
-    std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .any(|entry| {
-            let path = entry.path();
-            match path.is_dir() {
-                true => saved_under(&path, needle),
-                false => std::fs::read_to_string(&path).is_ok_and(|text| text.contains(needle)),
-            }
-        })
 }
 
 impl Scripted {

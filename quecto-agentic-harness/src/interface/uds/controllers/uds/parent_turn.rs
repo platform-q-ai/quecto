@@ -15,6 +15,14 @@ use crate::domain::inference::services::turn_suspension::Work;
 use crate::interface::cli::uds_session::PendingMessage;
 use crate::interface::uds::wire::protocol::ControlStatus;
 
+/// Reconcile after reload and before every OUTER admission, never a tool iteration.
+pub(super) fn enter_outer(ctx: &mut DispatchCtx<'_>) {
+    ctx.agent.reconcile_declaration_policy(true);
+    if let Some(runtime) = ctx.agent.parent_outcome_candidate() {
+        ctx.session.bind_parent_outcome_guard(runtime);
+    }
+}
+
 fn guarded(ctx: &DispatchCtx<'_>) -> bool {
     ctx.session.parent_outcome().is_some()
 }
@@ -75,12 +83,64 @@ pub(super) async fn accept_prompt(
         return None;
     };
     let episode_id = id.map_or_else(|| uuid::Uuid::new_v4().to_string(), str::to_owned);
-    if type_name != "steer" {
+    if ctx.session.admission_ack() && matches!(type_name, "prompt" | "follow_up") {
         let data = serde_json::json!({ "episodeId": episode_id });
         let event = AgentEvent::ok(id, type_name, Some(data));
         super::emit_event_to_broadcast_or_writer(ctx, &event).await;
     }
     Some(TurnAdmission::External { episode_id })
+}
+
+pub(super) async fn cancelled_prompt(ctx: &mut DispatchCtx<'_>, id: Option<&str>, type_name: &str) {
+    super::emit_pre_cancelled(ctx).await; // Stale abort (#483).
+    if let (Some(_), false) = (ctx.session.parent_outcome(), ctx.session.admission_ack()) {
+        let event = AgentEvent::err(id, type_name, "prompt execution cancelled");
+        super::emit_event_to_broadcast_or_writer(ctx, &event).await;
+    }
+}
+
+/// Complete the default id waiter before any uncorrelated error fallback.
+pub(super) async fn respond_prompt(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    type_name: &str,
+    outcome: &PromptOutcome,
+    completion_response: bool,
+    early_ack: bool,
+) {
+    // #1072: the turn's own save (`TurnSave`) drains the durable-prefix dirty latch.
+    if matches!(
+        (completion_response, early_ack, &outcome),
+        (true, _, _) | (false, false, PromptOutcome::Success)
+    ) {
+        let ev = match outcome {
+            PromptOutcome::Success => AgentEvent::ok(id, type_name, None),
+            PromptOutcome::Error => AgentEvent::err(id, type_name, "prompt execution failed"),
+            PromptOutcome::Cancelled => {
+                AgentEvent::err(id, type_name, "prompt execution cancelled")
+            }
+        };
+        super::emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    }
+    for error in ctx.session.finish_completion_response() {
+        super::emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(None, "agent_error", error))
+            .await;
+    }
+}
+
+/// Actual engine emission selection, not a retry/drain, owns freshness.
+pub(super) fn workflow_admission(
+    ctx: &mut DispatchCtx<'_>,
+    identity: Option<&str>,
+) -> Option<TurnAdmission> {
+    let guarded = ctx.session.parent_outcome().is_some();
+    let fresh =
+        identity.is_some_and(|identity| ctx.session.take_workflow_emission(identity.to_owned()));
+    match (guarded, fresh, admits(ctx, Work::Automatic)) {
+        (true, false, false) => None,
+        (_, true, _) => Some(TurnAdmission::FreshWake),
+        _ => Some(TurnAdmission::Nudge),
+    }
 }
 
 /// What a drained message opens: a queued instruction its own episode, a
@@ -93,9 +153,12 @@ pub(super) fn pending_admission(message: &PendingMessage) -> TurnAdmission {
         PendingMessage::User { .. } => TurnAdmission::External {
             episode_id: uuid::Uuid::new_v4().to_string(),
         },
-        PendingMessage::Automatic(_)
-        | PendingMessage::SubagentNotification { .. }
-        | PendingMessage::CoalescedSubagentNotification { .. } => TurnAdmission::WorkWake,
+        PendingMessage::Automatic(_) => TurnAdmission::WorkWake,
+        PendingMessage::SubagentNotification { sequence, .. } if *sequence > 0 => {
+            TurnAdmission::FreshWake
+        }
+        PendingMessage::CoalescedSubagentNotification { .. } => TurnAdmission::FreshWake,
+        PendingMessage::SubagentNotification { .. } => TurnAdmission::WorkWake,
     }
 }
 

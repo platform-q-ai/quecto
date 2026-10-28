@@ -5,8 +5,8 @@
 //! with nothing running gets the one correction as a run of its own; a
 //! turn that waits on its own children waits for their next note under
 //! the run's one `--max-time` deadline, and that note is the next run.
-//! The run ends once its outcome is terminal: done exits 0, needs_user and
-//! stalled exit 1 with the reason on stderr. An unguarded run is unchanged.
+//! Completed outcomes exit 0; correction-exhausted stalled exits 1. Typed
+//! diagnostics go to stderr. An unguarded run keeps its error semantics.
 use std::time::{Duration, Instant};
 
 use super::agent::{AgentOutput, DeadlineResult, run_with_deadline};
@@ -89,11 +89,18 @@ pub(crate) fn drive(
     (max_time, parent): (Option<u64>, Option<ParentRun>),
     opener: uuid::Uuid,
 ) -> Driven {
+    agent.reconcile_declaration_policy(true);
+    let mut latest_text = None;
     let Some(mut parent) = parent else {
         return match max_time.map(|secs| (secs, run_with_deadline(rt, agent, messages, secs))) {
-            Some((_, DeadlineResult::Completed(result))) => ended(result, None),
+            Some((_, DeadlineResult::Completed(result))) => {
+                ended(present(result, &mut latest_text), None)
+            }
             Some((secs, DeadlineResult::TimedOut)) => Driven::TimedOut(secs),
-            None => ended(rt.block_on(agent.process(messages)), None),
+            None => ended(
+                present(rt.block_on(agent.process(messages)), &mut latest_text),
+                None,
+            ),
         };
     };
     let deadline = max_time.map(|secs| Instant::now() + Duration::from_secs(secs));
@@ -106,6 +113,7 @@ pub(crate) fn drive(
         let Some(result) = run_once(rt, agent, messages, deadline) else {
             return timed_out();
         };
+        let result = present(result, &mut latest_text);
         let end = match &result {
             Ok(_) => TurnEnd::Completed(parent.observe()),
             Err(_) => TurnEnd::Interrupted,
@@ -137,6 +145,31 @@ pub(crate) fn drive(
         messages.push(note);
         turn = admit(&parent, agent, next.0, opener);
     }
+}
+
+/// Select only this invocation's appended assistant text, never session history.
+fn present(
+    result: Result<AgentResult, DomainError>,
+    latest: &mut Option<String>,
+) -> Result<AgentResult, DomainError> {
+    result.map(|mut result| {
+        for message in &result.appended_messages {
+            if let (crate::domain::conversation::value_objects::message::Role::Assistant, false) =
+                (&message.role, message.content.trim().is_empty())
+            {
+                *latest = Some(message.content.clone());
+            }
+        }
+        // Synthetic diagnostics are not provider replies and take precedence.
+        if let (false, true, Some(text)) = (
+            result.iteration_limit_reached,
+            result.response.trim().is_empty(),
+            latest.as_ref(),
+        ) {
+            result.response = text.clone();
+        }
+        result
+    })
 }
 
 fn admit(
@@ -193,17 +226,21 @@ fn wait_for_note(
     }
 }
 
-/// The exit status of a run that ended: done (or unguarded) 0; any other
-/// settled outcome 1, with its reason on stderr.
+/// Completed turns exit 0; stalled is correction exhaustion (1). Every
+/// guarded settlement has a typed stderr diagnostic.
 pub(crate) fn exit_code(settled: Option<&TurnOutcomeRecord>, out: &mut AgentOutput<'_>) -> i32 {
-    match settled.map(|record| (record.outcome, record.reason.as_str())) {
-        None | Some((TurnOutcome::Done, _)) => 0,
-        Some((TurnOutcome::NeedsUser | TurnOutcome::Stalled | TurnOutcome::Waiting, reason)) => {
-            out.stderr.push_str(reason);
-            out.stderr.push('\n');
-            1
-        }
-    }
+    let Some(record) = settled else {
+        return 0;
+    };
+    let name = match record.outcome {
+        TurnOutcome::Done => "done",
+        TurnOutcome::NeedsUser => "needs_user",
+        TurnOutcome::Waiting => "waiting",
+        TurnOutcome::Stalled => "stalled",
+    };
+    out.stderr
+        .push_str(&format!("turn outcome: {name}: {}\n", record.reason));
+    i32::from(record.outcome == TurnOutcome::Stalled)
 }
 
 #[cfg(test)]
