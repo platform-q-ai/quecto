@@ -1356,6 +1356,22 @@ no general finished-task edit is enabled, and Archived is not eligible.
 
 An unmet outcome requires a normalized nonblank reason, at most 1,000
 characters, still subject to the task's description and total text caps.
+It must also fit the existing **canonical inline-Markdown text-cell grammar**;
+normalization is not arbitrary-plaintext escaping. Use visible plain words,
+emphasis, balanced code spans, or labelled links of the form
+`[label](https://example.com/path)` (no title or userinfo). A code span must close
+with a backtick run of exactly the opening width. For example, the reason
+``Owner `deferred`` is rejected: close it as ``Owner `deferred` `` or remove the
+backtick. To include a literal backtick inside code, use a wider matching fence,
+for example ```See ``a`b`` ```.
+
+Raw HTML/autolinks, bare URLs or emails outside code, images, full/collapsed reference links,
+character references and dollar math are not supported. Put literal addresses
+in balanced code spans or use a labelled https link. Pipes and literal
+backslashes use the existing text-cell escaping on persistence; callers do not
+pre-escape table pipes. Unrepresentable reasons are refused without writes;
+the diagnostic identifies `reason` and gives canonical-text remediation (for
+an open code span, close the matching backtick run or remove the backticks).
 Restoring met removes the exception and refuses **any** supplied reason,
 including null or blank. Missing, malformed or stale revisions, invalid indices,
 wrong field types and ineligible tasks refuse atomically without writes.

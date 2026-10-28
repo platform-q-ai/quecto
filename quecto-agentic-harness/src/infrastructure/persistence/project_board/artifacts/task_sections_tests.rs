@@ -347,6 +347,10 @@ fn done_ticks_exception_text_cells_escape_and_roundtrip_without_changing_meaning
         r"See `a\|b`",
         r"See ``a`\|b``",
         r"Literal \* marker",
+        "Owner `deferred`",
+        "Owner **deferred** deployment",
+        "See [decision](https://example.com/decision)",
+        "Contact `owner@example.com`",
     ] {
         let task = read
             .set_outcome(0, Some(reason), &by, &read.fields().updated)

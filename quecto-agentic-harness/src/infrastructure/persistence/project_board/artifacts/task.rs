@@ -28,8 +28,8 @@ use crate::domain::project_board::value_objects::reference::{IssueNumber, Refere
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::{Resolution, TaskKind, TaskStatus};
 use crate::infrastructure::persistence::project_board::markdown::{
-    Body, BodyShape, CellKind, Column, Document, Limits, Section, SectionShape, Shape, blocks_of,
-    check_title, text_of,
+    Body, BodyShape, CellKind, Column, Document, Limits, MarkdownError, Section, SectionShape,
+    Shape, blocks_of, check_text_cell, check_title, text_of,
 };
 
 const TITLE: &str = "Title";
@@ -222,8 +222,24 @@ impl ArtifactCodec for TaskCodec {
                 for (heading, text) in description.sections() {
                     match heading {
                         DONE_WHEN => sections.push(section(heading, outcome_rows(&description))),
-                        EXCEPTIONS => sections
-                            .push(section(heading, Body::Table(description.exception_rows()))),
+                        EXCEPTIONS => {
+                            // Check the semantic reason before rendering the table, so a
+                            // refusal identifies the input rather than just a file line.
+                            for outcome in description.done_when() {
+                                if let Some(exception) = &outcome.exception {
+                                    check_text_cell(&exception.reason).map_err(|error| {
+                                        let remedy = match error {
+                                            MarkdownError::UnbalancedCode { .. } =>
+                                                "close each backtick code span with a matching-width backtick run, or remove the backticks",
+                                            _ => "use canonical inline Markdown text (plain words, balanced code spans, emphasis or labelled https links)",
+                                        };
+                                        refused("reason", format!("{error}; {remedy}"))
+                                    })?;
+                                }
+                            }
+                            sections
+                                .push(section(heading, Body::Table(description.exception_rows())));
+                        }
                         _ => sections.extend(prose(heading, &text)?),
                     }
                 }

@@ -626,3 +626,26 @@ fn done_ticks_exception_store_refusal_leaves_task_and_outcomes_unchanged() {
     assert_eq!(store.read().unwrap().tasks, before.tasks);
     assert_eq!(store.writes(), writes);
 }
+
+#[test]
+fn done_ticks_exception_unrepresentable_reason_is_actionable_without_writes() {
+    use crate::application::project_board::ports::ProjectBoardStore;
+    let (store, writer) = done_ticks_finished_board();
+    let read = ok(&writer, json!({"op":"show","task":"a"}));
+    let before = store.read().unwrap();
+    let writes = store.writes();
+    let mut request = done_ticks_request(&read["rev"]);
+    request["reason"] = json!("Owner `deferred");
+    let answer = call(&writer, request);
+    assert_eq!(answer["ok"], false, "{answer}");
+    assert_eq!(store.read().unwrap().tasks, before.tasks);
+    assert_eq!(
+        store.writes(),
+        writes,
+        "unrepresentable reasons never write"
+    );
+    let diagnostic = answer["error"]["message"].as_str().unwrap();
+    assert!(diagnostic.contains("reason"), "{answer}");
+    assert!(diagnostic.contains("backtick"), "{answer}");
+    assert!(diagnostic.contains("matching"), "{answer}");
+}
