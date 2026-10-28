@@ -1,6 +1,8 @@
 //! Executable local/CI boundary contract. Adapters record commands, never compile.
 #[path = "pre_push_fast_contract_round3.rs"]
 mod pre_push_ci_round3;
+#[path = "pre_push_fast_contract_round4.rs"]
+mod pre_push_ci_round4;
 #[path = "pre_push_fast_contract_scope.rs"]
 mod scope;
 use scope::{required_job, workflow_jobs};
