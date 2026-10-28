@@ -184,7 +184,8 @@ impl crate::application::tools::ports::ToolPolicyMutator for ToolRegistryImpl {
     fn rollback_tool_policy_results(&mut self, reconciliation: &ToolPolicyReconciliation) {
         use crate::domain::tool_policy::value_objects::tool::ToolPolicyMutationStatus;
         let mut changed = false;
-        for result in reconciliation.results.iter().filter(|result| {
+        // Duplicate resolved tools must unwind to transaction entry, not an intermediate state.
+        for result in reconciliation.results.iter().rev().filter(|result| {
             matches!(
                 result.status,
                 ToolPolicyMutationStatus::Applied | ToolPolicyMutationStatus::AlreadyInState
