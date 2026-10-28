@@ -305,6 +305,32 @@ async fn workflow_after_terminal(completed: bool, initially_stalled: bool) {
     rig.drain().await;
     let requests = rig.provider.requests();
     let frames = rig.frames();
+    if !initially_stalled && std::env::var("QUECTO_TURN_OUTCOMES").ok().as_deref() == Some("1") {
+        assert_eq!(
+            requests.len(),
+            2,
+            "opt-in settled root waits for next USER, not workflow wake"
+        );
+        assert!(of_type(&frames, "turn_admitted").is_empty());
+        for _ in 0..3 {
+            rig.drain().await;
+        }
+        assert_eq!(
+            rig.provider.requests().len(),
+            2,
+            "idle workflow drains remain inert in opt-in settled mode"
+        );
+        rig.prompt("next-user").await;
+        assert_eq!(
+            rig.provider.requests().len(),
+            4,
+            "next USER opens fresh episode and correction"
+        );
+        let next = rig.frames();
+        assert_eq!(of_type(&next, "turn_admitted")[0]["episodeId"], "next-user");
+        assert_eq!(of_type(&next, "turn_outcome")[0]["outcome"], "stalled");
+        return;
+    }
     assert_eq!(
         requests.len(),
         4,
@@ -369,4 +395,245 @@ async fn run16_m1_unchanged_workflow_does_not_reset_stalled_budget_forever() {
     )) {
         workflow_after_terminal(false, true).await;
     }
+}
+
+#[tokio::test]
+async fn run20_refuter_new_history_tool_success_does_not_inherit_emission() {
+    if run21_default_isolated(concat!(
+        module_path!(),
+        "::run20_refuter_new_history_tool_success_does_not_inherit_emission"
+    )) {
+        let composed = compose_with_config(
+            true,
+            |flags| {
+                flags.workflow_disabled = false;
+                flags.workflow = true;
+            },
+            workflow_config(),
+        );
+        let mut replies = done();
+        replies.extend([
+            Reply::Text("First nudge."),
+            Reply::Text("First correction."),
+        ]);
+        replies.push(Reply::Call(
+            "workflow",
+            json!({"action":"select_template", "template":"run16"}),
+        ));
+        replies.extend(done());
+        replies.extend([
+            Reply::Text("Second task nudge."),
+            Reply::Text("Second correction."),
+        ]);
+        let mut rig = Rig::composed(composed, replies);
+        rig.prompt("first-task").await;
+        rig.env
+            .workflow
+            .lock()
+            .unwrap()
+            .select_template("run16", None)
+            .unwrap();
+        rig.drain().await;
+        assert_eq!(
+            rig.provider.requests().len(),
+            4,
+            "consume first incarnation emission"
+        );
+        let first = rig.frames();
+        assert_eq!(
+            of_type(&first, "turn_outcome").last().unwrap()["outcome"],
+            "stalled"
+        );
+        let old_epoch = rig.env.session.parent_outcome().unwrap().view().epoch;
+        rig.send(r#"{"type":"clear_history","id":"clear-for-new-task"}"#)
+            .await;
+        let clear = rig.frames();
+        assert!(
+            clear.iter().any(|frame| frame["type"] == "response"
+                && frame["id"] == "clear-for-new-task"
+                && frame["success"] == true),
+            "actual successful history replacement: {clear:?}"
+        );
+        assert_ne!(
+            rig.env.session.parent_outcome().unwrap().view().epoch,
+            old_epoch
+        );
+        rig.prompt("second-task").await;
+        assert_eq!(rig.provider.requests().len(), 7);
+        assert!(
+            rig.env.messages.iter().any(|message| {
+                message.role == crate::domain::conversation::value_objects::message::Role::Tool
+                    && message
+                        .content
+                        .contains("Selected workflow template 'run16'.")
+            }),
+            "second task must successfully execute actual workflow selection tool"
+        );
+        assert!(rig.env.workflow.lock().unwrap().active_template().is_some());
+        let second = rig.frames();
+        assert_eq!(of_type(&second, "turn_outcome")[0]["outcome"], "done");
+        rig.drain().await;
+        let count = rig.provider.requests().len();
+        // Tear down all scratch before expected behavioral assertion.
+        drop(rig);
+        assert_eq!(
+            count, 9,
+            "new history/task must receive its own workflow emission even when progress matches the previous task"
+        );
+    }
+}
+
+fn run21_default_isolated(test: &str) -> bool {
+    if std::env::var("RUN16_LIFECYCLE_CASE").ok().as_deref() == Some(test) {
+        return true;
+    }
+    let (_, selected) = test.split_once("::").expect("qualified test");
+    let mut failures = Vec::new();
+    for switch in ["unset"] {
+        let scratch = tempfile::tempdir().unwrap();
+        let mut command = std::process::Command::new("sh");
+        command.args([
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 45s \"$@\"",
+            "run16",
+        ]);
+        command.arg(std::env::current_exe().unwrap());
+        command.args(["--exact", selected, "--nocapture", "--test-threads=1"]);
+        command.env("RUN16_LIFECYCLE_CASE", test);
+        command.env("RUN16_SCRATCH", scratch.path());
+        command.env("TMPDIR", scratch.path());
+        command.env("QUECTO_2708_TEST_ROOT", "default");
+        command.env_remove("QUECTO_TURN_OUTCOMES");
+        if switch == "1" {
+            command.env("QUECTO_TURN_OUTCOMES", "1");
+        }
+        let output = command.output().expect("bounded exact lifecycle child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        println!("{switch}: {}\n{stdout}\n{stderr}", output.status);
+        let selected_one = stdout.contains("running 1 test\n");
+        let success = output.status.success();
+        scratch
+            .close()
+            .expect("cleanup probe scratch after success/failure");
+        assert!(selected_one, "nonzero exact selection: {selected}");
+        match success {
+            true => {}
+            false => failures.push(format!("{switch}: {}", output.status)),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "bounded lifecycle children failed: {failures:?}"
+    );
+    false
+}
+
+#[tokio::test]
+async fn run21_same_history_workflow_a_b_a_is_stale() {
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
+    assert!(session.take_workflow_emission("A".into()));
+    assert!(session.take_workflow_emission("B".into()));
+    assert!(
+        !session.take_workflow_emission("A".into()),
+        "same-history A→B→A retry must not mint a second fresh input"
+    );
+}
+
+#[tokio::test]
+async fn run21_settled_outcomes_workflow_wake_obeys_two_modes() {
+    if !isolated(concat!(
+        module_path!(),
+        "::run21_settled_outcomes_workflow_wake_obeys_two_modes"
+    )) {
+        return;
+    }
+    for intent in ["done", "asking", "blocked"] {
+        let composed = compose_with_config(
+            true,
+            |flags| {
+                flags.workflow_disabled = false;
+                flags.workflow = true;
+            },
+            workflow_config(),
+        );
+        let mut rig = Rig::composed(
+            composed,
+            vec![
+                Reply::Call(
+                    "declare_turn_outcome",
+                    json!({"outcome":intent,"reason":"Settled fixture"}),
+                ),
+                Reply::Text("Settled"),
+                Reply::Text("Fresh information"),
+                Reply::Text("Correction"),
+            ],
+        );
+        rig.prompt("settled-user").await;
+        let initial = rig.frames();
+        assert_eq!(
+            of_type(&initial, "turn_outcome")[0]["outcome"],
+            if intent == "done" {
+                "done"
+            } else {
+                "needs_user"
+            }
+        );
+        rig.env
+            .workflow
+            .lock()
+            .unwrap()
+            .select_template("run16", None)
+            .unwrap();
+        rig.drain().await;
+        let expected = if std::env::var("QUECTO_TURN_OUTCOMES").ok().as_deref() == Some("1") {
+            2
+        } else {
+            4
+        };
+        assert_eq!(
+            rig.provider.requests().len(),
+            expected,
+            "settled {intent} wake mode"
+        );
+        for _ in 0..3 {
+            rig.drain().await;
+        }
+        assert_eq!(
+            rig.provider.requests().len(),
+            expected,
+            "unchanged drains never loop"
+        );
+    }
+}
+
+#[tokio::test]
+async fn run21_failed_resume_preserves_consumed_workflow_and_epoch() {
+    if !isolated(concat!(
+        module_path!(),
+        "::run21_failed_resume_preserves_consumed_workflow_and_epoch"
+    )) {
+        return;
+    }
+    let mut rig = Rig::new(vec![]);
+    assert!(rig.env.session.take_workflow_emission("A".into()));
+    let epoch = rig.runtime.as_ref().unwrap().view().epoch;
+    rig.send(r#"{"type":"resume_session","id":"failed-reset","session":"missing-run21-session"}"#)
+        .await;
+    let frames = rig.frames();
+    assert!(
+        frames
+            .iter()
+            .any(|f| f["type"] == "response" && f["id"] == "failed-reset" && f["success"] == false),
+        "real failed resume response: {frames:?}"
+    );
+    assert_eq!(
+        rig.runtime.as_ref().unwrap().view().epoch,
+        epoch,
+        "failed reset preserves outcome epoch"
+    );
+    assert!(
+        !rig.env.session.take_workflow_emission("A".into()),
+        "failed reset preserves consumption fence"
+    );
 }

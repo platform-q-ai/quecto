@@ -538,3 +538,65 @@ async fn run17_m2_failed_reload_preserves_effective_guard() {
         preserves_guard(Preserve::ReloadFailure).await;
     }
 }
+
+#[tokio::test]
+async fn run21_first_post_restore_validates_id_before_execution() {
+    if !isolated(concat!(
+        module_path!(),
+        "::run21_first_post_restore_validates_id_before_execution"
+    )) {
+        return;
+    }
+    let mut rig = Rig::new(done());
+    rig.policy(false, false).await;
+    rig.policy(true, false).await;
+    assert!(
+        rig.env.session.parent_outcome().is_none(),
+        "restore must await next outer boundary"
+    );
+    rig.frames();
+    rig.prompt(&"x".repeat(513)).await;
+    let refused = rig.frames();
+    assert_eq!(
+        rig.provider.requests().len(),
+        0,
+        "FIRST post-restore invalid ID is refused before execution"
+    );
+    assert!(
+        refused
+            .iter()
+            .any(|f| f["type"] == "response" && f["success"] == false)
+    );
+    rig.prompt("valid-next").await;
+    let accepted = rig.frames();
+    assert_eq!(rig.provider.requests().len(), 2);
+    assert_eq!(
+        of_type(&accepted, "turn_admitted")[0]["episodeId"],
+        "valid-next"
+    );
+    assert_eq!(of_type(&accepted, "turn_outcome")[0]["outcome"], "done");
+}
+
+#[tokio::test]
+async fn run21_first_post_restore_boundary_holds_busy_before_dispatch() {
+    if !isolated(concat!(
+        module_path!(),
+        "::run21_first_post_restore_boundary_holds_busy_before_dispatch"
+    )) {
+        return;
+    }
+    let mut rig = Rig::new(done());
+    rig.policy(false, false).await;
+    rig.policy(true, false).await;
+    let mut ctx = rig.env.ctx();
+    let id = super::super::episode_id(&mut ctx, Some("valid-first".into()), "prompt")
+        .await
+        .unwrap();
+    assert_eq!(id.as_deref(), Some("valid-first"));
+    let held = super::super::busy_across_turns(&ctx);
+    assert!(
+        held.is_some(),
+        "FIRST post-restore admission re-arms BEFORE busy_across_turns, not inside execution"
+    );
+    drop(held);
+}

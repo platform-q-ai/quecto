@@ -465,6 +465,8 @@ mod resume_persist_tests;
 #[cfg(test)]
 mod resume_picker_tests;
 #[cfg(test)]
+mod run21_prompt_tests;
+#[cfg(test)]
 mod tests_1093;
 #[cfg(test)]
 mod tests_1586;

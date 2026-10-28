@@ -503,3 +503,179 @@ async fn h2_default_correction_response_reports_original_result() {
         );
     }
 }
+
+async fn observe_two_waiters(execution: Execution) -> Observation {
+    let _signal = crate::interface::uds::test_support::SIMULATED_SIGNAL
+        .read()
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let socket_path = dir.path().join("h2.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let provider = Arc::new(Provider {
+        execution,
+        requests: Mutex::new(0),
+        entered: Arc::new(Notify::new()),
+        release: Arc::new(Notify::new()),
+    });
+    let (agent_provider, base) = (provider.clone(), dir.path().to_path_buf());
+    let thread = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async move {
+            use crate::interface::cli::controllers::active_runtime_2708_tests::compose;
+            let composed = compose(true);
+            assert!(composed.runtime.is_some(), "real production root must be guarded");
+            let agent = AgentLoopImpl::new(AgentLoopConfig {
+                provider: agent_provider,
+                tool_registry: Box::new(composed.registry),
+                model: "stub".into(),
+                max_tokens: 32,
+                temperature: 0.0,
+                retention: None,
+                session_key: KEY.into(),
+                max_context_tokens: 190_000,
+                progress_callback: None,
+                streaming: true,
+                effort: None,
+                audit_log: None,
+                pin_recent_turns: 2,
+                context_marks: Default::default(),
+                model_context_window: None,
+                tool_profile_context: crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
+            });
+            let store = crate::composition::sessions::build_session_handles(
+                crate::interface::uds::controllers::uds::dispatch_session_roster_tests::loop_inputs(&base, KEY),
+            );
+            let catalogue = crate::composition::catalogue::build_catalogue_handles(&base, None);
+            let args = MultiClientArgs {
+                parent_outcome: composed.runtime,
+                extensions: Default::default(),
+                agent,
+                workspace: &base,
+                messages: Vec::new(),
+                model: "stub".into(),
+                admission_slots: Vec::new(),
+                session_key: KEY.into(),
+                system_prompt: "system".into(),
+                ext_registry: None,
+                lifetime: crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime::UntilLastClientDisconnects,
+                notification_rx: None,
+                subagent_registry: None,
+                harness_lifecycle: None,
+                workflow_state: None,
+                workflow_config: None,
+                broadcast_tx: None,
+                parent_control: None,
+                teardown_graph: None,
+                turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
+                environment_control: None,
+            };
+            multi_client_loop(args, tokio::net::UnixListener::from_std(listener).unwrap(), &store, &catalogue).await
+        })
+    });
+    let client = tokio::net::UnixStream::connect(&socket_path).await.unwrap();
+    let (reader, mut writer) = tokio::io::split(client);
+    let mut lines = tokio::io::BufReader::new(reader).lines();
+    send(
+        &mut writer,
+        json!({"type":"prompt", "id":"h2-prompt", "message":"Execute H2 fixture"}),
+    )
+    .await;
+    tokio::time::timeout(STEP, provider.entered.notified())
+        .await
+        .expect("actual provider entered");
+    let mut frames = Vec::new();
+    let early_response = collect_until(&mut lines, &mut frames, PENDING, |f| {
+        response(f, "h2-prompt")
+    })
+    .await;
+    send(
+        &mut writer,
+        json!({"type":"prompt", "id":"h2-second", "message":"Second independent request"}),
+    )
+    .await;
+    let second_early = collect_until(&mut lines, &mut frames, PENDING, |f| {
+        response(f, "h2-second")
+    })
+    .await;
+    println!("second receipt before releasing A: {second_early}");
+    match execution {
+        Execution::Cancel => send(&mut writer, json!({"type":"abort", "id":"h2-abort"})).await,
+        _ => provider.release.notify_one(),
+    }
+    // Unlike get_state, set_effort is queued behind execution/settlement, so
+    // its response is a deterministic end-of-dispatch fence, not a busy read.
+    send(
+        &mut writer,
+        json!({"type":"set_effort", "id":"h2-fence", "effort":"low"}),
+    )
+    .await;
+    let fenced = collect_until(&mut lines, &mut frames, STEP, |f| response(f, "h2-fence")).await;
+    provider.release.notify_one();
+    drop(writer);
+    drop(lines);
+    let joined = tokio::task::spawn_blocking(move || thread.join());
+    let code = tokio::time::timeout(STEP, joined)
+        .await
+        .expect("socket loop cleanup bounded")
+        .unwrap()
+        .unwrap();
+    assert_eq!(code, 0, "real producer shuts down cleanly");
+    dir.close()
+        .expect("socket/session scratch cleaned before behavioral assertions");
+    assert!(fenced, "dispatch completed before waiter assertions");
+    let requests = *provider.requests.lock().unwrap();
+    println!("H2 clean shutdown execution={execution:?} requests={requests} frames={frames:?}");
+    Observation {
+        frames,
+        early_response,
+        requests,
+    }
+}
+
+#[tokio::test]
+async fn run20_refuter_two_api_waiters_do_not_cross_resolve() {
+    if !isolated(
+        concat!(
+            module_path!(),
+            "::run20_refuter_two_api_waiters_do_not_cross_resolve"
+        ),
+        &["unset"],
+    ) {
+        return;
+    }
+    let observed = observe_two_waiters(Execution::Failure).await;
+    // Exact quecto-api client.rs:144-160 semantics, with only B remaining
+    // after A's correlated response; two pending-map entries before first receipt.
+    let mut pending =
+        std::collections::HashSet::from(["h2-prompt".to_string(), "h2-second".to_string()]);
+    let mut resolutions = Vec::new();
+    for frame in &observed.frames {
+        if frame["type"] != "response" {
+            continue;
+        }
+        if let Some(id) = frame["id"].as_str() {
+            if pending.remove(id) {
+                resolutions.push((id.to_string(), frame.clone()));
+            }
+        }
+        if frame["command"] == "agent_error" {
+            if let Some(id) = pending.iter().next().cloned() {
+                pending.remove(&id);
+                resolutions.push((id, frame.clone()));
+            }
+        }
+    }
+    println!("API pending-map resolutions: {resolutions:?}");
+    assert!(
+        resolutions
+            .iter()
+            .all(|(id, frame)| frame["id"].as_str() == Some(id.as_str())),
+        "an uncorrelated error from A stole B's waiter: {resolutions:?}"
+    );
+    assert!(pending.is_empty(), "both requests resolved");
+}

@@ -30,6 +30,7 @@ struct Scripted {
     seen: Mutex<Vec<String>>,
     assistant_history: Mutex<Vec<String>>,
     correction_messages: Mutex<Vec<usize>>,
+    manifests: Mutex<Vec<String>>,
 }
 
 impl std::fmt::Debug for Scripted {
@@ -51,6 +52,13 @@ impl crate::application::providers::ports::LlmProvider for Scripted {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<LlmResponse, DomainError>> + Send + '_>,
     > {
+        self.manifests.lock().unwrap().extend(
+            request
+                .messages
+                .iter()
+                .filter(|m| m.is_manifest)
+                .map(|m| m.content.clone()),
+        );
         self.assistant_history.lock().unwrap().extend(
             request
                 .messages
@@ -165,6 +173,7 @@ struct Run {
     requests: Vec<String>,
     assistant_history: Vec<String>,
     correction_messages: Vec<usize>,
+    manifests: Vec<String>,
 }
 
 fn flags(max_time: Option<&str>) -> AgentFlags {
@@ -221,6 +230,26 @@ fn run_composition_history(
     >,
     old_answer: Option<&str>,
 ) -> Run {
+    run_composition_seeded(
+        replies,
+        (legacy, notes, max_time),
+        (quiet, closed),
+        composed,
+        old_answer,
+        false,
+    )
+}
+
+fn run_composition_seeded(
+    replies: Vec<Reply>,
+    (legacy, notes, max_time): (bool, Vec<&str>, Option<&str>),
+    (quiet, closed): (Option<std::time::Duration>, bool),
+    composed: Option<
+        crate::interface::cli::controllers::agent::active_runtime_2708_tests::Composed,
+    >,
+    old_answer: Option<&str>,
+    manifest: bool,
+) -> Run {
     let mut session_flags = flags(max_time);
     if composed.is_some() {
         match std::env::var("QUECTO_2708_TEST_ROOT")
@@ -236,6 +265,9 @@ fn run_composition_history(
             root => panic!("unexpected root {root}"),
         }
     }
+    if manifest {
+        session_flags.no_session = false; // This regression requires a real saved CLI session.
+    }
     let (tools, composed_runtime) = match composed {
         Some(composed) => (composed.registry, Some(composed.runtime)),
         None => (
@@ -248,6 +280,7 @@ fn run_composition_history(
         seen: Mutex::new(Vec::new()),
         assistant_history: Mutex::new(Vec::new()),
         correction_messages: Mutex::new(Vec::new()),
+        manifests: Mutex::new(Vec::new()),
     });
     let mut agent = crate::application::agent_turn::agent_loop::AgentLoopImpl::new(
         crate::application::agent_turn::agent_loop::AgentLoopConfig {
@@ -320,6 +353,11 @@ fn run_composition_history(
                 Message::user("old question"),
                 Message::assistant(old_answer, vec![]),
             ];
+            if manifest {
+                let mut message = Message::system("[context manifest] retained summary");
+                message.is_manifest = true;
+                history.insert(0, message);
+            }
             sessions
                 .save_session
                 .save(
@@ -359,6 +397,7 @@ fn run_composition_history(
         requests,
         assistant_history: provider.assistant_history.lock().unwrap().clone(),
         correction_messages: provider.correction_messages.lock().unwrap().clone(),
+        manifests: provider.manifests.lock().unwrap().clone(),
     }
 }
 
@@ -387,7 +426,10 @@ fn assert_stalled(run: Run, promise: &str) {
             .count(),
         1
     );
-    assert_eq!(run.code, 1, "stalled is not done");
+    assert_eq!(
+        run.code, 0,
+        "stalled preserves master successful-turn exit code; typed stderr distinguishes outcome"
+    );
     assert_eq!(
         run.stderr,
         format!("turn outcome: stalled: {STALLED_REASON}\n")
@@ -700,3 +742,6 @@ fn active_runtime_2708_characterization_cli_opt_in() {
 
 #[path = "run_session_parent_cold_review_tests.rs"]
 mod cold_review;
+
+#[path = "run21_cli_manifest_tests.rs"]
+mod run21_tests;

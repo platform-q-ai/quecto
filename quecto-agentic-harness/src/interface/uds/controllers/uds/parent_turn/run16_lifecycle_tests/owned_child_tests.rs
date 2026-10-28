@@ -217,6 +217,28 @@ async fn run16_m1_owned_child_completion_wakes_done_then_duplicate_is_inert() {
             ),
             "child must exit normally before intended RED assertion: {exit:?}"
         );
+        if std::env::var("QUECTO_TURN_OUTCOMES").ok().as_deref() == Some("1") {
+            assert_eq!(
+                requests.len(),
+                2,
+                "opt-in settled root waits for next USER despite fresh child report"
+            );
+            assert!(of_type(&frames, "turn_admitted").is_empty());
+            for _ in 0..3 {
+                rig.drain().await;
+            }
+            assert_eq!(rig.provider.requests().len(), 2);
+            rig.prompt("next-user").await;
+            assert_eq!(
+                rig.provider.requests().len(),
+                4,
+                "next USER receives retained child information and fresh correction"
+            );
+            let next = rig.frames();
+            assert_eq!(of_type(&next, "turn_admitted")[0]["episodeId"], "next-user");
+            assert_eq!(of_type(&next, "turn_outcome")[0]["outcome"], "stalled");
+            return;
+        }
         assert_eq!(
             requests.len(),
             4,
