@@ -497,7 +497,8 @@ fn run21_default_isolated(test: &str) -> bool {
     }
     let (_, selected) = test.split_once("::").expect("qualified test");
     let mut failures = Vec::new();
-    for switch in ["unset"] {
+    {
+        let switch = "unset";
         let scratch = tempfile::tempdir().unwrap();
         let mut command = std::process::Command::new("sh");
         command.args([
