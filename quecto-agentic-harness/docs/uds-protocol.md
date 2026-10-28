@@ -1960,10 +1960,11 @@ unset, `1` and other values behave alike, with no environment opt-out.
 The existing launch allowlist admits only a top-level parent (not spawned,
 not a coordinator, no parent id or parent control, not in a swarm). A root
 whose tool policy withholds `declare_turn_outcome` at startup is not guarded
-(it could never declare). Excluded roles, an ordinary TUI chat and explicitly
-uncomposed contexts remain unchanged: no declaration tool, no correction
-turn, no turn-outcome events or `get_state` members. Legacy launcher metadata
-is still removed from child `bash` and configured-extension environments.
+(it could never declare). Ordinary TUI-launched UDS roots are guarded when
+eligible under the same launch and tool-policy allowlists. Excluded roles and
+explicitly uncomposed contexts remain unchanged: no declaration tool, no
+correction turn, no turn-outcome events or `get_state` members. Legacy launcher
+metadata is still removed from child `bash` and configured-extension environments.
 The UDS guard runs on the multi-client socket loop; the single-client loop
 is a test rig that is never given it.
 
