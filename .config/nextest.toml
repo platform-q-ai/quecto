@@ -2,11 +2,12 @@
 #
 # nextest runs every test in its own process and schedules across binaries,
 # so the workspace `--lib --bins` set and the harness integration targets run
-# in roughly half the `cargo test` wall time. CI's Workspace Tests job and the
-# pre-push gate use the `ci` profile for every libtest-harness target; the
+# in roughly half the `cargo test` wall time. The Workspace Tests job in
+# merge-requested CI uses the `ci` profile for every libtest-harness target; the
 # cucumber `bdd` targets (harness = false) stay on `cargo test`'s build via
 # scripts/run-bdd-shards.sh, which sharding needs. The `census` profile is the
-# slow-test census (anything over 2 s is flagged SLOW).
+# slow-test census (anything over 2 s is flagged SLOW). Local pre-push is
+# static/fmt lint-only (NO BUILD); it neither detects nor invokes nextest.
 #
 #   cargo nextest run --workspace --features quecto-agentic-harness/test-support \
 #       --bins --lib --profile ci

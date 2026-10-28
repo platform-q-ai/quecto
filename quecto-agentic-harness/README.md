@@ -975,7 +975,7 @@ All test commands pipe through `scripts/test-filter.sh` which strips the per-tes
 
 `--no-fail-fast` ensures all failures are reported in a single run, not just the first.
 
-Two-tier local hooks: pre-commit performs lightweight staged-file hygiene and formatting; pre-push runs fast quality rules, changed-package strict Clippy, and architecture/repository invariants. Full tests, BDD, dependency policy, and mock E2E run in authoritative CI only after the `merge-requested` label is applied (library coverage runs nightly on master instead). A subsequent push removes that label. Install via `scripts/install-hooks.sh`.
+Two-tier local hooks: pre-commit performs lightweight staged-file hygiene and formatting; pre-push runs only static repository/BDD quality rules and formatting, with no build. Strict workspace and both standalone Clippy shapes, plus compiled architecture/contracts/docs suites, belong to merge-requested CI. Full tests, BDD, dependency policy, and mock E2E run in authoritative CI only after the `merge-requested` label is applied (library coverage runs nightly on master instead). A subsequent push removes that label. Install via `scripts/install-hooks.sh`.
 
 ### Sharded BDD (24-way parallel)
 
@@ -1038,10 +1038,17 @@ Contributor rules for the live/mock e2e split:
 - For UDS workflow scenarios, use the real multi-client socket path when asserting broadcast-only events. The test harness should read the socket while the run is active to avoid backpressure on large workflow event streams.
 - Keep `@provider-smoke` tiny and live-provider only: it validates credentials/provider availability, not tools, sessions, workflow, REPL, or UDS behavior.
 
-`scripts/pre-push.sh` runs fast repository and BDD quality rules plus formatting, strict workspace-shape Clippy (one feature unification, plus the standalone per-crate shapes), and architecture/contract/repository invariants. It does not run the full test, BDD, coverage, dependency-policy, or mock-E2E lanes.
-
-Pre-push control:
-- `QUECTO_PREPUSH_BASE` overrides the comparison base used to identify changed workspace packages (default `origin/master`, falling back to local `master`).
+`scripts/pre-push.sh` is lint-only and **NO BUILD**: six static repository/BDD
+quality scripts and `cargo fmt --all -- --check`, regardless of changed files.
+It does not detect nextest or run Clippy or compiled tests. There is no
+`QUECTO_PREPUSH_BASE` override; the hook does not classify changed packages.
+Strict workspace Clippy (including complexity lints), both standalone Clippy
+shapes, and compiled architecture/contract/docs suites are enforced by
+merge-requested CI, not local hooks. See the exact workflow/job/named-step
+mapping in [CONTRIBUTIONS.md](../CONTRIBUTIONS.md#local-pre-push-and-authoritative-ci).
+Focused tests remain development tools; a passing local hook does not prove CI
+passed. Full tests, BDD, dependency policy and mock E2E also remain CI-owned;
+library coverage runs nightly on master.
 
 Pre-merge controls (real-LLM lane):
 - `QUECTO_PROVIDER_SMOKE=1` enables `@provider-smoke` live provider checks (excluded by default)

@@ -3375,44 +3375,8 @@ fn hook_installation_checker_verifies_all_local_hooks() {
     );
 }
 
-#[test]
-fn pre_push_runs_contract_tests() {
-    // The lint-only hook delegates compiled invariants to merge-gating CI.
-    let ci = fs::read_to_string("../.github/workflows/ci.yml").expect("read CI workflow");
-    let workspace_job = ci
-        .split("\n  workspace-tests:\n")
-        .nth(1)
-        .expect("workspace-tests owns compiled invariants")
-        .split("\n  non-real-bdd:\n")
-        .next()
-        .expect("workspace-tests body");
-    assert!(
-        workspace_job.contains("if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'merge-requested'"),
-        "compiled invariants must remain merge-requested CI gates"
-    );
-    assert!(
-        workspace_job
-            .contains("name: All workspace unit and integration tests except sharded BDD targets"),
-        "compiled invariants need an identifiable CI step"
-    );
-    assert!(
-        workspace_job.contains("cargo nextest run \"${SHAPE[@]}\" --test architecture --test contracts --test integration --test docs --profile ci"),
-        "CI must enforce architecture, port contracts and docs in the workspace test shape"
-    );
-}
-
-#[test]
-fn ci_runs_architecture_and_contract_tests() {
-    let content = fs::read_to_string("../.github/workflows/ci.yml").expect("read CI workflow");
-    assert!(
-        content.contains("--test architecture"),
-        "CI must run architecture boundary tests"
-    );
-    assert!(
-        content.contains("--test contracts"),
-        "CI must run port contract tests"
-    );
-}
+// CI ownership, named steps, admission, strict lints and compiled targets are
+// consolidated in pre_push_fast_contract's bounded executable CI validator.
 
 #[test]
 fn lib_rs_has_deny_attributes() {
