@@ -1,7 +1,7 @@
 //! Exact shared promise-settlement assertions for the UDS parent tests.
 use super::{CORRECTION_NOTE, STALLED_REASON, Value, of_type, position};
 
-pub(super) fn assert_stalled(requests: &[String], frames: &[Value]) {
+fn assert_stalled_settlement(requests: &[String], frames: &[Value]) {
     assert_eq!(
         requests.len(),
         2,
@@ -34,6 +34,41 @@ pub(super) fn assert_stalled(requests: &[String], frames: &[Value]) {
     assert_eq!(outcomes[0]["turnId"], admitted[1]["turnId"]);
     assert_eq!(outcomes[0]["sequence"], 1);
     assert_eq!(outcomes[0].as_object().unwrap().len(), 8);
+}
+
+/// Ordinary default clients receive actual execution success only at END.
+pub(super) fn assert_stalled(requests: &[String], frames: &[Value]) {
+    assert_stalled_settlement(requests, frames);
+    let response = position(frames, |f| f["type"] == "response" && f["id"] == "ep-1");
+    let first = position(frames, |f| f["type"] == "turn_admitted");
+    let start = position(frames, |f| f["type"] == "agent_start");
+    let outcome = position(frames, |f| f["type"] == "turn_outcome");
+    let last_end = frames
+        .iter()
+        .rposition(|f| f["type"] == "agent_end")
+        .unwrap();
+    assert!(
+        first < start && last_end < outcome && outcome < response,
+        "{frames:?}"
+    );
+    assert_eq!(frames[response]["command"], "prompt");
+    assert_eq!(
+        frames[response]["success"], true,
+        "stalled is not an execution error"
+    );
+    assert_eq!(
+        of_type(frames, "response")
+            .iter()
+            .filter(|f| f["id"] == "ep-1")
+            .count(),
+        1,
+        "exactly one END response"
+    );
+}
+
+/// Production env1 alone retains the original admission receipt contract.
+pub(super) fn assert_stalled_opt_in(requests: &[String], frames: &[Value]) {
+    assert_stalled_settlement(requests, frames);
     // Order: ack, admitted, start, end, admitted, start, end, outcome.
     let ack = position(frames, |f| f["type"] == "response" && f["id"] == "ep-1");
     let first = position(frames, |f| f["type"] == "turn_admitted");
@@ -48,6 +83,8 @@ pub(super) fn assert_stalled(requests: &[String], frames: &[Value]) {
         "{frames:?}"
     );
     assert_eq!(frames[ack]["data"]["episodeId"], "ep-1");
+    assert_eq!(frames[ack]["command"], "prompt");
+    assert_eq!(frames[ack]["success"], true);
     assert_eq!(
         of_type(frames, "response")
             .iter()

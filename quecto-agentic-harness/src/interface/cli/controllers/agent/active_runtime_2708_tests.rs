@@ -4,6 +4,10 @@ use super::*;
 pub(crate) struct Composed {
     pub(crate) registry: crate::infrastructure::tools::registry::ToolRegistryImpl,
     pub(crate) runtime: Option<ParentOutcome>,
+    pub(crate) workflow: Option<crate::interface::cli::controllers::shared::WorkflowStateHandle>,
+    pub(crate) snippets: String,
+    // Lifecycle/reload fixtures retain the production registry's scratch home.
+    pub(crate) _home: tempfile::TempDir,
 }
 
 /// Run each launch in a new process: never mutate the test runner's environment.
@@ -56,10 +60,21 @@ pub(crate) fn compose(uds: bool) -> Composed {
     compose_with(uds, |_| {})
 }
 
-fn compose_with(uds: bool, apply: impl FnOnce(&mut AgentFlags)) -> Composed {
+pub(crate) fn compose_with(uds: bool, apply: impl FnOnce(&mut AgentFlags)) -> Composed {
+    compose_with_config(uds, apply, Config::default())
+}
+
+pub(crate) fn compose_with_config(
+    uds: bool,
+    apply: impl FnOnce(&mut AgentFlags),
+    config: Config,
+) -> Composed {
     let mut flags =
         parse_agent_flags(&["-m".into(), "test".into()], &mut String::new()).expect("launch flags");
-    let tmp = tempfile::TempDir::new().unwrap();
+    let tmp = match std::env::var_os("RUN16_SCRATCH") {
+        Some(parent) => tempfile::TempDir::new_in(parent).unwrap(),
+        None => tempfile::TempDir::new().unwrap(),
+    };
     let mut ctx = crate::interface::cli::mod_tests::active_runtime_2708_context();
     ctx.cwd = Some(tmp.path().to_path_buf());
     flags.adopt_context(&ctx);
@@ -74,7 +89,6 @@ fn compose_with(uds: bool, apply: impl FnOnce(&mut AgentFlags)) -> Composed {
         root => panic!("unexpected root {root}"),
     }
     apply(&mut flags);
-    let config = Config::default();
     let http = reqwest::Client::new();
     let mut stderr = String::new();
     let built = build_tool_registry(ToolRegistryArgs {
@@ -116,6 +130,9 @@ fn compose_with(uds: bool, apply: impl FnOnce(&mut AgentFlags)) -> Composed {
     Composed {
         registry: built.registry,
         runtime: built.parent_outcome,
+        workflow: built.workflow_state,
+        snippets: built.extension_prompt_snippets,
+        _home: tmp,
     }
 }
 

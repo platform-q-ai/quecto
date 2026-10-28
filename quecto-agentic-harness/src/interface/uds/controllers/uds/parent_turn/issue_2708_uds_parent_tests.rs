@@ -505,12 +505,21 @@ async fn issue_2708_protocol_episode_identity_is_bounded_echoed_and_minted() {
     root.send(&json!({"type":"prompt","id": exact,"message":"go"}).to_string())
         .await;
     let frames = root.frames();
-    let ack = &of_type(&frames, "response")[0];
-    assert_eq!(ack["data"]["episodeId"], json!(exact));
+    let response = &of_type(&frames, "response")[0];
+    assert_eq!(
+        response["id"],
+        json!(exact),
+        "default completion is correlated"
+    );
+    assert_eq!(response["success"], true);
+    assert_eq!(of_type(&frames, "response").len(), 1);
     assert_eq!(
         of_type(&frames, "turn_admitted")[0]["episodeId"],
         json!(exact)
     );
+    let settled = position(&frames, |f| f["type"] == "turn_outcome");
+    let completed = position(&frames, |f| f["type"] == "response");
+    assert!(settled < completed, "identity admission is not completion");
 
     let calls = root.provider.requests().len();
     let over = "e".repeat(513);
@@ -528,9 +537,20 @@ async fn issue_2708_protocol_episode_identity_is_bounded_echoed_and_minted() {
 
     root.send(r#"{"type":"prompt","message":"go"}"#).await;
     let frames = root.frames();
-    let minted = of_type(&frames, "response")[0]["data"]["episodeId"].clone();
+    let minted = of_type(&frames, "turn_admitted")[0]["episodeId"].clone();
     assert!(minted.as_str().is_some_and(|id| !id.is_empty()));
-    assert_eq!(of_type(&frames, "turn_admitted")[0]["episodeId"], minted);
+    assert!(
+        of_type(&frames, "turn_admitted")
+            .iter()
+            .all(|f| f["episodeId"] == minted)
+    );
+    let responses = of_type(&frames, "response");
+    assert_eq!(responses.len(), 1);
+    assert!(responses[0]["id"].is_null(), "no client id was supplied");
+    assert_eq!(responses[0]["success"], true);
+    let settled = position(&frames, |f| f["type"] == "turn_outcome");
+    let completed = position(&frames, |f| f["type"] == "response");
+    assert!(settled < completed, "minted episode still completes at END");
 }
 
 #[tokio::test]
@@ -637,6 +657,7 @@ async fn production_run(replies: Vec<Reply>) -> (Vec<String>, Vec<Value>) {
     );
     env.subagent_registry =
         Some(crate::infrastructure::tools::agents::subagent_registry::new_registry());
+    env.session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
     env.session.bind_parent_outcome(composed.runtime);
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(1024);
     {
@@ -705,7 +726,7 @@ async fn active_runtime_2708_characterization_uds_opt_in() {
         for promise in [PROMISE_2648, PROMISE_SPLIT_READER] {
             let (requests, frames) =
                 production_run(vec![Reply::Text(promise), Reply::Text(promise)]).await;
-            assert_stalled(&requests, &frames);
+            assertions_tests::assert_stalled_opt_in(&requests, &frames);
         }
         for (outcome, expected, reason) in [
             ("done", "done", "Merged #2650"),
