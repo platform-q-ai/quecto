@@ -1,4 +1,6 @@
 //! Executable local/CI boundary contract. Adapters record commands, never compile.
+#[path = "pre_push_fast_contract_final_red.rs"]
+mod pre_push_ci_final_red;
 #[path = "pre_push_fast_contract_round3.rs"]
 mod pre_push_ci_round3;
 #[path = "pre_push_fast_contract_round4.rs"]
