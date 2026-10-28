@@ -191,10 +191,19 @@ impl crate::application::tools::ports::ToolPolicyMutator for ToolRegistryImpl {
             )
         }) {
             if let Some(before) = result.before.as_ref() {
-                changed |= self.replace_profile_scope(&result.name, before.profile_scope);
+                if let Some(metadata) = self.metadata.get_mut(result.name.as_ref() as &str) {
+                    let differs = metadata.profile_scope != before.profile_scope
+                        || metadata.profile_enabled != before.profile_enabled
+                        || metadata.availability != before.runtime_availability;
+                    metadata.profile_scope = before.profile_scope;
+                    metadata.profile_enabled = before.profile_enabled;
+                    metadata.availability = before.runtime_availability;
+                    changed |= differs;
+                }
             }
         }
         if changed {
+            self.rebuild_definitions();
             self.refresh_spawn_inherited_child_policy_snapshot();
         }
     }

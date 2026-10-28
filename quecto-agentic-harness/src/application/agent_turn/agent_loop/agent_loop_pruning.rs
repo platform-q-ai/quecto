@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::agent_turn::context::provider_request_size;
 use crate::domain::inference::services::context_calibration::{MessageBudget, message_budget};
 
 impl AgentLoopImpl {
@@ -59,7 +60,7 @@ impl AgentLoopImpl {
         // #2403/#2414: the watermark pass, the only context mode.
         let pass = self
             .context_manager
-            .prepare_watermark_context(messages, (fixed_tokens, budget), spills_dirty)
+            .prepare_watermark_context(messages, (fixed_tokens, budget, credit), spills_dirty)
             .await;
         let (mut plan, cut, watermark_fallback) = (pass.plan, pass.cut, pass.fallback);
         // #2404: a due watermark cut's record, made or skipped. A cut is
@@ -109,14 +110,10 @@ impl AgentLoopImpl {
                 AuditEvent::ContextPruned {
                     messages_dropped: plan.messages_dropped,
                     // Counted as the estimate is: with the tool definitions.
-                    tokens_before: plan
-                        .tokens_before
-                        .saturating_add(fixed_tokens)
-                        .saturating_sub(credit),
-                    tokens_after: plan
-                        .total_tokens
-                        .saturating_add(fixed_tokens)
-                        .saturating_sub(credit),
+                    tokens_before: provider_request_size(plan.tokens_before, fixed_tokens, credit)
+                        .total(),
+                    tokens_after: provider_request_size(plan.total_tokens, fixed_tokens, credit)
+                        .total(),
                     budget_unmet: plan.over_budget,
                     ladder_stubbed: plan.ladder_stubbed,
                     ceiling_tokens,
@@ -125,9 +122,7 @@ impl AgentLoopImpl {
             )
             .await;
         }
-        plan.total_tokens
-            .saturating_add(fixed_tokens)
-            .saturating_sub(credit)
+        provider_request_size(plan.total_tokens, fixed_tokens, credit).total()
     }
 
     /// Tell each tool whose result a cut or the ladder just took out of the

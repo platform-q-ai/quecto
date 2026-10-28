@@ -54,8 +54,8 @@ Feature: End-to-End Subprocess Protocol
     Then the subprocess exit code should be 0
     And the subprocess stdout should contain "iteration limit (2)"
 
-  @done
   # Completed stalled settlement exits zero; the typed diagnostic still reports exhaustion.
+  @done
   Scenario: Guarded root exhaustion remains a failure at the iteration bound
     Given the mock LLM always returns a tool call for "bash" with args:
       | command | echo loop |

@@ -58,6 +58,7 @@ async fn measured_request(head: Head) {
         compose, compose_with_config,
     };
     let active = compose(true);
+    let active_snippets = active.snippets.clone();
     let stable = active
         .registry
         .catalogue_entries()
@@ -159,6 +160,25 @@ async fn measured_request(head: Head) {
     // Shared window: reserve exactly the requested reply. Canonical fits with
     // one token slack; the effective guidance must be accounted BEFORE pruning.
     let room = canonical_estimate + 1;
+    if matches!(head, Head::Composed) {
+        let effective_head = Message::system(
+            crate::interface::cli::controllers::shared::build_agent_system_prompt(
+                Some("budget AGENTS owner"),
+                None,
+                false,
+                &active_snippets,
+            ),
+        );
+        let unpruned_effective =
+            canonical_estimate - messages[0].estimated_tokens() + effective_head.estimated_tokens();
+        println!(
+            "RUN26 positive unpruned_effective={unpruned_effective} canonical={canonical_estimate} room={room}"
+        );
+        assert!(
+            unpruned_effective > room,
+            "effective unpruned prompt really overflows the shared window"
+        );
+    }
     agent = agent.with_model_context_window(Some(room + 128));
     if matches!(head, Head::Composed) {
         agent.bind_canonical_prompt(&messages, &canonical);

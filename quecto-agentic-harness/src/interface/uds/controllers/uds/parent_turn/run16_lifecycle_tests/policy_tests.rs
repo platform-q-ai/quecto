@@ -744,10 +744,6 @@ async fn mixed_repair(queued: bool, fail: bool) {
             .find(|r| r.name == "declare_turn_outcome")
             .unwrap();
         assert_eq!(noop.status, ToolPolicyMutationStatus::AlreadyInState);
-        assert_eq!(
-            entry(&rig),
-            after,
-            "successful equal replacement is an exact no-op"
-        );
+        assert_eq!(entry(&rig), after, "equal replacement is an exact no-op");
     }
 }
