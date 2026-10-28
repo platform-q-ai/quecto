@@ -100,6 +100,11 @@ async fn run21_real_composed_prompt_save_resume_roundtrip() {
         .unwrap();
     // Complete a real save/load/resume before checking all head invariants.
     let target = SessionIdentity::named_cli("round21-saved").unwrap();
+    crate::interface::uds::controllers::uds::dispatch_session_roster_tests::seed_home(
+        &fx.store,
+        target.runtime_key(),
+    )
+    .await;
     fx.store
         .save(&Session {
             key: target,
