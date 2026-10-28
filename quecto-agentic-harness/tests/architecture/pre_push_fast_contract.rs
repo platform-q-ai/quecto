@@ -3,6 +3,8 @@
 mod pre_push_ci_round3;
 #[path = "pre_push_fast_contract_round4.rs"]
 mod pre_push_ci_round4;
+#[path = "pre_push_fast_contract_round4_allowlists.rs"]
+mod pre_push_ci_round4_allowlists;
 #[path = "pre_push_fast_contract_scope.rs"]
 mod scope;
 use scope::{required_job, workflow_jobs};
@@ -323,7 +325,9 @@ fn required_commands(step: &[String], name: &str, commands: &[&str]) -> bool {
         &refs,
         "        ",
         &["name", "run", "uses", "continue-on-error"],
-        &["with", "env"],
+        // Required executable steps have no benign current environment shape.
+        // Other steps retain ownership of their env; never scan nested keys globally.
+        &["with"],
     ) && tolerance_is_required(&refs, "        continue-on-error: ")
         && matches!(
             refs.iter()
@@ -381,8 +385,25 @@ fn labeled_pull_request_trigger(lines: &[&str]) -> bool {
         })
         .unwrap_or(tail.len());
     required_job(&tail[..end], "pull_request").is_some_and(|pull_request| {
-        mapping_keys_supported(pull_request, "    ", &["types", "branches"], &[])
-            && unique_value(pull_request, "    types: ") == Some("[labeled]")
+        let supported =
+            mapping_keys_supported(pull_request, "    ", &["types", "branches"], &[])
+                && matches!(
+                    pull_request
+                        .iter()
+                        .filter_map(|line| line.strip_prefix("    branches: "))
+                        .collect::<Vec<_>>()
+                        .as_slice(),
+                    [] | ["[master]"]
+                );
+        match supported {
+            true => unique_value(pull_request, "    types: ") == Some("[labeled]"),
+            false => {
+                eprintln!(
+                    "unsupported pull_request syntax: require types: [labeled] and branches absent or exact branches: [master]"
+                );
+                false
+            }
+        }
     })
 }
 
