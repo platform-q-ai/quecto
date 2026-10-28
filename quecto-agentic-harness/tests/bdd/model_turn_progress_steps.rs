@@ -401,13 +401,36 @@ fn state_shows_the_model_turn(world: &mut QuectoWorld) {
     use quecto::domain::sessions::value_objects::state_snapshot::{
         StateSnapshot, UnchangedSnapshot,
     };
-    let typed = StateSnapshot::read_forward_compatible(&state["data"]).expect("accepted");
+    let mut typed = StateSnapshot::read_forward_compatible(&state["data"]).expect("accepted");
     assert!(typed.model_turn.is_some());
     // Polled at the generation it saw, a parent relays the small unchanged
     // marker, which still carries the model turn.
     let marker = serde_json::to_value(UnchangedSnapshot::at(typed.generation, &typed)).unwrap();
     assert_eq!(marker["modelTurn"], state["data"]["modelTurn"]);
-    assert_eq!(marker.as_object().unwrap().len(), 3, "{marker}");
+    assert_eq!(
+        marker,
+        json!({
+            "unchanged": true,
+            "generation": typed.generation,
+            "modelTurn": state["data"]["modelTurn"],
+            "sessionKey": state["data"]["sessionKey"],
+            "turnOutcomeVersion": 1,
+            "outcomeEpoch": state["data"]["outcomeEpoch"],
+            "latestTurnOutcome": null
+        })
+    );
+    assert!(marker["sessionKey"].is_string());
+    assert!(marker["outcomeEpoch"].is_string());
+    // An explicitly legacy producer still has the original three-key shape.
+    typed.turn_outcome_version = None;
+    typed.outcome_epoch = None;
+    typed.latest_turn_outcome = None;
+    let legacy = serde_json::to_value(UnchangedSnapshot::at(typed.generation, &typed)).unwrap();
+    assert_eq!(
+        legacy,
+        json!({"unchanged": true, "generation": typed.generation,
+        "modelTurn": state["data"]["modelTurn"]})
+    );
 }
 
 #[then(

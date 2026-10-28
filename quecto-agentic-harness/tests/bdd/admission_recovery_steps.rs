@@ -12,6 +12,10 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
@@ -29,6 +33,7 @@ pub struct UdsAgent {
     reader: BufReader<UnixStream>,
     stderr_path: PathBuf,
     last_error: Option<String>,
+    last_provider_requests: usize,
 }
 
 impl Drop for UdsAgent {
@@ -48,6 +53,7 @@ pub struct AdmissionRecoveryState {
     parent: Option<ProcessAdmission>,
     agents: BTreeMap<String, UdsAgent>,
     status_out: String,
+    mock_requests: Arc<AtomicUsize>,
 }
 
 impl std::fmt::Debug for AdmissionRecoveryState {
@@ -112,7 +118,9 @@ fn global_config(base: &Path, mock: &str) -> String {
     )
 }
 
-fn start_mock() -> (String, tokio::runtime::Runtime) {
+fn start_mock() -> (String, tokio::runtime::Runtime, Arc<AtomicUsize>) {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let observed = requests.clone();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -122,15 +130,14 @@ fn start_mock() -> (String, tokio::runtime::Runtime) {
         let server = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/chat/completions"))
-            .respond_with(|request: &wiremock::Request| {
-                let streaming = request
-                    .body_json::<serde_json::Value>()
-                    .ok()
-                    .and_then(|body| body.get("stream").and_then(serde_json::Value::as_bool))
-                    .unwrap_or(false);
+            .respond_with(move |request: &wiremock::Request| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                let body: serde_json::Value = request.body_json().unwrap();
+                let streaming = body["stream"] == true;
+                let (message, finish) = super::success_fixture::completion(&body, "DONE");
                 if streaming {
                     let chunk = serde_json::json!({
-                        "choices": [{"index": 0, "delta": {"content": "DONE"}, "finish_reason": "stop"}],
+                        "choices": [{"index": 0, "delta": message, "finish_reason": finish}],
                         "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
                     });
                     wiremock::ResponseTemplate::new(200).set_body_raw(
@@ -141,7 +148,7 @@ fn start_mock() -> (String, tokio::runtime::Runtime) {
                     wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
                         "id": "chatcmpl-test",
                         "object": "chat.completion",
-                        "choices": [{"index": 0, "message": {"role": "assistant", "content": "DONE"}, "finish_reason": "stop"}],
+                        "choices": [{"index": 0, "message": message, "finish_reason": finish}],
                         "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
                     }))
                 }
@@ -152,7 +159,7 @@ fn start_mock() -> (String, tokio::runtime::Runtime) {
         std::mem::forget(server);
         uri
     });
-    (uri, rt)
+    (uri, rt, requests)
 }
 
 fn start_broker(base: &Path) -> Child {
@@ -175,7 +182,8 @@ fn given_broker(world: &mut QuectoWorld) {
     let base_path = temp.path().to_path_buf();
     std::fs::create_dir_all(base_path.join("workspace")).unwrap();
     state(world).temp = Some(temp);
-    let (uri, rt) = start_mock();
+    let (uri, rt, requests) = start_mock();
+    state(world).mock_requests = requests;
     state(world).mock_uri = Some(uri.clone());
     state(world).runtime = Some(rt);
     std::fs::write(
@@ -226,6 +234,7 @@ fn start_agent(world: &mut QuectoWorld, name: &str, extra: &[&str]) {
             reader,
             stderr_path,
             last_error: None,
+            last_provider_requests: 0,
         },
     );
 }
@@ -269,7 +278,13 @@ fn given_child_agent(world: &mut QuectoWorld, name: String) {
     start_agent(
         world,
         &name,
-        &["--config", &config, "--admission-context", &context],
+        &[
+            "--config",
+            &config,
+            "--admission-context",
+            &context,
+            "--spawned",
+        ],
     );
 }
 
@@ -330,8 +345,8 @@ fn get_state(agent: &mut UdsAgent) -> serde_json::Value {
     reply["data"].clone()
 }
 
-/// Run one prompt to its end. The agent answers the prompt's own id only on
-/// success (after the turn), and emits an `agent_error` response on failure.
+/// Await a terminal correlated outcome, not the guarded root's early ACK.
+/// Legacy children reply to the prompt only after completion.
 fn run_prompt(agent: &mut UdsAgent) {
     agent.last_error = None;
     let id = format!(
@@ -344,6 +359,7 @@ fn run_prompt(agent: &mut UdsAgent) {
     let command = serde_json::json!({"type": "prompt", "id": id, "message": "hi"});
     writeln!(agent.stream, "{command}").unwrap();
     let deadline = Instant::now() + LIMIT;
+    let mut acknowledgements = 0;
     loop {
         let event = read_line(agent, deadline).unwrap_or_else(|| {
             panic!(
@@ -351,14 +367,24 @@ fn run_prompt(agent: &mut UdsAgent) {
                 std::fs::read_to_string(&agent.stderr_path).unwrap_or_default()
             )
         });
-        if event["type"] != "response" {
-            continue;
-        }
-        if event["id"] == id {
-            assert_eq!(event["success"], true, "{event}");
+        if event["type"] == "turn_outcome" && event["episodeId"] == id {
+            assert_eq!(
+                acknowledgements, 1,
+                "guarded completion must follow its early ACK: {event}"
+            );
+            assert_eq!(event["outcome"], "done", "{event}");
             return;
         }
-        if event["command"] == "agent_error" {
+        if event["type"] == "response" && event["id"] == id {
+            assert_eq!(event["success"], true, "{event}");
+            if event["data"]["episodeId"] == id {
+                assert_eq!(acknowledgements, 0, "exactly one correlated ACK: {event}");
+                acknowledgements = 1;
+                continue; // admitted is not completed
+            }
+            return;
+        }
+        if event["type"] == "response" && event["command"] == "agent_error" {
             agent.last_error = Some(event["error"].as_str().unwrap_or("").to_owned());
             return;
         }
@@ -367,7 +393,11 @@ fn run_prompt(agent: &mut UdsAgent) {
 
 #[when(expr = "{string} runs a prompt")]
 fn when_runs_prompt(world: &mut QuectoWorld, name: String) {
-    run_prompt(agent(world, &name));
+    let requests = state(world).mock_requests.clone();
+    let before = requests.load(Ordering::SeqCst);
+    let agent = agent(world, &name);
+    run_prompt(agent);
+    agent.last_provider_requests = requests.load(Ordering::SeqCst) - before;
 }
 
 #[then(
@@ -420,6 +450,10 @@ fn then_child_failed_closed(world: &mut QuectoWorld, name: String) {
         .last_error
         .clone()
         .unwrap_or_else(|| panic!("{name}'s prompt must fail closed, not run"));
+    assert_eq!(
+        agent.last_provider_requests, 0,
+        "a revoked child must never reach the provider"
+    );
     assert!(error.contains("respawn"), "{error}");
     assert!(error.contains("reset"), "{error}");
     let admission = get_state(agent)["admission"].clone();

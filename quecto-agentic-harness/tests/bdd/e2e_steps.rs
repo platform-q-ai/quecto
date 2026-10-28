@@ -89,7 +89,12 @@ fn given_mock_llm_text_response(world: &mut QuectoWorld, content: String) {
         });
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/chat/completions"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(response_body))
+            .respond_with(move |request: &wiremock::Request| {
+                let body = request.body_json::<serde_json::Value>().unwrap();
+                wiremock::ResponseTemplate::new(200).set_body_json(
+                    super::success_fixture::response(&body, response_body.clone()),
+                )
+            })
             .mount(&server)
             .await;
 
@@ -842,9 +847,15 @@ pub(crate) fn mount_auto_mock_responses_for_messages(world: &mut QuectoWorld, me
             wiremock::Mock::given(wiremock::matchers::method("POST"))
                 .and(wiremock::matchers::path("/chat/completions"))
                 .and(wiremock::matchers::body_string_contains(marker))
-                .respond_with(
-                    wiremock::ResponseTemplate::new(200).set_body_json(openai_text_json(text)),
-                )
+                .respond_with({
+                    let text = text.clone();
+                    move |request: &wiremock::Request| {
+                        let body = request.body_json::<serde_json::Value>().unwrap();
+                        wiremock::ResponseTemplate::new(200).set_body_json(
+                            super::success_fixture::response(&body, openai_text_json(&text)),
+                        )
+                    }
+                })
                 .with_priority(priority)
                 .mount(&server)
                 .await;
@@ -862,7 +873,12 @@ pub(crate) fn mount_auto_mock_responses_for_messages(world: &mut QuectoWorld, me
         for (i, body) in responses.into_iter().enumerate() {
             let mock = wiremock::Mock::given(wiremock::matchers::method("POST"))
                 .and(wiremock::matchers::path("/chat/completions"))
-                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+                .respond_with(move |request: &wiremock::Request| {
+                    let request_body = request.body_json::<serde_json::Value>().unwrap();
+                    wiremock::ResponseTemplate::new(200).set_body_json(
+                        super::success_fixture::response(&request_body, body.clone()),
+                    )
+                })
                 .with_priority(u8::try_from(i + 50).expect("too many auto mock responses"));
             if i < last {
                 mock.up_to_n_times(1).mount(&server).await;
