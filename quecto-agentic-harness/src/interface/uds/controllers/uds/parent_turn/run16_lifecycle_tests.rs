@@ -2,6 +2,7 @@
 //! file reload and supervisor-owned child monitor. No new runtime behavior.
 mod owned_child_tests;
 mod policy_tests;
+mod run28_duplicate_tests;
 use super::super::dispatch_test_env::{DispatchTestEnv, make_dispatch_test_agent_with_registry};
 use super::super::{dispatch_command, drain_pending_and_nudge, protocol};
 use super::issue_2708_uds_parent_tests::{Reply, of_type};
