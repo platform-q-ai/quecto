@@ -11,6 +11,9 @@ use crate::interface::cli::uds_session::PendingMessage;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
+mod assertions_tests;
+use assertions_tests::assert_stalled;
+
 /// The two original promises of #2708: each ends the turn with nothing run.
 pub(super) const PROMISE_2648: &str = "#2648 merged … Now working on #2650";
 pub(super) const PROMISE_SPLIT_READER: &str =
@@ -300,63 +303,6 @@ async fn assert_promise_is_corrected_once_then_stalls(promise: &'static str) {
     let requests = root.provider.requests();
     let frames = root.frames();
     assert_stalled(&requests, &frames);
-}
-
-fn assert_stalled(requests: &[String], frames: &[Value]) {
-    assert_eq!(
-        requests.len(),
-        2,
-        "exactly two provider requests: {requests:?}"
-    );
-    assert_eq!(requests[1], CORRECTION_NOTE, "the literal correction, once");
-    assert_eq!(
-        requests
-            .iter()
-            .filter(|note| note.as_str() == CORRECTION_NOTE)
-            .count(),
-        1
-    );
-    let admitted = of_type(&frames, "turn_admitted");
-    assert_eq!(
-        admitted.len(),
-        2,
-        "the opener and the correction: {frames:?}"
-    );
-    assert!(
-        admitted
-            .iter()
-            .all(|frame| frame["episodeId"] == "ep-1" && frame.as_object().unwrap().len() == 5)
-    );
-    assert_ne!(admitted[0]["turnId"], admitted[1]["turnId"]);
-    let outcomes = of_type(&frames, "turn_outcome");
-    assert_eq!(outcomes.len(), 1, "one outcome, never done: {frames:?}");
-    assert_eq!(outcomes[0]["outcome"], "stalled");
-    assert_eq!(outcomes[0]["reason"], STALLED_REASON);
-    assert_eq!(outcomes[0]["turnId"], admitted[1]["turnId"]);
-    assert_eq!(outcomes[0]["sequence"], 1);
-    assert_eq!(outcomes[0].as_object().unwrap().len(), 8);
-    // Order: ack, admitted, start, end, admitted, start, end, outcome.
-    let ack = position(&frames, |f| f["type"] == "response" && f["id"] == "ep-1");
-    let first = position(&frames, |f| f["type"] == "turn_admitted");
-    let start = position(&frames, |f| f["type"] == "agent_start");
-    let outcome = position(&frames, |f| f["type"] == "turn_outcome");
-    let last_end = frames
-        .iter()
-        .rposition(|f| f["type"] == "agent_end")
-        .unwrap();
-    assert!(
-        ack < first && first < start && last_end < outcome,
-        "{frames:?}"
-    );
-    assert_eq!(frames[ack]["data"]["episodeId"], "ep-1");
-    assert_eq!(
-        of_type(&frames, "response")
-            .iter()
-            .filter(|f| f["id"] == "ep-1")
-            .count(),
-        1,
-        "one acknowledgement, at admission"
-    );
 }
 
 #[tokio::test]

@@ -742,12 +742,9 @@ mod tests;
 #[path = "agent_web_fetch_recipe_tests.rs"]
 mod web_fetch_recipe_tests;
 #[cfg(test)]
-#[path = "agent_workflow_discovery_tests.rs"]
 mod workflow_discovery_tests;
 #[cfg(test)]
-#[path = "agent_workflow_spec_tests.rs"]
 mod workflow_spec_tests;
 
 #[cfg(test)]
-#[path = "agent/active_runtime_2708_tests.rs"]
 pub(crate) mod active_runtime_2708_tests;

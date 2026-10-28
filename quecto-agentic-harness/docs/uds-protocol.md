@@ -570,7 +570,7 @@ conversation never hides the latest outcome.
 
 | Field | Type | Description |
 |---|---|---|
-| `turnOutcomeVersion` | integer | `1`: this harness emits `turn_admitted` and `turn_outcome`. Present only when its launcher switched the guard on (`QUECTO_TURN_OUTCOMES=1`) for a top-level parent; absent from every other harness; a peer without it is legacy |
+| `turnOutcomeVersion` | integer | `1`: this harness emits `turn_admitted` and `turn_outcome`. Present by default for eligible top-level CLI/UDS parents whose startup tool policy permits `declare_turn_outcome`; absent from excluded roles and explicitly uncomposed contexts; a peer without it is unguarded |
 | `outcomeEpoch` | string | The incarnation the outcomes belong to; a new one is minted when the history is replaced |
 | `latestTurnOutcome` | object or `null` | The last `turn_outcome` event of this epoch, byte-for-byte the event that was emitted, with its original `sequence`; an explicit `null` before the first, never omitted |
 
@@ -1953,18 +1953,19 @@ Sent when a client falls behind on the broadcast channel (buffer overflow). The 
 
 ## Turn outcomes (trusted root parents)
 
-The guard is opt-in (#2708): its launcher switches it on by starting the
-harness with the environment variable `QUECTO_TURN_OUTCOMES=1` (exactly
-`1`; any other value, or none, is off). The Pocket relay sets it for the
-harness of a task. It then guards a top-level parent only (not spawned, not
-a coordinator, no parent id or parent control, not in a swarm). Every other
-harness, an ordinary TUI chat and a plain `quecto agent -m` run among them,
-is unchanged: no declaration tool, no correction turn, no turn-outcome
-events or `get_state` members. The switch is the guarded harness's own: its
-`bash` commands and configured extensions do not inherit it. A root whose
-tool policy withholds `declare_turn_outcome` at startup is not guarded
-either (it could never declare). The guard runs on the multi-client socket
-loop; the single-client loop is a test rig that is never given it.
+The guard is on by default (#2708) for eligible top-level CLI and UDS
+parents, including plain `quecto agent -m` runs and default, named and
+ephemeral sessions. Activation is independent of `QUECTO_TURN_OUTCOMES`:
+unset, `1` and other values behave alike, with no environment opt-out.
+The existing launch allowlist admits only a top-level parent (not spawned,
+not a coordinator, no parent id or parent control, not in a swarm). A root
+whose tool policy withholds `declare_turn_outcome` at startup is not guarded
+(it could never declare). Excluded roles, an ordinary TUI chat and explicitly
+uncomposed contexts remain unchanged: no declaration tool, no correction
+turn, no turn-outcome events or `get_state` members. Legacy launcher metadata
+is still removed from child `bash` and configured-extension environments.
+The UDS guard runs on the multi-client socket loop; the single-client loop
+is a test rig that is never given it.
 
 - **Declaring.** The model is given `declare_turn_outcome` (`outcome`:
   `waiting`, `blocked`, `asking` or `done`; a one-line `reason` of at most 512
