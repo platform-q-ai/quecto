@@ -3,6 +3,7 @@ use super::*;
 use crate::domain::tool_policy::value_objects::tool::{
     ToolPolicyApplyMode, ToolPolicyMutationStatus,
 };
+use crate::domain::tool_policy::value_objects::tool_descriptor::ToolCatalogueEntry;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Clone, Copy, Debug)]
@@ -27,8 +28,7 @@ fn definitions_of(rig: &Rig) -> Vec<(String, String, String)> {
         .collect()
 }
 
-async fn transaction(state: EntryState, queued: bool, fail: bool) {
-    let mut rig = Rig::new(vec![]);
+async fn prepare_entry_state(rig: &mut Rig, state: EntryState) -> String {
     let read_id = rig
         .env
         .agent
@@ -56,7 +56,28 @@ async fn transaction(state: EntryState, queued: bool, fail: bool) {
             );
         }
     }
-    let before = rig.env.agent.tool_catalogue_entries();
+    read_id
+}
+
+fn duplicate_mutations(state: EntryState, read_id: String) -> Vec<ToolPolicyMutation> {
+    match state {
+        // The exact review reproducer: an originally enabled read ends enabled.
+        EntryState::Enabled => vec![
+            ToolPolicyMutation::disable("read", "first duplicate"),
+            ToolPolicyMutation::enable("read", "second duplicate"),
+        ],
+        // Resolved aliases, repeated no-op, and interleaved independent key.
+        EntryState::Disabled | EntryState::Mixed => vec![
+            ToolPolicyMutation::enable(read_id, "alias enable"),
+            ToolPolicyMutation::disable("write", "other key"),
+            ToolPolicyMutation::enable("read", "repeated enable"),
+            ToolPolicyMutation::disable("read", "duplicate disable"),
+            ToolPolicyMutation::enable("read", "final enable"),
+        ],
+    }
+}
+
+fn assert_entry_state(before: &[ToolCatalogueEntry], state: EntryState) {
     let read = before.iter().find(|entry| entry.name == "read").unwrap();
     match state {
         EntryState::Enabled => assert!(read.effective_parent_enabled),
@@ -69,6 +90,13 @@ async fn transaction(state: EntryState, queued: bool, fail: bool) {
             assert!(!read.runtime_availability.is_enabled());
         }
     }
+}
+
+async fn transaction(state: EntryState, queued: bool, fail: bool) {
+    let mut rig = Rig::new(vec![]);
+    let read_id = prepare_entry_state(&mut rig, state).await;
+    let before = rig.env.agent.tool_catalogue_entries();
+    assert_entry_state(&before, state);
     let definitions = definitions_of(&rig);
     let visibility = ["read", "write", "declare_turn_outcome"]
         .map(|name| rig.env.agent.is_tool_model_visible(name));
@@ -84,21 +112,7 @@ async fn transaction(state: EntryState, queued: bool, fail: bool) {
                 Ok(())
             }
         })));
-    let mutations = match state {
-        // The exact review reproducer: an originally enabled read ends enabled.
-        EntryState::Enabled => vec![
-            ToolPolicyMutation::disable("read", "first duplicate"),
-            ToolPolicyMutation::enable("read", "second duplicate"),
-        ],
-        // Resolved aliases, repeated no-op, and interleaved independent key.
-        EntryState::Disabled | EntryState::Mixed => vec![
-            ToolPolicyMutation::enable(read_id, "alias enable"),
-            ToolPolicyMutation::disable("write", "other key"),
-            ToolPolicyMutation::enable("read", "repeated enable"),
-            ToolPolicyMutation::disable("read", "duplicate disable"),
-            ToolPolicyMutation::enable("read", "final enable"),
-        ],
-    };
+    let mutations = duplicate_mutations(state, read_id);
     let count = mutations.len();
     let mut request = ToolPolicyRequest::patch(mutations);
     request.persist = true;
