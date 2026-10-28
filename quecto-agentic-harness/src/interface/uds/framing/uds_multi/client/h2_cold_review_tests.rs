@@ -18,6 +18,8 @@ use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
 
 mod run17_ingress_tests;
+mod run24_budget_tests;
+mod run24_restoration_tests;
 
 const STEP: Duration = Duration::from_secs(10);
 const PENDING: Duration = Duration::from_millis(200);
