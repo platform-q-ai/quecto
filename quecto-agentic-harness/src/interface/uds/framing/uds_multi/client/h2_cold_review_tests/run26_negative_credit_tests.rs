@@ -9,16 +9,15 @@ use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabil
 #[tokio::test]
 async fn run26_disabled_guidance_credit_does_not_cut_fitting_history() {
     use crate::interface::cli::controllers::active_runtime_2708_tests::isolated;
-    if !isolated(
+    if isolated(
         concat!(
             module_path!(),
             "::run26_disabled_guidance_credit_does_not_cut_fitting_history"
         ),
         &["unset", "1"],
     ) {
-        return;
+        check_fitting_history(false).await;
     }
-    check_fitting_history(false).await;
 }
 
 #[tokio::test]
@@ -64,8 +63,25 @@ async fn check_fitting_history(normalized: bool) {
     let credit = messages[0].estimated_tokens() - projected.estimated_tokens();
     assert!(credit > 4);
     let ceiling = initial - credit / 2;
-    // False-positive control: identical effective request, already canonical
-    // without guidance, must retain every message below the exact same H.
+    // Independent real composition updates the extensions byte-length header.
+    // Raw replacement is retained only as the nonnormative stale-header control.
+    let effective = Message::system(
+        crate::interface::cli::controllers::shared::build_agent_system_prompt(
+            Some("AGENTS negative-credit owner"),
+            None,
+            false,
+            &composed.snippets.replace(DECLARE_GUIDANCE, ""),
+        ),
+    );
+    let expected = if normalized {
+        initial - credit
+    } else {
+        initial - messages[0].estimated_tokens() + effective.estimated_tokens()
+    };
+    assert_eq!(initial, 9335);
+    assert_eq!(ceiling, 9309);
+    assert!(expected < ceiling);
+    // The stale-header normalized control must still retain eight messages.
     if normalized {
         messages[0] = projected;
     }
@@ -109,27 +125,33 @@ async fn check_fitting_history(normalized: bool) {
     let (actual, sent, output) = provider.seen.lock().unwrap().clone().unwrap();
     println!(
         "RUN26 negative-credit canonical={initial} ceiling={ceiling} credit={credit} expected_effective={} actual={actual} before={} after={}",
-        initial - credit,
+        expected,
         original_ids.len(),
         sent.len()
     );
     assert!(
-        initial - credit < ceiling,
+        expected < ceiling,
         "legitimate effective history fits below high/ceiling"
     );
     assert!(sent.iter().all(|m| !m.content.contains(DECLARE_GUIDANCE)));
     assert_eq!(output, 128);
     assert_eq!(
-        actual,
-        initial - credit,
-        "provider receives exactly the fitting effective view"
+        sent.len(),
+        8,
+        "provider-fitting history must retain all eight messages"
     );
-    assert_eq!(sent.len(), 8);
     assert_eq!(
         messages.iter().map(Message::id).collect::<Vec<_>>(),
         original_ids,
         "provider-fitting history must not be cut due to disabled canonical guidance"
     );
+    assert_eq!(
+        actual, expected,
+        "provider receives exactly the independently composed fitting view"
+    );
+    if normalized {
+        assert_eq!(actual, 9283, "nonnormative stale-header control");
+    }
 }
 
 #[derive(Debug, Default)]
