@@ -329,7 +329,7 @@ fn done_ticks_exception_codec_refuses_inconsistent_or_unattributed_metadata() {
         file.replace("Ada (`ada@example.com`)", "Ada"),
         file.replace("2026-10-11T09:30:00Z", "not-a-time"),
         file.replace("schema=4", "schema=3"),
-        file.replace("| 0 | Owner deferred deployment | Ada (`ada@example.com`) | 2026-10-11T09:30:00Z |", &"| 0 | Owner deferred deployment | Ada (`ada@example.com`) | 2026-10-11T09:30:00Z |\n| 0 | Owner deferred deployment | Ada (`ada@example.com`) | 2026-10-11T09:30:00Z |"),
+        file.replace("| 0 | Owner deferred deployment | Ada (`ada@example.com`) | 2026-10-11T09:30:00Z |", "| 0 | Owner deferred deployment | Ada (`ada@example.com`) | 2026-10-11T09:30:00Z |\n| 0 | Owner deferred deployment | Ada (`ada@example.com`) | 2026-10-11T09:30:00Z |"),
     ] {
         assert!(decode::<TaskCodec>(malformed.as_bytes()).is_err(), "{malformed}");
     }

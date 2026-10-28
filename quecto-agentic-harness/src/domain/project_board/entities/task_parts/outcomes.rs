@@ -61,10 +61,10 @@ impl Description {
                 .filter(|index: &usize| index.to_string() == cells[0])
                 .ok_or_else(|| SchemaError::new("outcome_index", "a canonical index"))?;
             let valid = previous.is_none_or(|before| before < index)
-                && next
-                    .done_when
-                    .get(index)
-                    .is_some_and(|outcome| matches!(outcome.done, false));
+                && matches!(
+                    next.done_when.get(index),
+                    Some(super::Outcome { done: false, .. })
+                );
             if valid {
                 let (name, email) = by
                     .strip_suffix("`)")
