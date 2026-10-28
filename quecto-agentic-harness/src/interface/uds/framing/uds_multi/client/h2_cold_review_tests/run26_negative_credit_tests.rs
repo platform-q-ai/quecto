@@ -63,16 +63,21 @@ async fn check_fitting_history(normalized: bool) {
     let credit = messages[0].estimated_tokens() - projected.estimated_tokens();
     assert!(credit > 4);
     let ceiling = initial - credit / 2;
-    // Independent real composition updates the extensions byte-length header.
-    // Raw replacement is retained only as the nonnormative stale-header control.
-    let effective = Message::system(
-        crate::interface::cli::controllers::shared::build_agent_system_prompt(
-            Some("AGENTS negative-credit owner"),
-            None,
-            false,
-            &composed.snippets.replace(DECLARE_GUIDANCE, ""),
-        ),
-    );
+    // Independently render the existing frame, including an empty extensions
+    // section. Startup composition omits empty sections; this provider view
+    // deliberately preserves the owned canonical frame and refreshes its length.
+    let frame_start = canonical.find("<extensions>\n").unwrap();
+    let body_start =
+        canonical[frame_start..].find(" bytes\n\n").unwrap() + frame_start + " bytes\n\n".len();
+    let body_end = canonical.rfind("\n\n</extensions>").unwrap();
+    let body = canonical[body_start..body_end].replace(DECLARE_GUIDANCE, "");
+    let effective = Message::system(format!(
+        "{}<extensions>\nContent length: {} bytes\n\n{}{}",
+        &canonical[..frame_start],
+        body.len(),
+        body,
+        &canonical[body_end..],
+    ));
     let expected = if normalized {
         initial - credit
     } else {
