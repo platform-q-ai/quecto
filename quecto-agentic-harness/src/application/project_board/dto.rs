@@ -16,7 +16,6 @@ use crate::domain::project_board::services::artifacts_of;
 use crate::domain::project_board::services::run_outcomes::{
     ItemStanding, inconsistencies, item_standings,
 };
-use crate::domain::project_board::services::transitions::MoveReason;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -75,41 +74,6 @@ impl From<NewBoardTaskStatus> for TaskStatus {
         match status {
             NewBoardTaskStatus::Draft => Self::Draft,
             NewBoardTaskStatus::Ready => Self::Ready,
-        }
-    }
-}
-
-/// A change to one task, made by the board's rules
-/// (`domain::project_board::services`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BoardOp {
-    /// The holder's claim runs two hours from now again.
-    Renew,
-    /// Take an expired claim over.
-    TakeOver,
-    /// Move the task through the transition table, for the reason its
-    /// mover gives (#2705 T4: back to ready from review takes one);
-    /// `Move(Claimed, _)` claims a ready task.
-    Move(TaskStatus, MoveReason),
-    /// The holder links a pull request.
-    AddPr(u64),
-    /// The holder unlinks a pull request deliberately (a wrong or
-    /// abandoned one); a task whose pull requests all merged is closed by
-    /// `CompleteMergedTask`, and once none is linked, Review→Done is the
-    /// holder's.
-    RemovePr(u64),
-}
-
-impl BoardOp {
-    /// The board commit message of this op on task `id`.
-    pub fn message(&self, id: &Slug) -> String {
-        let id = id.as_str();
-        match self {
-            Self::Renew => format!("board: renew {id}"),
-            Self::TakeOver => format!("board: take over {id}"),
-            Self::Move(to, _) => format!("board: move {id} to {}", to.as_str()),
-            Self::AddPr(pr) => format!("board: link pull request {pr} to {id}"),
-            Self::RemovePr(pr) => format!("board: unlink pull request {pr} from {id}"),
         }
     }
 }
@@ -740,7 +704,7 @@ pub use start::{EndedRun, LivenessCheck, RunEnd, RunEndOutcome, RunReport, TaskS
 #[path = "dto_requests.rs"]
 mod requests;
 pub use requests::{
-    BoardAnswered, BoardExecution, BoardOutcome, BoardRequest, Completion, ListFilter,
+    BoardAnswered, BoardExecution, BoardOp, BoardOutcome, BoardRequest, Completion, ListFilter,
     ListSummaries, OpNoting, PlanPage, PlanView, ReadRequest, SUMMARIES_LISTINGS_ONLY,
     ServedAnswer,
 };

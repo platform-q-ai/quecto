@@ -441,6 +441,9 @@ pub fn task_json(task: &Task) -> Value {
     });
     let fields = answer.as_object_mut().expect("a task answers an object");
     fields.extend(described);
+    if let Some(reason) = &task.reason {
+        fields.insert("reason".into(), json!(reason));
+    }
     answer
 }
 

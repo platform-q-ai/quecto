@@ -3,11 +3,12 @@
 //! what it is handed back. Nothing here names a use case, so the port and
 //! any adapter of it (the local one, a board server's) depend on values
 //! alone; `operations` re-exports them beside the parts the use case runs.
+use crate::domain::project_board::services::transitions::MoveReason;
 use std::collections::BTreeMap;
 
 use super::{
-    BoardOp, DraftUpdate, EndedRun, NewBoardTask, PlanAcceptance, PlanDiscard, PlanEdit,
-    PlanProposal, ProjectBoardError, ReadPin, RunEnd, ShownTask, TaskStart,
+    DraftUpdate, EndedRun, NewBoardTask, PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal,
+    ProjectBoardError, ReadPin, RunEnd, ShownTask, TaskStart,
 };
 use crate::application::project_board::ports::{BoardHead, KeepCopy};
 use crate::application::project_board::start::{Begun, StartWrite, StartedTask};
@@ -19,6 +20,48 @@ use crate::domain::project_board::services::plans::Accepted;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::FrontEnd;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+
+/// A change to one task, made by the board's rules
+/// (`domain::project_board::services`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BoardOp {
+    /// The holder's claim runs two hours from now again.
+    Renew,
+    /// Take an expired claim over.
+    TakeOver,
+    /// Move the task through the transition table, for the reason its
+    /// mover gives (#2705 T4: back to ready from review takes one);
+    /// `Move(Claimed, _)` claims a ready task.
+    Move(TaskStatus, MoveReason),
+    /// The holder links a pull request.
+    AddPr(u64),
+    /// The holder unlinks a pull request deliberately (a wrong or
+    /// abandoned one); a task whose pull requests all merged is closed by
+    /// `CompleteMergedTask`, and once none is linked, Review→Done is the
+    /// holder's.
+    RemovePr(u64),
+    /// A narrow, board-head-pinned exception to a settled outcome.
+    SetOutcome {
+        index: usize,
+        reason: Option<String>,
+        expected_rev: BoardHead,
+    },
+}
+
+impl BoardOp {
+    /// The board commit message of this op on task `id`.
+    pub fn message(&self, id: &Slug) -> String {
+        let id = id.as_str();
+        match self {
+            Self::SetOutcome { .. } => format!("board: set outcome of {id}"),
+            Self::Renew => format!("board: renew {id}"),
+            Self::TakeOver => format!("board: take over {id}"),
+            Self::Move(to, _) => format!("board: move {id} to {}", to.as_str()),
+            Self::AddPr(pr) => format!("board: link pull request {pr} to {id}"),
+            Self::RemovePr(pr) => format!("board: unlink pull request {pr} from {id}"),
+        }
+    }
+}
 
 /// Why summaries are refused of a request that lists nothing.
 pub const SUMMARIES_LISTINGS_ONLY: &str = "is taken only by list, list_ready and list_takeable";

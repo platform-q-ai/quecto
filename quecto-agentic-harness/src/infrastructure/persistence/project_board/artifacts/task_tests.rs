@@ -321,10 +321,10 @@ fn a_claim_needs_all_three_rows() {
 
 #[test]
 fn a_newer_task_schema_asks_for_an_upgrade() {
-    let newer = edited("quecto-task schema=1", "quecto-task schema=4");
+    let newer = edited("quecto-task schema=1", "quecto-task schema=5");
     assert_eq!(
         decode::<TaskCodec>(newer.as_bytes()),
-        Err(CodecError::NewerSchema { found: 4, known: 3 })
+        Err(CodecError::NewerSchema { found: 5, known: 4 })
     );
     let other = edited("quecto-task schema=1", "quecto-plan schema=1");
     assert_eq!(

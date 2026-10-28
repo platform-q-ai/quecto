@@ -40,3 +40,56 @@ fn move_reason(read: &Read<'_>) -> Result<MoveReason, RequestError> {
         (None, EntryPolicy::SectionedOrLegacy) => MoveReason::Unasked,
     })
 }
+
+/// A board-head-pinned exception, with conditional reason fields checked first.
+pub(super) fn set_outcome(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
+    use crate::domain::project_board::value_objects::telemetry::FaultKind;
+    use serde_json::Value;
+    let index = read.offset("outcome_index")?.ok_or_else(|| {
+        RequestError::of(
+            "outcome_index",
+            "must be an existing zero-based index",
+            FaultKind::WrongType,
+        )
+    })?;
+    let met = read
+        .value("met")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| RequestError::of("met", "must be a boolean", FaultKind::WrongType))?;
+    let reason = match (met, read.value("reason")) {
+        (false, Some(_)) => read.text("reason")?,
+        (false, None) => {
+            return Err(RequestError::of(
+                "reason",
+                "is required when unmet",
+                FaultKind::Missing,
+            ));
+        }
+        (true, None) => None,
+        (true, Some(_)) => {
+            return Err(RequestError::of(
+                "reason",
+                "is taken only when unmet",
+                FaultKind::InvalidValue,
+            ));
+        }
+    };
+    let expected_rev = match read.pin()? {
+        Some(crate::application::project_board::dto::ReadPin::Rev(rev)) => rev,
+        _ => {
+            return Err(RequestError::of(
+                "expected_rev",
+                "is required",
+                FaultKind::Missing,
+            ));
+        }
+    };
+    Ok(BoardRequest::Change(
+        read.task()?,
+        BoardOp::SetOutcome {
+            index,
+            reason,
+            expected_rev,
+        },
+    ))
+}

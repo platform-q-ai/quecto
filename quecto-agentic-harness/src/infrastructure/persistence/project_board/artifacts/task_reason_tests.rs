@@ -91,7 +91,10 @@ fn a_task_done_without_a_run_round_trips_sectioned_at_schema_3() {
     })
     .unwrap();
     let file = encode::<TaskCodec>(&task).unwrap();
-    assert_eq!(file, DONE_WITHOUT_RUN);
+    assert_eq!(
+        file,
+        DONE_WITHOUT_RUN.replace("| no | Merged |", "| yes | Merged |")
+    );
     let read = decode::<TaskCodec>(file.as_bytes()).unwrap();
     assert_eq!(read, task);
     assert_eq!(read.fields().description_form, DescriptionForm::Sectioned);

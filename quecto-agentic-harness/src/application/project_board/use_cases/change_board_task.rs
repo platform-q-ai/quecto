@@ -107,6 +107,20 @@ impl ChangeBoardTask {
                         .map(|task| (task.fields().status, claim_facts(task, actor, &when.now)));
                 }
                 let task = task?;
+                // This operation pins BOARD HEAD, not task-object equality. Recheck
+                // the caller's original pin on every CAS attempt, including retries.
+                if let BoardOp::SetOutcome { expected_rev, .. } = op {
+                    if &board.head == expected_rev {
+                    } else {
+                        return Err(ProjectBoardError::Stale {
+                            id: id.clone(),
+                            expected: crate::application::project_board::dto::ReadPin::Rev(
+                                expected_rev.clone(),
+                            ),
+                            updated: task.fields().updated.clone(),
+                        });
+                    }
+                }
                 let changed = apply(task, board, actor, op, &when.now)?;
                 Ok(vec![BoardArtifact::Task(changed)])
             },
@@ -119,7 +133,11 @@ impl ChangeBoardTask {
             }
             facts.status_to = match op {
                 BoardOp::Move(to, _) => Some(*to),
-                BoardOp::Renew | BoardOp::TakeOver | BoardOp::AddPr(_) | BoardOp::RemovePr(_) => {
+                BoardOp::Renew
+                | BoardOp::TakeOver
+                | BoardOp::AddPr(_)
+                | BoardOp::RemovePr(_)
+                | BoardOp::SetOutcome { .. } => {
                     written.as_ref().ok().map(|task| task.fields().status)
                 }
             };
@@ -195,6 +213,10 @@ fn apply(
 ) -> Result<Task, ProjectBoardError> {
     let id = &task.fields().id;
     let ruled = match op {
+        BoardOp::SetOutcome { index, reason, .. } => {
+            let reason = reason.as_deref().map(board_text::line);
+            task.set_outcome(*index, reason.as_deref(), actor, now)
+        }
         BoardOp::Renew => renew(task, actor, now),
         BoardOp::TakeOver => take_over(task, actor, now),
         BoardOp::Move(to, reason) => {

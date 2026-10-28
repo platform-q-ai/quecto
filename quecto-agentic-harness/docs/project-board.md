@@ -1201,7 +1201,7 @@ an older quecto ignores it.
 |---|---|
 | `session` | As on every event-log record: the agent's session for the tool; `board-cli:<UTC date>` for `quecto board` |
 | `turn` | Always `null`: a board call is filed under no agent turn |
-| `op` | The op the request named: `bootstrap`, `list`, `list_ready`, `list_takeable`, `show`, `create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`, `clear_set_aside`, `propose_plan`, `edit_plan`, `accept_plan`, `discard_plan`, `end_run`, `start`, `done_without_run`; `unknown` for a request that names none, or none the board has. A request the agent tool does not take (`bootstrap`) records its op, refused, and a `quecto board` line refused as it is read records the op it named before the refusal |
+| `op` | The op the request named: `bootstrap`, `list`, `list_ready`, `list_takeable`, `show`, `create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`, `clear_set_aside`, `propose_plan`, `edit_plan`, `accept_plan`, `discard_plan`, `end_run`, `start`, `done_without_run`, `set_outcome`; `unknown` for a request that names none, or none the board has. A request the agent tool does not take (`bootstrap`) records its op, refused, and a `quecto board` line refused as it is read records the op it named before the refusal |
 | `front_end` | `tool` (the agent `board` tool) or `cli` (`quecto board`) |
 | `client` | For the tool `agent`, for the CLI `cli`, or, for either, as `QUECTO_BOARD_CLIENT` names it: `pocket_relay` or `other`; `session_end` for an `end_run` the harness makes as a session ends with a run it started still open |
 | `board` | The board the request reached, once its operations were built: an opaque id, 16 hex digits of the SHA-256 of its remote's repository as its fetch URL names it: the host in lower case (with its scheme's own default port left out: ssh 22, http 80, https 443, git 9418, an scp-style `user@host:path` counting as ssh; another port, or another scheme's default, is kept) and the path with its case kept, the scheme and any userinfo left out, an scp-style `user@host:path` read as host and path, a trailing `/` and `.git` dropped; a local remote, a path or a `file://` URL, is the canonical absolute path it names, a relative one resolved from the clone's top level (a bare clone's git directory). So the https, ssh and `.git` spellings of one repository give one id, and one daily `board-cli_<date>.jsonl` holding several repositories' records tells them apart. The id names no remote, but it is opaque, not secret: anyone who knows a repository can compute its id |
@@ -1216,7 +1216,7 @@ an older quecto ignores it.
 | `plan_version`, `items`, `roles` | For `propose_plan`, the version it wrote, only once written. For `edit_plan`, `accept_plan`, `discard_plan` and `start`, the version it named, also when the board refused the change. For `show(task, version)`, the version it named once the task was read, also when that version was refused; a `show` of a task the board refused records none. A request refused as it is read records none. For `propose_plan` and `edit_plan`, once written, how many task items and team roles the plan holds (`roles` is 0 with no team); counts only |
 | `plan_state_from`, `plan_state_to` | For `accept_plan` and `discard_plan`: the state of the version it named as the change last read it (`draft`, `accepted`, `superseded` or `discarded`; none when the task has no such version, or the read was refused first), and the state it wrote (`accepted` or `discarded`; none for a refused change) |
 | `run`, `run_outcome` | For `end_run`, once the request was read: the run it named and the outcome it ends it with (`succeeded`, `stopped`, `failed` or `lost`), also when the board refused the change |
-| `status_from`, `status_to` | For a write of a task (`create`, `update_draft`, `move`, `done_without_run`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`): the task's status as the write last read it (none for `create`), and the status it moved to: a `move`'s target (`done_without_run`'s `done`), made or refused, otherwise the status of the task it wrote (`create`'s `draft` or `ready`, `complete`'s `done`), so a refused write other than `move` writes no `status_to`. A `link_pr` that completes its task records its own write's status here; what came of completing it is in `completion`. An `end_run` records only `status_from`, the status of the task whose run it ends: it writes no task |
+| `status_from`, `status_to` | For a write of a task (`create`, `update_draft`, `move`, `done_without_run`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`, `set_outcome`): the task's status as the write last read it (none for `create`), and the status it moved to: a `move`'s target (`done_without_run`'s `done`), made or refused, otherwise the status of the task it wrote (`create`'s `draft` or `ready`, `complete`'s `done`), so a refused write other than `move` writes no `status_to`. A `link_pr` that completes its task records its own write's status here; what came of completing it is in `completion`. An `end_run` records only `status_from`, the status of the task whose run it ends: it writes no task |
 | `claim` | For a `move`, `renew`, `take_over`, `link_pr`, `unlink_pr` or `end_run` of a task that holds a claim, the claim as the change found it, never its holder: `held_s` (seconds since it began, never below zero: 0 when the writer's clock reads before that), `left_s` (seconds until it expires, below zero once it has lapsed) and `holder_is_writer` |
 | `attempts`, `races_lost`, `pause_ms` | For a write (every op that writes but `bootstrap`): the attempts it began (at most 3), how many of them lost the race to another writer (`races_lost`, never a run's `lost` outcome), and, when it paused between attempts, the time it paused in milliseconds. A `link_pr` that completes its task counts only its own write's attempts here; the completion's write is counted in `completion_attempts` |
 | `lock_races` | For a write (a `clear_set_aside` too) whose fetches found the board's tracking ref locked by another writer in the same clone, how many times they fetched again (The board branch, above); absent when none did. The store counts them, so calls that run at once in one process (the agent tool's) may each count the other's |
@@ -1327,3 +1327,70 @@ Each `start` that reaches the board writes one `board_start` record besides its
 
 A start undone writes its fold-back's own `board_fold_back` record too, as
 below.
+
+
+## Settled done-when outcomes
+
+Completing a task settles every implicit done-when outcome as met in the domain:
+merged pull requests, merged changes, review-to-done and `done_without_run` all
+share this rule. Completion refusals still leave both status and outcomes alone.
+Old **sectioned Done** tasks with unchecked outcomes read as met, without a
+migration commit or any write on read. Legacy prose stays byte-preserved, even
+when it resembles a checklist. Unfinished tasks and unrelated archived tasks
+are not normalized.
+
+A finished task can record an explicit unmet outcome without reopening it:
+
+```json
+{"op":"set_outcome","task":"a","outcome_index":0,"met":false,"reason":"Owner deferred deployment","expected_rev":"r3"}
+{"op":"set_outcome","task":"a","outcome_index":0,"met":true,"expected_rev":"r4"}
+```
+
+Copy `show.rev` for `expected_rev`: it pins the **exact board HEAD**, not just
+the task's file or timestamp. Any intervening board write, including an
+unrelated task's, makes it stale. Refresh and decide again; retries never
+blindly rebase an index onto a changed board. `expected_updated` is not accepted.
+The index is zero-based in the existing outcome order (duplicate text is fine).
+Only a sectioned task in **Done** is eligible; no outcome is added or reordered,
+no general finished-task edit is enabled, and Archived is not eligible.
+
+An unmet outcome requires a normalized nonblank reason, at most 1,000
+characters, still subject to the task's description and total text caps.
+Restoring met removes the exception and refuses **any** supplied reason,
+including null or blank. Missing, malformed or stale revisions, invalid indices,
+wrong field types and ineligible tasks refuse atomically without writes.
+Status, resolution, claim, task-level lifecycle `reason`, outcome text/order and
+other description sections remain unchanged.
+
+The CLI uses the same operation envelope and answers:
+
+```sh
+quecto board set-outcome --task a --outcome-index 0 --met false --reason 'Owner deferred deployment' --expected-rev "$REV"
+quecto board set-outcome --task a --outcome-index 0 --met true --expected-rev "$FRESH_REV"
+```
+
+Answers retain `done_when[].outcome` and `done`. Only an explicitly unmet entry
+adds `exception: {reason, by: {name, email}, at}`. `by` comes from the application's
+configured writer, **a self-asserted git committer, not an authenticated human**;
+`at` is the task's chosen `updated` write stamp. Neither can be supplied by the
+request. Show, list and change answers share this representation.
+
+Explicit exceptions persist at task **schema 4**, with this optional table after
+Done when and before Links, both in canonical descriptions and task files:
+
+```markdown
+## Outcome exceptions
+| Outcome index | Reason | By | At |
+|---|---|---|---|
+| 0 | Owner deferred deployment | Ada (`ada@example.com`) | 2026-10-11T09:30:00Z |
+```
+
+Rows are ordered by index, reference existing unchecked outcomes exactly once,
+and use the existing text-cell and identity spelling/escaping. Done when remains
+a checkbox list in descriptions and a yes/no table in task files. Exceptions
+survive archiving and subsequent reads/writes; implicit compatibility settlement
+never erases explicit unmet metadata. Older readers reject schema 4 and must
+upgrade, not clear the sound file as set aside. Without exceptions (including
+after restoring the last one), writers select the minimal applicable schema
+1/2/3, independently of lifecycle Reason. This is a current-data encoding choice,
+not a monotonic schema audit history. No live-board migration is required.

@@ -162,6 +162,7 @@ fn each_op_reads_its_own_fields() {
             "link_pr",
             "unlink_pr",
             "complete",
+            "set_outcome",
             "propose_plan",
             "edit_plan",
             "accept_plan",
@@ -322,6 +323,7 @@ fn anything_but_the_ops_own_fields_of_their_own_types_is_refused() {
 /// the wrong type.
 fn samples(kind: Kind) -> (Value, Value, Value) {
     match kind {
+        Kind::Boolean => (json!(false), json!(true), json!("false")),
         Kind::Slug => (json!("a"), json!("b"), json!(7)),
         Kind::OptionalSlug => (json!("a"), Value::Null, json!(7)),
         Kind::Slugs => (json!(["a"]), json!(["b"]), json!("a")),
@@ -337,7 +339,7 @@ fn samples(kind: Kind) -> (Value, Value, Value) {
         Kind::NewStatus => (json!("draft"), json!("ready"), json!("claimed")),
         Kind::TaskKind => (json!("epic"), json!("chore"), json!("story")),
         Kind::Pr => (json!(1), json!(2), json!(0)),
-        Kind::Offset => (json!(0), json!(5), json!(-1)),
+        Kind::Index | Kind::Offset => (json!(0), json!(5), json!(-1)),
         Kind::Path => (json!("tasks/x.md"), json!("tasks/y.md"), json!(7)),
         Kind::ObjectId => (json!("a".repeat(40)), json!("b".repeat(40)), json!("HEAD")),
         Kind::Repeated => (
@@ -374,6 +376,10 @@ fn every_field_in_the_table_is_read_by_its_kind() {
             object.insert("op".into(), json!(op));
             for field in fields.iter().filter(|field| field.required) {
                 object.insert(field.name.into(), samples(field.kind).0);
+            }
+            // An unmet outcome takes a reason; restoring one takes none.
+            if *op == "set_outcome" && except != "met" {
+                object.insert("reason".into(), json!("x"));
             }
             // An edit must set something besides the field under test.
             if *op == "update_draft" {
@@ -413,7 +419,17 @@ fn every_field_in_the_table_is_read_by_its_kind() {
             let (one, two, wrong) = samples(field.kind);
             let with = |value: Value| {
                 let mut object = base(field.name);
-                object.insert(field.name.into(), value);
+                object.insert(field.name.into(), value.clone());
+                if *op == "set_outcome" && field.name == "met" {
+                    match value.as_bool() {
+                        Some(false) => {
+                            object.insert("reason".into(), json!("x"));
+                        }
+                        _ => {
+                            object.remove("reason");
+                        }
+                    }
+                }
                 Value::Object(object)
             };
             assert_eq!(
@@ -432,6 +448,7 @@ fn every_field_in_the_table_is_read_by_its_kind() {
 /// A value of `kind` every op accepts.
 fn sample(kind: Kind) -> Value {
     match kind {
+        Kind::Boolean => json!(true),
         Kind::Slug => json!("a"),
         Kind::OptionalSlug => Value::Null,
         Kind::Slugs | Kind::Lines => json!([]),
@@ -442,7 +459,7 @@ fn sample(kind: Kind) -> Value {
         Kind::NewStatus => json!("draft"),
         Kind::TaskKind => json!("task"),
         Kind::Pr => json!(1),
-        Kind::Offset => json!(0),
+        Kind::Index | Kind::Offset => json!(0),
         Kind::Path => json!("p"),
         Kind::ObjectId => json!("0".repeat(40)),
         Kind::Repeated => json!({}),

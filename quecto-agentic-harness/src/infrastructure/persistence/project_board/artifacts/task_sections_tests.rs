@@ -163,10 +163,10 @@ fn a_legacy_description_stays_its_description_never_rewritten() {
 /// reason since #2705 T4.
 #[test]
 fn a_newer_schema_asks_for_an_upgrade() {
-    let newer = FILE.replacen("schema=2", "schema=4", 1);
+    let newer = FILE.replacen("schema=2", "schema=5", 1);
     assert_eq!(
         decode::<TaskCodec>(newer.as_bytes()),
-        Err(CodecError::NewerSchema { found: 4, known: 3 })
+        Err(CodecError::NewerSchema { found: 5, known: 4 })
     );
 }
 
@@ -316,4 +316,83 @@ fn done_ticks_exception_description_is_parseable_without_changing_outcome_text()
         "Current master merged in, moves only"
     );
     assert!(!parsed.done_when()[0].done);
+}
+
+#[test]
+fn done_ticks_exception_codec_refuses_inconsistent_or_unattributed_metadata() {
+    let file = done_ticks_exception_file("done");
+    for malformed in [
+        file.replace("| 0 | Owner", "| 2 | Owner"),
+        file.replace("| 0 | Owner", "| 1 | Owner"),
+        file.replace("| 0 | Owner", "| 00 | Owner"),
+        file.replace("Owner deferred deployment", " "),
+        file.replace("Ada (`ada@example.com`)", "Ada"),
+        file.replace("2026-10-11T09:30:00Z", "not-a-time"),
+        file.replace("schema=4", "schema=3"),
+        file.replace("| 0 | Owner deferred deployment | Ada (`ada@example.com`) | 2026-10-11T09:30:00Z |", &"| 0 | Owner deferred deployment | Ada (`ada@example.com`) | 2026-10-11T09:30:00Z |\n| 0 | Owner deferred deployment | Ada (`ada@example.com`) | 2026-10-11T09:30:00Z |"),
+    ] {
+        assert!(decode::<TaskCodec>(malformed.as_bytes()).is_err(), "{malformed}");
+    }
+}
+
+#[test]
+fn done_ticks_exception_text_cells_escape_and_roundtrip_without_changing_meaning() {
+    let read = decode::<TaskCodec>(done_ticks_exception_file("done").as_bytes()).unwrap();
+    let by = crate::domain::project_board::entities::claim::Identity {
+        name: "Ada | Ops".into(),
+        email: "a|b@example.com".into(),
+    };
+    for reason in [
+        r"Owner | deferred\deployment",
+        r"See `a\|b`",
+        r"See ``a`\|b``",
+        r"Literal \* marker",
+    ] {
+        let task = read
+            .set_outcome(0, Some(reason), &by, &read.fields().updated)
+            .unwrap();
+        let encoded = encode::<TaskCodec>(&task).unwrap();
+        assert_eq!(
+            decode::<TaskCodec>(encoded.as_bytes()).unwrap(),
+            task,
+            "{encoded}"
+        );
+        let description = Description::read(&task.fields().description).unwrap();
+        assert_eq!(
+            description.done_when()[0]
+                .exception
+                .as_ref()
+                .unwrap()
+                .reason,
+            reason
+        );
+    }
+}
+
+#[test]
+fn done_ticks_schema4_settles_only_implicit_done_outcomes() {
+    let file = done_ticks_exception_file("done").replace("| yes |", "| no |");
+    let task = decode::<TaskCodec>(file.as_bytes()).unwrap();
+    let description = Description::read(&task.fields().description).unwrap();
+    assert!(!description.done_when()[0].done);
+    assert!(description.done_when()[0].exception.is_some());
+    assert!(description.done_when()[1].done);
+    assert!(description.done_when()[1].exception.is_none());
+    assert_eq!(
+        decode::<TaskCodec>(encode::<TaskCodec>(&task).unwrap().as_bytes()).unwrap(),
+        task
+    );
+}
+
+#[test]
+fn done_ticks_exception_metadata_cannot_enter_as_a_general_description_edit() {
+    let text = SECTIONED_TEXT.replace(
+        "## Links\n",
+        &format!("{DONE_TICKS_EXCEPTION_SECTION}## Links\n"),
+    );
+    assert!(Description::read(&text).is_some());
+    assert!(
+        Description::entered(&text).is_err(),
+        "writer attribution is not caller-supplied description data"
+    );
 }

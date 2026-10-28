@@ -96,6 +96,13 @@ pub trait ArtifactCodec {
     /// What in `document` is not a value of the kind.
     fn from_document(document: &Document) -> Result<Self::Value, CodecError>;
 
+    /// A validated read document after an explicitly supported pure compatibility
+    /// normalization. Raw bytes still pass the strict Markdown parser first.
+    /// By default nothing changes; codecs must keep this narrow and idempotent.
+    fn compatible_read(document: Document) -> Document {
+        document
+    }
+
     /// Whether the value keeps field `name` of the shape, so a canonical
     /// file holds it only as the value writes it. Every field, unless a
     /// codec keeps fewer: one a file written before a change may still
@@ -156,7 +163,7 @@ pub fn decode<C: ArtifactCodec>(bytes: &[u8]) -> Result<C::Value, CodecError> {
         "the marker read is the one parsed"
     );
     let value = C::from_document(&document)?;
-    match C::to_document(&value)? == kept::<C>(document) {
+    match C::to_document(&value)? == C::compatible_read(kept::<C>(document)) {
         true => Ok(value),
         false => Err(CodecError::NotCanonical),
     }

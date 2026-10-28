@@ -126,6 +126,11 @@ fn every_request() -> Vec<BoardRequest> {
         change(BoardOp::TakeOver),
         change(BoardOp::AddPr(7)),
         change(BoardOp::RemovePr(8)),
+        change(BoardOp::SetOutcome {
+            index: 0,
+            reason: Some("Deferred".into()),
+            expected_rev: crate::application::project_board::ports::BoardHead("r1".into()),
+        }),
         BoardRequest::Complete(a.clone()),
         BoardRequest::Clear {
             path: "tasks/a.md".into(),
@@ -238,6 +243,7 @@ fn a_request_names_its_task_and_pull_request() {
             task(OpKind::TakeOver),
             (OpKind::LinkPr, Some("a"), Some(7)),
             (OpKind::UnlinkPr, Some("a"), Some(8)),
+            (OpKind::SetOutcome, Some("a"), None),
             task(OpKind::Complete),
             none(OpKind::ClearSetAside),
             task(OpKind::ProposePlan),

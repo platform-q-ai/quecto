@@ -520,3 +520,109 @@ fn done_ticks_existing_cli_envelope_builds_the_same_exception_request() {
         .expect("approved board operation through existing CLI envelope");
     assert_eq!(request, done_ticks_request(&json!("r3")));
 }
+
+#[test]
+fn done_ticks_exception_pin_is_exact_board_head_even_after_an_unrelated_write() {
+    use crate::application::project_board::ports::ProjectBoardStore;
+    let (store, writer) = done_ticks_finished_board();
+    let read = ok(&writer, json!({"op":"show","task":"a"}));
+    ok(
+        &writer,
+        json!({"op":"create","task":"unrelated","title":"Another task"}),
+    );
+    let before = store.read().unwrap();
+    let writes = store.writes();
+    let answer = call(&writer, done_ticks_request(&read["rev"]));
+    assert_eq!(answer["error"]["code"], "stale", "{answer}");
+    assert_eq!(store.read().unwrap().tasks, before.tasks);
+    assert_eq!(store.writes(), writes);
+    let fresh = ok(&writer, json!({"op":"show","task":"a"}));
+    ok(&writer, done_ticks_request(&fresh["rev"]));
+}
+
+#[test]
+fn done_ticks_restore_refuses_any_reason_and_null_index_without_writes() {
+    use crate::application::project_board::ports::ProjectBoardStore;
+    let (store, writer) = done_ticks_finished_board();
+    let read = ok(&writer, json!({"op":"show","task":"a"}));
+    for reason in [json!(null), json!(""), json!(" ")] {
+        let before = store.read().unwrap();
+        let writes = store.writes();
+        let answer = call(
+            &writer,
+            json!({"op":"set_outcome","task":"a","outcome_index":0,"met":true,"reason":reason,"expected_rev":read["rev"]}),
+        );
+        assert_eq!(answer["error"]["field"], "reason", "{answer}");
+        assert_eq!(store.read().unwrap().tasks, before.tasks);
+        assert_eq!(store.writes(), writes);
+    }
+    let mut request = done_ticks_request(&read["rev"]);
+    request["outcome_index"] = json!(null);
+    let writes = store.writes();
+    let before = store.read().unwrap();
+    let answer = call(&writer, request);
+    assert_eq!(answer["error"]["field"], "outcome_index", "{answer}");
+    assert_eq!(store.read().unwrap().tasks, before.tasks);
+    assert_eq!(store.writes(), writes);
+}
+
+#[test]
+fn done_ticks_exception_retry_rechecks_the_original_board_head_pin() {
+    use crate::application::project_board::ports::ProjectBoardStore;
+    use crate::domain::project_board::entities::task::Task;
+    let (store, writer) = done_ticks_finished_board();
+    ok(
+        &writer,
+        json!({"op":"create","task":"unrelated","title":"Before"}),
+    );
+    let read = ok(&writer, json!({"op":"show","task":"a"}));
+    let before = store.read().unwrap();
+    let writes = store.writes();
+    store.before_next_write(|store| {
+        let snapshot = store.read().unwrap();
+        let mut unrelated = snapshot
+            .tasks
+            .iter()
+            .find(|task| task.fields().id.as_str() == "unrelated")
+            .unwrap()
+            .fields()
+            .clone();
+        unrelated.title = "Concurrent edit".into();
+        store
+            .write_tasks(
+                &snapshot.head,
+                &[Task::new(unrelated).unwrap()],
+                "competing write",
+            )
+            .unwrap();
+    });
+    let answer = call(&writer, done_ticks_request(&read["rev"]));
+    assert_eq!(answer["error"]["code"], "stale", "{answer}");
+    let after = store.read().unwrap();
+    let target = |tasks: Vec<Task>| {
+        tasks
+            .into_iter()
+            .find(|task| task.fields().id.as_str() == "a")
+            .unwrap()
+    };
+    assert_eq!(target(after.tasks), target(before.tasks));
+    assert_eq!(
+        store.writes(),
+        writes + 1,
+        "only the competing write landed"
+    );
+}
+
+#[test]
+fn done_ticks_exception_store_refusal_leaves_task_and_outcomes_unchanged() {
+    use crate::application::project_board::ports::ProjectBoardStore;
+    let (store, writer) = done_ticks_finished_board();
+    let read = ok(&writer, json!({"op":"show","task":"a"}));
+    let before = store.read().unwrap();
+    let writes = store.writes();
+    store.refuse_next_write("fixture refusal");
+    let answer = call(&writer, done_ticks_request(&read["rev"]));
+    assert_eq!(answer["ok"], false, "{answer}");
+    assert_eq!(store.read().unwrap().tasks, before.tasks);
+    assert_eq!(store.writes(), writes);
+}

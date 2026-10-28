@@ -94,8 +94,18 @@ impl TaskFields {
 pub struct Task(TaskFields);
 
 impl Task {
-    pub fn new(fields: TaskFields) -> Result<Self, SchemaError> {
+    pub fn new(mut fields: TaskFields) -> Result<Self, SchemaError> {
         validate(&fields)?;
+        // Shared settlement invariant, also a pure compatibility read for old Done files.
+        if let (TaskStatus::Done, DescriptionForm::Sectioned) =
+            (fields.status, fields.description_form)
+        {
+            let mut description =
+                Description::read(&fields.description).expect("validated sections");
+            description.settle();
+            fields.description = description.markdown();
+            validate(&fields)?;
+        }
         Ok(Self(fields))
     }
 
@@ -119,6 +129,40 @@ impl Task {
         let mut fields = task.0;
         fields.description_form = entry.form(&fields.description);
         Self::new(fields)
+    }
+
+    /// Record or clear a reasoned exception without reopening finished work.
+    pub fn set_outcome(
+        &self,
+        index: usize,
+        reason: Option<&str>,
+        by: &super::claim::Identity,
+        at: &Timestamp,
+    ) -> Result<Self, super::super::value_objects::rule_error::BoardRuleError> {
+        use super::super::value_objects::rule_error::BoardRuleError;
+        use super::task_parts::OutcomeException;
+        let invalid = BoardRuleError::Invalid;
+        let mut fields = self.0.clone();
+        match (fields.status, fields.description_form) {
+            (TaskStatus::Done, DescriptionForm::Sectioned) => {}
+            _ => {
+                return Err(invalid(SchemaError::new(
+                    "status",
+                    "only a sectioned Done task has settled outcomes",
+                )));
+            }
+        }
+        let mut description = Description::read(&fields.description).expect("validated sections");
+        let at = at.max(&fields.updated);
+        let exception = reason.map(|reason| OutcomeException {
+            reason: reason.into(),
+            by: by.clone(),
+            at: at.clone(),
+        });
+        description.set_outcome(index, exception).map_err(invalid)?;
+        fields.description = description.markdown();
+        fields.updated = at.clone();
+        Self::new(fields).map_err(invalid)
     }
 
     pub fn fields(&self) -> &TaskFields {

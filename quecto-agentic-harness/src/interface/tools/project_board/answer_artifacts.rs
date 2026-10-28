@@ -448,7 +448,13 @@ pub(super) fn description_fields(text: &str) -> Map<String, Value> {
     let outcomes = description.as_ref().map_or(vec![], |description| {
         let outcomes = description.done_when().iter();
         outcomes
-            .map(|outcome| json!({"outcome": outcome.text, "done": outcome.done}))
+            .map(|outcome| {
+                let mut answer = json!({"outcome": outcome.text, "done": outcome.done});
+                if let Some(exception) = &outcome.exception {
+                    answer["exception"] = json!({"reason": exception.reason, "by": identity_json(&exception.by), "at": exception.at.as_str()});
+                }
+                answer
+            })
             .collect()
     });
     Map::from_iter([
