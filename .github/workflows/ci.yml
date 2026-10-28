@@ -68,12 +68,15 @@ jobs:
       - run: scripts/check-bdd-tags.sh
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines
+        name: Strict workspace Clippy
       # Feature unification: the harness's dev-dependency enables quecto-tui's
       # `test-harness` feature in every workspace build, so code that only the
       # headless harness uses looks live above. `cargo install --path <crate>`
       # builds each package alone with default features; check that shape too.
       - run: cargo clippy -p quecto-tui --lib --bins -- -D warnings
+        name: Strict standalone quecto-tui Clippy
       - run: cargo clippy -p quecto-agentic-harness --lib --bins -- -D warnings
+        name: Strict standalone quecto-agentic-harness Clippy
 
   # The release binaries include macOS, built only for a `release-binaries`
   # PR, so a macOS-only compile error would first show at release (#2237).
