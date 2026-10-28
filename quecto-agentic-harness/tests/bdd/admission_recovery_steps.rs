@@ -34,6 +34,7 @@ pub struct UdsAgent {
     stderr_path: PathBuf,
     last_error: Option<String>,
     last_provider_requests: usize,
+    prompt_frames: Vec<serde_json::Value>,
 }
 
 impl Drop for UdsAgent {
@@ -54,6 +55,16 @@ pub struct AdmissionRecoveryState {
     agents: BTreeMap<String, UdsAgent>,
     status_out: String,
     mock_requests: Arc<AtomicUsize>,
+    early_ack: bool,
+}
+
+#[given(expr = "the admission client selects transport mode {string}")]
+fn transport_mode(world: &mut QuectoWorld, mode: String) {
+    state(world).early_ack = match mode.as_str() {
+        "default" => false,
+        "exact-env1" => true,
+        _ => panic!("unsupported transport mode: {mode}"),
+    };
 }
 
 impl std::fmt::Debug for AdmissionRecoveryState {
@@ -131,7 +142,8 @@ fn start_mock() -> (String, tokio::runtime::Runtime, Arc<AtomicUsize>) {
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/chat/completions"))
             .respond_with(move |request: &wiremock::Request| {
-                observed.fetch_add(1, Ordering::SeqCst);
+                let count = observed.fetch_add(1, Ordering::SeqCst) + 1;
+                eprintln!("admission provider requests: {count}");
                 let body: serde_json::Value = request.body_json().unwrap();
                 let streaming = body["stream"] == true;
                 let (message, finish) = super::success_fixture::completion(&body, "DONE");
@@ -203,7 +215,12 @@ fn start_agent(world: &mut QuectoWorld, name: &str, extra: &[&str]) {
     let mut args = vec!["agent", "--mode", "uds", "--no-session", "--socket"];
     args.push(socket.to_str().unwrap());
     args.extend_from_slice(extra);
-    let mut child = qcmd(&base_path, &args)
+    let mut command = qcmd(&base_path, &args);
+    command.env_remove("QUECTO_TURN_OUTCOMES");
+    if state(world).early_ack {
+        command.env("QUECTO_TURN_OUTCOMES", "1");
+    }
+    let mut child = command
         .stdout(Stdio::null())
         .stderr(stderr)
         .spawn()
@@ -235,6 +252,7 @@ fn start_agent(world: &mut QuectoWorld, name: &str, extra: &[&str]) {
             stderr_path,
             last_error: None,
             last_provider_requests: 0,
+            prompt_frames: Vec::new(),
         },
     );
 }
@@ -349,6 +367,7 @@ fn get_state(agent: &mut UdsAgent) -> serde_json::Value {
 /// Legacy children reply to the prompt only after completion.
 fn run_prompt(agent: &mut UdsAgent) {
     agent.last_error = None;
+    agent.prompt_frames.clear();
     let id = format!(
         "rc-{}",
         std::time::SystemTime::now()
@@ -367,6 +386,13 @@ fn run_prompt(agent: &mut UdsAgent) {
                 std::fs::read_to_string(&agent.stderr_path).unwrap_or_default()
             )
         });
+        if event["type"] == "turn_outcome"
+            || (event["type"] == "response"
+                && matches!(event["command"].as_str(), Some("prompt" | "agent_error")))
+        {
+            eprintln!("admission prompt {id}: {event}");
+            agent.prompt_frames.push(event.clone());
+        }
         if event["type"] == "turn_outcome" && event["episodeId"] == id {
             assert_eq!(
                 acknowledgements, 1,
@@ -398,6 +424,61 @@ fn when_runs_prompt(world: &mut QuectoWorld, name: String) {
     let agent = agent(world, &name);
     run_prompt(agent);
     agent.last_provider_requests = requests.load(Ordering::SeqCst) - before;
+}
+
+#[then(expr = "{string} completed the selected transport contract without a correction")]
+fn selected_transport_completed(world: &mut QuectoWorld, name: String) {
+    let early_ack = state(world).early_ack;
+    let agent = agent(world, &name);
+    let barrier = serde_json::json!({"type":"get_state", "id":"transport-barrier"});
+    writeln!(agent.stream, "{barrier}").unwrap();
+    let deadline = Instant::now() + LIMIT;
+    loop {
+        let frame = read_line(agent, deadline).expect("transport barrier must complete");
+        if frame["type"] == "response" && frame["id"] == "transport-barrier" {
+            assert_eq!(frame["command"], "get_state", "{frame}");
+            assert_eq!(frame["success"], true, "{frame}");
+            break;
+        }
+        if matches!(frame["type"].as_str(), Some("response" | "turn_outcome")) {
+            agent.prompt_frames.push(frame);
+        }
+    }
+    assert_eq!(
+        agent.last_provider_requests, 2,
+        "one declaration and one completion"
+    );
+    let frames = &agent.prompt_frames;
+    let outcomes: Vec<_> = frames
+        .iter()
+        .filter(|frame| frame["type"] == "turn_outcome")
+        .collect();
+    assert_eq!(outcomes.len(), 1, "{frames:?}");
+    let outcome = outcomes[0];
+    assert_eq!(outcome["outcome"], "done", "{outcome}");
+    let responses: Vec<_> = frames
+        .iter()
+        .filter(|frame| frame["type"] == "response")
+        .collect();
+    assert_eq!(
+        responses.len(),
+        1,
+        "no extra uncorrelated diagnostic: {frames:?}"
+    );
+    let response = responses[0];
+    assert_eq!(response["id"], outcome["episodeId"], "{frames:?}");
+    assert_eq!(response["command"], "prompt", "{response}");
+    assert_eq!(response["success"], true, "{response}");
+    assert_eq!(
+        response["data"]["episodeId"] == outcome["episodeId"],
+        early_ack,
+        "{frames:?}"
+    );
+    assert_eq!(
+        frames.first().unwrap()["type"] == "response",
+        early_ack,
+        "{frames:?}"
+    );
 }
 
 #[then(

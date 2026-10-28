@@ -61,3 +61,21 @@ Feature: One host-wide admission broker, agent-operable
     Given an admission config whose only binding is the default alias
     When the broker serves that config
     Then the broker reports the authority as running
+
+  Scenario: Admission root uses the default completion contract
+    Given a real admission broker serving a mock provider
+    And the admission client selects transport mode "default"
+    And a real root UDS agent "root" bound to the broker
+    When "root" runs a prompt
+    Then "root" completed the selected transport contract without a correction
+    And "root" completed 2 admitted attempts and reports the authority "connected" in epoch 1
+    And the broker reports epoch 1 with exactly 1 live scope
+
+  Scenario: Admission root uses the exact-env1 completion contract
+    Given a real admission broker serving a mock provider
+    And the admission client selects transport mode "exact-env1"
+    And a real root UDS agent "root" bound to the broker
+    When "root" runs a prompt
+    Then "root" completed the selected transport contract without a correction
+    And "root" completed 2 admitted attempts and reports the authority "connected" in epoch 1
+    And the broker reports epoch 1 with exactly 1 live scope
