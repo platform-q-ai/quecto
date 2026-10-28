@@ -268,7 +268,7 @@ fn job<'a>(workflow: &'a str, name: &str) -> &'a str {
             .strip_prefix("  ")
             .and_then(|line| line.strip_suffix(':'));
         if key.is_some_and(|key| {
-            key.len() > 0
+            !key.is_empty()
                 && key
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
