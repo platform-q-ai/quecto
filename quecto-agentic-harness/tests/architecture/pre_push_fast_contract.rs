@@ -1,4 +1,6 @@
 //! Executable local/CI boundary contract. Adapters record commands, never compile.
+#[path = "pre_push_fast_contract_diagnostics.rs"]
+mod diagnostics;
 #[path = "pre_push_fast_contract_final_red.rs"]
 mod pre_push_ci_final_red;
 #[path = "pre_push_fast_contract_round3.rs"]
@@ -9,7 +11,11 @@ mod pre_push_ci_round4;
 mod pre_push_ci_round4_allowlists;
 #[path = "pre_push_fast_contract_scope.rs"]
 mod scope;
+
+#[path = "pre_push_fast_contract_validation.rs"]
+mod validation;
 use scope::{required_job, workflow_jobs};
+use validation::ci_contract_validation;
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -234,9 +240,9 @@ fn pre_push_concurrent_failures_wait_for_every_independent_gate() {
 }
 
 // Deliberately bounded to ci.yml's two-space jobs, four-space scalar job
-// properties and six-space step mappings. Plain unquoted names/commands and
+// properties and six-space step mappings. Plain or simply quoted names, unquoted commands and
 // literal `run: |` blocks are supported, with allowlisted executable shell lines.
-// No YAML aliases, folded/quoted scalars, inline comments or shell equivalence.
+// No YAML aliases, folded commands, inline comments or shell equivalence.
 // Unsupported spelling fails closed for the required identities and commands.
 fn unique_value<'a>(lines: &'a [&str], prefix: &str) -> Option<&'a str> {
     let values: Vec<_> = lines
@@ -255,6 +261,23 @@ fn tolerance_is_required(lines: &[&str], prefix: &str) -> bool {
         .filter_map(|line| line.strip_prefix(prefix))
         .collect();
     matches!(values.as_slice(), [] | ["false"])
+}
+
+// Only literal pinned identities need quote support, not YAML interpolation/escapes.
+fn pinned_name_scalar(value: &str) -> Option<&str> {
+    if let Some(inner) = value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')) {
+        return inner.chars().all(|c| c != '\'').then_some(inner);
+    }
+    if let Some(inner) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+        return inner
+            .chars()
+            .all(|c| c != '"' && c != '\\')
+            .then_some(inner);
+    }
+    value
+        .chars()
+        .all(|c| c != '\'' && c != '"')
+        .then_some(value)
 }
 
 fn required_step(steps: &[&str], name: &str) -> Option<Vec<String>> {
@@ -279,7 +302,10 @@ fn required_step(steps: &[&str], name: &str) -> Option<Vec<String>> {
             .filter_map(|line| line.strip_prefix("        name: "))
             .collect();
         let unique = names.len() == 1;
-        if names.contains(&name) {
+        if names
+            .iter()
+            .any(|value| pinned_name_scalar(value) == Some(name))
+        {
             matching.push((normalized, unique));
         }
     }
@@ -410,60 +436,7 @@ fn labeled_pull_request_trigger(lines: &[&str]) -> bool {
 }
 
 fn ci_contract_valid(workflow: &str) -> bool {
-    let lines: Vec<_> = workflow.lines().collect();
-    let required = [
-        (
-            "static-quality",
-            "Static Quality",
-            vec![
-                ("Strict workspace Clippy", vec![WORKSPACE_CLIPPY]),
-                (
-                    "Strict standalone quecto-tui Clippy",
-                    vec!["cargo clippy -p quecto-tui --lib --bins -- -D warnings"],
-                ),
-                (
-                    "Strict standalone quecto-agentic-harness Clippy",
-                    vec!["cargo clippy -p quecto-agentic-harness --lib --bins -- -D warnings"],
-                ),
-            ],
-        ),
-        (
-            "workspace-tests",
-            "Workspace Tests",
-            vec![(COMPILED_NAME, vec![SHAPE, COMPILED_COMMAND])],
-        ),
-    ];
-    let Some(jobs) = workflow_jobs(&lines) else {
-        return false;
-    };
-    labeled_pull_request_trigger(&lines)
-        && required.into_iter().all(|(id, display, required)| {
-            let Some(body) = required_job(jobs, id) else {
-                return false;
-            };
-            let Some(steps_start) = body.iter().position(|line| *line == "    steps:") else {
-                return false;
-            };
-            mapping_keys_supported(
-                body,
-                "    ",
-                &[
-                    "name",
-                    "if",
-                    "runs-on",
-                    "timeout-minutes",
-                    "continue-on-error",
-                ],
-                &["steps", "needs", "permissions"],
-            ) && unique_value(body, "    name: ") == Some(display)
-                && unique_value(body, "    if: ") == Some(ADMISSION)
-                && tolerance_is_required(body, "    continue-on-error: ")
-                && body.iter().filter(|line| **line == "    steps:").count() == 1
-                && required.into_iter().all(|(name, commands)| {
-                    required_step(&body[steps_start + 1..], name)
-                        .is_some_and(|step| required_commands(&step, name, &commands))
-                })
-        })
+    ci_contract_validation(workflow).is_ok()
 }
 
 const WORKSPACE_CLIPPY: &str = "cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines";
@@ -698,9 +671,8 @@ fn pre_push_ci_synthetic_rejects_identity_scope_commands_and_tolerance() {
 
 #[test]
 fn pre_push_ci_owns_strict_workspace_standalone_and_compiled_invariants() {
-    assert!(ci_contract_valid(include_str!(
-        "../../../.github/workflows/ci.yml"
-    )));
+    let result = ci_contract_validation(include_str!("../../../.github/workflows/ci.yml"));
+    assert!(result.is_ok(), "actual ci.yml contract: {result:?}");
 }
 
 #[test]

@@ -2,13 +2,6 @@
 use super::{ci_contract_valid, pre_push_synthetic_ci};
 
 #[test]
-fn pre_push_ci_round3_actual_workflow_remains_valid() {
-    assert!(ci_contract_valid(include_str!(
-        "../../../.github/workflows/ci.yml"
-    )));
-}
-
-#[test]
 fn pre_push_ci_round3_rejects_required_jobs_inside_inert_run_name() {
     let source = pre_push_synthetic_ci(true);
     let (trigger, required_job_text) = source

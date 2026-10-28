@@ -67,7 +67,6 @@ fn pre_push_ci_round4_actual_workflow_branch_and_env_remain_valid() {
     let source = include_str!("../../../.github/workflows/ci.yml");
     assert!(source.contains("  pull_request:\n    branches: [master]\n"));
     assert!(source.contains("        env:\n          GH_TOKEN: ${{ github.token }}\n"));
-    assert!(ci_contract_valid(source));
 }
 
 #[test]
