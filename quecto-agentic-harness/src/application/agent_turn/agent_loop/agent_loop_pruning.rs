@@ -13,9 +13,28 @@ impl AgentLoopImpl {
         // units at the provider-observed residual scale; the ladder sums
         // per-class estimates against it, the scale applying to all alike.
         self.log_pending_window_note();
-        let fixed_tokens = self.tool_definition_tokens();
-        let effective = self.context_manager.pruning_ceiling_in_estimate_units();
-        let window = self.context_manager.window_in_estimate_units();
+        // The ladder sees canonical messages, but the provider sees effective
+        // guidance. Charge that exact difference alongside fixed tool schemas
+        // BEFORE deciding what history fits. Nothing projected is published or
+        // persisted. A negative difference first offsets fixed tokens; any
+        // remaining credit increases canonical room and is removed from totals.
+        let (canonical, projected) = guidance_projection::GuidanceProjection::token_change(
+            messages,
+            self.composed_prompt_id,
+            self.parent_outcome_candidate()
+                .map(|runtime| runtime.enabled()),
+        );
+        let provider_fixed = self.tool_definition_tokens().saturating_add(projected);
+        let fixed_tokens = provider_fixed.saturating_sub(canonical);
+        let credit = canonical.saturating_sub(provider_fixed);
+        let effective = self
+            .context_manager
+            .pruning_ceiling_in_estimate_units()
+            .saturating_add(credit);
+        let window = self
+            .context_manager
+            .window_in_estimate_units()
+            .map(|window| window.saturating_add(credit));
         let MessageBudget {
             tokens: budget,
             window_exceeded,
@@ -90,8 +109,14 @@ impl AgentLoopImpl {
                 AuditEvent::ContextPruned {
                     messages_dropped: plan.messages_dropped,
                     // Counted as the estimate is: with the tool definitions.
-                    tokens_before: plan.tokens_before.saturating_add(fixed_tokens),
-                    tokens_after: plan.total_tokens.saturating_add(fixed_tokens),
+                    tokens_before: plan
+                        .tokens_before
+                        .saturating_add(fixed_tokens)
+                        .saturating_sub(credit),
+                    tokens_after: plan
+                        .total_tokens
+                        .saturating_add(fixed_tokens)
+                        .saturating_sub(credit),
                     budget_unmet: plan.over_budget,
                     ladder_stubbed: plan.ladder_stubbed,
                     ceiling_tokens,
@@ -100,7 +125,9 @@ impl AgentLoopImpl {
             )
             .await;
         }
-        plan.total_tokens.saturating_add(fixed_tokens)
+        plan.total_tokens
+            .saturating_add(fixed_tokens)
+            .saturating_sub(credit)
     }
 
     /// Tell each tool whose result a cut or the ladder just took out of the

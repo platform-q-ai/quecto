@@ -475,6 +475,7 @@ impl ToolRegistryImpl {
                         .profile_scope
                         .unwrap_or(ProfileAvailabilityScope::Both)
                         == mutation.scope
+                        && entry.runtime_availability == ToolAvailability::from(mutation.scope)
                         && self.metadata.get(&resolved_name).is_some_and(|metadata| {
                             let configured_scope = metadata.configured_scope;
                             if !request.persist {
@@ -576,7 +577,7 @@ impl ToolRegistryImpl {
             .metadata
             .entry(name.to_string())
             .or_insert_with(ToolRegistration::official_native);
-        if metadata.profile_scope == scope {
+        if metadata.profile_matches(scope) {
             return true;
         }
         metadata.profile_scope = scope;

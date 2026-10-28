@@ -32,6 +32,12 @@ pub struct ToolRegistration {
 }
 
 impl ToolRegistration {
+    /// Profile equality is a session no-op only when runtime availability agrees.
+    pub(super) fn profile_matches(&self, scope: Option<ProfileAvailabilityScope>) -> bool {
+        self.profile_scope == scope
+            && self.availability == scope.map_or(ToolAvailability::Enabled, ToolAvailability::from)
+    }
+
     pub fn official_native() -> Self {
         Self {
             source: ToolSource::BundledNative,

@@ -5,7 +5,7 @@
 //! with nothing running gets the one correction as a run of its own; a
 //! turn that waits on its own children waits for their next note under
 //! the run's one `--max-time` deadline, and that note is the next run.
-//! Completed outcomes exit 0; correction-exhausted stalled exits 1. Typed
+//! Completed outcomes, including correction-exhausted stalled, exit 0. Typed
 //! diagnostics go to stderr. An unguarded run keeps its error semantics.
 use std::time::{Duration, Instant};
 
@@ -226,7 +226,7 @@ fn wait_for_note(
     }
 }
 
-/// Completed turns exit 0; stalled is correction exhaustion (1). Every
+/// Completed turns exit 0, including correction-exhausted stalled. Every
 /// guarded settlement has a typed stderr diagnostic.
 pub(crate) fn exit_code(settled: Option<&TurnOutcomeRecord>, out: &mut AgentOutput<'_>) -> i32 {
     let Some(record) = settled else {

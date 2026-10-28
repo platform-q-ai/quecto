@@ -34,6 +34,28 @@ impl<'a> GuidanceProjection<'a> {
         projection
     }
 
+    /// Price the same owned provider view before pruning, without lending or
+    /// mutating the canonical head. Unowned heads/manifests add no guidance.
+    pub(super) fn token_change(
+        messages: &[Message],
+        owned: Option<uuid::Uuid>,
+        enabled: Option<bool>,
+    ) -> (usize, usize) {
+        if let (Some(id), Some(enabled)) = (owned, enabled)
+            && let Some(message) = messages
+                .iter()
+                .find(|message| message.id() == id && message.role == Role::System)
+            && let Some(content) = effective_content(&message.content, enabled)
+        {
+            let canonical = message.estimated_tokens();
+            let mut projected = message.clone();
+            projected.content = content;
+            projected.invalidate_token_cache();
+            return (canonical, projected.estimated_tokens());
+        }
+        (0, 0)
+    }
+
     pub(super) fn messages(&mut self) -> &mut [Message] {
         self.messages
     }
