@@ -66,10 +66,26 @@ async fn check_diagnostic(command: &str, success: bool) {
         visible.contains(DIAGNOSTIC),
         "full original/appended diagnostic discarded for {command} success={success}: {visible:?}"
     );
+    let expected = format!("Error: {DIAGNOSTIC}");
     assert_eq!(
-        visible.matches(DIAGNOSTIC).count(),
+        app.notifications
+            .messages()
+            .iter()
+            .filter(|message| *message == &expected)
+            .count(),
         1,
-        "diagnostic must appear once"
+        "full diagnostic notification must appear once"
+    );
+    assert_eq!(
+        app.ac()
+            .master_session
+            .chat
+            .entries()
+            .iter()
+            .filter(|entry| matches!(entry, ChatEntry::Status { text } if text == &expected))
+            .count(),
+        1,
+        "full retained diagnostic must appear once"
     );
 }
 

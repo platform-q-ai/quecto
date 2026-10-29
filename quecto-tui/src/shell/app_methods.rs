@@ -260,6 +260,19 @@ impl App {
         self.notifications.push(Notification::new(message, level));
     }
 
+    pub(super) fn notify_prompt_diagnostic(&mut self, error: Option<String>) {
+        if let Some(error) = error {
+            let text = format!("Error: {error}");
+            self.notify(&text, NotifyLevel::Error);
+            // A correlated receipt is not a lifecycle event. Keep a full
+            // scrollable copy without resetting newer running/pending work.
+            self.ac_mut()
+                .master_session
+                .chat
+                .add_entry(ChatEntry::Status { text });
+        }
+    }
+
     // ── Rendering ─────────────────────────────────────────────────────
 
     /// Diagnostic: append one frame (ANSI-stripped) to the render log.

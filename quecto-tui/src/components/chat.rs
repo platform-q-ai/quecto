@@ -661,7 +661,7 @@ impl Chat {
             ChatEntry::Status { text } => {
                 lines.push(String::new());
                 for status_line in text.lines() {
-                    lines.push(truncate_to_width(&theme::dim(status_line), width, None));
+                    lines.extend(wrap_text(&theme::dim(status_line), width));
                 }
             }
             ChatEntry::Stub { text, is_user, .. } => {
