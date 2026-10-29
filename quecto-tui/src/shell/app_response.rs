@@ -323,6 +323,7 @@ impl App {
                 self.reconcile_after_delete_all();
                 self.notify_response_error("Could not delete subagents", error)
             }
+            "prompt" | "follow_up" if error.is_some() => self.notify_response_error("Error", error),
             "agent_error" => self.handle_agent_error(error),
             // A `parse_error` is BROADCAST and carries no id: it is nobody's in
             // particular. Only a handler that can show the error is about this
