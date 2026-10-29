@@ -78,14 +78,24 @@ async fn check_fitting_history(normalized: bool) {
         body,
         &canonical[body_end..],
     ));
-    let expected = if normalized {
-        initial - credit
+    let expected_system = if normalized {
+        projected.clone()
     } else {
-        initial - messages[0].estimated_tokens() + effective.estimated_tokens()
+        effective
     };
-    assert_eq!(initial, 9335);
-    assert_eq!(ceiling, 9309);
-    assert!(expected < ceiling);
+    let history_tokens = messages[1..]
+        .iter()
+        .map(Message::estimated_tokens)
+        .sum::<usize>();
+    let expected = expected_system.estimated_tokens() + history_tokens;
+    assert!(
+        ceiling > 0,
+        "the context boundary must be finite and nonzero"
+    );
+    assert!(
+        expected < ceiling && ceiling < initial,
+        "effective history fits but canonical history exceeds the boundary"
+    );
     // The stale-header normalized control must still retain eight messages.
     if normalized {
         messages[0] = projected;
@@ -154,9 +164,15 @@ async fn check_fitting_history(normalized: bool) {
         actual, expected,
         "provider receives exactly the independently composed fitting view"
     );
-    if normalized {
-        assert_eq!(actual, 9283, "nonnormative stale-header control");
-    }
+    assert_eq!(
+        sent.iter().map(Message::id).collect::<Vec<_>>(),
+        original_ids,
+        "provider view preserves all eight original UUID identities"
+    );
+    assert_eq!(
+        sent[0].content, expected_system.content,
+        "provider system payload matches the independent frame, including the normalized control"
+    );
 }
 
 #[derive(Debug, Default)]
