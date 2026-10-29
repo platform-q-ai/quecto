@@ -1,4 +1,4 @@
-use crate::application::agent_turn::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::{AgentLoopImpl, GuidanceAppend};
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
 use crate::domain::tool_policy::services::tool_policy::inherited_child_policy_from_catalogue;
 use crate::domain::tool_policy::value_objects::tool::{
@@ -166,9 +166,18 @@ impl AgentLoopImpl {
         self.tool_catalog().parent_outcome_candidate()
     }
 
+    /// Retain provenance from the registry's actual append operation.
+    pub(crate) fn with_guidance_append(mut self, appended: Option<GuidanceAppend>) -> Self {
+        self.composed_guidance_append = appended;
+        self
+    }
+
     /// The transport owns the injected prompt's identity, not its position.
     pub(crate) fn bind_composed_prompt(&mut self, id: Option<uuid::Uuid>) {
         self.composed_prompt_id = id;
+        if let Some(appended) = &mut self.composed_guidance_append {
+            appended.bind(id);
+        }
     }
 
     /// UDS has the canonical marker; resolve it to the injected prompt identity.

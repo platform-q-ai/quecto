@@ -310,9 +310,15 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         pending::queue_prompt(ctx, id.as_deref(), &type_name, message, work).await;
         return false;
     }
-    // Restore effective authority before automatic admission and the busy guard.
-    super::uds_dispatch_reload::poll_reload(ctx).await;
-    parent_turn::enter_outer(ctx);
+    // Client instructions already reconciled in episode_id, before validating
+    // their identity. Automatic inputs have no such boundary of their own.
+    if matches!(
+        work,
+        crate::domain::inference::services::turn_suspension::Work::Automatic
+    ) {
+        super::uds_dispatch_reload::poll_reload(ctx).await;
+        parent_turn::enter_outer(ctx);
+    }
     if !parent_turn::admits(ctx, work) {
         return false; // #2708: a terminal outcome fences automatic turns.
     }

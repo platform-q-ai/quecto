@@ -24,6 +24,7 @@ impl AgentLoopImpl {
             self.composed_prompt_id,
             self.parent_outcome_candidate()
                 .map(|runtime| runtime.enabled()),
+            self.composed_guidance_append.as_ref(),
         );
         let provider_fixed = self.tool_definition_tokens().saturating_add(projected);
         let fixed_tokens = provider_fixed.saturating_sub(canonical);

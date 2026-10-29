@@ -133,10 +133,21 @@ pub(super) async fn respond_prompt(
         };
         // Preserve diagnostics even when only the correction failed: the original
         // prompt's success flag still describes its own execution, not the guard.
-        if let (true, Some(_), AgentEvent::Response { error, .. }) =
-            (completion_response, errors.first(), &mut ev)
-        {
-            *error = Some(errors.join("\n"));
+        if let (true, AgentEvent::Response { error, .. }) = (completion_response, &mut ev) {
+            for diagnostic in &errors {
+                match (diagnostic.as_str(), error.as_mut()) {
+                    ("", _) => {}
+                    (_, Some(original)) if original.lines().any(|line| line == diagnostic) => {}
+                    (_, Some(original)) => {
+                        match original.is_empty() {
+                            true => {}
+                            false => original.push('\n'),
+                        }
+                        original.push_str(diagnostic);
+                    }
+                    (_, None) => *error = Some(diagnostic.clone()),
+                }
+            }
         }
         super::emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
@@ -150,14 +161,14 @@ pub(super) async fn respond_prompt(
 }
 
 /// Exact-env1 relays cannot display harness-minted episodes after settlement.
-/// Waiting, stalled and still-open episodes keep their ordinary wake semantics.
+/// Waiting and still-open episodes keep their ordinary wake semantics.
 pub(super) fn fresh_wake_allowed(ctx: &DispatchCtx<'_>) -> bool {
     use crate::domain::agents::value_objects::turn_outcome::TurnOutcome;
     match (ctx.session.admission_ack(), ctx.session.parent_outcome()) {
         (true, Some(runtime)) if runtime.admits_automatic() => true,
         (true, Some(runtime)) => match runtime.view().latest.map(|record| record.outcome) {
-            Some(TurnOutcome::Done | TurnOutcome::NeedsUser) => false,
-            None | Some(TurnOutcome::Waiting | TurnOutcome::Stalled) => true,
+            Some(TurnOutcome::Done | TurnOutcome::NeedsUser | TurnOutcome::Stalled) => false,
+            None | Some(TurnOutcome::Waiting) => true,
         },
         _ => true,
     }

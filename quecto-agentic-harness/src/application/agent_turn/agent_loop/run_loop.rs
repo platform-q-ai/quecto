@@ -57,6 +57,7 @@ impl AgentLoopImpl {
                 self.composed_prompt_id,
                 self.parent_outcome_candidate()
                     .map(|runtime| runtime.enabled()),
+                self.composed_guidance_append.as_ref(),
             );
             let sent = self.conversation_for_model(guidance.messages());
             // #2434: whether its reply may be empty (tool results) or must
