@@ -59,6 +59,8 @@ mod hook_scripts_worktree;
 mod no_python;
 #[path = "architecture/panic_strategy.rs"]
 mod panic_strategy;
+#[path = "architecture/pre_push_fast_contract.rs"]
+mod pre_push_fast_contract;
 /// The board's front ends reach its use case only through the
 /// `BoardOperations` port (epic #2705 B6).
 #[path = "architecture/project_board_operations.rs"]
@@ -3373,27 +3375,8 @@ fn hook_installation_checker_verifies_all_local_hooks() {
     );
 }
 
-#[test]
-fn pre_push_runs_contract_tests() {
-    let content = fs::read_to_string("../scripts/pre-push.sh").expect("read pre-push hook");
-    assert!(
-        content.contains("--test contracts"),
-        "pre-push hook must run cargo test --test contracts so port contracts are enforced"
-    );
-}
-
-#[test]
-fn ci_runs_architecture_and_contract_tests() {
-    let content = fs::read_to_string("../.github/workflows/ci.yml").expect("read CI workflow");
-    assert!(
-        content.contains("--test architecture"),
-        "CI must run architecture boundary tests"
-    );
-    assert!(
-        content.contains("--test contracts"),
-        "CI must run port contract tests"
-    );
-}
+// CI ownership, named steps, admission, strict lints and compiled targets are
+// consolidated in pre_push_fast_contract's bounded executable CI validator.
 
 #[test]
 fn lib_rs_has_deny_attributes() {
