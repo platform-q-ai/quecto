@@ -629,3 +629,7 @@ mod tests_1172;
 #[cfg(test)]
 #[path = "app_prompt_diagnostic_tests.rs"]
 mod prompt_diagnostic_tests;
+
+#[cfg(test)]
+#[path = "app_prompt_diagnostic_presentation_tests.rs"]
+mod prompt_diagnostic_presentation_tests;
