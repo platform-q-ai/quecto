@@ -37,6 +37,47 @@ Build the workspace:
 cargo build --workspace
 ```
 
+## Local pre-push and authoritative CI
+
+The pre-push hook is a **lint-only**, no-build gate targeting 20 seconds on a
+warm development checkout (about 30 seconds is the timing acceptance bound).
+It always runs these seven commands, regardless of changed files:
+
+- `scripts/check-quality.sh`
+- `scripts/check-golden-manifest.sh`
+- `bash scripts/check-layout-ratchet-tests.sh`
+- `bash scripts/check-layout-ratchet.sh`
+- `scripts/check-bdd-quality.sh`
+- `scripts/check-bdd-tags.sh`
+- `cargo fmt --all -- --check`
+
+The repository-quality chain, BDD quality, BDD tags and formatting run
+independently in parallel; the hook waits for each result and any failure
+blocks the push. The repository-quality chain stops at its first failure.
+No Clippy, compiled architecture/contracts/docs tests, or nextest detection
+runs in the hook. Run relevant focused tests during development; a successful
+local hook is not proof that merge validation passed.
+
+All six relocated checks remain in `.github/workflows/ci.yml`, workflow
+**Authoritative Merge CI**. Apply `merge-requested` to request the authoritative
+merge run; reapply the label after every push so the current head is validated.
+`workflow_dispatch` is also available for diagnosis. Do not bypass required CI.
+
+| Relocated check | Job ID (check name) | Step name |
+| --- | --- | --- |
+| Strict workspace Clippy (all targets, test-support, complexity lints) | `static-quality` (Static Quality) | Strict workspace Clippy |
+| Strict standalone quecto-tui Clippy | `static-quality` (Static Quality) | Strict standalone quecto-tui Clippy |
+| Strict standalone quecto-agentic-harness Clippy | `static-quality` (Static Quality) | Strict standalone quecto-agentic-harness Clippy |
+| Architecture tests | `workspace-tests` (Workspace Tests) | All workspace unit and integration tests except sharded BDD targets |
+| Port contract tests | `workspace-tests` (Workspace Tests) | All workspace unit and integration tests except sharded BDD targets |
+| Docs tests | `workspace-tests` (Workspace Tests) | All workspace unit and integration tests except sharded BDD targets |
+
+The compiled invariants run with the workspace/test-support/bins shape under
+nextest's `ci` profile; workspace tests depend on Static Quality and Dependency
+Policy. Full tests, BDD and dependency checks remain CI responsibilities;
+coverage runs nightly on master. Actual merge requirements are controlled by
+repository protection/rulesets as well as workflow admission, not this table.
+
 ## Common checks
 
 Run formatting before submitting:
@@ -60,7 +101,7 @@ bash scripts/run-bdd-shards.sh --suite tui-bdd --package quecto-tui --test-targe
 
 CI runs the libtest targets (everything but the cucumber `*_bdd` targets) under
 `cargo nextest run … --profile ci`, one process per test scheduled across
-binaries; with `cargo-nextest` installed the pre-push gate does the same and
+binaries. For optional focused local testing with `cargo-nextest` installed,
 the `--lib` row above drops from ~26 s to ~20 s on 32 cpus:
 
 ```bash

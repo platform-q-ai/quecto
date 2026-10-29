@@ -29,9 +29,9 @@ fn git(dir: &Path, args: &[&str]) -> String {
         ])
         .args(["-c", "commit.gpgsign=false"])
         .args(args)
-        // Only PATH passes: a git hook's GIT_DIR or GIT_INDEX_FILE (the
-        // pre-push gate runs these tests) must never reach the real
-        // repository.
+        // Only PATH passes: a caller's GIT_DIR or GIT_INDEX_FILE must
+        // never reach the real repository. These compiled tests run in CI,
+        // not the fast local pre-push gate.
         .env_clear()
         .envs(std::env::var_os("PATH").map(|path| ("PATH", path)))
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
