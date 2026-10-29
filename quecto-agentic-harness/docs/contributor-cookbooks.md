@@ -13,8 +13,13 @@ see the [architecture-hardening PRD](prd/prd-harness-architecture-hardening.md) 
 ## Local check command index
 
 Run the narrowest check that exercises the touched subsystem before committing.
-The pre-push hook remains the fast local integration gate, and authoritative CI
-runs after `merge-requested` is applied.
+The pre-push hook is static/fmt lint-only (NO BUILD): six repository/BDD
+quality scripts and formatting, not Clippy or compiled suites. Authoritative CI
+runs after `merge-requested` is applied and owns strict workspace plus both
+standalone Clippy shapes and compiled architecture/contracts/docs suites. See the
+[exact workflow/job/named-step table](../../CONTRIBUTIONS.md#local-pre-push-and-authoritative-ci).
+Focused local tests below are development tools, not hook responsibilities; a
+passing local hook does not prove CI passed.
 
 | Subsystem | Focused local command |
 |---|---|

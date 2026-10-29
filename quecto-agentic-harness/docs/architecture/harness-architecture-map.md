@@ -481,8 +481,12 @@ follows the pages with only the `docs` tool and `bash`.
 
 ## Baseline subsystem checks
 
-Use these focused checks while hardening the architecture. The full pre-push gate
-remains authoritative before a PR is handed off.
+Use these focused checks while hardening the architecture. Local pre-push is
+static/fmt lint-only (NO BUILD), not authoritative compiled validation. Strict
+workspace and both standalone Clippy shapes and compiled architecture/contracts/
+docs suites belong to CI after `merge-requested` is applied. See the exact
+[workflow/job/named-step ownership table](../../../CONTRIBUTIONS.md#local-pre-push-and-authoritative-ci).
+A passing local hook does not establish that CI passed.
 
 | Subsystem | Focused check |
 |---|---|

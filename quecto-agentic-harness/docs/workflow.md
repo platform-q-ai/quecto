@@ -247,7 +247,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
             "key": "hooks",
             "label": "Install/check local quality hooks",
             "phase": "setup",
-            "guidance": "Run `scripts/install-hooks.sh`, then verify pre-commit, pre-push, and the git --no-verify wrapper are installed/active before editing code. Hook summary: `git commit` pre-commit runs staged-file hygiene, conditional BDD quality/tag checks, and `cargo fmt --check`; it does not run clippy or tests. `git push` pre-push runs fast quality rules, changed-package strict clippy, and architecture/repository invariants. Never bypass hooks with --no-verify. Done when all three hooks are installed and active."
+            "guidance": "Run `scripts/install-hooks.sh`, then verify pre-commit, pre-push, and the git --no-verify wrapper are installed/active before editing code. Hook summary: `git commit` pre-commit runs staged-file hygiene, conditional BDD quality/tag checks, and `cargo fmt --check`; it does not run clippy or tests. `git push` pre-push is lint-only, NO BUILD: six static repository/BDD quality scripts and formatting. Strict workspace and both standalone Clippy shapes and compiled architecture/contracts/docs suites are owned by authoritative CI after `merge-requested`, not local hooks. Never bypass hooks with --no-verify. Done when all three hooks are installed and active."
           },
           {
             "key": "scenarios",
@@ -307,7 +307,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
             "key": "push",
             "label": "Push through the fast pre-push gate",
             "phase": "ci_cd",
-            "guidance": "Push in the foreground and wait for the fast pre-push gate: repository/BDD quality rules, formatting, strict workspace-shape Clippy (one feature unification, plus the standalone per-crate shapes), and architecture/contract/repository invariants. Full tests, BDD, dependency policy, and mock E2E do not run on ordinary pushes (coverage runs nightly on master); they run only after `merge-requested` is applied. If it fails, fix the reported issue and push again; never bypass the hook. The same gate can be run directly with `scripts/pre-push.sh`. Done when the latest push exits successfully."
+            "guidance": "Push in the foreground and wait for the fast pre-push gate: six static repository/BDD quality scripts and formatting only (lint-only, NO BUILD). Strict workspace Clippy, both standalone Clippy shapes and compiled architecture/contract/docs suites belong to authoritative CI after `merge-requested`. See CONTRIBUTIONS.md for exact workflow/job/named-step ownership. Full tests, BDD, dependency policy, and mock E2E do not run on ordinary pushes (coverage runs nightly on master); they run only after `merge-requested` is applied. If it fails, fix the reported issue and push again; never bypass the hook. The same gate can be run directly with `scripts/pre-push.sh`. Done when the latest push exits successfully."
           },
           {
             "key": "pr",
