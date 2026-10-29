@@ -8,6 +8,7 @@ pub(crate) struct Composed {
     pub(crate) subagents:
         Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     pub(crate) snippets: String,
+    pub(crate) guidance_append: Option<crate::application::agent_turn::agent_loop::GuidanceAppend>,
     // Lifecycle/reload fixtures retain the production registry's scratch home.
     pub(crate) _home: tempfile::TempDir,
 }
@@ -135,6 +136,7 @@ pub(crate) fn compose_with_config(
         workflow: built.workflow_state,
         subagents: built.subagent_registry,
         snippets: built.extension_prompt_snippets,
+        guidance_append: built.guidance_append,
         _home: tmp,
     }
 }

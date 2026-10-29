@@ -364,7 +364,7 @@ async fn run42_round3_real_client_surfaces_success_with_error() {
 #[tokio::test]
 async fn run42_round3_real_client_response_controls() {
     let clean = run42_client_response(true, None).await;
-    assert_eq!(clean.is_error, false);
+    assert!(!clean.is_error);
     let failed = run42_client_response(false, Some("prompt execution failed")).await;
     assert!(failed.is_error);
     assert!(failed.content.contains("prompt execution failed"));
