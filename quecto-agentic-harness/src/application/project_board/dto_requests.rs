@@ -40,7 +40,7 @@ pub enum BoardOp {
     /// `CompleteMergedTask`, and once none is linked, Review→Done is the
     /// holder's.
     RemovePr(u64),
-    /// A narrow, board-head-pinned exception to a settled outcome.
+    /// A narrow, task-revision-pinned exception to a settled outcome.
     SetOutcome {
         index: usize,
         reason: Option<String>,

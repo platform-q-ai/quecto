@@ -170,7 +170,15 @@ impl Task {
             by: by.clone(),
             at: at.clone(),
         });
+        let same_reason = description
+            .done_when()
+            .get(index)
+            .and_then(|outcome| outcome.exception.as_ref())
+            .is_some_and(|existing| Some(existing.reason.as_str()) == reason);
         description.set_outcome(index, exception).map_err(invalid)?;
+        if same_reason {
+            return Ok(self.clone());
+        }
         let settled = description.markdown();
         if settled == fields.description {
             return Ok(self.clone());
