@@ -145,3 +145,7 @@ mod plan_ops_tests;
 #[cfg(test)]
 #[path = "plan_ops_rev_tests.rs"]
 mod plan_ops_rev_tests;
+
+#[cfg(test)]
+#[path = "outcome_exception_noop_tests.rs"]
+mod outcome_exception_noop_tests;

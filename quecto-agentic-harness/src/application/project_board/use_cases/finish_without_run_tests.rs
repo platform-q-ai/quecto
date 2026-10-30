@@ -206,3 +206,45 @@ fn a_task_held_back_by_a_dependency_is_refused_before_the_host_is_read() {
     );
     assert_eq!(host.asked(), Vec::<u64>::new());
 }
+
+#[test]
+fn done_ticks_without_run_settles_outcomes_and_keeps_its_task_reason() {
+    use crate::domain::project_board::entities::task_parts::DescriptionForm;
+    let description =
+        "## Goal\nAnswer the question.\n\n## Done when\n- [ ] Answer given\n- [x] Context retained";
+    let store = seeded(vec![TaskFields {
+        description: description.into(),
+        description_form: DescriptionForm::Sectioned,
+        ..fields("a")
+    }]);
+    let done = finish(&store, Err(NoPullRequestHost::NotAPullRequestHost))
+        .execute_noted(&slug("a"), "Answered in chat", None)
+        .unwrap();
+    assert_eq!(done.fields().status, TaskStatus::Done);
+    assert_eq!(done.fields().reason.as_deref(), Some("Answered in chat"));
+    assert_eq!(done.fields(), &current(&store));
+    assert_eq!(
+        done.fields().description,
+        description.replace("- [ ]", "- [x]")
+    );
+}
+
+#[test]
+fn done_ticks_refused_completion_preserves_unchecked_outcomes_without_writes() {
+    use crate::domain::project_board::entities::task_parts::DescriptionForm;
+    let store = seeded(vec![TaskFields {
+        description: "## Goal\nShip.\n\n## Done when\n- [ ] Merged".into(),
+        description_form: DescriptionForm::Sectioned,
+        ..claimed(&[7])
+    }]);
+    let before = current(&store);
+    let writes = store.writes();
+    let host = MemoryPullRequests::default();
+    host.set(7, PullRequestState::Open);
+    assert_eq!(
+        finish(&store, reading(&host)).execute_noted(&slug("a"), "By hand", None),
+        Err(ProjectBoardError::Rule(BoardRuleError::PrsOpen(vec![7])))
+    );
+    assert_eq!(current(&store), before);
+    assert_eq!(store.writes(), writes);
+}

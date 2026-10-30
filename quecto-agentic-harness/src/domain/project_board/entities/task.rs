@@ -72,6 +72,19 @@ pub struct TaskFields {
 }
 
 impl TaskFields {
+    /// Sectioned outcomes settle on completion; an archive needs recorded proof.
+    pub fn has_settled_outcomes(&self) -> bool {
+        self.description_form == DescriptionForm::Sectioned
+            && (matches!(self.status, TaskStatus::Done)
+                || matches!(
+                    (self.status, self.resolution),
+                    (
+                        TaskStatus::Archived,
+                        Some(Resolution::Completed | Resolution::DoneWithoutRun)
+                    )
+                ))
+    }
+
     /// The UTF-8 bytes of every free text in the task: its title and
     /// description, and its references. Ids, words, numbers, times and the
     /// claim's holder are not text: their size is bounded by the field
@@ -94,8 +107,16 @@ impl TaskFields {
 pub struct Task(TaskFields);
 
 impl Task {
-    pub fn new(fields: TaskFields) -> Result<Self, SchemaError> {
+    pub fn new(mut fields: TaskFields) -> Result<Self, SchemaError> {
         validate(&fields)?;
+        // Pure compatibility read: archives need positive evidence of completion.
+        if fields.has_settled_outcomes() {
+            let mut description =
+                Description::read(&fields.description).expect("validated sections");
+            description.settle();
+            fields.description = description.markdown();
+            validate(&fields)?;
+        }
         Ok(Self(fields))
     }
 
@@ -119,6 +140,52 @@ impl Task {
         let mut fields = task.0;
         fields.description_form = entry.form(&fields.description);
         Self::new(fields)
+    }
+
+    /// Record or clear a reasoned exception without reopening finished work.
+    pub fn set_outcome(
+        &self,
+        index: usize,
+        reason: Option<&str>,
+        by: &super::claim::Identity,
+        at: &Timestamp,
+    ) -> Result<Self, super::super::value_objects::rule_error::BoardRuleError> {
+        use super::super::value_objects::rule_error::BoardRuleError;
+        use super::task_parts::OutcomeException;
+        let invalid = BoardRuleError::Invalid;
+        let mut fields = self.0.clone();
+        match (fields.status, fields.description_form) {
+            (TaskStatus::Done, DescriptionForm::Sectioned) => {}
+            _ => {
+                return Err(invalid(SchemaError::new(
+                    "status",
+                    "only a sectioned Done task has settled outcomes",
+                )));
+            }
+        }
+        let mut description = Description::read(&fields.description).expect("validated sections");
+        let at = at.max(&fields.updated);
+        let exception = reason.map(|reason| OutcomeException {
+            reason: reason.into(),
+            by: by.clone(),
+            at: at.clone(),
+        });
+        let same_reason = description
+            .done_when()
+            .get(index)
+            .and_then(|outcome| outcome.exception.as_ref())
+            .is_some_and(|existing| Some(existing.reason.as_str()) == reason);
+        description.set_outcome(index, exception).map_err(invalid)?;
+        if same_reason {
+            return Ok(self.clone());
+        }
+        let settled = description.markdown();
+        if settled == fields.description {
+            return Ok(self.clone());
+        }
+        fields.description = settled;
+        fields.updated = at.clone();
+        Self::new(fields).map_err(invalid)
     }
 
     pub fn fields(&self) -> &TaskFields {
@@ -151,6 +218,22 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
                 "description",
                 "is kept in its sections, so must be in them",
             ));
+        }
+    }
+    if let Some(description) = Description::read(&task.description)
+        && description
+            .done_when()
+            .iter()
+            .any(|outcome| outcome.exception.is_some())
+    {
+        match task.status {
+            TaskStatus::Done | TaskStatus::Archived => {}
+            _ => {
+                return Err(SchemaError::new(
+                    "status",
+                    "outcome exceptions require Done or Archived",
+                ));
+            }
         }
     }
     if task.parent.as_ref() == Some(&task.id) {

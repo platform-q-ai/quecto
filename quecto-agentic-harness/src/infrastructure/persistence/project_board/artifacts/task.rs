@@ -22,14 +22,14 @@ use super::{ArtifactCodec, CodecError};
 use crate::domain::project_board::entities::claim::Claim;
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::entities::task_parts::{
-    Description, DescriptionForm, Outcome, PARTS, Shape as PartShape,
+    Description, DescriptionForm, EXCEPTIONS, Outcome, PARTS, Shape as PartShape,
 };
 use crate::domain::project_board::value_objects::reference::{IssueNumber, Reference};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::{Resolution, TaskKind, TaskStatus};
 use crate::infrastructure::persistence::project_board::markdown::{
-    Body, BodyShape, CellKind, Column, Document, Limits, Section, SectionShape, Shape, blocks_of,
-    check_title, text_of,
+    Body, BodyShape, CellKind, Column, Document, Limits, MarkdownError, Section, SectionShape,
+    Shape, blocks_of, check_text_cell, check_title, text_of,
 };
 
 const TITLE: &str = "Title";
@@ -99,6 +99,13 @@ const SECTIONED_SCHEMA: u32 = 2;
 /// description kept either way (its sections, or legacy text as its
 /// Description): an earlier build reads it as a newer quecto's.
 const REASONED_SCHEMA: u32 = 3;
+const EXCEPTION_SCHEMA: u32 = 4;
+const EXCEPTION_COLUMNS: &[Column<'static>] = &[
+    column("Outcome index", CellKind::Ascii),
+    column("Reason", CellKind::Text),
+    column("By", CellKind::Text),
+    column("At", CellKind::Ascii),
+];
 
 const SECTIONS: &[SectionShape<'static>] = &[
     SectionShape {
@@ -116,6 +123,10 @@ const SECTIONS: &[SectionShape<'static>] = &[
     SectionShape {
         heading: DONE_WHEN,
         body: BodyShape::Table(OUTCOME_COLUMNS),
+    },
+    SectionShape {
+        heading: EXCEPTIONS,
+        body: BodyShape::Table(EXCEPTION_COLUMNS),
     },
     SectionShape {
         heading: PARTS[3].heading,
@@ -158,7 +169,7 @@ pub struct TaskCodec;
 
 impl ArtifactCodec for TaskCodec {
     type Value = Task;
-    const SCHEMA: u32 = REASONED_SCHEMA;
+    const SCHEMA: u32 = EXCEPTION_SCHEMA;
     const OLDEST_SCHEMA: u32 = 1;
     const SHAPE: Shape<'static> = Shape {
         kind: "task",
@@ -209,9 +220,27 @@ impl ArtifactCodec for TaskCodec {
                 let description = Description::read(&task.description)
                     .ok_or_else(|| refused(DESCRIPTION, NOT_A_DESCRIPTION))?;
                 for (heading, text) in description.sections() {
-                    match heading == DONE_WHEN {
-                        true => sections.push(section(heading, outcome_rows(&description))),
-                        false => sections.extend(prose(heading, &text)?),
+                    match heading {
+                        DONE_WHEN => sections.push(section(heading, outcome_rows(&description))),
+                        EXCEPTIONS => {
+                            // Check the semantic reason before rendering the table, so a
+                            // refusal identifies the input rather than just a file line.
+                            for outcome in description.done_when() {
+                                if let Some(exception) = &outcome.exception {
+                                    check_text_cell(&exception.reason).map_err(|error| {
+                                        let remedy = match error {
+                                            MarkdownError::UnbalancedCode { .. } =>
+                                                "close each backtick code span with a matching-width backtick run, or remove the backticks",
+                                            _ => "use canonical inline Markdown text (plain words, balanced code spans, emphasis or labelled https links)",
+                                        };
+                                        refused("reason", format!("{error}; {remedy}"))
+                                    })?;
+                                }
+                            }
+                            sections
+                                .push(section(heading, Body::Table(description.exception_rows())));
+                        }
+                        _ => sections.extend(prose(heading, &text)?),
                     }
                 }
                 SECTIONED_SCHEMA
@@ -226,6 +255,15 @@ impl ArtifactCodec for TaskCodec {
         let schema = match task.reason {
             Some(_) => REASONED_SCHEMA,
             None => schema,
+        };
+        let schema = match Description::read(&task.description) {
+            Some(description)
+                if task.description_form == DescriptionForm::Sectioned
+                    && matches!(description.exception_rows().as_slice(), [_, ..]) =>
+            {
+                EXCEPTION_SCHEMA
+            }
+            _ => schema,
         };
         let slugs = |slugs: &[Slug]| slugs.iter().map(|slug| vec![cells::slug(slug)]).collect();
         let prs = task
@@ -261,6 +299,37 @@ impl ArtifactCodec for TaskCodec {
                 .collect(),
             sections,
         })
+    }
+
+    fn compatible_read(mut document: Document) -> Document {
+        // Domain-owned settlement also covers archives with completion evidence.
+        // This hook only adjusts canonical checkbox cells, never prose or metadata.
+        let settled =
+            Self::from_document(&document).is_ok_and(|task| task.fields().has_settled_outcomes());
+        if settled {
+            let explicit: Vec<String> = document
+                .sections
+                .iter()
+                .filter(|section| section.heading == EXCEPTIONS)
+                .flat_map(|section| match &section.body {
+                    Body::Table(rows) => rows.iter().map(|row| row[0].clone()).collect(),
+                    Body::Prose(_) => vec![],
+                })
+                .collect();
+            for section in &mut document.sections {
+                if let (DONE_WHEN, Body::Table(rows)) =
+                    (section.heading.as_str(), &mut section.body)
+                {
+                    for (index, row) in rows.iter_mut().enumerate() {
+                        if explicit.contains(&index.to_string()) {
+                        } else {
+                            row[0] = DONE.into();
+                        }
+                    }
+                }
+            }
+        }
+        document
     }
 
     fn from_document(document: &Document) -> Result<Task, CodecError> {
@@ -384,6 +453,7 @@ struct Read {
     superseded_by: Vec<Slug>,
     prs: Vec<u64>,
     references: Vec<Reference>,
+    exceptions: Vec<Vec<String>>,
 }
 
 impl Read {
@@ -398,11 +468,18 @@ impl Read {
     fn description(&mut self, schema: u32) -> Result<(String, DescriptionForm), CodecError> {
         let parts = std::mem::take(&mut self.parts);
         let text = std::mem::take(&mut self.description);
+        if self.exceptions.is_empty() {
+        } else {
+            match schema {
+                EXCEPTION_SCHEMA => {}
+                _ => return Err(refused(EXCEPTIONS, "exceptions require schema 4")),
+            }
+        }
         // A schema-3 file is read as the layout it holds: sections, or a
         // Description (or none, legacy text left empty).
         let schema = match (schema, parts.as_slice()) {
-            (REASONED_SCHEMA, [_, ..]) => SECTIONED_SCHEMA,
-            (REASONED_SCHEMA, []) => Self::LEGACY_SCHEMA,
+            (REASONED_SCHEMA | EXCEPTION_SCHEMA, [_, ..]) => SECTIONED_SCHEMA,
+            (REASONED_SCHEMA | EXCEPTION_SCHEMA, []) => Self::LEGACY_SCHEMA,
             (schema, _) => schema,
         };
         match (schema, text.is_empty(), parts.as_slice()) {
@@ -411,6 +488,15 @@ impl Read {
                     .iter()
                     .map(|(heading, text)| (*heading, text.as_str()));
                 let text = Description::assemble(pairs);
+                let text = match Description::read(&text) {
+                    Some(mut description) => {
+                        description
+                            .apply_exception_rows(&self.exceptions)
+                            .map_err(|error| refused(EXCEPTIONS, error.to_string()))?;
+                        description.markdown()
+                    }
+                    None => return Err(refused(DESCRIPTION, NOT_A_DESCRIPTION)),
+                };
                 match Description::read(&text) {
                     Some(_) => Ok((text, DescriptionForm::Sectioned)),
                     None => Err(refused(DESCRIPTION, NOT_A_DESCRIPTION)),
@@ -444,6 +530,7 @@ impl Read {
                                 _ => None,
                             })?,
                             text: text.clone(),
+                            exception: None,
                         }),
                         _ => Err(refused(DONE_WHEN, "a row of two cells")),
                     })
@@ -451,6 +538,7 @@ impl Read {
                 self.parts
                     .push((DONE_WHEN, Description::checklist(&outcomes)));
             }
+            (EXCEPTIONS, Body::Table(rows)) => self.exceptions = rows.clone(),
             (DEPENDS_ON, Body::Table(rows)) => self.depends_on = slugs(DEPENDS_ON, rows)?,
             (SUPERSEDED_BY, Body::Table(rows)) => {
                 self.superseded_by = slugs(SUPERSEDED_BY, rows)?;

@@ -5,6 +5,10 @@
 use super::super::value_objects::board_text;
 use super::super::value_objects::schema_error::{SchemaError, distinct, line};
 use regex::Regex;
+#[path = "task_parts/outcomes.rs"]
+mod outcomes;
+pub use outcomes::{EXCEPTION_HEADER, EXCEPTIONS, OutcomeException};
+use outcomes::{exception_cell, exception_cells};
 use std::ops::RangeInclusive;
 use std::sync::LazyLock;
 
@@ -195,6 +199,7 @@ fn linked(shape: Shape, item: String) -> String {
 /// One outcome of the done-when checklist.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
+    pub exception: Option<OutcomeException>,
     pub done: bool,
     pub text: String,
 }
@@ -231,6 +236,13 @@ impl Description {
             return Ok(None);
         }
         let description = sectioned(text)?;
+        if description.exception_rows().is_empty() {
+        } else {
+            return Err(SchemaError::new(
+                "description",
+                "outcome exceptions are recorded only through set_outcome",
+            ));
+        }
         description.within_rules(text)?;
         Ok(Some(description))
     }
@@ -319,6 +331,23 @@ impl Description {
         let mut sections = vec![(goal.heading, self.goal.clone())];
         sections.extend(self.why.clone().map(|text| (why.heading, text)));
         sections.push((done_when.heading, Self::checklist(&self.done_when)));
+        if self
+            .done_when
+            .iter()
+            .any(|outcome| outcome.exception.is_some())
+        {
+            let mut table = EXCEPTION_HEADER.to_string();
+            for row in self.exception_rows() {
+                table.push_str(&format!(
+                    "\n| {} |",
+                    row.iter()
+                        .map(|cell| exception_cell(cell))
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                ));
+            }
+            sections.push((EXCEPTIONS, table));
+        }
         // Links are optional: a section only while it holds one.
         if let [_, ..] = listed.as_slice() {
             sections.push((links.heading, listed.join("\n")));
@@ -412,10 +441,28 @@ impl Description {
 /// is missing, out of order, empty or misshapen (each body checked as it
 /// is met, so the first broken section is named).
 fn sectioned(text: &str) -> Result<Description, SchemaError> {
+    let mut exceptions = None;
+    let mut base = Vec::new();
+    for block in text.split(BETWEEN) {
+        if let Some(table) = block.strip_prefix("## Outcome exceptions\n") {
+            let allowed = exceptions.is_none()
+                && base
+                    .last()
+                    .is_some_and(|last: &&str| last.starts_with("## Done when\n"));
+            if allowed {
+                exceptions = Some(table);
+            } else {
+                return Err(SchemaError::new("description", NOT_SECTIONED));
+            }
+        } else {
+            base.push(block);
+        }
+    }
+    let base = base.join(BETWEEN);
     let wanted = |rule: &PartRule| SchemaError::new(rule.field, rule.wanted);
     let mut bodies: [Option<&str>; 4] = [None; 4];
     let mut next = 0;
-    for block in text.split(BETWEEN) {
+    for block in base.split(BETWEEN) {
         let (head, body) = block.split_once('\n').unwrap_or((block, ""));
         let rest = &PARTS[next..];
         let found = head
@@ -453,18 +500,40 @@ fn sectioned(text: &str) -> Result<Description, SchemaError> {
                 .collect()
         })
     };
-    let description = Description {
+    let mut description = Description {
         goal: goal.expect("a goal is required").to_string(),
         why: why.map(str::to_string),
         done_when: items(done_when, &[OPEN, DONE])
             .into_iter()
-            .map(|(done, text)| Outcome { done, text })
+            .map(|(done, text)| Outcome {
+                done,
+                text,
+                exception: None,
+            })
             .collect(),
         links: items(links, &[ITEM])
             .into_iter()
             .map(|(_, text)| text)
             .collect(),
     };
+    if let Some(table) = exceptions {
+        let rows = table
+            .strip_prefix(EXCEPTION_HEADER)
+            .and_then(|rest| rest.strip_prefix('\n'))
+            .ok_or_else(|| SchemaError::new("description", "an exception table with rows"))?;
+        let rows = rows
+            .lines()
+            .map(|row| {
+                exception_cells(row)
+                    .ok_or_else(|| SchemaError::new("description", "four exception cells"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        description.apply_exception_rows(&rows)?;
+    }
+    match description.markdown() == text {
+        true => {}
+        false => return Err(SchemaError::new("description", NOT_SECTIONED)),
+    }
     assert_eq!(
         description.markdown(),
         text,

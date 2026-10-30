@@ -158,10 +158,12 @@ fn sectioned_text_reads_back_byte_for_byte() {
         description.done_when(),
         [
             Outcome {
+                exception: None,
                 done: false,
                 text: "Current master merged in, moves only".into()
             },
             Outcome {
+                exception: None,
                 done: true,
                 text: "Layout ratchet and placements still hold".into()
             },

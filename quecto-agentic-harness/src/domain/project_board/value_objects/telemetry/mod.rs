@@ -64,7 +64,7 @@ kinds!(
         Bootstrap => "bootstrap", List => "list", ListReady => "list_ready",
         ListTakeable => "list_takeable", Show => "show", Create => "create",
         UpdateDraft => "update_draft", Move => "move", Renew => "renew",
-        TakeOver => "take_over", LinkPr => "link_pr", UnlinkPr => "unlink_pr",
+        TakeOver => "take_over", LinkPr => "link_pr", UnlinkPr => "unlink_pr", SetOutcome => "set_outcome",
         Complete => "complete", ClearSetAside => "clear_set_aside", Unknown => "unknown",
         ProposePlan => "propose_plan", EditPlan => "edit_plan",
         AcceptPlan => "accept_plan", DiscardPlan => "discard_plan", EndRun => "end_run",

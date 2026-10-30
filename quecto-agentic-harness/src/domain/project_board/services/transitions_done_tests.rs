@@ -125,3 +125,27 @@ fn a_merged_change_lets_it_go_and_an_open_one_holds_it() {
     let merged = Change::new(fields).unwrap();
     assert!(done(&held, &[merged], &[], &[]).is_ok());
 }
+
+#[test]
+fn done_ticks_review_to_done_settles_outcomes_preserving_sections() {
+    use crate::domain::project_board::entities::task_parts::DescriptionForm;
+    let description = "## Goal\nShip.\n\n## Why\nKeep this.\n\n## Done when\n- [ ] First\n- [x] Second\n- [ ] Third";
+    let mut fields = without_prs(task(Review)).into_fields();
+    fields.description = description.into();
+    fields.description_form = DescriptionForm::Sectioned;
+    let reviewed = Task::new(fields).unwrap();
+    let finished = move_task(
+        &reviewed,
+        Done,
+        &person("Ada"),
+        (&[], &[]),
+        &[],
+        &at("10:00:00"),
+    )
+    .unwrap();
+    assert_eq!(finished.fields().status, Done);
+    assert_eq!(
+        finished.fields().description,
+        description.replace("- [ ]", "- [x]")
+    );
+}

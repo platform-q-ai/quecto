@@ -42,6 +42,11 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
             .next()
             .ok_or_else(|| refused(&name, "needs a value", FaultKind::Missing))?;
         let value = match field.kind {
+            Kind::Boolean => match text.as_str() {
+                "true" => Value::Bool(true),
+                "false" => Value::Bool(false),
+                _ => Value::String(text.clone()),
+            },
             Kind::Slugs if text.is_empty() => Value::Array(vec![]),
             Kind::Slugs => {
                 let ids: Vec<&str> = text.split(',').collect();
@@ -52,7 +57,12 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
             }
             Kind::OptionalSlug if text.is_empty() => Value::Null,
             Kind::AcceptedVersion if text.is_empty() || text == "null" => Value::Null,
-            Kind::Pr | Kind::Offset | Kind::Version | Kind::AcceptedVersion | Kind::Run => text
+            Kind::Pr
+            | Kind::Index
+            | Kind::Offset
+            | Kind::Version
+            | Kind::AcceptedVersion
+            | Kind::Run => text
                 .parse::<u64>()
                 .map(Value::from)
                 .unwrap_or_else(|_| Value::String(text.clone())),

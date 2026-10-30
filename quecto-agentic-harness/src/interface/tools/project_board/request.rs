@@ -106,6 +106,10 @@ fn misfit(is_type: bool) -> FaultKind {
 pub enum Kind {
     /// A task id.
     Slug,
+    /// A JSON boolean.
+    Boolean,
+    /// A required zero-based existing outcome index (never null).
+    Index,
     /// A task id, or `null` for none.
     OptionalSlug,
     /// A list of task ids.
@@ -247,6 +251,16 @@ pub const OPS: &[(&str, &[Field])] = &[
     ("link_pr", &[TASK, required("pr", Kind::Pr)]),
     ("unlink_pr", &[TASK, required("pr", Kind::Pr)]),
     ("complete", &[TASK]),
+    (
+        "set_outcome",
+        &[
+            TASK,
+            required("outcome_index", Kind::Index),
+            required("met", Kind::Boolean),
+            REASON,
+            required("expected_rev", Kind::Rev),
+        ],
+    ),
     (
         "propose_plan",
         &[
@@ -518,6 +532,7 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "take_over" => change(BoardOp::TakeOver),
         "link_pr" => change(BoardOp::AddPr(read.pr()?)),
         "unlink_pr" => change(BoardOp::RemovePr(read.pr()?)),
+        "set_outcome" => moves::set_outcome(read),
         "complete" => Ok(BoardRequest::Complete(read.task()?)),
         "propose_plan" => plans::propose_plan(read),
         "edit_plan" => plans::edit_plan(read),

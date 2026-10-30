@@ -29,6 +29,7 @@ pub fn op_kind(request: &BoardRequest) -> OpKind {
         BoardRequest::Change(_, BoardOp::TakeOver) => OpKind::TakeOver,
         BoardRequest::Change(_, BoardOp::AddPr(_)) => OpKind::LinkPr,
         BoardRequest::Change(_, BoardOp::RemovePr(_)) => OpKind::UnlinkPr,
+        BoardRequest::Change(_, BoardOp::SetOutcome { .. }) => OpKind::SetOutcome,
         BoardRequest::Complete(_) => OpKind::Complete,
         BoardRequest::DoneWithoutRun { .. } => OpKind::DoneWithoutRun,
         BoardRequest::Clear { .. } => OpKind::ClearSetAside,
@@ -55,6 +56,7 @@ pub fn access_of(kind: OpKind) -> Access {
         | OpKind::TakeOver
         | OpKind::LinkPr
         | OpKind::UnlinkPr
+        | OpKind::SetOutcome
         | OpKind::Complete
         | OpKind::ClearSetAside
         | OpKind::ProposePlan
@@ -99,7 +101,10 @@ pub fn task_of(request: &BoardRequest) -> Option<&Slug> {
 pub fn pr_of(request: &BoardRequest) -> Option<u64> {
     match request {
         BoardRequest::Change(_, BoardOp::AddPr(pr) | BoardOp::RemovePr(pr)) => Some(*pr),
-        BoardRequest::Change(_, BoardOp::Move(..) | BoardOp::Renew | BoardOp::TakeOver)
+        BoardRequest::Change(
+            _,
+            BoardOp::Move(..) | BoardOp::Renew | BoardOp::TakeOver | BoardOp::SetOutcome { .. },
+        )
         | BoardRequest::Bootstrap
         | BoardRequest::List(_)
         | BoardRequest::ListReady

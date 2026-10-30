@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, owned, task_on, written_task};
-use super::board_view;
+use super::{board_view, read_pins};
 use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardSnapshot, ProjectBoardStore,
@@ -93,12 +93,16 @@ impl ChangeBoardTask {
         let noting = facts.is_some();
         let mut read = None;
         let noted = facts.as_deref_mut();
+        let commit = match op {
+            BoardOp::SetOutcome { .. } => super::board_change::commit_task_if_changed,
+            _ => commit,
+        };
         let written = commit(
             &*self.store,
             &*self.clock,
             &op.message(id),
             noted,
-            |board, when| {
+            |board: &BoardSnapshot, when: &super::board_change::When| {
                 let task = task_on(board, id);
                 if noting {
                     // This attempt's read, or none: never an earlier one's.
@@ -107,6 +111,12 @@ impl ChangeBoardTask {
                         .map(|task| (task.fields().status, claim_facts(task, actor, &when.now)));
                 }
                 let task = task?;
+                // The original task pin is rechecked against every CAS snapshot.
+                if let BoardOp::SetOutcome { expected_rev, .. } = op {
+                    let pin =
+                        crate::application::project_board::dto::ReadPin::Rev(expected_rev.clone());
+                    read_pins::task_as_read(&*self.store, board, task, Some(&pin))?;
+                }
                 let changed = apply(task, board, actor, op, &when.now)?;
                 Ok(vec![BoardArtifact::Task(changed)])
             },
@@ -119,7 +129,11 @@ impl ChangeBoardTask {
             }
             facts.status_to = match op {
                 BoardOp::Move(to, _) => Some(*to),
-                BoardOp::Renew | BoardOp::TakeOver | BoardOp::AddPr(_) | BoardOp::RemovePr(_) => {
+                BoardOp::Renew
+                | BoardOp::TakeOver
+                | BoardOp::AddPr(_)
+                | BoardOp::RemovePr(_)
+                | BoardOp::SetOutcome { .. } => {
                     written.as_ref().ok().map(|task| task.fields().status)
                 }
             };
@@ -195,6 +209,10 @@ fn apply(
 ) -> Result<Task, ProjectBoardError> {
     let id = &task.fields().id;
     let ruled = match op {
+        BoardOp::SetOutcome { index, reason, .. } => {
+            let reason = reason.as_deref().map(board_text::line);
+            task.set_outcome(*index, reason.as_deref(), actor, now)
+        }
         BoardOp::Renew => renew(task, actor, now),
         BoardOp::TakeOver => take_over(task, actor, now),
         BoardOp::Move(to, reason) => {
