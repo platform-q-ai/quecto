@@ -672,7 +672,7 @@ fn done_ticks_invalid_index_has_its_own_diagnostic_not_paging_offset() {
             message.contains("index"),
             "outcome diagnostic must name an index: {answer}"
         );
-        assert_eq!(message.contains("read on from"), false, "{answer}");
+        assert!(!message.contains("read on from"), "{answer}");
     }
 }
 
