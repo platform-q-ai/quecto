@@ -40,25 +40,13 @@ pub(in crate::interface) const MAX_FRAME_PAYLOAD_BYTES: usize =
 pub(super) fn is_cancel_command(trimmed: &str) -> bool {
     is_abort_command(trimmed) || is_steer_command(trimmed)
 }
-/// Reader-side classification so the eager cancel and the abort/steer control
-/// flag are set together, before the command is dispatched (#895/#896).
-pub(in crate::interface) fn is_abort_command(trimmed: &str) -> bool {
-    command_type_is(trimmed, "abort")
-}
+pub(in crate::interface) use prompt_admission::is_abort_command;
 
 pub(super) use prompt_admission::admit_images;
 #[cfg(test)]
 pub(super) use prompt_admission::is_steer_command;
 pub(in crate::interface) use prompt_admission::{AdmittedImages, dispatch_parsed};
 pub(in crate::interface) use prompt_admission::{record_rejected, steer_images};
-
-fn command_type_is(trimmed: &str, expected: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(trimmed)
-        .ok()
-        .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_owned))
-        .as_deref()
-        == Some(expected)
-}
 
 pub(in crate::interface) enum LineResult {
     Command(AgentCommand),
