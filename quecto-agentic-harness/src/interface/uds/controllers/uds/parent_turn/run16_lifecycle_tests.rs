@@ -270,6 +270,48 @@ fn workflow_config() -> Config {
     config
 }
 
+async fn assert_opt_in_workflow_waits_for_user(
+    rig: &mut Rig,
+    initial: &[Value],
+    frames: &[Value],
+    requests: &[Request],
+    initially_stalled: bool,
+) {
+    if initially_stalled {
+        assert_eq!(rig.provider.requests()[1].last_user, CORRECTION_NOTE);
+        assert_eq!(of_type(initial, "turn_admitted").len(), 2);
+        assert_eq!(of_type(initial, "turn_admitted")[0]["episodeId"], "first");
+        assert_eq!(of_type(initial, "turn_admitted")[1]["episodeId"], "first");
+    }
+    assert_eq!(
+        requests.len(),
+        2,
+        "opt-in settled root waits for next USER, not workflow wake"
+    );
+    assert!(of_type(frames, "turn_admitted").is_empty());
+    assert!(of_type(frames, "turn_outcome").is_empty());
+    for _ in 0..3 {
+        rig.drain().await;
+    }
+    assert_eq!(
+        rig.provider.requests().len(),
+        2,
+        "idle workflow drains remain inert in opt-in settled mode"
+    );
+    let idle = rig.frames();
+    assert!(of_type(&idle, "turn_admitted").is_empty());
+    assert!(of_type(&idle, "turn_outcome").is_empty());
+    rig.prompt("next-user").await;
+    assert_eq!(
+        rig.provider.requests().len(),
+        4,
+        "next USER opens fresh episode and declares done"
+    );
+    let next = rig.frames();
+    assert_eq!(of_type(&next, "turn_admitted")[0]["episodeId"], "next-user");
+    assert_eq!(of_type(&next, "turn_outcome")[0]["outcome"], "done");
+}
+
 async fn workflow_after_terminal(completed: bool, initially_stalled: bool) {
     let composed = compose_with_config(
         true,
@@ -312,39 +354,14 @@ async fn workflow_after_terminal(completed: bool, initially_stalled: bool) {
     let requests = rig.provider.requests();
     let frames = rig.frames();
     if std::env::var("QUECTO_TURN_OUTCOMES").ok().as_deref() == Some("1") {
-        if initially_stalled {
-            assert_eq!(rig.provider.requests()[1].last_user, CORRECTION_NOTE);
-            assert_eq!(of_type(&initial, "turn_admitted").len(), 2);
-            assert_eq!(of_type(&initial, "turn_admitted")[0]["episodeId"], "first");
-            assert_eq!(of_type(&initial, "turn_admitted")[1]["episodeId"], "first");
-        }
-        assert_eq!(
-            requests.len(),
-            2,
-            "opt-in settled root waits for next USER, not workflow wake"
-        );
-        assert!(of_type(&frames, "turn_admitted").is_empty());
-        assert!(of_type(&frames, "turn_outcome").is_empty());
-        for _ in 0..3 {
-            rig.drain().await;
-        }
-        assert_eq!(
-            rig.provider.requests().len(),
-            2,
-            "idle workflow drains remain inert in opt-in settled mode"
-        );
-        let idle = rig.frames();
-        assert!(of_type(&idle, "turn_admitted").is_empty());
-        assert!(of_type(&idle, "turn_outcome").is_empty());
-        rig.prompt("next-user").await;
-        assert_eq!(
-            rig.provider.requests().len(),
-            4,
-            "next USER opens fresh episode and declares done"
-        );
-        let next = rig.frames();
-        assert_eq!(of_type(&next, "turn_admitted")[0]["episodeId"], "next-user");
-        assert_eq!(of_type(&next, "turn_outcome")[0]["outcome"], "done");
+        assert_opt_in_workflow_waits_for_user(
+            &mut rig,
+            &initial,
+            &frames,
+            &requests,
+            initially_stalled,
+        )
+        .await;
         return;
     }
     assert_eq!(
