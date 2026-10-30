@@ -9,6 +9,7 @@ pub(super) struct ToolRegistryBuild {
     pub(super) model: String,
     pub(super) ext_registry: ExtensionRegistry,
     pub(super) extension_prompt_snippets: String,
+    pub(super) guidance_append: Option<crate::application::agent_turn::agent_loop::GuidanceAppend>,
     pub(super) notification_rx:
         Option<crate::infrastructure::tools::agents::subagent_registry::NotificationRx>,
     pub(super) subagent_registry:
@@ -145,7 +146,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         .then_some(flags.parent_outcome)
         .flatten()
         .and_then(|build| build());
-    let runtime = crate::interface::cli::controllers::tool_runtime::build_tool_runtime(
+    let mut runtime = crate::interface::cli::controllers::tool_runtime::build_tool_runtime(
         crate::interface::cli::controllers::tool_runtime::ToolRuntimeBuildArgs {
             swarm_context,
             parent_outcome: parent_outcome.clone().map(|runtime| runtime as _),
@@ -197,16 +198,18 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent;
     let mut offered = runtime.registry.definitions_for(parent_context).iter();
     let offered = offered.any(|definition| definition.name == "declare_turn_outcome");
+    runtime.registry.parent_outcome_candidate = parent_outcome.clone().map(|runtime| runtime as _);
+    if let Some(candidate) = &parent_outcome {
+        candidate.observe_policy(offered);
+    }
     let parent_outcome = parent_outcome.filter(|_| offered);
     // #2708: a guarded root is told, with the tools' prompt notes, to declare.
-    use crate::domain::agents::value_objects::turn_outcome::DECLARE_GUIDANCE;
-    let guidance = parent_outcome.as_ref().map(|_| DECLARE_GUIDANCE);
-    let snippets = [Some(runtime.extension_prompt_snippets.as_str()), guidance];
-    let snippets = snippets
-        .into_iter()
-        .flatten()
-        .filter(|snippet| !snippet.is_empty());
-    let extension_prompt_snippets = snippets.collect::<Vec<_>>().join("\n\n");
+    let mut extension_prompt_snippets = runtime.extension_prompt_snippets;
+    let guidance_append = parent_outcome.as_ref().map(|_| {
+        crate::application::agent_turn::agent_loop::GuidanceAppend::append_to(
+            &mut extension_prompt_snippets,
+        )
+    });
     let _policy_state = runtime.policy_state;
     let _catalogue_entries = runtime.catalogue_entries;
 
@@ -223,6 +226,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         model,
         ext_registry: runtime.ext_registry,
         extension_prompt_snippets,
+        guidance_append,
         notification_rx: runtime.notification_rx,
         subagent_registry: runtime.subagent_registry,
         harness_lifecycle: runtime.harness_lifecycle,

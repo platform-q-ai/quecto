@@ -3,6 +3,15 @@
 Sessions persist conversation history so the agent remembers context across
 prompts and restarts. They are the primary state mechanism for UDS agents.
 
+## Root turn outcomes and completion
+
+For session persistence, resume and history replacement, see the canonical
+[root turn-outcome contract](uds-protocol.md#turn-outcomes-trusted-root-parents)
+for eligibility and policy reload, default completion versus opt-in admission
+ACKs, automatic wake modes, correction/request costs, and CLI stdout/stderr/exit
+semantics. Runtime guidance stays out of durable session history.
+
+
 ## How sessions work
 
 Each session is identified by a key. Two shapes exist today, and both are

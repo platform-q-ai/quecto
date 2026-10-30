@@ -89,7 +89,12 @@ pub struct AgentLoopConfig {
     pub model_context_window: Option<usize>,
     pub tool_profile_context: ToolProfileContext,
 }
+mod guidance_projection;
+pub(crate) use guidance_projection::GuidanceAppend;
+
 pub struct AgentLoopImpl {
+    composed_prompt_id: Option<uuid::Uuid>,
+    composed_guidance_append: Option<GuidanceAppend>,
     unreported_usage: std::sync::Mutex<UsageTotals>,
     accounting_outbox: std::sync::Mutex<Vec<RequestObservation>>,
     request_observations: std::sync::Mutex<RequestDiagnostics>,
@@ -168,6 +173,8 @@ impl AgentLoopImpl {
             model_context_window: config.model_context_window,
         });
         let mut agent = Self {
+            composed_prompt_id: None,
+            composed_guidance_append: None,
             unreported_usage: std::sync::Mutex::new(UsageTotals::default()),
             request_observations: std::sync::Mutex::new(Default::default()),
             in_flight_request: Arc::default(),

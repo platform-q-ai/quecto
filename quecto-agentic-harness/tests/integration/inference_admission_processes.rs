@@ -14,6 +14,8 @@ use quecto::infrastructure::admission::{AdminConnection, AuthorityConnection, Au
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
+use super::configured_extensions::success_fixture;
+
 const LIMIT: Duration = Duration::from_secs(30);
 
 fn quecto_binary() -> PathBuf {
@@ -27,6 +29,7 @@ struct FakeProvider {
     peak: Arc<AtomicUsize>,
     total: Arc<AtomicUsize>,
     inflight: Arc<AtomicUsize>,
+    continuations: Arc<AtomicUsize>,
 }
 
 async fn fake_provider(hold: Duration) -> FakeProvider {
@@ -35,13 +38,15 @@ async fn fake_provider(hold: Duration) -> FakeProvider {
     let peak = Arc::new(AtomicUsize::new(0));
     let total = Arc::new(AtomicUsize::new(0));
     let inflight = Arc::new(AtomicUsize::new(0));
+    let continuations = Arc::new(AtomicUsize::new(0));
+    let c = continuations.clone();
     let (p, t, i) = (peak.clone(), total.clone(), inflight.clone());
     tokio::spawn(async move {
         loop {
             let Ok((mut stream, _)) = listener.accept().await else {
                 return;
             };
-            let (p, t, i) = (p.clone(), t.clone(), i.clone());
+            let (p, t, i, c) = (p.clone(), t.clone(), i.clone(), c.clone());
             tokio::spawn(async move {
                 let mut buf = Vec::new();
                 let mut chunk = [0u8; 4096];
@@ -73,32 +78,21 @@ async fn fake_provider(hold: Duration) -> FakeProvider {
                     }
                     buf.extend_from_slice(&chunk[..n]);
                 }
-                let body = String::from_utf8_lossy(&buf[body_start..]).to_string();
-                let streaming = body.contains("\"stream\":true");
+                let body: serde_json::Value =
+                    serde_json::from_slice(&buf[body_start..body_start + length]).unwrap();
+                if success_fixture::continuation(&body) {
+                    c.fetch_add(1, Ordering::SeqCst);
+                }
                 let now = i.fetch_add(1, Ordering::SeqCst) + 1;
                 p.fetch_max(now, Ordering::SeqCst);
                 t.fetch_add(1, Ordering::SeqCst);
                 tokio::time::sleep(hold).await;
                 i.fetch_sub(1, Ordering::SeqCst);
-                let response = if streaming {
-                    let events = concat!(
-                        "data: {\"id\":\"fake\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"admitted-reply\"},\"finish_reason\":null}]}\n\n",
-                        "data: {\"id\":\"fake\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}\n\n",
-                        "data: [DONE]\n\n"
-                    );
-                    format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                        events.len(),
-                        events
-                    )
-                } else {
-                    let json = "{\"id\":\"fake\",\"object\":\"chat.completion\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"admitted-reply\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}";
-                    format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                        json.len(),
-                        json
-                    )
-                };
+                let (body, content_type) = success_fixture::response(&body, "admitted-reply");
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
                 let _ = stream.write_all(response.as_bytes()).await;
                 let _ = stream.shutdown().await;
             });
@@ -109,6 +103,7 @@ async fn fake_provider(hold: Duration) -> FakeProvider {
         peak,
         total,
         inflight,
+        continuations,
     }
 }
 
@@ -221,14 +216,15 @@ async fn independent_root_processes_share_the_configured_bound() {
     }
     assert_eq!(
         provider.total.load(Ordering::SeqCst),
-        3,
-        "every root made exactly one attempt"
+        6,
+        "three roots each make an initial declaration and a receipt continuation"
     );
     assert!(
         provider.peak.load(Ordering::SeqCst) <= 2,
         "peak {} exceeded configured capacity 2",
         provider.peak.load(Ordering::SeqCst)
     );
+    assert_eq!(provider.continuations.load(Ordering::SeqCst), 3);
     assert_eq!(provider.inflight.load(Ordering::SeqCst), 0);
     // Clean exits retire their scopes and leave no occupancy behind.
     let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
@@ -256,6 +252,8 @@ async fn without_admission_the_fake_provider_observes_the_unbounded_burst() {
     for (ok, _, stderr) in &results {
         assert!(*ok, "root agent failed: {stderr}");
     }
+    assert_eq!(provider.total.load(Ordering::SeqCst), 6);
+    assert_eq!(provider.continuations.load(Ordering::SeqCst), 3);
     assert_eq!(
         provider.peak.load(Ordering::SeqCst),
         3,
@@ -314,7 +312,8 @@ async fn descendant_context_waits_behind_its_root_and_a_forged_context_fails_clo
         .unwrap();
     assert!(ok, "descendant failed: {stderr}");
     assert!(stdout.contains("admitted-reply"));
-    assert_eq!(provider.total.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.total.load(Ordering::SeqCst), 2);
+    assert_eq!(provider.continuations.load(Ordering::SeqCst), 1);
     assert!(
         !context.exists(),
         "the child consumed and removed its capability sidecar"
@@ -344,7 +343,7 @@ async fn descendant_context_waits_behind_its_root_and_a_forged_context_fails_clo
     );
     assert_eq!(
         provider.total.load(Ordering::SeqCst),
-        1,
+        2,
         "no bypass attempt was made"
     );
 
@@ -606,11 +605,11 @@ async fn sigterm_stops_the_authority_cleanly() {
 }
 
 /// P4 measured comparison (AC8): the same fake workload — four independent
-/// root sessions each making one attempt against a provider that holds every
+/// root sessions each making two sequential requests (declare done, then receipt
+/// continuation) against a provider that holds every
 /// request for 600 ms — run once without admission and once behind a shared
 /// authority bound at C=2. The oracle records peak concurrency and the wall
-/// time of the whole burst; the numbers are recorded in
-/// `notes/1679-p4-3-verification.md`.
+/// time of the whole two-phase burst, including admission on both requests.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn burst_versus_admitted_fake_workload_is_measured() {
     const ROOTS: usize = 4;
@@ -634,6 +633,7 @@ async fn burst_versus_admitted_fake_workload_is_measured() {
         for (ok, _, stderr) in &results {
             assert!(*ok, "root agent failed: {stderr}");
         }
+        assert_eq!(provider.continuations.load(Ordering::SeqCst), ROOTS);
         (
             provider.peak.load(Ordering::SeqCst),
             provider.total.load(Ordering::SeqCst),
@@ -649,9 +649,10 @@ async fn burst_versus_admitted_fake_workload_is_measured() {
         "MEASURED burst: peak={burst_peak} total={burst_total} wall={burst_wall:?}; \
          admitted(C={CAPACITY}): peak={admitted_peak} total={admitted_total} wall={admitted_wall:?}"
     );
-    assert_eq!(burst_total, ROOTS);
+    assert_eq!(burst_total, ROOTS * 2);
     assert_eq!(
-        admitted_total, ROOTS,
+        admitted_total,
+        ROOTS * 2,
         "admission delays, never drops, attempts"
     );
     assert_eq!(
@@ -662,10 +663,10 @@ async fn burst_versus_admitted_fake_workload_is_measured() {
         admitted_peak <= CAPACITY,
         "admitted peak {admitted_peak} exceeded C={CAPACITY}"
     );
-    // Two waves of at most C attempts: the admitted run takes at least two
-    // holds, while the burst finishes in about one.
+    // Eight requests at C=2 take at least four holds; the unbounded
+    // four-root control has two sequential phases, each held for 600 ms.
     assert!(
-        admitted_wall >= hold * 2,
-        "admitted burst finished in {admitted_wall:?}, faster than two waves"
+        admitted_wall >= hold * 4,
+        "admitted burst finished in {admitted_wall:?}, faster than four waves"
     );
 }

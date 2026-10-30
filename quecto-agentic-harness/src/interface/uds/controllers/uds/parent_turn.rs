@@ -15,8 +15,25 @@ use crate::domain::inference::services::turn_suspension::Work;
 use crate::interface::cli::uds_session::PendingMessage;
 use crate::interface::uds::wire::protocol::ControlStatus;
 
+/// Reconcile after reload and before every OUTER admission, never a tool iteration.
+pub(super) fn enter_outer(ctx: &mut DispatchCtx<'_>) {
+    ctx.agent.reconcile_declaration_policy(true);
+    if let Some(runtime) = ctx.agent.parent_outcome_candidate() {
+        ctx.session.bind_parent_outcome_guard(runtime);
+    }
+}
+
 fn guarded(ctx: &DispatchCtx<'_>) -> bool {
     ctx.session.parent_outcome().is_some()
+}
+
+/// A streaming turn retains its current authority until the next outer input.
+async fn reconcile_idle_boundary(ctx: &mut DispatchCtx<'_>) {
+    let false = ctx.session.is_streaming() else {
+        return;
+    };
+    super::super::uds_dispatch_reload::poll_reload(ctx).await;
+    enter_outer(ctx);
 }
 
 /// The identity of an external instruction: unchanged when the session is
@@ -28,6 +45,7 @@ pub(in crate::interface::uds::controllers) async fn episode_id(
     id: Option<String>,
     type_name: &str,
 ) -> Result<Option<String>, ()> {
+    reconcile_idle_boundary(ctx).await;
     match (guarded(ctx), id) {
         (false, id) | (true, id @ None) => Ok(id),
         (true, Some(id)) if admissible_episode_id(&id) => Ok(Some(id)),
@@ -75,12 +93,103 @@ pub(super) async fn accept_prompt(
         return None;
     };
     let episode_id = id.map_or_else(|| uuid::Uuid::new_v4().to_string(), str::to_owned);
-    if type_name != "steer" {
+    if ctx.session.admission_ack() && matches!(type_name, "prompt" | "follow_up") {
         let data = serde_json::json!({ "episodeId": episode_id });
         let event = AgentEvent::ok(id, type_name, Some(data));
         super::emit_event_to_broadcast_or_writer(ctx, &event).await;
     }
     Some(TurnAdmission::External { episode_id })
+}
+
+pub(super) async fn cancelled_prompt(ctx: &mut DispatchCtx<'_>, id: Option<&str>, type_name: &str) {
+    super::emit_pre_cancelled(ctx).await; // Stale abort (#483).
+    if let (Some(_), false) = (ctx.session.parent_outcome(), ctx.session.admission_ack()) {
+        let event = AgentEvent::err(id, type_name, "prompt execution cancelled");
+        super::emit_event_to_broadcast_or_writer(ctx, &event).await;
+    }
+}
+
+/// Complete the default id waiter before any uncorrelated error fallback.
+pub(super) async fn respond_prompt(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    type_name: &str,
+    outcome: &PromptOutcome,
+    completion_response: bool,
+    early_ack: bool,
+) {
+    let errors = ctx.session.finish_completion_response();
+    // #1072: the turn's own save (`TurnSave`) drains the durable-prefix dirty latch.
+    if matches!(
+        (completion_response, early_ack, &outcome),
+        (true, _, _) | (false, false, PromptOutcome::Success)
+    ) {
+        let mut ev = match outcome {
+            PromptOutcome::Success => AgentEvent::ok(id, type_name, None),
+            PromptOutcome::Error => AgentEvent::err(id, type_name, "prompt execution failed"),
+            PromptOutcome::Cancelled => {
+                AgentEvent::err(id, type_name, "prompt execution cancelled")
+            }
+        };
+        // Preserve diagnostics even when only the correction failed: the original
+        // prompt's success flag still describes its own execution, not the guard.
+        if let (true, AgentEvent::Response { error, .. }) = (completion_response, &mut ev) {
+            for diagnostic in &errors {
+                match (diagnostic.as_str(), error.as_mut()) {
+                    ("", _) => {}
+                    (_, Some(original)) if original.lines().any(|line| line == diagnostic) => {}
+                    (_, Some(original)) => {
+                        match original.is_empty() {
+                            true => {}
+                            false => original.push('\n'),
+                        }
+                        original.push_str(diagnostic);
+                    }
+                    (_, None) => *error = Some(diagnostic.clone()),
+                }
+            }
+        }
+        super::emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    }
+    let false = completion_response else {
+        return;
+    };
+    for error in errors {
+        super::emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(None, "agent_error", error))
+            .await;
+    }
+}
+
+/// Exact-env1 relays cannot display harness-minted episodes after settlement.
+/// Waiting and still-open episodes keep their ordinary wake semantics.
+pub(super) fn fresh_wake_allowed(ctx: &DispatchCtx<'_>) -> bool {
+    use crate::domain::agents::value_objects::turn_outcome::TurnOutcome;
+    match (ctx.session.admission_ack(), ctx.session.parent_outcome()) {
+        (true, Some(runtime)) if runtime.admits_automatic() => true,
+        (true, Some(runtime)) => match runtime.view().latest.map(|record| record.outcome) {
+            Some(TurnOutcome::Done | TurnOutcome::NeedsUser | TurnOutcome::Stalled) => false,
+            None | Some(TurnOutcome::Waiting) => true,
+        },
+        _ => true,
+    }
+}
+
+/// Actual engine emission selection, not a retry/drain, owns freshness.
+pub(super) fn workflow_admission(
+    ctx: &mut DispatchCtx<'_>,
+    identity: Option<&str>,
+) -> Option<TurnAdmission> {
+    let true = fresh_wake_allowed(ctx) else {
+        return None;
+    };
+    let guarded = ctx.session.parent_outcome().is_some();
+    let fresh =
+        identity.is_some_and(|identity| ctx.session.take_workflow_emission(identity.to_owned()));
+    match (guarded, fresh, admits(ctx, Work::Automatic)) {
+        (true, false, false) => None,
+        (_, true, _) => Some(TurnAdmission::FreshWake),
+        _ => Some(TurnAdmission::Nudge),
+    }
 }
 
 /// What a drained message opens: a queued instruction its own episode, a
@@ -93,9 +202,12 @@ pub(super) fn pending_admission(message: &PendingMessage) -> TurnAdmission {
         PendingMessage::User { .. } => TurnAdmission::External {
             episode_id: uuid::Uuid::new_v4().to_string(),
         },
-        PendingMessage::Automatic(_)
-        | PendingMessage::SubagentNotification { .. }
-        | PendingMessage::CoalescedSubagentNotification { .. } => TurnAdmission::WorkWake,
+        PendingMessage::Automatic(_) => TurnAdmission::WorkWake,
+        PendingMessage::SubagentNotification { sequence, .. } if *sequence > 0 => {
+            TurnAdmission::FreshWake
+        }
+        PendingMessage::CoalescedSubagentNotification { .. } => TurnAdmission::FreshWake,
+        PendingMessage::SubagentNotification { .. } => TurnAdmission::WorkWake,
     }
 }
 
@@ -245,3 +357,5 @@ pub(super) async fn settle(
 mod issue_2708_uds_parent_tests;
 #[cfg(test)]
 mod review_2762_tests;
+#[cfg(test)]
+mod run16_lifecycle_tests;

@@ -37,6 +37,20 @@ pub struct ModelTurnRun {
     lines: Vec<Value>,
     /// The `get_state` a second client received while the reply streamed.
     state: Option<Value>,
+    early_ack: bool,
+}
+
+#[given(expr = "the model turn client selects transport mode {string}")]
+fn transport_mode(world: &mut QuectoWorld, mode: String) {
+    world
+        .model_turn
+        .as_mut()
+        .expect("a model turn workspace")
+        .early_ack = match mode.as_str() {
+        "default" => false,
+        "exact-env1" => true,
+        _ => panic!("unsupported transport mode: {mode}"),
+    };
 }
 
 impl ModelTurnRun {
@@ -47,7 +61,8 @@ impl ModelTurnRun {
     /// The UDS agent, started and listening.
     fn start_agent(&self) -> (Child, PathBuf) {
         let socket = self.dir("agent.sock");
-        let mut child = Command::new(env!("CARGO_BIN_EXE_quecto"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_quecto"));
+        command
             .args(["agent", "--mode", "uds", "--socket"])
             .arg(&socket)
             .current_dir(self.dir("work"))
@@ -62,9 +77,11 @@ impl ModelTurnRun {
             .env("RUST_LOG", "warn")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+            .stderr(Stdio::null());
+        if self.early_ack {
+            command.env("QUECTO_TURN_OUTCOMES", "1");
+        }
+        let mut child = command.spawn().unwrap();
         let started = Instant::now();
         while !socket.exists() {
             assert!(child.try_wait().unwrap().is_none(), "the agent exited");
@@ -124,7 +141,15 @@ impl Client {
     fn read_until(&mut self, kept: &mut Vec<Value>, last: impl Fn(&Value) -> bool) -> Value {
         loop {
             let mut line = String::new();
-            let read = self.reader.read_line(&mut line).unwrap();
+            let read = self.reader.read_line(&mut line).unwrap_or_else(|error| {
+                let terminal: Vec<_> = kept
+                    .iter()
+                    .filter(|frame| {
+                        matches!(frame["type"].as_str(), Some("response" | "turn_outcome"))
+                    })
+                    .collect();
+                panic!("bounded socket read failed: {error}; terminal frames: {terminal:?}");
+            });
             assert!(read > 0, "the agent closed the socket; lines: {kept:?}");
             let Ok(value) = serde_json::from_str::<Value>(&line) else {
                 continue;
@@ -242,6 +267,7 @@ fn workspace(world: &mut QuectoWorld, reply: String) {
         requests,
         lines: Vec::new(),
         state: None,
+        early_ack: false,
     });
 }
 
@@ -377,8 +403,42 @@ fn prompted_until_the_turn_ends_blocking(run: &mut ModelTurnRun) {
     let (child, socket) = run.start_agent();
     let mut client = Client::connect(&socket);
     client.send(json!({"type": "prompt", "message": "Write a lot.", "id": "p1"}));
-    client.read_until(&mut run.lines, |line| line["command"] == "agent_error");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let early_ack = run.early_ack;
+        let terminal = client.read_until(&mut run.lines, |line| match early_ack {
+            true => {
+                line["type"] == "response"
+                    && line["command"] == "agent_error"
+                    && line["id"].is_null()
+            }
+            false => {
+                line["type"] == "response" && line["command"] == "prompt" && line["id"] == "p1"
+            }
+        });
+        assert_eq!(terminal["success"], false, "{terminal}");
+        assert!(
+            terminal["error"]
+                .as_str()
+                .expect("terminal failure reason")
+                .contains("output cap exceeded: "),
+            "{terminal}"
+        );
+        client.send(json!({"type":"get_state", "id":"cap-barrier"}));
+        let state = client.read_until(&mut run.lines, |line| {
+            line["type"] == "response" && line["id"] == "cap-barrier"
+        });
+        assert_eq!(state["command"], "get_state", "{state}");
+        assert_eq!(state["success"], true, "{state}");
+    }));
     terminate(child);
+    eprintln!(
+        "runaway provider requests: {}; observations: {:?}",
+        run.requests.load(Ordering::SeqCst),
+        run.observations()
+    );
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
 }
 
 #[then("the state shows the model turn with its attempt's events, output and last event")]
@@ -401,13 +461,36 @@ fn state_shows_the_model_turn(world: &mut QuectoWorld) {
     use quecto::domain::sessions::value_objects::state_snapshot::{
         StateSnapshot, UnchangedSnapshot,
     };
-    let typed = StateSnapshot::read_forward_compatible(&state["data"]).expect("accepted");
+    let mut typed = StateSnapshot::read_forward_compatible(&state["data"]).expect("accepted");
     assert!(typed.model_turn.is_some());
     // Polled at the generation it saw, a parent relays the small unchanged
     // marker, which still carries the model turn.
     let marker = serde_json::to_value(UnchangedSnapshot::at(typed.generation, &typed)).unwrap();
     assert_eq!(marker["modelTurn"], state["data"]["modelTurn"]);
-    assert_eq!(marker.as_object().unwrap().len(), 3, "{marker}");
+    assert_eq!(
+        marker,
+        json!({
+            "unchanged": true,
+            "generation": typed.generation,
+            "modelTurn": state["data"]["modelTurn"],
+            "sessionKey": state["data"]["sessionKey"],
+            "turnOutcomeVersion": 1,
+            "outcomeEpoch": state["data"]["outcomeEpoch"],
+            "latestTurnOutcome": null
+        })
+    );
+    assert!(marker["sessionKey"].is_string());
+    assert!(marker["outcomeEpoch"].is_string());
+    // An explicitly legacy producer still has the original three-key shape.
+    typed.turn_outcome_version = None;
+    typed.outcome_epoch = None;
+    typed.latest_turn_outcome = None;
+    let legacy = serde_json::to_value(UnchangedSnapshot::at(typed.generation, &typed)).unwrap();
+    assert_eq!(
+        legacy,
+        json!({"unchanged": true, "generation": typed.generation,
+        "modelTurn": state["data"]["modelTurn"]})
+    );
 }
 
 #[then(
@@ -429,6 +512,64 @@ fn interrupted_request_recorded(world: &mut QuectoWorld) {
     assert_eq!(attempt["output_bytes"], 2 * DELTA.len(), "{attempt}");
     assert_eq!(attempt["event_count"], 3, "{attempt}");
     assert!(attempt["first_token_ms"].is_u64(), "{attempt}");
+}
+
+#[then("the output cap failure obeys the selected transport contract")]
+fn cap_transport_contract(world: &mut QuectoWorld) {
+    let run = world.model_turn.as_ref().expect("a model turn workspace");
+    let observations = run.observations();
+    assert_eq!(
+        observations.len(),
+        1,
+        "no hidden retry or guard correction: {observations:?}"
+    );
+    let attempts = observations[0]["attempt_diagnostics"].as_array().unwrap();
+    assert_eq!(attempts.len(), 1, "{attempts:?}");
+    // This fixture deliberately uses an unlisted model: its fallback cap is 256 KiB.
+    assert_eq!(
+        attempts[0]["output_bytes"],
+        262_144 + DELTA.len(),
+        "{attempts:?}"
+    );
+    let responses: Vec<_> = run
+        .lines
+        .iter()
+        .filter(|line| {
+            line["type"] == "response"
+                && matches!(line["command"].as_str(), Some("prompt" | "agent_error"))
+        })
+        .collect();
+    if run.early_ack {
+        assert_eq!(responses.len(), 2, "{responses:?}");
+        assert_eq!(responses[0]["id"], "p1");
+        assert_eq!(responses[0]["command"], "prompt");
+        assert_eq!(responses[0]["success"], true);
+        assert_eq!(responses[0]["data"]["episodeId"], "p1");
+        assert_eq!(responses[1]["command"], "agent_error");
+        assert!(responses[1]["id"].is_null(), "{responses:?}");
+        assert_eq!(responses[1]["success"], false);
+        assert!(
+            responses[1]["error"]
+                .as_str()
+                .unwrap()
+                .contains("output cap exceeded: ")
+        );
+    } else {
+        assert_eq!(
+            responses.len(),
+            1,
+            "no uncorrelated error may steal another waiter: {responses:?}"
+        );
+        assert_eq!(responses[0]["id"], "p1");
+        assert_eq!(responses[0]["command"], "prompt");
+        assert_eq!(responses[0]["success"], false);
+        assert!(
+            responses[0]["error"]
+                .as_str()
+                .unwrap()
+                .contains("output cap exceeded: ")
+        );
+    }
 }
 
 #[then("the turn ends with the output cap error")]

@@ -44,6 +44,7 @@ use tempfile::TempDir;
 #[path = "../common/mod.rs"]
 mod common;
 mod feature_preprocess;
+mod success_fixture;
 
 // ===========================================================================
 // Mock LLM Provider for BDD tests

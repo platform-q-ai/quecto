@@ -5,6 +5,15 @@ agent session. They run as **background UDS-mode agents** — the parent returns
 immediately and interacts with children asynchronously via the `agent_cmd`
 tool. No external dependencies (no `ncat`, `socat`, or `bash` intermediary).
 
+## Root turn outcomes and completion
+
+For root-parent outcomes while children run, see the canonical
+[root turn-outcome contract](uds-protocol.md#turn-outcomes-trusted-root-parents)
+for eligibility and policy reload, default completion versus opt-in admission
+ACKs, automatic wake modes, correction/request costs, and CLI stdout/stderr/exit
+semantics. Runtime guidance stays out of durable session history.
+
+
 ## Parent coordination model
 
 Use subagents to isolate substantial working context and run independent work

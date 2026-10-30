@@ -22,7 +22,7 @@ use crate::domain::audit::{
     AuditEvent, ContextCutRecord, ContextCutSkippedRecord, CutMarks, CutSkipReason,
 };
 use crate::domain::conversation::services::watermark::{
-    CutInput, CutPlan, CutTrigger, NoCut, RequestSize, Watermark, plan_cut,
+    CutInput, CutPlan, CutTrigger, NoCut, PlanRole, RequestSize, Watermark, plan_cut,
 };
 use crate::domain::conversation::services::watermark_cut::{
     apply_cut, archive_index, archive_stub, archived, plan_messages, stub_tokens_bound,
@@ -30,6 +30,14 @@ use crate::domain::conversation::services::watermark_cut::{
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::SpillEntry;
 use std::sync::Mutex;
+
+/// The provider view's size, with canonical hidden guidance credited once.
+pub(crate) fn provider_request_size(messages: usize, fixed: usize, credit: usize) -> RequestSize {
+    RequestSize {
+        tool_tokens: fixed,
+        message_tokens: messages.saturating_sub(credit),
+    }
+}
 
 /// The archive index's base id; later cuts are `archive:2`, `archive:3`...
 const ARCHIVE_ID: &str = "archive";
@@ -105,14 +113,15 @@ impl ContextManager {
         }
     }
 
-    /// The watermark pass before a request. `tool_tokens` is the tool
-    /// definitions' estimate. Every await comes before the cut, which is
+    /// The watermark pass before a request. Fixed tokens include provider-only
+    /// additions; message credit removes hidden canonical guidance from every
+    /// size decision without changing canonical messages. Every await comes before the cut, which is
     /// made in one step: a pass dropped while it archives leaves the
     /// conversation as it was.
     pub async fn prepare_watermark_context(
         &self,
         messages: &mut Vec<Message>,
-        (tool_tokens, message_budget): (usize, usize),
+        (tool_tokens, message_budget, message_credit): (usize, usize, usize),
         spills_dirty: bool,
     ) -> WatermarkPass {
         let state = &self.watermark;
@@ -122,15 +131,22 @@ impl ContextManager {
             .refresh_spill_manifest(messages, spills_dirty || message_spilled)
             .await;
         let (trigger, marks) = self.cut_trigger(state, messages);
-        let size = RequestSize {
+        let size = provider_request_size(
+            context_pruning::estimate_total_tokens(messages),
             tool_tokens,
-            message_tokens: context_pruning::estimate_total_tokens(messages),
-        };
+            message_credit,
+        );
         let mut plan = ContextPlan::default();
         let cut = match trigger.is_due(size) {
             true => {
-                self.cut(state, (trigger, marks), messages, size, &mut plan)
-                    .await
+                self.cut(
+                    state,
+                    (trigger, marks),
+                    messages,
+                    (size, message_credit),
+                    &mut plan,
+                )
+                .await
             }
             false => None,
         };
@@ -139,7 +155,12 @@ impl ContextManager {
         // counted once, in its own `context_cut` record.
         plan.tokens_before = context_pruning::estimate_total_tokens(messages);
         let over_ceiling = |messages: &[Message]| {
-            context_pruning::estimate_total_tokens(messages).saturating_add(tool_tokens)
+            provider_request_size(
+                context_pruning::estimate_total_tokens(messages),
+                tool_tokens,
+                message_credit,
+            )
+            .total()
                 > trigger.ceiling
         };
         let fallback = over_ceiling(messages);
@@ -224,10 +245,25 @@ impl ContextManager {
         state: &WatermarkState,
         (trigger, marks): (CutTrigger, CutMarks),
         messages: &mut Vec<Message>,
-        size: RequestSize,
+        (size, message_credit): (RequestSize, usize),
         plan: &mut ContextPlan,
     ) -> Option<CutRecord> {
-        let view = plan_messages(messages);
+        let mut view = plan_messages(messages);
+        // System messages are pinned by the planner. Charge their provider
+        // view, not hidden canonical guidance, even when deciding the cut.
+        let mut remaining = message_credit;
+        for message in view
+            .iter_mut()
+            .filter(|m| matches!(m.role, PlanRole::System))
+        {
+            let credit = remaining.min(message.tokens);
+            message.tokens -= credit;
+            remaining -= credit;
+        }
+        assert_eq!(
+            remaining, 0,
+            "guidance credit belongs to pinned system content"
+        );
         let input = CutInput {
             messages: &view,
             tool_tokens: size.tool_tokens,
@@ -256,8 +292,12 @@ impl ContextManager {
             stub: stub_id,
             message_tokens: baseline(trigger, &cut),
         });
-        let tokens_after =
-            context_pruning::estimate_total_tokens(messages).saturating_add(size.tool_tokens);
+        let tokens_after = provider_request_size(
+            context_pruning::estimate_total_tokens(messages),
+            size.tool_tokens,
+            message_credit,
+        )
+        .total();
         assert_eq!(dropped.len(), count, "the cut drops what it archives");
         let record = CutRecord::Made(ContextCutRecord {
             tokens_before: size.total(),

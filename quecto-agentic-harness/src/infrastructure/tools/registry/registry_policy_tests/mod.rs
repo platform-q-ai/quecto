@@ -15,3 +15,5 @@ use std::sync::Arc;
 mod persisted;
 #[path = "../registry_policy_tests.rs"]
 mod policy;
+
+mod run24_transitions;

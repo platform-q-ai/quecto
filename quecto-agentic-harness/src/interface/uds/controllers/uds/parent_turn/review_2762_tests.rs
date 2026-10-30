@@ -353,3 +353,146 @@ async fn review_2762_instruction_queued_behind_two_notes_is_admitted_after_a_ter
     let requests = root.provider.requests();
     assert_eq!(requests[3], "Then this", "{requests:?}");
 }
+
+/// Count the real configuration source polls at an idle prompt boundary,
+/// while proving the configuration rebuilt by that poll reaches execution.
+#[tokio::test]
+async fn run42_round3_idle_prompt_polls_configuration_once() {
+    use super::issue_2708_uds_parent_tests::Scripted;
+    use crate::application::catalogue::ports::{ReloadedConfiguration, RuntimeConfigurationSource};
+    use crate::application::catalogue::use_cases::ReloadRuntimeConfiguration;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    struct Source {
+        polls: Arc<AtomicUsize>,
+        configuration: Option<ReloadedConfiguration>,
+    }
+    impl RuntimeConfigurationSource for Source {
+        fn changed(&mut self) -> bool {
+            self.polls.fetch_add(1, Ordering::SeqCst);
+            self.configuration.is_some()
+        }
+        fn rebuild(&mut self) -> Result<ReloadedConfiguration, String> {
+            self.configuration
+                .take()
+                .ok_or_else(|| "already rebuilt".into())
+        }
+    }
+    let mut root = Root::legacy(vec![Reply::Text("obsolete provider")]);
+    let replacement = Scripted::new(vec![Reply::Text("latest configuration")]);
+    let polls = Arc::new(AtomicUsize::new(0));
+    let reload = Arc::new(ReloadRuntimeConfiguration::new(Box::new(Source {
+        polls: polls.clone(),
+        configuration: Some(ReloadedConfiguration {
+            provider: replacement.clone(),
+            tool_policy: Default::default(),
+        }),
+    })));
+    let command = crate::interface::uds::wire::protocol::parse_command_line(
+        r#"{"type":"prompt","id":"reload-once","message":"Use latest config"}"#,
+    )
+    .unwrap();
+    {
+        let mut ctx = root.env.ctx();
+        ctx.broadcast_tx = Some(root.tx.clone());
+        ctx.stdout = None;
+        ctx.catalogue.reload = reload;
+        super::super::dispatch_command(command, &mut ctx).await;
+    }
+    assert_eq!(replacement.requests(), ["Use latest config"]);
+    assert!(
+        root.provider.requests().is_empty(),
+        "old provider must be replaced"
+    );
+    assert_eq!(
+        polls.load(Ordering::SeqCst),
+        1,
+        "one idle prompt must poll/reconcile configuration once"
+    );
+}
+
+async fn run42_response(
+    outcome: super::PromptOutcome,
+    diagnostics: &[&str],
+) -> Vec<serde_json::Value> {
+    let mut root = Root::new(vec![]);
+    root.env.session.begin_completion_response(true);
+    for diagnostic in diagnostics {
+        assert_eq!(root.env.session.prompt_error((*diagnostic).into()), None);
+    }
+    {
+        let mut ctx = root.env.ctx();
+        ctx.broadcast_tx = Some(root.tx.clone());
+        ctx.stdout = None;
+        super::respond_prompt(
+            &mut ctx,
+            Some("original-id"),
+            "prompt",
+            &outcome,
+            true,
+            false,
+        )
+        .await;
+    }
+    root.frames()
+}
+
+#[tokio::test]
+async fn run42_round3_error_appends_diagnostic_to_original() {
+    let frames = run42_response(super::PromptOutcome::Error, &["provider down"]).await;
+    assert_eq!(
+        frames.len(),
+        1,
+        "no extra uncorrelated agent_error: {frames:?}"
+    );
+    assert_eq!(frames[0]["id"], "original-id");
+    assert_eq!(frames[0]["success"], false);
+    assert_eq!(frames[0]["error"], "prompt execution failed\nprovider down");
+}
+
+#[tokio::test]
+async fn run42_round3_cancelled_appends_diagnostic_to_original() {
+    let frames = run42_response(super::PromptOutcome::Cancelled, &["save diagnostic"]).await;
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0]["id"], "original-id");
+    assert_eq!(
+        frames[0]["error"],
+        "prompt execution cancelled\nsave diagnostic"
+    );
+}
+
+#[tokio::test]
+async fn run42_round3_completion_response_controls() {
+    for (outcome, error, success) in [
+        (
+            super::PromptOutcome::Error,
+            Some("prompt execution failed"),
+            false,
+        ),
+        (
+            super::PromptOutcome::Cancelled,
+            Some("prompt execution cancelled"),
+            false,
+        ),
+        (super::PromptOutcome::Success, None, true),
+    ] {
+        let frames = run42_response(outcome, &[]).await;
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0]["id"], "original-id");
+        assert_eq!(frames[0]["success"], success);
+        assert_eq!(frames[0]["error"].as_str(), error);
+    }
+    let frames = run42_response(super::PromptOutcome::Success, &["correction failed"]).await;
+    assert_eq!(frames.len(), 1);
+    assert_eq!(
+        frames[0]["success"], true,
+        "receipt describes original execution"
+    );
+    assert_eq!(
+        frames[0]["error"], "correction failed",
+        "diagnostic appears once, without empty prefix"
+    );
+}

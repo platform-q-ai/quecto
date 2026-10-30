@@ -32,3 +32,6 @@ pub(crate) mod tool_runtime;
 
 #[cfg(test)]
 mod find_runtime_tests;
+
+#[cfg(test)]
+pub(crate) use agent::active_runtime_2708_tests;

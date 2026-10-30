@@ -32,6 +32,8 @@ use crate::infrastructure::config::Config;
 
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
+    pub(crate) parent_outcome_candidate:
+        Option<Arc<dyn crate::application::agent_turn::ports::ParentOutcomeGuard>>,
     pub(super) tools: HashMap<String, Arc<dyn Tool>>,
     pub(super) metadata: HashMap<String, ToolRegistration>,
     definitions: Vec<ToolDefinition>,
@@ -81,6 +83,7 @@ impl ToolRegistryImpl {
     /// Create a new empty registry.
     pub fn new() -> Self {
         Self {
+            parent_outcome_candidate: None,
             tools: HashMap::new(),
             metadata: HashMap::new(),
             definitions: Vec::new(),
@@ -472,6 +475,7 @@ impl ToolRegistryImpl {
                         .profile_scope
                         .unwrap_or(ProfileAvailabilityScope::Both)
                         == mutation.scope
+                        && entry.runtime_availability == ToolAvailability::from(mutation.scope)
                         && self.metadata.get(&resolved_name).is_some_and(|metadata| {
                             let configured_scope = metadata.configured_scope;
                             if !request.persist {
@@ -573,7 +577,7 @@ impl ToolRegistryImpl {
             .metadata
             .entry(name.to_string())
             .or_insert_with(ToolRegistration::official_native);
-        if metadata.profile_scope == scope {
+        if metadata.profile_matches(scope) {
             return true;
         }
         metadata.profile_scope = scope;

@@ -72,8 +72,9 @@ pub fn is_trusted_root(facts: LaunchFacts) -> bool {
     )
 }
 
-/// Whether the launcher switched the guard on: exactly `1`, nothing else.
-pub fn turn_outcomes_switched_on(value: Option<&str>) -> bool {
+/// Historical switch characterization retained for the original opt-in tests.
+#[cfg(test)]
+fn turn_outcomes_switched_on(value: Option<&str>) -> bool {
     matches!(value, Some("1"))
 }
 

@@ -28,3 +28,21 @@ Feature: Supervising a model turn in flight
     Then the turn ends with the output cap error
     And the provider was asked once
     And the event log holds the attempt stopped at its output cap
+
+  Scenario: Runaway output cap uses the default failure contract
+    Given a model turn workspace whose provider streams without end
+    And the model turn client selects transport mode "default"
+    When a UDS agent is prompted until its turn ends
+    Then the output cap failure obeys the selected transport contract
+    And the turn ends with the output cap error
+    And the provider was asked once
+    And the event log holds the attempt stopped at its output cap
+
+  Scenario: Runaway output cap uses the exact-env1 failure contract
+    Given a model turn workspace whose provider streams without end
+    And the model turn client selects transport mode "exact-env1"
+    When a UDS agent is prompted until its turn ends
+    Then the output cap failure obeys the selected transport contract
+    And the turn ends with the output cap error
+    And the provider was asked once
+    And the event log holds the attempt stopped at its output cap

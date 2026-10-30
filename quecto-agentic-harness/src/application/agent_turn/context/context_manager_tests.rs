@@ -180,7 +180,7 @@ async fn context_manager_marks_dirty_when_manifest_layout_shifts() {
     let mut messages = vec![manifest];
 
     let plan = manager
-        .prepare_watermark_context(&mut messages, (0, 190_000), true)
+        .prepare_watermark_context(&mut messages, (0, 190_000, 0), true)
         .await
         .plan;
 
@@ -594,7 +594,7 @@ async fn pin_recent_turns_reaches_the_emergency_ladder() {
         });
         let mut messages: Vec<Message> = (1..=4).map(long_message).collect();
         let pass = manager
-            .prepare_watermark_context(&mut messages, (0, 10), false)
+            .prepare_watermark_context(&mut messages, (0, 10, 0), false)
             .await;
         assert!(pass.fallback, "no cut fits: the ladder ran");
         messages
@@ -605,4 +605,39 @@ async fn pin_recent_turns_reaches_the_emergency_ladder() {
     }
     assert_eq!(kept(2).await, [3, 4]);
     assert_eq!(kept(3).await, [2, 3, 4]);
+}
+
+#[test]
+fn run26_signed_provider_size_boundaries() {
+    use crate::domain::conversation::services::watermark::{CutTrigger, Watermark};
+    let trigger = CutTrigger {
+        marks: Watermark::new(100, 80).unwrap(),
+        ceiling: 100,
+        after_last_cut: None,
+    };
+    let size = |canonical, fixed, credit| super::provider_request_size(canonical, fixed, credit);
+    assert!(
+        !trigger.is_due(size(111, 0, 12)),
+        "credit fits below high mark"
+    );
+    assert_eq!(
+        size(112, 0, 12).total(),
+        trigger.ceiling,
+        "equality fits ceiling"
+    );
+    assert!(
+        trigger.is_due(size(112, 0, 12)),
+        "high-mark equality is due"
+    );
+    assert!(trigger.is_due(size(113, 0, 12)), "one above ceiling is due");
+    assert!(
+        trigger.is_due(size(85, 16, 0)),
+        "positive provider overhead counts too"
+    );
+    assert_eq!(size(0, 0, usize::MAX).total(), 0, "credit saturates safely");
+    assert_eq!(
+        size(usize::MAX, 1, 0).total(),
+        usize::MAX,
+        "addition saturates safely"
+    );
 }

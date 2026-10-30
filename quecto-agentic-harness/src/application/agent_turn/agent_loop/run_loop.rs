@@ -52,10 +52,24 @@ impl AgentLoopImpl {
             });
 
             // #2421: the conversation as the active model is sent it.
-            let sent = self.conversation_for_model(messages);
+            let mut guidance = guidance_projection::GuidanceProjection::new(
+                messages,
+                self.composed_prompt_id,
+                self.parent_outcome_candidate()
+                    .map(|runtime| runtime.enabled()),
+                self.composed_guidance_append.as_ref(),
+            );
+            let sent = self.conversation_for_model(guidance.messages());
             // #2434: whether its reply may be empty (tool results) or must
             // have output (a prompt, a steer, a follow-up, feedback).
-            let requirement = ReplyRequirement::for_conversation(sent.messages());
+            let requirement = if self
+                .parent_outcome_candidate()
+                .is_some_and(|runtime| runtime.correcting())
+            {
+                ReplyRequirement::MayBeEmpty
+            } else {
+                ReplyRequirement::for_conversation(sent.messages())
+            };
             let request = self.prepare_provider_request_transition(
                 sent.messages(),
                 &tool_defs,
@@ -88,6 +102,7 @@ impl AgentLoopImpl {
                 ),
             };
             drop(sent);
+            drop(guidance);
 
             let llm_duration_ms = llm_start.elapsed().as_millis() as u64;
             // Every response is audited and counted, including one dropped below.

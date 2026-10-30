@@ -80,7 +80,7 @@ fn start_provider() -> String {
                         json!({"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call-probe","type":"function","function":{"name":"panic_probe","arguments":json!({"where": place}).to_string()}}]}),
                         "tool_calls",
                     ),
-                    _ => (json!({"role":"assistant","content":"RECOVERED"}), "stop"),
+                    _ => super::success_fixture::completion(&body, "RECOVERED"),
                 };
                 let usage = json!({"prompt_tokens":50,"completion_tokens":30,"total_tokens":80});
                 match body["stream"] == true {

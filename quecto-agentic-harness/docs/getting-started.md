@@ -3,6 +3,15 @@
 Minimal path from zero to a working Quecto agent. Config is optional — defaults
 apply with no `~/.quecto/config.json`.
 
+## Root turn outcomes and completion
+
+Before starting a root session, see the canonical
+[root turn-outcome contract](uds-protocol.md#turn-outcomes-trusted-root-parents)
+for eligibility and policy reload, default completion versus opt-in admission
+ACKs, automatic wake modes, correction/request costs, and CLI stdout/stderr/exit
+semantics. Runtime guidance stays out of durable session history.
+
+
 ## 1. Install
 
 From the workspace root:

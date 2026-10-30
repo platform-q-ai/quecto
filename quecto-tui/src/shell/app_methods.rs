@@ -260,6 +260,30 @@ impl App {
         self.notifications.push(Notification::new(message, level));
     }
 
+    pub(super) fn notify_prompt_diagnostic(&mut self, error: Option<String>) {
+        if let Some(error) = error {
+            let text = format!("Error: {error}");
+            self.notify(&text, NotifyLevel::Error);
+            // A correlated receipt is not a lifecycle event. Retain it before
+            // the active assistant so token/thinking/finalization keep their
+            // existing tail owner. replace_range also invalidates render caches.
+            let chat = &mut self.ac_mut().master_session.chat;
+            let end = chat.entry_count();
+            let index = if matches!(
+                chat.entries().last(),
+                Some(ChatEntry::Assistant {
+                    streaming: true,
+                    ..
+                })
+            ) {
+                end - 1
+            } else {
+                end
+            };
+            chat.replace_range(index, index, vec![ChatEntry::Status { text }]);
+        }
+    }
+
     // ── Rendering ─────────────────────────────────────────────────────
 
     /// Diagnostic: append one frame (ANSI-stripped) to the render log.

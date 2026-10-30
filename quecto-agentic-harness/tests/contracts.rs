@@ -526,3 +526,6 @@ mod project_board_fence_cli;
 
 #[path = "contracts/project_board_fence_remediation.rs"]
 mod project_board_fence_remediation;
+
+#[path = "contracts/parent_outcome_guard.rs"]
+mod parent_outcome_guard;

@@ -746,3 +746,5 @@ fn tool_start_clears_interrupted_assistant_cursor_and_next_segment_streams() {
         "finalized assistant text should not leave a cursor: {final_render:?}"
     );
 }
+#[path = "chat_status_tests.rs"]
+mod status_layout;

@@ -657,8 +657,10 @@ impl Tool for AgentCmdTool {
             // and must not race with `agent_end` by marking the child Busy here.
             match send {
                 Ok(response) => {
-                    let rejected = serde_json::from_str::<serde_json::Value>(&response)
-                        .is_ok_and(|value| value["success"] == false);
+                    let rejected =
+                        serde_json::from_str::<serde_json::Value>(&response).is_ok_and(|value| {
+                            value["success"] == false || value["error"].as_str().is_some()
+                        });
                     let routed = routed_target_id.as_deref();
                     let response = if default_get_messages_report {
                         let backfilled = self

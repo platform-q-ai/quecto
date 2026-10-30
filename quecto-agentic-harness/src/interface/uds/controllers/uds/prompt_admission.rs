@@ -1,5 +1,19 @@
 use super::*;
 
+/// Reader-side classification so the eager cancel and the abort/steer control
+/// flag are set together, before the command is dispatched (#895/#896).
+pub(in crate::interface) fn is_abort_command(trimmed: &str) -> bool {
+    command_type_is(trimmed, "abort")
+}
+
+fn command_type_is(trimmed: &str, expected: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(trimmed)
+        .ok()
+        .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_owned))
+        .as_deref()
+        == Some(expected)
+}
+
 /// Images a reader admitted for the command it hands to dispatch (#2422):
 /// dispatch runs them as admitted, so a message's images are decoded once.
 pub(in crate::interface) type AdmittedImages =
