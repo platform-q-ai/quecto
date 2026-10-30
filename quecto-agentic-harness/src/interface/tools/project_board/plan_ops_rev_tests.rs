@@ -22,7 +22,6 @@ fn show_and_its_pages_answer_the_rev_they_were_read_at() {
     );
     assert_eq!(page["rev"], shown["rev"], "{page}");
 }
-
 #[test]
 fn a_stale_expected_rev_gives_plan_changed() {
     let (store, ada, bob) = drafted();
@@ -56,7 +55,6 @@ fn a_stale_expected_rev_gives_plan_changed() {
     );
     assert!(accept.get("deprecated").is_none(), "{accept}");
 }
-
 /// A pin holds while the artifact it pins is as it was read, whatever
 /// else the board took since.
 #[test]
@@ -82,7 +80,6 @@ fn a_change_elsewhere_on_the_board_leaves_a_rev_pin_holding() {
     );
     assert_eq!(accepted["plan"]["state"], json!("accepted"), "{accepted}");
 }
-
 #[test]
 fn a_legacy_expected_updated_still_works_and_its_answer_says_it_is_deprecated() {
     let (_store, ada, bob) = drafted();
@@ -108,7 +105,6 @@ fn a_legacy_expected_updated_still_works_and_its_answer_says_it_is_deprecated() 
     );
     assert_eq!(updated["deprecated"], json!(DEPRECATED), "{updated}");
 }
-
 #[test]
 fn update_draft_is_pinned_by_rev_and_a_stale_one_is_stale() {
     let (store, ada, bob) = drafted();
@@ -131,7 +127,6 @@ fn update_draft_is_pinned_by_rev_and_a_stale_one_is_stale() {
     );
     assert_eq!(store.writes(), writes, "nothing written");
 }
-
 #[test]
 fn a_pin_is_given_once_and_an_acceptance_needs_one() {
     let (_store, ada, _bob) = drafted();
@@ -169,7 +164,6 @@ fn a_pin_is_given_once_and_an_acceptance_needs_one() {
         "{unspellable}"
     );
 }
-
 /// #2705 B9 review round 1: a rev pin is judged where the stamp pin was,
 /// after the draft and state checks, so a retried acceptance whose first
 /// try landed is told the plan is no draft (`plan_not_draft`), as a
@@ -214,7 +208,6 @@ fn a_retry_after_its_first_try_landed_is_told_the_plan_is_no_draft() {
         "{retried}"
     );
 }
-
 /// #2705 B9 review round 1: a page pinned to the rev of the first page
 /// holds while that plan is as it was, whatever else the board took, and
 /// is refused (`plan_changed`) once the plan changed: read again from 0.
@@ -257,7 +250,6 @@ fn a_page_pinned_by_rev_restarts_only_when_its_plan_changed() {
         "a pin is a page's: {unpaged}"
     );
 }
-
 /// Approved parent contract: exercise the real JSON dispatch without naming
 /// production symbols that do not exist yet. Writer and clock are trusted
 /// inputs from the existing assembly, never request fields.
@@ -281,7 +273,6 @@ fn done_ticks_finished_board() -> (
     );
     (store, writer)
 }
-
 fn done_ticks_request(rev: &serde_json::Value) -> serde_json::Value {
     json!({"op":"set_outcome","task":"a","outcome_index":0,"met":false,
         "reason":"Owner deferred deployment","expected_rev":rev})
@@ -297,7 +288,7 @@ fn done_ticks_exception_is_attributed_roundtrips_answers_and_restores_without_re
     let changed = ok(&writer, request);
     let task = &changed["task"];
     assert_eq!(task["status"], "done");
-    assert_eq!(task["reason"], "Answered by hand");
+    assert!(task.get("reason").is_none());
     assert_eq!(task["done_when"][0]["outcome"], "Same outcome");
     assert_eq!(task["done_when"][0]["done"], false);
     assert_eq!(
@@ -336,7 +327,7 @@ fn done_ticks_exception_is_attributed_roundtrips_answers_and_restores_without_re
         "met":true,"expected_rev":shown["rev"]}),
     );
     assert_eq!(restored["task"]["status"], "done");
-    assert_eq!(restored["task"]["reason"], "Answered by hand");
+    assert!(restored["task"].get("reason").is_none());
     assert_eq!(restored["task"]["done_when"][0]["done"], true);
     assert!(restored["task"]["done_when"][0].get("exception").is_none());
     assert!(
@@ -359,7 +350,7 @@ fn done_ticks_exception_survives_archiving_and_subsequent_reads() {
     let archived = ok(&writer, json!({"op":"move","task":"a","to":"archived"}));
     assert_eq!(archived["task"]["status"], "archived");
     assert_eq!(archived["task"]["done_when"], changed["task"]["done_when"]);
-    assert_eq!(archived["task"]["reason"], "Answered by hand");
+    assert!(archived["task"].get("reason").is_none());
     let shown = ok(&writer, json!({"op":"show","task":"a"}));
     assert_eq!(shown["task"], archived["task"]);
 }

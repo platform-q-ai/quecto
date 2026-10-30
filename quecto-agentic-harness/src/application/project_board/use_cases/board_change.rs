@@ -80,6 +80,18 @@ pub(super) fn commit(
     shaped(Writes::OneTask, store, clock, message, facts, change)
 }
 
+/// Commit one task only when its validated fields differ from the snapshot.
+/// The closure still judges pins and rules on every attempt, including no-ops.
+pub(super) fn commit_task_if_changed(
+    store: &dyn ProjectBoardStore,
+    clock: &dyn BoardClock,
+    message: &str,
+    facts: Option<&mut OpFacts>,
+    change: impl FnMut(&BoardSnapshot, &When) -> Result<Vec<BoardArtifact>, ProjectBoardError>,
+) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
+    shaped(Writes::TaskIfChanged, store, clock, message, facts, change)
+}
+
 /// [`commit`] of a run's end (a fold-back, an end_run): its run, after
 /// its task when the end moves it (#2705 T5), and nothing else.
 pub(super) fn commit_run(
@@ -97,6 +109,8 @@ pub(super) fn commit_run(
 enum Writes {
     /// One task's change ([`one_tasks_change`]).
     OneTask,
+    /// One task, omitting an identical write.
+    TaskIfChanged,
     /// One run, after its task when its end moves it, and nothing else.
     OneRun,
 }
@@ -106,6 +120,8 @@ impl Writes {
     fn holds(self, artifacts: &[BoardArtifact]) -> bool {
         match (self, artifacts) {
             (Self::OneTask, _) => one_tasks_change(artifacts),
+            (Self::TaskIfChanged, [BoardArtifact::Task(_)]) => true,
+            (Self::TaskIfChanged, _) => false,
             (Self::OneRun, [BoardArtifact::Run(_)]) => true,
             (Self::OneRun, [BoardArtifact::Task(task), BoardArtifact::Run(run)]) => {
                 task.fields().id == run.fields().task
@@ -117,6 +133,7 @@ impl Writes {
     /// What a change breaks when it writes otherwise.
     fn rule(self) -> &'static str {
         match self {
+            Self::TaskIfChanged => "an idempotent task change returns exactly one task",
             Self::OneTask => {
                 "a board change writes its task first, or only one task's other artifacts"
             }
@@ -144,6 +161,11 @@ fn shaped(
         let when = checked_now(clock)?;
         let artifacts = change(&snapshot, &when)?;
         assert!(writes.holds(&artifacts), "{}", writes.rule());
+        if let (Writes::TaskIfChanged, [BoardArtifact::Task(task)]) = (writes, artifacts.as_slice())
+            && snapshot.tasks.iter().any(|current| current == task)
+        {
+            return Ok(Attempt::Done(artifacts));
+        }
         match store.write(&snapshot.head, &artifacts, message)? {
             BoardWrite::Written(head) => {
                 assert_ne!(

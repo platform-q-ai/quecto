@@ -713,8 +713,7 @@
         "why": null,
         "done_when": [],
         "links": [],
-        "needs_goal": true,
-        "reason": "Answered in chat: no change"
+        "needs_goal": true
       }
     }
   },

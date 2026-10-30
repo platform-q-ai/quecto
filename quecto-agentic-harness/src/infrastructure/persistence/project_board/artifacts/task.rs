@@ -302,18 +302,11 @@ impl ArtifactCodec for TaskCodec {
     }
 
     fn compatible_read(mut document: Document) -> Document {
-        // Only the implicit checkboxes of sectioned Done tasks have new read
-        // semantics. The original document has already passed parsing and domain
-        // validation. Never reinterpret legacy prose or unrelated archives.
-        let done = document
-            .fields
-            .iter()
-            .any(|(key, value)| key == STATUS && value == "done");
-        let sectioned = document
-            .sections
-            .iter()
-            .any(|section| section.heading == DONE_WHEN);
-        if done && sectioned {
+        // Domain-owned settlement also covers archives with completion evidence.
+        // This hook only adjusts canonical checkbox cells, never prose or metadata.
+        let settled =
+            Self::from_document(&document).is_ok_and(|task| task.fields().has_settled_outcomes());
+        if settled {
             let explicit: Vec<String> = document
                 .sections
                 .iter()

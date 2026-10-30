@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, owned, task_on, written_task};
-use super::board_view;
+use super::{board_view, read_pins};
 use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardSnapshot, ProjectBoardStore,
@@ -93,12 +93,16 @@ impl ChangeBoardTask {
         let noting = facts.is_some();
         let mut read = None;
         let noted = facts.as_deref_mut();
+        let commit = match op {
+            BoardOp::SetOutcome { .. } => super::board_change::commit_task_if_changed,
+            _ => commit,
+        };
         let written = commit(
             &*self.store,
             &*self.clock,
             &op.message(id),
             noted,
-            |board, when| {
+            |board: &BoardSnapshot, when: &super::board_change::When| {
                 let task = task_on(board, id);
                 if noting {
                     // This attempt's read, or none: never an earlier one's.
@@ -107,19 +111,11 @@ impl ChangeBoardTask {
                         .map(|task| (task.fields().status, claim_facts(task, actor, &when.now)));
                 }
                 let task = task?;
-                // This operation pins BOARD HEAD, not task-object equality. Recheck
-                // the caller's original pin on every CAS attempt, including retries.
+                // The original task pin is rechecked against every CAS snapshot.
                 if let BoardOp::SetOutcome { expected_rev, .. } = op {
-                    if &board.head == expected_rev {
-                    } else {
-                        return Err(ProjectBoardError::Stale {
-                            id: id.clone(),
-                            expected: crate::application::project_board::dto::ReadPin::Rev(
-                                expected_rev.clone(),
-                            ),
-                            updated: task.fields().updated.clone(),
-                        });
-                    }
+                    let pin =
+                        crate::application::project_board::dto::ReadPin::Rev(expected_rev.clone());
+                    read_pins::task_as_read(&*self.store, board, task, Some(&pin))?;
                 }
                 let changed = apply(task, board, actor, op, &when.now)?;
                 Ok(vec![BoardArtifact::Task(changed)])

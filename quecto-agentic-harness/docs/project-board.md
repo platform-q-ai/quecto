@@ -1337,7 +1337,11 @@ share this rule. Completion refusals still leave both status and outcomes alone.
 Old **sectioned Done** tasks with unchecked outcomes read as met, without a
 migration commit or any write on read. Legacy prose stays byte-preserved, even
 when it resembles a checklist. Unfinished tasks and unrelated archived tasks
-are not normalized.
+are not normalized. Sectioned Archived tasks are settled only when their stored
+resolution proves prior completion (`Completed` or `DoneWithoutRun`). Without
+that completion evidence/history, no completion is inferred; unrelated archives
+remain untouched. Explicit exceptions remain valid on Done or Archived tasks,
+but the public operation below is Done-only.
 
 A finished task can record an explicit unmet outcome without reopening it:
 
@@ -1346,10 +1350,12 @@ A finished task can record an explicit unmet outcome without reopening it:
 {"op":"set_outcome","task":"a","outcome_index":0,"met":true,"expected_rev":"r4"}
 ```
 
-Copy `show.rev` for `expected_rev`: it pins the **exact board HEAD**, not just
-the task's file or timestamp. Any intervening board write, including an
-unrelated task's, makes it stale. Refresh and decide again; retries never
-blindly rebase an index onto a changed board. `expected_updated` is not accepted.
+Copy `show.rev` for `expected_rev`: it pins the **task's file at that revision**,
+using the same read-pin semantics as other task operations. Unrelated board
+writes do not make it stale. A changed task or unknown revision is refused;
+refresh and decide again. Every CAS retry rechecks the original task pin, never
+blindly rebasing an index onto changed outcomes. Stale diagnostics give the
+current target task's `updated` stamp. `expected_updated` is not accepted.
 The index is zero-based in the existing outcome order (duplicate text is fine).
 Only a sectioned task in **Done** is eligible; no outcome is added or reordered,
 no general finished-task edit is enabled, and Archived is not eligible.
@@ -1373,7 +1379,8 @@ pre-escape table pipes. Unrepresentable reasons are refused without writes;
 the diagnostic identifies `reason` and gives canonical-text remediation (for
 an open code span, close the matching backtick run or remove the backticks).
 Restoring met removes the exception and refuses **any** supplied reason,
-including null or blank. Missing, malformed or stale revisions, invalid indices,
+including null or blank. Restoring an already-met outcome is a no-op: no write,
+no new revision and no changed timestamp. Missing, malformed or stale revisions, invalid indices,
 wrong field types and ineligible tasks refuse atomically without writes.
 Status, resolution, claim, task-level lifecycle `reason`, outcome text/order and
 other description sections remain unchanged.
@@ -1389,7 +1396,9 @@ Answers retain `done_when[].outcome` and `done`. Only an explicitly unmet entry
 adds `exception: {reason, by: {name, email}, at}`. `by` comes from the application's
 configured writer, **a self-asserted git committer, not an authenticated human**;
 `at` is the task's chosen `updated` write stamp. Neither can be supplied by the
-request. Show, list and change answers share this representation.
+request. Show, list and change answers share this representation. The task-level
+lifecycle reason remains stored in the domain, not published as a top-level
+`reason` in task answers; nested outcome exception reasons remain public.
 
 Explicit exceptions persist at task **schema 4**, with this optional table after
 Done when and before Links, both in canonical descriptions and task files:
@@ -1405,8 +1414,19 @@ Rows are ordered by index, reference existing unchecked outcomes exactly once,
 and use the existing text-cell and identity spelling/escaping. Done when remains
 a checkbox list in descriptions and a yes/no table in task files. Exceptions
 survive archiving and subsequent reads/writes; implicit compatibility settlement
-never erases explicit unmet metadata. Older readers reject schema 4 and must
-upgrade, not clear the sound file as set aside. Without exceptions (including
+never erases explicit unmet metadata. **Upgrade EVERY host before any
+`set_outcome` use.** Older binaries reject task schema 4, and their old
+`clear_set_aside` operation may delete a valid task file: do not clear a sound
+schema-4 task as set aside. This mixed-host deployment risk applies even when
+another host wrote the exception; upgrading only the writing host is unsafe. Without exceptions (including
 after restoring the last one), writers select the minimal applicable schema
 1/2/3, independently of lifecycle Reason. This is a current-data encoding choice,
-not a monotonic schema audit history. No live-board migration is required.
+not a monotonic schema audit history. Schema 4 is emitted only while an exception
+exists. No SQLite migration or live-board migration is required: this is the
+task artifact encoding, not the board server's SQLite schema.
+
+The restored tool Work paragraph adds only the completion/`set_outcome` sentence.
+Its approved description snapshot is 8,364 UTF-8 bytes, under the board-only
+8,448-byte internal test cap (other tools' budgets are unchanged). The operator's
+estimated per-turn cost is ~172 bytes/~40 tokens; the internal test cap is not a
+provider limit.

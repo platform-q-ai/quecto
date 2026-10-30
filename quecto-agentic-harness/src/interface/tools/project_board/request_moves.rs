@@ -41,17 +41,21 @@ fn move_reason(read: &Read<'_>) -> Result<MoveReason, RequestError> {
     })
 }
 
-/// A board-head-pinned exception, with conditional reason fields checked first.
+/// A task-revision-pinned exception, with conditional reason fields checked first.
 pub(super) fn set_outcome(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     use crate::domain::project_board::value_objects::telemetry::FaultKind;
     use serde_json::Value;
-    let index = read.offset("outcome_index")?.ok_or_else(|| {
-        RequestError::of(
-            "outcome_index",
-            "must be an existing zero-based index",
-            FaultKind::WrongType,
-        )
-    })?;
+    let index = read
+        .value("outcome_index")
+        .and_then(Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+        .ok_or_else(|| {
+            RequestError::of(
+                "outcome_index",
+                "must be an existing zero-based index",
+                FaultKind::WrongType,
+            )
+        })?;
     let met = read
         .value("met")
         .and_then(Value::as_bool)

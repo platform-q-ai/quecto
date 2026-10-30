@@ -72,6 +72,19 @@ pub struct TaskFields {
 }
 
 impl TaskFields {
+    /// Sectioned outcomes settle on completion; an archive needs recorded proof.
+    pub fn has_settled_outcomes(&self) -> bool {
+        self.description_form == DescriptionForm::Sectioned
+            && (matches!(self.status, TaskStatus::Done)
+                || matches!(
+                    (self.status, self.resolution),
+                    (
+                        TaskStatus::Archived,
+                        Some(Resolution::Completed | Resolution::DoneWithoutRun)
+                    )
+                ))
+    }
+
     /// The UTF-8 bytes of every free text in the task: its title and
     /// description, and its references. Ids, words, numbers, times and the
     /// claim's holder are not text: their size is bounded by the field
@@ -96,10 +109,8 @@ pub struct Task(TaskFields);
 impl Task {
     pub fn new(mut fields: TaskFields) -> Result<Self, SchemaError> {
         validate(&fields)?;
-        // Shared settlement invariant, also a pure compatibility read for old Done files.
-        if let (TaskStatus::Done, DescriptionForm::Sectioned) =
-            (fields.status, fields.description_form)
-        {
+        // Pure compatibility read: archives need positive evidence of completion.
+        if fields.has_settled_outcomes() {
             let mut description =
                 Description::read(&fields.description).expect("validated sections");
             description.settle();
@@ -160,7 +171,11 @@ impl Task {
             at: at.clone(),
         });
         description.set_outcome(index, exception).map_err(invalid)?;
-        fields.description = description.markdown();
+        let settled = description.markdown();
+        if settled == fields.description {
+            return Ok(self.clone());
+        }
+        fields.description = settled;
         fields.updated = at.clone();
         Self::new(fields).map_err(invalid)
     }
@@ -195,6 +210,22 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
                 "description",
                 "is kept in its sections, so must be in them",
             ));
+        }
+    }
+    if let Some(description) = Description::read(&task.description)
+        && description
+            .done_when()
+            .iter()
+            .any(|outcome| outcome.exception.is_some())
+    {
+        match task.status {
+            TaskStatus::Done | TaskStatus::Archived => {}
+            _ => {
+                return Err(SchemaError::new(
+                    "status",
+                    "outcome exceptions require Done or Archived",
+                ));
+            }
         }
     }
     if task.parent.as_ref() == Some(&task.id) {
