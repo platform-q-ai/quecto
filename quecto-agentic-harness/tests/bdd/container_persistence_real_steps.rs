@@ -82,7 +82,7 @@ fn mount_provider(server: &wiremock::MockServer, seen: Arc<Mutex<Vec<String>>>) 
                             // The kill window: the scenario ends this
                             // harness before it can tear its child down.
                             delay = Duration::from_secs(60);
-                            (serde_json::json!({"content": "REAL_AGENT_DONE"}), "stop")
+                            super::success_fixture::completion(&input, "REAL_AGENT_DONE")
                         }
                     }
                 } else if user_has(JOIN_MARKER) {
@@ -101,10 +101,10 @@ fn mount_provider(server: &wiremock::MockServer, seen: Arc<Mutex<Vec<String>>>) 
                             ),
                             "tool_calls",
                         ),
-                        _ => (serde_json::json!({"content": "REAL_AGENT_DONE"}), "stop"),
+                        _ => super::success_fixture::completion(&input, "REAL_AGENT_DONE"),
                     }
                 } else {
-                    (serde_json::json!({"content": "REAL_AGENT_DONE"}), "stop")
+                    super::success_fixture::completion(&input, "REAL_AGENT_DONE")
                 };
                 let template = if input["stream"] == true {
                     let chunk = serde_json::json!({

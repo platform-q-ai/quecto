@@ -86,7 +86,7 @@ fn workspace(world: &mut QuectoWorld, switch: String) {
                         json!({"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"grep","arguments":"{\"pattern\":\"hello\"}"}}]}),
                         "tool_calls",
                     ),
-                    _ => (json!({"role":"assistant","content":"found it"}), "stop"),
+                    _ => super::success_fixture::completion(&body, "found it"),
                 };
                 let usage = json!({"prompt_tokens":50,"completion_tokens":30,"total_tokens":80});
                 match body["stream"] == true {

@@ -66,7 +66,7 @@ fn mount_spawning_provider(server: &wiremock::MockServer, seen: Arc<Mutex<Vec<St
                         "tool_calls",
                     )
                 } else {
-                    (serde_json::json!({"content": "REAL_AGENT_DONE"}), "stop")
+                    super::success_fixture::completion(&input, "REAL_AGENT_DONE")
                 };
                 if input["stream"] == true {
                     let chunk = serde_json::json!({

@@ -40,25 +40,13 @@ pub(in crate::interface) const MAX_FRAME_PAYLOAD_BYTES: usize =
 pub(super) fn is_cancel_command(trimmed: &str) -> bool {
     is_abort_command(trimmed) || is_steer_command(trimmed)
 }
-/// Reader-side classification so the eager cancel and the abort/steer control
-/// flag are set together, before the command is dispatched (#895/#896).
-pub(in crate::interface) fn is_abort_command(trimmed: &str) -> bool {
-    command_type_is(trimmed, "abort")
-}
+pub(in crate::interface) use prompt_admission::is_abort_command;
 
 pub(super) use prompt_admission::admit_images;
 #[cfg(test)]
 pub(super) use prompt_admission::is_steer_command;
 pub(in crate::interface) use prompt_admission::{AdmittedImages, dispatch_parsed};
 pub(in crate::interface) use prompt_admission::{record_rejected, steer_images};
-
-fn command_type_is(trimmed: &str, expected: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(trimmed)
-        .ok()
-        .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_owned))
-        .as_deref()
-        == Some(expected)
-}
 
 pub(in crate::interface) enum LineResult {
     Command(AgentCommand),
@@ -310,6 +298,15 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         pending::queue_prompt(ctx, id.as_deref(), &type_name, message, work).await;
         return false;
     }
+    // Client instructions already reconciled in episode_id, before validating
+    // their identity. Automatic inputs have no such boundary of their own.
+    if matches!(
+        work,
+        crate::domain::inference::services::turn_suspension::Work::Automatic
+    ) {
+        super::uds_dispatch_reload::poll_reload(ctx).await;
+        parent_turn::enter_outer(ctx);
+    }
     if !parent_turn::admits(ctx, work) {
         return false; // #2708: a terminal outcome fences automatic turns.
     }
@@ -319,9 +316,6 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     let steer = work.is_steer();
     let generation = ctx.turn_control.control_generation();
     ctx.session.automatic_turns().start_turn(work, generation);
-    // Reload runtime configuration (#1849): the pull-based poll before every
-    // prompt (ADR-0002), rebuilt off the runtime; a failure keeps last-good.
-    super::uds_dispatch_reload::poll_reload(ctx).await;
     let cancel_rx = arm_prompt_cancel(ctx, steer).await;
     let Some(cancel_rx) = cancel_rx else {
         ctx.session.record_control(
@@ -329,7 +323,7 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
             &type_name,
             protocol::ControlStatus::Cancelled,
         );
-        emit_pre_cancelled(ctx).await; // Stale abort (#483).
+        parent_turn::cancelled_prompt(ctx, id.as_deref(), &type_name).await;
         drain_and_run_pending(ctx).await;
         super::uds_swarm_control::at_idle_boundary(ctx).await;
         return false;
@@ -346,16 +340,22 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     ctx.session
         .record_control(id.as_deref(), &type_name, protocol::ControlStatus::Started);
     let admission = parent_turn::accept_prompt(ctx, work, (id.as_deref(), &type_name)).await;
-    let accepted = admission.is_some();
+    let early_ack = admission.is_some() && ctx.session.admission_ack();
+    let completion_response = matches!((admission.as_ref(), early_ack), (Some(_), false));
+    ctx.session.begin_completion_response(completion_response);
     let outcome = parent_turn::dispatch_prompt(ctx, message, cancel_rx, admission).await;
     ctx.session
         .record_control(id.as_deref(), &type_name, control_status(&outcome));
     disarm_cancel(&ctx.cancel_handle);
-    // #1072: the turn's own save (`TurnSave`) drains the durable-prefix dirty latch.
-    if matches!(outcome, PromptOutcome::Success) && !accepted {
-        let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-    }
+    parent_turn::respond_prompt(
+        ctx,
+        id.as_deref(),
+        &type_name,
+        &outcome,
+        completion_response,
+        early_ack,
+    )
+    .await;
     // Runs what the turn left queued; each of those turns saves itself (#2218).
     drain_pending_and_nudge(ctx).await;
     // Publish completed-turn state before any post-turn query queues behind the next command (#1104).
@@ -440,7 +440,7 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
 
     let mut no_progress_turns = 0usize;
     for _ in 0..MAX_WORKFLOW_NUDGES {
-        if !ctx.session.automatic_turns_allowed() || !parent_turn::admits(ctx, Work::Automatic) {
+        if !ctx.session.automatic_turns_allowed() {
             break;
         }
         // #930: an abort that lands WHILE this auto-continue loop is mid-flight is
@@ -480,6 +480,9 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
         if has_active_workflow_descendant(ctx).await {
             break;
         }
+        let Some(admission) = parent_turn::workflow_admission(ctx, before.as_deref()) else {
+            break;
+        };
         // A stalled previous nudged turn switches the auto-continue path to
         // its corrective wording: literal instruction-following models (e.g.
         // GPT-5.6) reply to the standard nudge with a bare status message and
@@ -497,7 +500,7 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
                 ctx,
                 nudge.into_message(no_progress_turns > 0),
                 TurnAdmissionGuard::NoActiveWorkflowDescendant,
-                Some(TurnAdmission::Nudge),
+                Some(admission),
             )
             .await;
         }
@@ -530,7 +533,6 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
 
 mod parent_turn;
 use crate::application::agent_turn::use_cases::parent_outcome::{ActiveTurn, TurnAdmission};
-use crate::domain::inference::services::turn_suspension::Work;
 pub(in crate::interface) use parent_turn::busy_for;
 pub(super) use parent_turn::{ack_data, episode_id};
 mod pending;
@@ -575,6 +577,8 @@ async fn run_drained_message_guarded(
     {
         tracing::warn!("failed to persist drained prompt before turn: {err}");
     }
+    super::uds_dispatch_reload::poll_reload(ctx).await;
+    parent_turn::enter_outer(ctx);
     let turn = parent_turn::admit(ctx, admission, &msg).await;
     let outcome = run_turn(ctx, msg, rx, guard, &turn).await;
     parent_turn::settle(ctx, turn, outcome).await

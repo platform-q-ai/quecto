@@ -50,6 +50,7 @@ pub(crate) use plan::{ContextPlan, ToolMessageBuild};
 // #2403: the watermark context's pass: the only context mode (#2414).
 #[path = "context_watermark.rs"]
 mod watermark;
+pub(crate) use watermark::provider_request_size;
 
 /// The narrow handles the pruning policy holds on the sessions
 /// capability's retention namespace (D9 #1978): the writer that appends

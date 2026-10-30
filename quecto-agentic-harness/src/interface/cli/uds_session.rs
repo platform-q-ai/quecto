@@ -47,7 +47,12 @@ pub struct AgentSession {
     overflow_notifications: std::collections::VecDeque<PendingMessage>,
     /// A trusted root parent's turn-outcome runtime (#2708); `None` for
     /// every other harness, whose turns stay unguarded.
-    parent_outcome: Option<ParentOutcome>,
+    parent_outcome:
+        Option<std::sync::Arc<dyn crate::application::agent_turn::ports::ParentOutcomeGuard>>,
+    admission_ack: bool,
+    completion_response_pending: bool,
+    deferred_prompt_errors: Vec<String>,
+    workflow_emission: std::collections::HashSet<String>,
 }
 pub(crate) type ParentOutcome =
     std::sync::Arc<crate::application::agent_turn::use_cases::parent_outcome::ParentOutcomeRuntime>;
@@ -248,6 +253,10 @@ impl AgentSession {
             repeated_failure_notifications: 0,
             overflow_notifications: std::collections::VecDeque::new(),
             parent_outcome: None,
+            admission_ack: false,
+            completion_response_pending: false,
+            deferred_prompt_errors: Vec::new(),
+            workflow_emission: Default::default(),
         }
     }
     pub fn model(&self) -> &str {
@@ -386,15 +395,6 @@ impl AgentSession {
         for message in messages.rev() {
             self.pending.push_front(message);
         }
-    }
-
-    /// Guard this session's turns with a trusted root's runtime (#2708).
-    pub(crate) fn bind_parent_outcome(&mut self, runtime: Option<ParentOutcome>) {
-        self.parent_outcome = runtime;
-    }
-
-    pub(crate) fn parent_outcome(&self) -> Option<ParentOutcome> {
-        self.parent_outcome.clone()
     }
 
     /// Whether queued work (an instruction or a note) waits to run.

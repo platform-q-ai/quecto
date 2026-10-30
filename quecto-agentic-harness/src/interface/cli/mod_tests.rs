@@ -448,3 +448,8 @@ fn help_lists_every_board_op_the_command_line_takes() {
         assert!(help.stdout.contains(op), "{op} missing:\n{}", help.stdout);
     }
 }
+
+/// The same composition recipe as main, through its real context injection.
+pub(crate) fn active_runtime_2708_context() -> CliContext {
+    composed_context(test_composition(), None, false)
+}

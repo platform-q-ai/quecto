@@ -425,7 +425,7 @@ async fn start(
     let mut command = tokio::process::Command::new(&spec.command);
     command
         .args(&spec.args)
-        .env_remove("QUECTO_TURN_OUTCOMES") // the harness's own switch (#2708)
+        .env_remove("QUECTO_TURN_OUTCOMES") // isolate legacy launcher metadata (#2708)
         .envs(&spec.env)
         .stdin(std::process::Stdio::null())
         .stdout(log)

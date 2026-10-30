@@ -14,6 +14,10 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+// This owner exposes the narrow success responder to the admission fixture.
+#[path = "success_fixture.rs"]
+pub(super) mod success_fixture;
+
 const BOUND: Duration = Duration::from_secs(90);
 const FIXTURE: &str = env!("CARGO_BIN_EXE_quecto-test-fixture");
 const EXTENSION: &str = "stand-in";
@@ -58,7 +62,8 @@ async fn provider(child_config: PathBuf) -> wiremock::MockServer {
                     "function": {"name": "spawn", "arguments": arguments}
                 }]})
             } else {
-                serde_json::json!({"content": "DONE"})
+                let (response, content_type) = success_fixture::response(&input, "DONE");
+                return wiremock::ResponseTemplate::new(200).set_body_raw(response, content_type);
             };
             let finish = match delta.get("tool_calls") {
                 Some(_) => "tool_calls",
@@ -232,13 +237,17 @@ impl Drop for Harness {
 
 struct Client {
     stream: UnixStream,
+    outcomes: Vec<serde_json::Value>,
 }
 
 impl Client {
     fn connect(socket: &Path) -> Self {
         let stream = UnixStream::connect(socket).expect("connect");
         stream.set_read_timeout(Some(BOUND)).unwrap();
-        Self { stream }
+        Self {
+            stream,
+            outcomes: Vec::new(),
+        }
     }
 
     fn send(&mut self, line: &str) {
@@ -259,10 +268,13 @@ impl Client {
                 buffer.push(byte[0]);
                 continue;
             }
-            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&buffer)
-                && want(&value)
-            {
-                return value;
+            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&buffer) {
+                if value["type"] == "turn_outcome" {
+                    self.outcomes.push(value.clone());
+                }
+                if want(&value) {
+                    return value;
+                }
             }
             buffer.clear();
         }
@@ -603,7 +615,8 @@ fn a_prompt_held_at_start_up_runs_though_its_client_leaves() {
     client.query("get_state");
     drop(client);
     harness.wait_exit();
-    assert_eq!(fixture.requests().len(), 1, "the held prompt ran");
+    assert_completed_prompt(&fixture, "hello");
+    assert!(harness.child.try_wait().unwrap().unwrap().success());
 }
 
 /// #2446 review round 2 M1: a state change sent after a held prompt is
@@ -616,10 +629,39 @@ fn a_state_change_after_a_held_prompt_applies_after_its_turn() {
     client.send(r#"{"type":"prompt","id":"p1","message":"HELD_PROMPT"}"#);
     client.send(r#"{"type":"clear_history","id":"c1"}"#);
     client.read_until(|v| v["type"] == "response" && v["id"] == "c1");
-    assert_eq!(fixture.requests().len(), 1, "the prompt ran first");
+    assert_completed_prompt(&fixture, "HELD_PROMPT");
+    assert_eq!(
+        client
+            .outcomes
+            .last()
+            .expect("terminal outcome before clear ACK")["outcome"],
+        "done"
+    );
     let history = client.query("get_messages").to_string();
     assert!(
         !history.contains("HELD_PROMPT"),
         "the clear came after the turn: {history}"
     );
+}
+
+/// One original prompt, one declaration receipt continuation, zero correction.
+fn assert_completed_prompt(fixture: &Fixture, prompt: &str) {
+    let requests = fixture.requests();
+    assert_eq!(
+        requests.len(),
+        2,
+        "one prompt plus declaration continuation"
+    );
+    assert!(!success_fixture::continuation(&requests[0]));
+    assert!(success_fixture::continuation(&requests[1]));
+    for request in &requests {
+        assert!(
+            request["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| { m["role"] == "user" && m["content"] == prompt }),
+            "the held prompt ran first: {request}"
+        );
+    }
 }

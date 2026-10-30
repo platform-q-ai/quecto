@@ -21,20 +21,10 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         }
         // #2531: a recoverable failure is re-armed by the next automatic
         // note (bounded), so the domain decides, not the allowed flag.
-        let automatic = crate::domain::inference::services::turn_suspension::Work::Automatic;
-        let pending = if ctx.session.automatic_turns().admits(automatic)
-            && super::parent_turn::admits(ctx, automatic)
-        {
-            crate::interface::cli::uds_session::coalesce_pending(ctx.session.drain_pending())
-        } else {
-            // #1712: a suspended member still obeys explicit instructions
-            // (a parent's fast-acked prompt arrives as a queued follow-up);
-            // an admitted one re-arms it, while buffered automatic notes wait.
-            let Some(explicit) = take_explicit_instructions(ctx) else {
-                return;
-            };
-            explicit
+        let Some(pending) = take_admissible_pending(ctx) else {
+            return;
         };
+        let pending = crate::interface::cli::uds_session::coalesce_pending(pending);
         if pending.is_empty() {
             break;
         }
@@ -47,9 +37,17 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                     .restore_pending(std::iter::once(pending_msg).chain(remaining));
                 return;
             }
-            // #2708: a terminal outcome fences the notes, never an
-            // instruction queued behind them: drain again, explicit only.
-            if !super::parent_turn::admits(ctx, work) {
+            // Earlier work in this batch may have settled terminal. Recheck
+            // each item; a stale note must not hide an instruction behind it.
+            let fresh = super::parent_turn::fresh_wake_allowed(ctx)
+                && matches!(
+                super::parent_turn::pending_admission(&pending_msg),
+                crate::application::agent_turn::use_cases::parent_outcome::TurnAdmission::FreshWake
+            );
+            if matches!(
+                (super::parent_turn::admits(ctx, work), fresh),
+                (false, false)
+            ) {
                 ctx.session
                     .restore_pending(std::iter::once(pending_msg).chain(remaining));
                 continue 'drain;
@@ -137,10 +135,10 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
     }
 }
 
-/// Split the pending queue: explicit instructions (user prompts, queued
-/// controls) are returned when there are any; automatic notes go back to
-/// the queue untouched. `None` when nothing explicit is waiting.
-fn take_explicit_instructions(
+/// Admit instructions and trusted fresh notes independently: stale internal
+/// activity remains queued without hiding fresh input behind it or spinning.
+/// Automatic suspension remains authoritative for every kind of note.
+fn take_admissible_pending(
     ctx: &mut DispatchCtx<'_>,
 ) -> Option<Vec<crate::interface::cli::uds_session::PendingMessage>> {
     let (explicit, automatic): (Vec<_>, Vec<_>) = ctx
@@ -148,10 +146,11 @@ fn take_explicit_instructions(
         .drain_pending()
         .into_iter()
         .partition(|message| {
-            matches!(
-                work_of(message),
-                crate::domain::inference::services::turn_suspension::Work::Instruction(_)
-            )
+            let work = work_of(message);
+            ctx.session.automatic_turns().admits(work)
+                && (super::parent_turn::admits(ctx, work)
+                    || (super::parent_turn::fresh_wake_allowed(ctx) && matches!(super::parent_turn::pending_admission(message),
+                        crate::application::agent_turn::use_cases::parent_outcome::TurnAdmission::FreshWake)))
         });
     ctx.session.restore_pending(automatic.into_iter());
     if explicit.is_empty() {

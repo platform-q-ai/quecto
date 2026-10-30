@@ -1,4 +1,4 @@
-use crate::application::agent_turn::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::{AgentLoopImpl, GuidanceAppend};
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
 use crate::domain::tool_policy::services::tool_policy::inherited_child_policy_from_catalogue;
 use crate::domain::tool_policy::value_objects::tool::{
@@ -142,6 +142,7 @@ impl AgentLoopImpl {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clear_runtime_overlays();
         self.refresh_spawn_inherited_child_policy_snapshot();
+        self.reconcile_declaration_policy(false);
         unknown
     }
 
@@ -157,6 +158,53 @@ impl AgentLoopImpl {
             policy.apply_to_catalogue_entry(entry);
         }
         entries
+    }
+
+    pub fn parent_outcome_candidate(
+        &self,
+    ) -> Option<std::sync::Arc<dyn crate::application::agent_turn::ports::ParentOutcomeGuard>> {
+        self.tool_catalog().parent_outcome_candidate()
+    }
+
+    /// Retain provenance from the registry's actual append operation.
+    pub(crate) fn with_guidance_append(mut self, appended: Option<GuidanceAppend>) -> Self {
+        self.composed_guidance_append = appended;
+        self
+    }
+
+    /// The transport owns the injected prompt's identity, not its position.
+    pub(crate) fn bind_composed_prompt(&mut self, id: Option<uuid::Uuid>) {
+        self.composed_prompt_id = id;
+        if let Some(appended) = &mut self.composed_guidance_append {
+            appended.bind(id);
+        }
+    }
+
+    /// UDS has the canonical marker; resolve it to the injected prompt identity.
+    pub(crate) fn bind_canonical_prompt(
+        &mut self,
+        messages: &[crate::domain::conversation::value_objects::message::Message],
+        canonical: &str,
+    ) {
+        use crate::domain::conversation::value_objects::message::{Message, Role};
+        self.bind_composed_prompt(match canonical {
+            "" => None,
+            _ => messages
+                .iter()
+                .find(|message| message.role == Role::System && message.content == canonical)
+                .map(Message::id),
+        });
+    }
+
+    /// One shared effective catalogue/overlay snapshot owns declaration authority.
+    pub fn reconcile_declaration_policy(&self, outer_boundary: bool) {
+        if let Some(runtime) = self.parent_outcome_candidate() {
+            let visible = self.is_tool_model_visible("declare_turn_outcome");
+            runtime.observe_policy(visible);
+            if outer_boundary {
+                runtime.enter_outer_boundary();
+            }
+        }
     }
 
     /// Whether the model is shown the tool `name` now, under the live tool
@@ -304,6 +352,7 @@ impl AgentLoopImpl {
                     .record_persisted_tool_policy_results(&reconciliation);
             }
             self.refresh_spawn_inherited_child_policy_snapshot();
+            self.reconcile_declaration_policy(false);
             self.notify_tool_policy_changed(&reconciliation, "immediate");
         }
         Some(reconciliation)
@@ -403,6 +452,7 @@ impl AgentLoopImpl {
                     self.tool_registry
                         .record_persisted_tool_policy_results(&reconciliation);
                 }
+                self.reconcile_declaration_policy(false);
                 self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
             }
             combined.results.extend(reconciliation.results);

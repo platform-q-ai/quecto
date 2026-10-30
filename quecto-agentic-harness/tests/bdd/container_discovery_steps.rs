@@ -393,7 +393,7 @@ fn mount_discovering_provider(
                             "tool_calls",
                         )
                     }
-                    None => (serde_json::json!({"content": "REAL_AGENT_DONE"}), "stop"),
+                    None => super::success_fixture::completion(&input, "REAL_AGENT_DONE"),
                 };
                 if input["stream"] == true {
                     let chunk = serde_json::json!({

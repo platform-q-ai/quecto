@@ -286,3 +286,86 @@ async fn rejected_clarification_is_an_agent_cmd_tool_error() {
     );
     assert!(result.content.contains("message was not queued"));
 }
+
+/// Exercise the real parent-side client, not just response serialization.
+/// The local child accepts one bounded connection and echoes the request id.
+async fn run42_client_response(success: bool, error: Option<&str>) -> ToolResult {
+    let registry = new_registry();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket = tmp.path().join("diagnostic.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    registry
+        .lock()
+        .unwrap()
+        .insert("diagnostic-child".into(), SubagentEntry::new(socket, 0));
+    let error = error.map(str::to_owned);
+    let child = tokio::spawn(async move {
+        let (mut stream, _) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+                .await
+                .expect("client connects promptly")
+                .unwrap();
+        let mut bytes = Vec::new();
+        let mut reader = tokio::io::BufReader::new(&mut stream);
+        let mode = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            quecto_line_io::read_frame_or_legacy_line_into(
+                &mut reader,
+                &mut bytes,
+                quecto_line_io::PROTOCOL_LINE_CAP_BYTES,
+            ),
+        )
+        .await
+        .expect("client sends promptly")
+        .unwrap()
+        .expect("request frame");
+        let command: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(command["type"], "prompt");
+        assert!(command["id"].as_str().is_some_and(|id| !id.is_empty()));
+        let response = serde_json::json!({
+            "type": "response", "command": "prompt", "id": command["id"],
+            "success": success, "error": error,
+        });
+        quecto_line_io::write_message(
+            &mut stream,
+            response.to_string().as_bytes(),
+            mode,
+            quecto_line_io::PROTOCOL_LINE_CAP_BYTES,
+        )
+        .await
+        .unwrap();
+        command["id"].clone()
+    });
+    let tool = AgentCmdTool::new(registry);
+    let result = run_with_overall_cap(
+        &tool,
+        r#"{"agent_id":"diagnostic-child","command":"prompt","message":"do work"}"#,
+    )
+    .await;
+    let id = child.await.unwrap();
+    let received: serde_json::Value =
+        serde_json::from_str(&result.content).expect("original response retained");
+    assert_eq!(received["id"], id, "preserve response correlation");
+    assert_eq!(received["success"], success);
+    result
+}
+
+#[tokio::test]
+async fn run42_round3_real_client_surfaces_success_with_error() {
+    let result = run42_client_response(true, Some("correction provider down")).await;
+    assert!(result.content.contains("correction provider down"));
+    assert!(
+        result.is_error,
+        "success describes the original prompt, but the appended error must surface to the caller: {}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn run42_round3_real_client_response_controls() {
+    let clean = run42_client_response(true, None).await;
+    assert!(!clean.is_error);
+    let failed = run42_client_response(false, Some("prompt execution failed")).await;
+    assert!(failed.is_error);
+    assert!(failed.content.contains("prompt execution failed"));
+}

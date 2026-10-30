@@ -435,6 +435,7 @@ pub(crate) fn build_agent_from_config_in(
         model,
         ext_registry,
         extension_prompt_snippets,
+        guidance_append,
         notification_rx,
         subagent_registry,
         harness_lifecycle,
@@ -510,7 +511,8 @@ pub(crate) fn build_agent_from_config_in(
             .max_iterations
             .unwrap_or(config.agents.defaults.max_tool_iterations),
     )
-    .with_model_limits(limits);
+    .with_model_limits(limits)
+    .with_guidance_append(guidance_append);
     let mut agent = super::swarm_composition::wire_member(
         agent,
         &flags.swarm_participation,
@@ -548,11 +550,9 @@ mod run_session;
 #[path = "agent/run_session_save.rs"]
 mod run_session_save;
 pub(crate) use run_session::run_agent_session;
-
 #[path = "agent/startup_identity.rs"]
 mod startup_identity;
 use startup_identity::{composed_loop_builders, resolve_startup_identity};
-
 fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -> i32 {
     // Early validation for user-supplied --socket paths: check length before
     // doing any I/O (config load, agent build).  Auto-generated paths are
@@ -742,8 +742,9 @@ mod tests;
 #[path = "agent_web_fetch_recipe_tests.rs"]
 mod web_fetch_recipe_tests;
 #[cfg(test)]
-#[path = "agent_workflow_discovery_tests.rs"]
 mod workflow_discovery_tests;
 #[cfg(test)]
-#[path = "agent_workflow_spec_tests.rs"]
 mod workflow_spec_tests;
+
+#[cfg(test)]
+pub(crate) mod active_runtime_2708_tests;

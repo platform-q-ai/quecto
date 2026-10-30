@@ -13,6 +13,8 @@ pub enum TurnAdmission {
     Correction,
     /// A note of work the parent owns (a child's or a swarm's).
     WorkWake,
+    /// Trusted, consumed-once external child/workflow information.
+    FreshWake,
     /// A harness nudge (workflow continuation): never renews the correction.
     Nudge,
 }

@@ -270,3 +270,71 @@ fn issue_2708_parent_runtime_history_replacement_mints_a_new_epoch() {
     let again = published(runtime.complete(fresh, TurnEnd::Completed(WorkLiveness::Empty)));
     assert!(again.sequence > done.sequence, "sequence never goes back");
 }
+
+/// Baseline-PASS twin: WorkWake is not FreshWake and cannot replenish an
+/// already spent correction inside an open episode.
+#[test]
+fn run42_round3_workwake_preserves_spent_budget_and_open_episode() {
+    let runtime = runtime();
+    let first = external(&runtime, "open", "first");
+    assert_eq!(
+        runtime.complete(first, TurnEnd::Completed(WorkLiveness::Empty)),
+        ParentVerdict::Correct
+    );
+    let correction = runtime
+        .admit("cli:root", TurnAdmission::Correction, "correction")
+        .unwrap();
+    let waiting = published(runtime.complete(correction, TurnEnd::Completed(WorkLiveness::Live)));
+    assert_eq!(waiting.outcome, TurnOutcome::Waiting);
+    let wake = runtime
+        .admit("cli:root", TurnAdmission::WorkWake, "work-report")
+        .expect("actual WorkWake admission inside open episode");
+    assert_eq!(wake.admission().episode_id, "open");
+    assert_eq!(wake.admission().turn_id, "work-report");
+    let settled = published(runtime.complete(wake, TurnEnd::Completed(WorkLiveness::Empty)));
+    assert_eq!(settled.outcome, TurnOutcome::Stalled);
+    assert_eq!(settled.episode_id, "open");
+    assert_eq!(settled.sequence, waiting.sequence + 1);
+    let next = external(&runtime, "genuine-next", "next");
+    assert_eq!(
+        runtime.complete(next, TurnEnd::Completed(WorkLiveness::Empty)),
+        ParentVerdict::Correct,
+        "only a genuine new episode renews correction"
+    );
+}
+
+#[test]
+fn run21_open_workflow_nudge_preserves_spent_budget_new_episode_resets() {
+    let runtime = runtime();
+    let first = external(&runtime, "open", "first");
+    assert!(matches!(
+        runtime.complete(first, TurnEnd::Completed(WorkLiveness::Empty)),
+        ParentVerdict::Correct
+    ));
+    let correction = runtime
+        .admit("cli:root", TurnAdmission::Correction, "correction")
+        .unwrap();
+    let waiting = published(runtime.complete(correction, TurnEnd::Completed(WorkLiveness::Live)));
+    assert_eq!(waiting.outcome, TurnOutcome::Waiting);
+    let nudge = runtime
+        .admit("cli:root", TurnAdmission::FreshWake, "workflow-information")
+        .unwrap();
+    assert_eq!(
+        nudge.admission().episode_id,
+        "open",
+        "still-open workflow nudge is same episode"
+    );
+    let settled = runtime.complete(nudge, TurnEnd::Completed(WorkLiveness::Empty));
+    assert!(
+        matches!(settled, ParentVerdict::Published(ref record) if record.outcome == TurnOutcome::Stalled),
+        "nudge cannot replenish spent correction: {settled:?}"
+    );
+    let next = external(&runtime, "genuine-next", "next");
+    assert!(
+        matches!(
+            runtime.complete(next, TurnEnd::Completed(WorkLiveness::Empty)),
+            ParentVerdict::Correct
+        ),
+        "genuine new episode gets one correction"
+    );
+}

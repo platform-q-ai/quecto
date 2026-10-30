@@ -246,3 +246,58 @@ impl AgentSession {
         NotificationEnqueueOutcome::Retained
     }
 }
+
+impl AgentSession {
+    /// Guard this session's turns with a trusted root's runtime (#2708).
+    pub(crate) fn bind_parent_outcome(&mut self, runtime: Option<super::ParentOutcome>) {
+        self.parent_outcome = runtime.map(|runtime| runtime as _);
+    }
+
+    pub(crate) fn parent_outcome(
+        &self,
+    ) -> Option<std::sync::Arc<dyn crate::application::agent_turn::ports::ParentOutcomeGuard>> {
+        self.parent_outcome
+            .clone()
+            .filter(|runtime| runtime.enabled())
+    }
+
+    pub(crate) fn begin_completion_response(&mut self, pending: bool) {
+        self.completion_response_pending = pending;
+        self.deferred_prompt_errors.clear();
+    }
+    pub(crate) fn prompt_error(&mut self, error: String) -> Option<String> {
+        if self.completion_response_pending {
+            self.deferred_prompt_errors.push(error);
+            None
+        } else {
+            Some(error)
+        }
+    }
+    pub(crate) fn finish_completion_response(&mut self) -> Vec<String> {
+        self.completion_response_pending = false;
+        std::mem::take(&mut self.deferred_prompt_errors)
+    }
+
+    pub(crate) fn bind_parent_outcome_guard(
+        &mut self,
+        runtime: std::sync::Arc<dyn crate::application::agent_turn::ports::ParentOutcomeGuard>,
+    ) {
+        self.parent_outcome = Some(runtime);
+    }
+
+    pub(crate) fn set_admission_ack(&mut self, enabled: bool) {
+        self.admission_ack = enabled;
+    }
+    pub(crate) fn admission_ack(&self) -> bool {
+        self.admission_ack && self.parent_outcome().is_some()
+    }
+
+    pub(crate) fn reset_workflow_emissions(&mut self) {
+        self.workflow_emission.clear();
+    }
+
+    /// Consumed engine emission identity, retained across idle drains.
+    pub(crate) fn take_workflow_emission(&mut self, identity: String) -> bool {
+        self.workflow_emission.insert(identity)
+    }
+}

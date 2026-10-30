@@ -733,3 +733,7 @@ mod persist_tests;
 mod reload_tests;
 #[path = "agent_loop_policy_restriction_tests.rs"]
 mod restriction_tests;
+
+/// The composed head's identity is not ownership of every matching sentence.
+#[path = "agent_loop_policy_round3_tests.rs"]
+mod round3_guidance_tests;

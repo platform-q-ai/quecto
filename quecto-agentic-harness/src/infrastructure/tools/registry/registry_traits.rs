@@ -19,6 +19,12 @@ use crate::domain::tool_policy::value_objects::tool_descriptor::{
 use crate::infrastructure::config::{ToolPolicyConfig, ToolPolicyEntryConfig};
 
 impl ToolCatalog for ToolRegistryImpl {
+    fn parent_outcome_candidate(
+        &self,
+    ) -> Option<Arc<dyn crate::application::agent_turn::ports::ParentOutcomeGuard>> {
+        self.parent_outcome_candidate.clone()
+    }
+
     fn definitions(&self) -> &[ToolDefinition] {
         self.definitions()
     }
@@ -178,17 +184,27 @@ impl crate::application::tools::ports::ToolPolicyMutator for ToolRegistryImpl {
     fn rollback_tool_policy_results(&mut self, reconciliation: &ToolPolicyReconciliation) {
         use crate::domain::tool_policy::value_objects::tool::ToolPolicyMutationStatus;
         let mut changed = false;
-        for result in reconciliation.results.iter().filter(|result| {
+        // Duplicate resolved tools must unwind to transaction entry, not an intermediate state.
+        for result in reconciliation.results.iter().rev().filter(|result| {
             matches!(
                 result.status,
                 ToolPolicyMutationStatus::Applied | ToolPolicyMutationStatus::AlreadyInState
             )
         }) {
             if let Some(before) = result.before.as_ref() {
-                changed |= self.replace_profile_scope(&result.name, before.profile_scope);
+                if let Some(metadata) = self.metadata.get_mut(result.name.as_ref() as &str) {
+                    let differs = metadata.profile_scope != before.profile_scope
+                        || metadata.profile_enabled != before.profile_enabled
+                        || metadata.availability != before.runtime_availability;
+                    metadata.profile_scope = before.profile_scope;
+                    metadata.profile_enabled = before.profile_enabled;
+                    metadata.availability = before.runtime_availability;
+                    changed |= differs;
+                }
             }
         }
         if changed {
+            self.rebuild_definitions();
             self.refresh_spawn_inherited_child_policy_snapshot();
         }
     }

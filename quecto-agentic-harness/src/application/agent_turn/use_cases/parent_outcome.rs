@@ -38,6 +38,8 @@ struct RuntimeState {
     /// The admitted turn, by nonce; a newer admission supersedes it.
     active: Option<(u64, TurnIdentity)>,
     next_nonce: u64,
+    enabled: bool,
+    visible: bool,
 }
 
 pub struct ParentOutcomeRuntime {
@@ -59,6 +61,8 @@ impl ParentOutcomeRuntime {
                 latest: None,
                 active: None,
                 next_nonce: 0,
+                enabled: true,
+                visible: true,
             }),
             // Between turns the declarations hold no turn's identity.
             declarations: TurnDeclarationService::new(TurnIdentity::default()),
@@ -72,10 +76,46 @@ impl ParentOutcomeRuntime {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Whether an automatic turn (a note, a wake, a nudge) may run now:
-    /// never after a terminal outcome until a fresh external instruction.
+    /// Internal automatic work is admitted only while the episode is open.
+    /// Trusted fresh external information uses its separate admission kind.
     pub fn admits_automatic(&self) -> bool {
-        !self.state().fenced
+        let state = self.state();
+        matches!((state.enabled, state.fenced), (false, _) | (true, false))
+    }
+
+    /// An admitted correction may return an explicit empty EndTurn: that is
+    /// noncompliance to settle, not a new provider retry budget.
+    pub fn correcting(&self) -> bool {
+        let state = self.state();
+        state.enabled && state.active.is_some() && state.correction == Correction::Spent
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.state().enabled
+    }
+
+    pub fn observe_policy(&self, visible: bool) {
+        let mut state = self.state();
+        state.visible = visible;
+        if matches!((state.enabled, visible), (true, false)) {
+            state.enabled = false;
+            state.epoch = (self.mint)();
+            state.active = None;
+            state.episode = None;
+            state.latest = None;
+            state.correction = Correction::Unspent;
+            state.fenced = false;
+            let _ = self
+                .declarations
+                .enter(TurnBoundary::OuterRun, &TurnIdentity::default());
+        }
+    }
+
+    pub fn enter_outer_boundary(&self) {
+        let mut state = self.state();
+        if matches!((state.enabled, state.visible), (false, true)) {
+            state.enabled = true;
+        }
     }
 
     /// Admit the outer turn whose committed opener is `turn_id`. An
@@ -89,6 +129,9 @@ impl ParentOutcomeRuntime {
         turn_id: &str,
     ) -> Option<ActiveTurn> {
         let mut state = self.state();
+        let true = state.enabled else {
+            return None;
+        };
         let open = state.episode.is_some() && !state.fenced;
         match (admission, open, state.correction) {
             (TurnAdmission::External { episode_id }, _, _) => {
@@ -96,10 +139,17 @@ impl ParentOutcomeRuntime {
                 state.fenced = false;
                 state.correction = Correction::Unspent;
             }
+            (TurnAdmission::FreshWake, _, _) => {
+                if state.fenced || state.episode.is_none() {
+                    state.episode = Some((self.mint)());
+                    state.correction = Correction::Unspent;
+                }
+                state.fenced = false;
+            }
             (TurnAdmission::Correction, true, Correction::Owed) => {
                 state.correction = Correction::Spent;
             }
-            (TurnAdmission::WorkWake, true, _) => state.correction = Correction::Unspent,
+            (TurnAdmission::WorkWake, true, _) => {}
             (TurnAdmission::Nudge, true, _) => {}
             (TurnAdmission::Correction | TurnAdmission::WorkWake | TurnAdmission::Nudge, _, _) => {
                 return None;
@@ -218,8 +268,15 @@ impl crate::application::agent_turn::ports::DeclareTurnOutcome for ParentOutcome
         intent: TurnIntent,
         reason: &str,
     ) -> Result<TurnDeclaration, DomainError> {
-        self.declarations
-            .declare(authority, identity, intent, reason)
+        let state = self.state();
+        match state.active.as_ref() {
+            Some((_, active)) if state.enabled && active == identity => self
+                .declarations
+                .declare(authority, identity, intent, reason),
+            _ => Err(DomainError::Tool(
+                "This declaration does not belong to the active turn.".into(),
+            )),
+        }
     }
 }
 
@@ -229,6 +286,36 @@ impl crate::application::agent_turn::ports::BoundTurnDeclaration for ParentOutco
             .active
             .as_ref()
             .map(|(_, identity)| identity.clone())
+    }
+}
+
+impl crate::application::agent_turn::ports::ParentOutcomeGuard for ParentOutcomeRuntime {
+    fn enabled(&self) -> bool {
+        self.enabled()
+    }
+    fn observe_policy(&self, visible: bool) {
+        self.observe_policy(visible);
+    }
+    fn enter_outer_boundary(&self) {
+        self.enter_outer_boundary();
+    }
+    fn correcting(&self) -> bool {
+        self.correcting()
+    }
+    fn admits_automatic(&self) -> bool {
+        self.admits_automatic()
+    }
+    fn admit(&self, key: &str, admission: TurnAdmission, turn: &str) -> Option<ActiveTurn> {
+        self.admit(key, admission, turn)
+    }
+    fn complete(&self, turn: ActiveTurn, end: TurnEnd) -> ParentVerdict {
+        self.complete(turn, end)
+    }
+    fn history_replaced(&self) {
+        self.history_replaced();
+    }
+    fn view(&self) -> OutcomeView {
+        self.view()
     }
 }
 

@@ -11,6 +11,9 @@ use crate::interface::cli::uds_session::PendingMessage;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
+mod assertions_tests;
+use assertions_tests::{assert_stalled, saved_under};
+
 /// The two original promises of #2708: each ends the turn with nothing run.
 pub(super) const PROMISE_2648: &str = "#2648 merged … Now working on #2650";
 pub(super) const PROMISE_SPLIT_READER: &str =
@@ -33,21 +36,6 @@ pub(super) struct Scripted {
     /// already saved under this directory.
     pub(super) probe: Mutex<Option<std::path::PathBuf>>,
     pub(super) persisted: Mutex<Vec<bool>>,
-}
-
-/// Whether any file under `dir` holds `needle`.
-fn saved_under(dir: &std::path::Path, needle: &str) -> bool {
-    std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .any(|entry| {
-            let path = entry.path();
-            match path.is_dir() {
-                true => saved_under(&path, needle),
-                false => std::fs::read_to_string(&path).is_ok_and(|text| text.contains(needle)),
-            }
-        })
 }
 
 impl Scripted {
@@ -298,54 +286,8 @@ async fn assert_promise_is_corrected_once_then_stalls(promise: &'static str) {
     root.send(r#"{"type":"prompt","id":"ep-1","message":"Carry on with the layout epic"}"#)
         .await;
     let requests = root.provider.requests();
-    assert_eq!(
-        requests.len(),
-        2,
-        "exactly two provider requests: {requests:?}"
-    );
-    assert_eq!(requests[1], CORRECTION_NOTE, "the literal correction, once");
     let frames = root.frames();
-    let admitted = of_type(&frames, "turn_admitted");
-    assert_eq!(
-        admitted.len(),
-        2,
-        "the opener and the correction: {frames:?}"
-    );
-    assert!(
-        admitted
-            .iter()
-            .all(|frame| frame["episodeId"] == "ep-1" && frame.as_object().unwrap().len() == 5)
-    );
-    assert_ne!(admitted[0]["turnId"], admitted[1]["turnId"]);
-    let outcomes = of_type(&frames, "turn_outcome");
-    assert_eq!(outcomes.len(), 1, "one outcome, never done: {frames:?}");
-    assert_eq!(outcomes[0]["outcome"], "stalled");
-    assert_eq!(outcomes[0]["reason"], STALLED_REASON);
-    assert_eq!(outcomes[0]["turnId"], admitted[1]["turnId"]);
-    assert_eq!(outcomes[0]["sequence"], 1);
-    assert_eq!(outcomes[0].as_object().unwrap().len(), 8);
-    // Order: ack, admitted, start, end, admitted, start, end, outcome.
-    let ack = position(&frames, |f| f["type"] == "response" && f["id"] == "ep-1");
-    let first = position(&frames, |f| f["type"] == "turn_admitted");
-    let start = position(&frames, |f| f["type"] == "agent_start");
-    let outcome = position(&frames, |f| f["type"] == "turn_outcome");
-    let last_end = frames
-        .iter()
-        .rposition(|f| f["type"] == "agent_end")
-        .unwrap();
-    assert!(
-        ack < first && first < start && last_end < outcome,
-        "{frames:?}"
-    );
-    assert_eq!(frames[ack]["data"]["episodeId"], "ep-1");
-    assert_eq!(
-        of_type(&frames, "response")
-            .iter()
-            .filter(|f| f["id"] == "ep-1")
-            .count(),
-        1,
-        "one acknowledgement, at admission"
-    );
+    assert_stalled(&requests, &frames);
 }
 
 #[tokio::test]
@@ -548,12 +490,21 @@ async fn issue_2708_protocol_episode_identity_is_bounded_echoed_and_minted() {
     root.send(&json!({"type":"prompt","id": exact,"message":"go"}).to_string())
         .await;
     let frames = root.frames();
-    let ack = &of_type(&frames, "response")[0];
-    assert_eq!(ack["data"]["episodeId"], json!(exact));
+    let response = &of_type(&frames, "response")[0];
+    assert_eq!(
+        response["id"],
+        json!(exact),
+        "default completion is correlated"
+    );
+    assert_eq!(response["success"], true);
+    assert_eq!(of_type(&frames, "response").len(), 1);
     assert_eq!(
         of_type(&frames, "turn_admitted")[0]["episodeId"],
         json!(exact)
     );
+    let settled = position(&frames, |f| f["type"] == "turn_outcome");
+    let completed = position(&frames, |f| f["type"] == "response");
+    assert!(settled < completed, "identity admission is not completion");
 
     let calls = root.provider.requests().len();
     let over = "e".repeat(513);
@@ -571,9 +522,20 @@ async fn issue_2708_protocol_episode_identity_is_bounded_echoed_and_minted() {
 
     root.send(r#"{"type":"prompt","message":"go"}"#).await;
     let frames = root.frames();
-    let minted = of_type(&frames, "response")[0]["data"]["episodeId"].clone();
+    let minted = of_type(&frames, "turn_admitted")[0]["episodeId"].clone();
     assert!(minted.as_str().is_some_and(|id| !id.is_empty()));
-    assert_eq!(of_type(&frames, "turn_admitted")[0]["episodeId"], minted);
+    assert!(
+        of_type(&frames, "turn_admitted")
+            .iter()
+            .all(|f| f["episodeId"] == minted)
+    );
+    let responses = of_type(&frames, "response");
+    assert_eq!(responses.len(), 1);
+    assert!(responses[0]["id"].is_null(), "no client id was supplied");
+    assert_eq!(responses[0]["success"], true);
+    let settled = position(&frames, |f| f["type"] == "turn_outcome");
+    let completed = position(&frames, |f| f["type"] == "response");
+    assert!(settled < completed, "minted episode still completes at END");
 }
 
 #[tokio::test]
@@ -664,5 +626,118 @@ async fn issue_2708_uds_parent_an_unguarded_harness_is_unchanged() {
             !state["data"].as_object().unwrap().contains_key(field),
             "{field}"
         );
+    }
+}
+
+async fn production_run(replies: Vec<Reply>) -> (Vec<String>, Vec<Value>) {
+    use crate::interface::cli::controllers::active_runtime_2708_tests::compose;
+    let composed = compose(true);
+    let provider = Scripted::new(replies);
+    let mut env = DispatchTestEnv::with_unselected_workflow();
+    env.set_agent(
+        super::super::dispatch_test_env::make_dispatch_test_agent_with_registry(
+            provider.clone(),
+            composed.registry,
+        ),
+    );
+    env.subagent_registry =
+        Some(crate::infrastructure::tools::agents::subagent_registry::new_registry());
+    env.session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
+    env.session.bind_parent_outcome(composed.runtime);
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(1024);
+    {
+        let mut ctx = env.ctx();
+        ctx.broadcast_tx = Some(tx);
+        ctx.stdout = None;
+        dispatch_command(
+            protocol::parse_command_line(
+                r#"{"type":"prompt","id":"ep-1","message":"Carry on with the layout epic"}"#,
+            )
+            .unwrap(),
+            &mut ctx,
+        )
+        .await;
+    }
+    let mut frames = Vec::new();
+    while let Ok(line) = rx.try_recv() {
+        frames.push(serde_json::from_str(line.trim_end()).expect("JSON frame"));
+    }
+    (provider.requests(), frames)
+}
+
+async fn production_promise(test: &str, promise: &'static str, switches: &[&str]) {
+    use crate::interface::cli::controllers::active_runtime_2708_tests::isolated;
+    if isolated(test, switches) {
+        let (requests, frames) =
+            production_run(vec![Reply::Text(promise), Reply::Text(promise)]).await;
+        assert_stalled(&requests, &frames);
+    }
+}
+
+#[tokio::test]
+async fn active_runtime_2708_uds_original_promise_2648_default_activation() {
+    production_promise(
+        concat!(
+            module_path!(),
+            "::active_runtime_2708_uds_original_promise_2648_default_activation"
+        ),
+        PROMISE_2648,
+        &["unset", "other"],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn active_runtime_2708_uds_original_split_reader_default_activation() {
+    production_promise(
+        concat!(
+            module_path!(),
+            "::active_runtime_2708_uds_original_split_reader_default_activation"
+        ),
+        PROMISE_SPLIT_READER,
+        &["unset", "other"],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn active_runtime_2708_characterization_uds_opt_in() {
+    let test = concat!(
+        module_path!(),
+        "::active_runtime_2708_characterization_uds_opt_in"
+    );
+    use crate::interface::cli::controllers::active_runtime_2708_tests::isolated;
+    if isolated(test, &["1"]) {
+        for promise in [PROMISE_2648, PROMISE_SPLIT_READER] {
+            let (requests, frames) =
+                production_run(vec![Reply::Text(promise), Reply::Text(promise)]).await;
+            assertions_tests::assert_stalled_opt_in(&requests, &frames);
+        }
+        for (outcome, expected, reason) in [
+            ("done", "done", "Merged #2650"),
+            ("asking", "needs_user", "Which repository?"),
+            ("blocked", "needs_user", "Need the deploy key"),
+        ] {
+            let (requests, frames) = production_run(vec![
+                Reply::Call(
+                    "declare_turn_outcome",
+                    json!({"outcome": outcome, "reason": reason}),
+                ),
+                Reply::Text("Final."),
+            ])
+            .await;
+            assert_eq!(requests.len(), 2);
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|note| note.as_str() == CORRECTION_NOTE)
+                    .count(),
+                0
+            );
+            let outcomes = of_type(&frames, "turn_outcome");
+            assert_eq!(outcomes.len(), 1);
+            assert_eq!(outcomes[0]["outcome"], expected);
+            assert_eq!(outcomes[0]["reason"], reason);
+        }
     }
 }
