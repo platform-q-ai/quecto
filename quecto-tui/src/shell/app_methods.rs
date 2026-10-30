@@ -264,12 +264,23 @@ impl App {
         if let Some(error) = error {
             let text = format!("Error: {error}");
             self.notify(&text, NotifyLevel::Error);
-            // A correlated receipt is not a lifecycle event. Keep a full
-            // scrollable copy without resetting newer running/pending work.
-            self.ac_mut()
-                .master_session
-                .chat
-                .add_entry(ChatEntry::Status { text });
+            // A correlated receipt is not a lifecycle event. Retain it before
+            // the active assistant so token/thinking/finalization keep their
+            // existing tail owner. replace_range also invalidates render caches.
+            let chat = &mut self.ac_mut().master_session.chat;
+            let end = chat.entry_count();
+            let index = if matches!(
+                chat.entries().last(),
+                Some(ChatEntry::Assistant {
+                    streaming: true,
+                    ..
+                })
+            ) {
+                end - 1
+            } else {
+                end
+            };
+            chat.replace_range(index, index, vec![ChatEntry::Status { text }]);
         }
     }
 
