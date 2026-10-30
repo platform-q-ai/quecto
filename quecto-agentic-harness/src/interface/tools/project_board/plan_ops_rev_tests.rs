@@ -522,22 +522,15 @@ fn done_ticks_existing_cli_envelope_builds_the_same_exception_request() {
 }
 
 #[test]
-fn done_ticks_exception_pin_is_exact_board_head_even_after_an_unrelated_write() {
-    use crate::application::project_board::ports::ProjectBoardStore;
-    let (store, writer) = done_ticks_finished_board();
+fn done_ticks_exception_task_pin_survives_an_unrelated_write() {
+    let (_store, writer) = done_ticks_finished_board();
     let read = ok(&writer, json!({"op":"show","task":"a"}));
     ok(
         &writer,
         json!({"op":"create","task":"unrelated","title":"Another task"}),
     );
-    let before = store.read().unwrap();
-    let writes = store.writes();
-    let answer = call(&writer, done_ticks_request(&read["rev"]));
-    assert_eq!(answer["error"]["code"], "stale", "{answer}");
-    assert_eq!(store.read().unwrap().tasks, before.tasks);
-    assert_eq!(store.writes(), writes);
-    let fresh = ok(&writer, json!({"op":"show","task":"a"}));
-    ok(&writer, done_ticks_request(&fresh["rev"]));
+    let changed = ok(&writer, done_ticks_request(&read["rev"]));
+    assert_eq!(changed["task"]["done_when"][0]["done"], false);
 }
 
 #[test]
@@ -567,7 +560,7 @@ fn done_ticks_restore_refuses_any_reason_and_null_index_without_writes() {
 }
 
 #[test]
-fn done_ticks_exception_retry_rechecks_the_original_board_head_pin() {
+fn done_ticks_exception_retry_keeps_task_pin_after_unrelated_competing_write() {
     use crate::application::project_board::ports::ProjectBoardStore;
     use crate::domain::project_board::entities::task::Task;
     let (store, writer) = done_ticks_finished_board();
@@ -597,20 +590,21 @@ fn done_ticks_exception_retry_rechecks_the_original_board_head_pin() {
             .unwrap();
     });
     let answer = call(&writer, done_ticks_request(&read["rev"]));
-    assert_eq!(answer["error"]["code"], "stale", "{answer}");
+    assert_eq!(answer["ok"], true, "{answer}");
     let after = store.read().unwrap();
-    let target = |tasks: Vec<Task>| {
-        tasks
-            .into_iter()
-            .find(|task| task.fields().id.as_str() == "a")
-            .unwrap()
-    };
-    assert_eq!(target(after.tasks), target(before.tasks));
+    let unrelated = after
+        .tasks
+        .iter()
+        .find(|task| task.fields().id.as_str() == "unrelated")
+        .unwrap();
+    assert_eq!(unrelated.fields().title, "Concurrent edit");
+    assert_eq!(answer["task"]["done_when"][0]["done"], false);
     assert_eq!(
         store.writes(),
-        writes + 1,
-        "only the competing write landed"
+        writes + 2,
+        "competing and requested writes both land"
     );
+    assert_eq!(after.tasks.len(), before.tasks.len());
 }
 
 #[test]
@@ -648,4 +642,118 @@ fn done_ticks_exception_unrepresentable_reason_is_actionable_without_writes() {
     assert!(diagnostic.contains("reason"), "{answer}");
     assert!(diagnostic.contains("backtick"), "{answer}");
     assert!(diagnostic.contains("matching"), "{answer}");
+}
+
+#[test]
+fn done_ticks_restore_already_met_is_a_no_write_no_revision_noop() {
+    use crate::application::project_board::ports::ProjectBoardStore;
+    let (store, writer) = done_ticks_finished_board();
+    let read = ok(&writer, json!({"op":"show","task":"a"}));
+    let writes = store.writes();
+    let before = store.read().unwrap();
+    let restored = ok(
+        &writer,
+        json!({"op":"set_outcome","task":"a","outcome_index":0,"met":true,"expected_rev":read["rev"]}),
+    );
+    assert_eq!(
+        store.writes(),
+        writes,
+        "already met must not invoke persistence"
+    );
+    assert_eq!(store.read().unwrap().head, before.head, "no new revision");
+    let reread = ok(&writer, json!({"op":"show","task":"a"}));
+    assert_eq!(reread["rev"], read["rev"]);
+    assert_eq!(restored["task"], read["task"]);
+}
+
+#[test]
+fn done_ticks_invalid_index_has_its_own_diagnostic_not_paging_offset() {
+    let (_store, writer) = done_ticks_finished_board();
+    let read = ok(&writer, json!({"op":"show","task":"a"}));
+    for index in [json!(-1), json!(0.5), json!("0")] {
+        let mut request = done_ticks_request(&read["rev"]);
+        request["outcome_index"] = index;
+        let answer = call(&writer, request);
+        assert_eq!(answer["error"]["field"], "outcome_index", "{answer}");
+        let message = answer["error"]["message"].as_str().unwrap();
+        assert!(message.contains("outcome_index"), "{answer}");
+        assert!(
+            message.contains("index"),
+            "outcome diagnostic must name an index: {answer}"
+        );
+        assert_eq!(message.contains("read on from"), false, "{answer}");
+    }
+}
+
+#[test]
+fn done_ticks_public_answers_keep_lifecycle_reason_private() {
+    let (_store, writer) = done_ticks_finished_board();
+    let shown = ok(&writer, json!({"op":"show","task":"a"}));
+    assert!(shown["task"].get("reason").is_none(), "{shown}");
+    let listed = ok(&writer, json!({"op":"list"}));
+    assert!(listed["tasks"][0].get("reason").is_none(), "{listed}");
+}
+
+#[test]
+fn done_ticks_exception_and_restore_preserve_distinct_outcome_text_and_order() {
+    let (_store, writer) = done_ticks_finished_board();
+    ok(
+        &writer,
+        json!({"op":"create","task":"ordered","title":"Ordered outcomes","status":"ready","goal":"Ship safely.","done_when":["Zulu first","Alpha second","Middle last"]}),
+    );
+    ok(
+        &writer,
+        json!({"op":"done_without_run","task":"ordered","reason":"Answered by hand"}),
+    );
+    let original = ok(&writer, json!({"op":"show","task":"ordered"}));
+    let changed = ok(
+        &writer,
+        json!({"op":"set_outcome","task":"ordered","outcome_index":1,"met":false,"reason":"Deferred","expected_rev":original["rev"]}),
+    );
+    let fresh = ok(&writer, json!({"op":"show","task":"ordered"}));
+    let restored = ok(
+        &writer,
+        json!({"op":"set_outcome","task":"ordered","outcome_index":1,"met":true,"expected_rev":fresh["rev"]}),
+    );
+    for answer in [&changed, &restored] {
+        let texts: Vec<_> = answer["task"]["done_when"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["outcome"].clone())
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                json!("Zulu first"),
+                json!("Alpha second"),
+                json!("Middle last")
+            ]
+        );
+    }
+    assert_eq!(
+        restored["task"]["description"],
+        original["task"]["description"]
+    );
+}
+
+#[test]
+fn done_ticks_stale_diagnostic_names_target_stamp_after_unrelated_write() {
+    let (_store, writer) = done_ticks_finished_board();
+    let original = ok(&writer, json!({"op":"show","task":"a"}));
+    let changed = ok(&writer, done_ticks_request(&original["rev"]));
+    ok(
+        &writer,
+        json!({"op":"create","task":"unrelated","title":"Another task"}),
+    );
+    let refused = call(
+        &writer,
+        json!({"op":"set_outcome","task":"a","outcome_index":0,"met":true,"expected_rev":original["rev"]}),
+    );
+    assert_eq!(refused["error"]["code"], "stale", "{refused}");
+    assert_eq!(refused["error"]["task"], "a", "{refused}");
+    assert_eq!(
+        refused["error"]["updated"], changed["task"]["updated"],
+        "target's revision stamp, not another task's: {refused}"
+    );
 }

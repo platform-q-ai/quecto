@@ -400,3 +400,112 @@ fn done_ticks_exception_metadata_cannot_enter_as_a_general_description_edit() {
         "writer attribution is not caller-supplied description data"
     );
 }
+
+#[test]
+fn done_ticks_archived_completed_files_settle_only_with_completion_evidence() {
+    for resolution in ["completed", "done_without_run"] {
+        let reason = match resolution {
+            "done_without_run" => "\n| Reason | Answered by hand |",
+            _ => "",
+        };
+        let archived = FILE.replace(
+            "| Status | draft |",
+            &format!("| Status | archived |\n| Resolution | {resolution} |{reason}"),
+        );
+        let archived = match resolution {
+            "done_without_run" => archived.replace("schema=2", "schema=3"),
+            _ => archived,
+        };
+        let read = decode::<TaskCodec>(archived.as_bytes()).unwrap();
+        assert_eq!(
+            read.fields().description,
+            SECTIONED_TEXT.replace("- [ ]", "- [x]"),
+            "formerly completed: {resolution}"
+        );
+        assert_eq!(
+            decode::<TaskCodec>(encode::<TaskCodec>(&read).unwrap().as_bytes()).unwrap(),
+            read
+        );
+    }
+    for resolution in ["", "\n| Resolution | not_planned |"] {
+        let archived = FILE.replace(
+            "| Status | draft |",
+            &format!("| Status | archived |{resolution}"),
+        );
+        let read = decode::<TaskCodec>(archived.as_bytes()).unwrap();
+        assert_eq!(
+            read.fields().description,
+            SECTIONED_TEXT,
+            "no completed history means no inference"
+        );
+    }
+}
+
+#[test]
+fn done_ticks_domain_exception_validation_allows_only_done_and_archived() {
+    for status in [
+        TaskStatus::Draft,
+        TaskStatus::Ready,
+        TaskStatus::Claimed,
+        TaskStatus::InProgress,
+        TaskStatus::Review,
+        TaskStatus::Blocked,
+        TaskStatus::Done,
+        TaskStatus::Archived,
+    ] {
+        let read = decode::<TaskCodec>(done_ticks_exception_file("done").as_bytes()).unwrap();
+        let mut fields = read.into_fields();
+        fields.status = status;
+        match status {
+            TaskStatus::Done | TaskStatus::Archived => {}
+            _ => {
+                fields.resolution = None;
+                fields.reason = None;
+            }
+        }
+        if matches!(status, TaskStatus::Claimed | TaskStatus::InProgress) {
+            fields.claim = Some(crate::domain::project_board::entities::claim::Claim {
+                holder: crate::domain::project_board::entities::claim::Identity {
+                    name: "Ada".into(),
+                    email: "ada@example.com".into(),
+                },
+                since: fields.updated.clone(),
+                expires: fields.updated.plus_seconds(3600).unwrap(),
+            });
+        }
+        let result = Task::new(fields);
+        match status {
+            TaskStatus::Done | TaskStatus::Archived => {
+                assert!(result.is_ok(), "{status:?}: {result:?}")
+            }
+            _ => assert!(result.is_err(), "exception must not inhabit {status:?}"),
+        }
+    }
+}
+
+#[test]
+fn done_ticks_schema4_is_emitted_only_while_an_exception_exists() {
+    let read = decode::<TaskCodec>(done_ticks_exception_file("done").as_bytes()).unwrap();
+    assert!(
+        encode::<TaskCodec>(&read)
+            .unwrap()
+            .starts_with("<!-- quecto-task schema=4 -->")
+    );
+    let restored = read
+        .set_outcome(
+            0,
+            None,
+            &crate::domain::project_board::entities::claim::Identity {
+                name: "Ada".into(),
+                email: "ada@example.com".into(),
+            },
+            &read.fields().updated,
+        )
+        .unwrap();
+    let encoded = encode::<TaskCodec>(&restored).unwrap();
+    assert!(
+        encoded.starts_with("<!-- quecto-task schema=3 -->"),
+        "reason alone uses schema3: {encoded}"
+    );
+    assert_eq!(decode::<TaskCodec>(encoded.as_bytes()).unwrap(), restored);
+}
