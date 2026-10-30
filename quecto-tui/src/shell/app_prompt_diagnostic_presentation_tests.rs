@@ -187,3 +187,146 @@ fn run47_diagnostic_presentation_existing_status_presenter() {
         "existing status presenter must expose every original/appended character at width80"
     );
 }
+
+// A correlated command receipt is presentation-only even when it arrives
+// between tokens belonging to a newer assistant response.
+async fn check_run49_stream_continuity(command: &str, success: bool, tail: bool, errors: usize) {
+    let mut app = test_app().await;
+    app.handle_event(Event::AgentStart);
+    app.handle_event(Event::Token {
+        token: "BEFORE".into(),
+    });
+    app.ac_mut().pending_resume_messages_id = Some("resume-owner".into());
+    app.ac_mut().pending_rewind_refresh_id = Some("rewind-owner".into());
+    app.ac_mut().pending_attach_backfill_id = Some("attach-owner".into());
+    let receipts = errors.max(1);
+    let mut expected_diagnostics = Vec::new();
+    for index in 0..receipts {
+        let error = (errors > 0).then(|| format!("{}:late-{index}", long_diagnostic()));
+        if let Some(error) = &error {
+            expected_diagnostics.push(format!("Error: {error}"));
+        }
+        app.handle_event(Event::Response {
+            id: Some(format!("older-root-owner-{index}")),
+            command: command.into(),
+            success,
+            data: None,
+            error,
+        });
+    }
+    assert!(app.ac().master_session.running);
+    assert!(app.ac().agent_state.is_running());
+    assert!(app.ac().spinner.is_some());
+    assert_eq!(
+        app.ac().pending_resume_messages_id.as_deref(),
+        Some("resume-owner")
+    );
+    assert_eq!(
+        app.ac().pending_rewind_refresh_id.as_deref(),
+        Some("rewind-owner")
+    );
+    assert_eq!(
+        app.ac().pending_attach_backfill_id.as_deref(),
+        Some("attach-owner")
+    );
+    assert_eq!(app.notifications.messages(), expected_diagnostics);
+    let retained: Vec<_> = app
+        .ac()
+        .master_session
+        .chat
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry {
+            ChatEntry::Status { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        retained, expected_diagnostics,
+        "each full diagnostic is retained immediately exactly once"
+    );
+    // Populate render caches before the next token and finalization, so stale
+    // cached streaming cursors cannot hide behind a correct entry accessor.
+    app.ac_mut().master_session.chat.render(80);
+    if tail {
+        app.handle_event(Event::Token {
+            token: "AFTER".into(),
+        });
+    }
+    app.handle_event(serde_json::from_str::<Event>(r#"{"type":"agent_end"}"#).unwrap());
+    assert!(!app.ac().master_session.running);
+    assert!(!app.ac().agent_state.is_running());
+    assert!(app.ac().spinner.is_none());
+    let assistants: Vec<_> = app
+        .ac()
+        .master_session
+        .chat
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry {
+            ChatEntry::Assistant {
+                text, streaming, ..
+            } => Some((text.as_str(), *streaming)),
+            _ => None,
+        })
+        .collect();
+    let expected_text = if tail { "BEFOREAFTER" } else { "BEFORE" };
+    assert_eq!(
+        assistants,
+        vec![(expected_text, false)],
+        "late {command} success={success} errors={errors} tail={tail} must preserve one finalized assistant"
+    );
+    let rendered = rendered_payload(&mut app.ac_mut().master_session.chat);
+    assert!(rendered.contains(expected_text));
+    for diagnostic in expected_diagnostics {
+        assert!(
+            rendered.contains(&compact(&diagnostic)),
+            "full diagnostic survives stream completion at width80"
+        );
+    }
+}
+
+#[tokio::test]
+async fn run49_stream_continuity_prompt_success_error() {
+    check_run49_stream_continuity("prompt", true, true, 1).await;
+}
+
+#[tokio::test]
+async fn run49_stream_continuity_prompt_failure_error() {
+    check_run49_stream_continuity("prompt", false, true, 1).await;
+}
+
+#[tokio::test]
+async fn run49_stream_continuity_follow_up_success_error() {
+    check_run49_stream_continuity("follow_up", true, true, 1).await;
+}
+
+#[tokio::test]
+async fn run49_stream_continuity_follow_up_failure_error() {
+    check_run49_stream_continuity("follow_up", false, true, 1).await;
+}
+
+#[tokio::test]
+async fn run49_stream_continuity_no_tail_errors() {
+    for command in ["prompt", "follow_up"] {
+        for success in [true, false] {
+            check_run49_stream_continuity(command, success, false, 1).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn run49_stream_continuity_multiple_errors() {
+    check_run49_stream_continuity("prompt", true, true, 3).await;
+}
+
+#[tokio::test]
+async fn run49_stream_continuity_clean_receipts() {
+    for command in ["prompt", "follow_up"] {
+        for success in [true, false] {
+            for tail in [true, false] {
+                check_run49_stream_continuity(command, success, tail, 0).await;
+            }
+        }
+    }
+}
