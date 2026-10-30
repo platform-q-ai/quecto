@@ -285,7 +285,7 @@ async fn workflow_after_terminal(completed: bool, initially_stalled: bool) {
     } else {
         done()
     };
-    if !initially_stalled && std::env::var("QUECTO_TURN_OUTCOMES").ok().as_deref() == Some("1") {
+    if std::env::var("QUECTO_TURN_OUTCOMES").ok().as_deref() == Some("1") {
         replies.extend(done());
     } else {
         replies.extend([
@@ -311,13 +311,20 @@ async fn workflow_after_terminal(completed: bool, initially_stalled: bool) {
     rig.drain().await;
     let requests = rig.provider.requests();
     let frames = rig.frames();
-    if !initially_stalled && std::env::var("QUECTO_TURN_OUTCOMES").ok().as_deref() == Some("1") {
+    if std::env::var("QUECTO_TURN_OUTCOMES").ok().as_deref() == Some("1") {
+        if initially_stalled {
+            assert_eq!(rig.provider.requests()[1].last_user, CORRECTION_NOTE);
+            assert_eq!(of_type(&initial, "turn_admitted").len(), 2);
+            assert_eq!(of_type(&initial, "turn_admitted")[0]["episodeId"], "first");
+            assert_eq!(of_type(&initial, "turn_admitted")[1]["episodeId"], "first");
+        }
         assert_eq!(
             requests.len(),
             2,
             "opt-in settled root waits for next USER, not workflow wake"
         );
         assert!(of_type(&frames, "turn_admitted").is_empty());
+        assert!(of_type(&frames, "turn_outcome").is_empty());
         for _ in 0..3 {
             rig.drain().await;
         }
@@ -326,6 +333,9 @@ async fn workflow_after_terminal(completed: bool, initially_stalled: bool) {
             2,
             "idle workflow drains remain inert in opt-in settled mode"
         );
+        let idle = rig.frames();
+        assert!(of_type(&idle, "turn_admitted").is_empty());
+        assert!(of_type(&idle, "turn_outcome").is_empty());
         rig.prompt("next-user").await;
         assert_eq!(
             rig.provider.requests().len(),
